@@ -1,9 +1,9 @@
 {
   "diagram_spec": {
     "meta": {
-      "spec_version": "1.0.0",
+      "spec_version": "1.1.0",
       "title": "Motion Detection State Machine",
-      "description": "Per-camera FSM showing the Idle → Scoring → Fire event → Cooldown loop, with a side panel describing how the emitted MotionEvent is delivered.",
+      "description": "Per-camera FSM showing the Idle → Scoring → Fire event → Cooldown loop. v1.1 dropped the side Delivery panel that referenced colors (green primary, blue consumers) which never appeared on the canvas — delivery mechanics live in the surrounding prose, not in this diagram.",
       "tags": ["motion", "state_machine", "fsm", "per_camera"]
     },
     "canvas": {
@@ -12,7 +12,7 @@
       "unit": "px",
       "direction": "circular",
       "background_color": "#0a0a0f",
-      "style_notes": "Dark theme. All nodes are rounded rectangles with subtle borders. Crisp 1.5px arrows in amber. Use Inter or similar geometric sans-serif for labels. Apply a soft outer glow to active-state nodes (Scoring, Fire event) in amber. Subtle grid texture in deep teal-black background, very low contrast."
+      "style_notes": "Dark theme. All nodes are rounded rectangles with subtle borders. Crisp 1.5px arrows in amber. Use Inter or similar geometric sans-serif for labels. Apply a soft outer glow to active-state nodes (Scoring, Fire event) in amber. Subtle grid texture in deep teal-black background, very low contrast. Center the FSM cycle horizontally on the canvas (no side panel) — the four states arranged in a balanced clockwise loop with the PER-CAMERA / Motion FSM eyebrow + title at the geometric center."
     },
     "semantics": {
       "diagram_type": "state_machine",
@@ -167,42 +167,6 @@
         }
       }
     ],
-    "side_panel": {
-      "position": {"x": 1640, "y": 360},
-      "width": 220,
-      "height": 360,
-      "background": "#161620",
-      "border_color": "rgba(255,255,255,0.10)",
-      "border_radius": 12,
-      "title": "Delivery",
-      "title_color": "#ffffff",
-      "title_size": 14,
-      "title_weight": "semibold",
-      "title_underline_color": "rgba(255,255,255,0.10)",
-      "items": [
-        {
-          "bullet_color": "#22c55e",
-          "label": "primary",
-          "label_color": "#ffffff",
-          "sublabel": "WebSocket — low latency",
-          "sublabel_color": "rgba(255,255,255,0.55)"
-        },
-        {
-          "bullet_color": "#f59e0b",
-          "label": "fallback",
-          "label_color": "#ffffff",
-          "sublabel": "POST /cameras/{id}/motion",
-          "sublabel_color": "rgba(255,255,255,0.55)"
-        },
-        {
-          "bullet_color": "#3b82f6",
-          "label": "consumed by",
-          "label_color": "#ffffff",
-          "sublabel": "dashboard + MCP agents",
-          "sublabel_color": "rgba(255,255,255,0.55)"
-        }
-      ]
-    },
     "constraints": {
       "layout_lock": true,
       "allow_auto_routing": false,
@@ -212,14 +176,12 @@
         "Fire event", "MotionEvent emitted",
         "Cooldown", "30s quiet window",
         "frame in", "score ≥ threshold", "delivered", "elapsed",
-        "PER-CAMERA", "Motion FSM",
-        "Delivery", "primary", "WebSocket — low latency",
-        "fallback", "POST /cameras/{id}/motion",
-        "consumed by", "dashboard + MCP agents"
+        "PER-CAMERA", "Motion FSM"
       ],
       "do_not_change_text": true,
       "do_not_misspell_anything": true,
-      "rendering_notes": "Render as a clean technical diagram in a premium dark UI style. Crisp typography (Inter / system sans-serif), perfect alignment, no hand-drawn or rough look. Output should look like a high-end product-doc diagram, not an illustration. Aspect ratio 16:9. NO photographic imagery, NO 3D rendering, NO illustrative styling — pure flat technical diagram on a dark background."
+      "do_not_render_extra_panels": "Do NOT render any side panel, legend, key, or annotation box outside the four FSM nodes. The diagram is intentionally minimal — just the four-state cycle plus the PER-CAMERA / Motion FSM center label. Any extra content (e.g. 'Delivery', 'primary', 'fallback', 'consumed by') is forbidden — it was removed in v1.1 because it referenced colors not present on the canvas.",
+      "rendering_notes": "Render as a clean technical diagram in a premium dark UI style. Crisp typography (Inter / system sans-serif), perfect alignment, no hand-drawn or rough look. Output should look like a high-end product-doc diagram, not an illustration. Aspect ratio 16:9. NO photographic imagery, NO 3D rendering, NO illustrative styling — pure flat technical diagram on a dark background. Center the four-state cycle horizontally; balanced negative space on left and right (no side panel)."
     }
   }
 }
