@@ -1,9 +1,9 @@
 {
   "diagram_spec": {
     "meta": {
-      "spec_version": "1.0.0",
+      "spec_version": "1.1.0",
       "title": "MCP Agent Workflow",
-      "description": "3-lane swimlane: AI AGENT (top) calls 7 MCP tools, COMMAND CENTER (middle) authenticates and dispatches each call, CLOUDNODE (bottom) produces physical data when needed."
+      "description": "3-lane swimlane: AI AGENT (top) calls 7 MCP tools, COMMAND CENTER (middle) authenticates and dispatches each call, CLOUDNODE (bottom) produces physical data when needed. v1.1: agent-lane dots are now classification-coloured (READ green / VISUAL amber / WRITE purple) so the bottom legend actually maps to what's drawn — the v1.0 render coloured all 7 agent dots uniformly purple, which made the legend's READ/VISUAL/WRITE colour key orphan content."
     },
     "canvas": {
       "width": 1920,
@@ -19,22 +19,27 @@
     ],
     "lane_label_letter_spacing": "0.13em",
     "lane_label_font_weight": 600,
+    "classifications": {
+      "read":   {"color": "#22c55e", "description": "metadata only · list / get"},
+      "visual": {"color": "#f59e0b", "description": "returns images the model can see"},
+      "write":  {"color": "#a855f7", "description": "creates or updates state"}
+    },
     "steps": [
-      {"x_pct": 0.10, "tool_name": "list_cameras",      "node_outcome": "metadata only",  "node_present": false},
-      {"x_pct": 0.22, "tool_name": "view_camera",       "node_outcome": "JPEG snapshot",  "node_present": true},
-      {"x_pct": 0.34, "tool_name": "watch_camera",      "node_outcome": "JPEG burst",     "node_present": true},
-      {"x_pct": 0.47, "tool_name": "create_incident",   "node_outcome": "incident row",   "node_present": false},
-      {"x_pct": 0.60, "tool_name": "attach_snapshot",   "node_outcome": "JPEG → DB",      "node_present": true},
-      {"x_pct": 0.73, "tool_name": "attach_clip",       "node_outcome": "clip from cache","node_present": true},
-      {"x_pct": 0.86, "tool_name": "finalize_incident", "node_outcome": "report body",    "node_present": false}
+      {"x_pct": 0.10, "tool_name": "list_cameras",      "classification": "read",   "node_outcome": "metadata only",   "node_present": false},
+      {"x_pct": 0.22, "tool_name": "view_camera",       "classification": "visual", "node_outcome": "JPEG snapshot",   "node_present": true},
+      {"x_pct": 0.34, "tool_name": "watch_camera",      "classification": "visual", "node_outcome": "JPEG burst",      "node_present": true},
+      {"x_pct": 0.47, "tool_name": "create_incident",   "classification": "write",  "node_outcome": "incident row",    "node_present": false},
+      {"x_pct": 0.60, "tool_name": "attach_snapshot",   "classification": "write",  "node_outcome": "JPEG → DB",       "node_present": true},
+      {"x_pct": 0.73, "tool_name": "attach_clip",       "classification": "write",  "node_outcome": "clip from cache", "node_present": true},
+      {"x_pct": 0.86, "tool_name": "finalize_incident", "classification": "write",  "node_outcome": "report body",     "node_present": false}
     ],
     "step_rendering": {
-      "agent_lane_dot": "purple_filled_circle_with_white_step_number_inside_and_thin_purple_outer_ring",
-      "command_center_lane_dot": "green_filled_circle_with_white_step_number_inside_and_thin_green_outer_ring",
-      "cloudnode_lane_dot": "blue_filled_circle_with_white_check_mark_(✓)_— only_appears_when_node_present_is_true",
-      "tool_name_label": "above_agent_dot_in_JetBrains_Mono_monospace_muted_grey",
-      "node_outcome_label": "below_cloudnode_lane_in_Inter_sans-serif_muted_grey_— always_shown_even_when_node_dot_absent",
-      "vertical_connecting_lines": "thin_dashed_white_5%_opacity_running_top_to_bottom_through_each_step_column"
+      "agent_lane_dot": "FILLED circle whose colour comes from the step's classification: READ steps render in green (#22c55e), VISUAL steps render in amber (#f59e0b), WRITE steps render in purple (#a855f7). White step number (1–7) inside each dot. Thin matching-coloured outer ring at ~18% alpha. This is the visual axis the bottom legend describes — DO NOT colour all agent dots the same.",
+      "command_center_lane_dot": "Hollow / outlined-only circle with a thin white border at ~35% alpha and a white step number (1–7) inside on a transparent fill. Deliberately neutral so it reads as 'CC dispatched this call' without competing with the legend's READ-green colour key (which now belongs to the agent-lane dot for step 1).",
+      "cloudnode_lane_dot": "blue (#3b82f6) filled circle with a white check mark (✓) — only appears when node_present is true (steps 2, 3, 5, 6).",
+      "tool_name_label": "above each agent dot in JetBrains Mono monospace, muted grey (#9ca3af).",
+      "node_outcome_label": "below the cloudnode lane in Inter sans-serif, muted grey — always shown even when the cloudnode dot is absent.",
+      "vertical_connecting_lines": "thin dashed white at 5% opacity running top to bottom through each step column."
     },
     "legend_panel": {
       "position": "bottom_full_width",
@@ -45,7 +50,8 @@
         {"bullet_color": "#22c55e", "bold_label": "READ",   "trailing_text": "metadata only · list / get"},
         {"bullet_color": "#f59e0b", "bold_label": "VISUAL", "trailing_text": "returns images the model can see"},
         {"bullet_color": "#a855f7", "bold_label": "WRITE",  "trailing_text": "creates or updates state"}
-      ]
+      ],
+      "intent": "The three bullet colours in the legend MUST match the three filled-circle colours actually used on the agent lane. Step 1 (list_cameras) is the only green dot, steps 2-3 (view_camera, watch_camera) are the amber dots, steps 4-7 (create_incident, attach_snapshot, attach_clip, finalize_incident) are the purple dots."
     },
     "constraints": {
       "layout_lock": true,
@@ -61,7 +67,9 @@
       ],
       "do_not_change_text": true,
       "do_not_misspell_anything": true,
-      "rendering_notes": "Premium technical-doc style. Crisp typography. Tool names in monospace, lane labels in spaced caps. Numbered dots are EXACTLY 1-7 in the agent and CC lanes; the CLOUDNODE lane shows ONLY check-mark dots and only at columns 2, 3, 5, 6 (view_camera, watch_camera, attach_snapshot, attach_clip). NOT photographic. Aspect ratio 16:9."
+      "do_not_render_metadata": "Do NOT render any JSON keys, position values, hex colour codes, rgba() values, x_pct/y_pct positioning values, font-weight numbers, letter-spacing values, percentage alpha values, or any other JSON metadata as visible text on the canvas. The ONLY visible text on the canvas must come from the exact_text array — lane labels, tool names, outcome labels, the numbered dot digits 1-7, and the legend (READ / VISUAL / WRITE plus their description lines). No other text whatsoever.",
+      "do_not_uniformly_colour_agent_dots": "Critical: the seven agent-lane dots must NOT all share the same colour. Their colours are driven per-step by the classification field — green for step 1 only, amber for steps 2-3, purple for steps 4-7. Uniform colouring (e.g. all purple, as in v1.0) makes the bottom legend orphan content and is what this v1.1 spec exists to fix.",
+      "rendering_notes": "Premium technical-doc style. Crisp typography. Tool names in monospace, lane labels in spaced caps. Numbered dots are EXACTLY 1-7 on both the agent and CC lanes. The CLOUDNODE lane shows ONLY check-mark dots, and only at columns 2, 3, 5, 6 (view_camera, watch_camera, attach_snapshot, attach_clip). NOT photographic. Aspect ratio 16:9. The canvas should look like a polished product diagram, not a debug view of a JSON spec — no JSON keys, no position values, no font/spacing parameters as visible text."
     }
   }
 }
