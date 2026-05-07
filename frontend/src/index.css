@@ -7978,15 +7978,16 @@ body {
     }
 }
 
-/* ── Sentinel control page ─────────────────────────────────────────
-   Service-management UI for the autonomous agent. Replaces the v1
-   marketing/coming-soon layout. All controls bind to local React
-   state today; the Preview banner at the top makes that clear. */
 
-.sentinel-control-page {
-    max-width: 1100px;
+/* ── Sentinel control page (v3 — tabbed dashboard) ─────────────────
+   Service-management UI for the autonomous agent. Three-tab layout
+   (Overview / Configure / History) with a compact persistent header
+   and a slide-in run-detail drawer. All state is local React only. */
+
+.sentinel-page-v3 {
+    max-width: 1280px;
     margin: 0 auto;
-    padding: 1.5rem 1.5rem 4rem;
+    padding: 1.25rem 1.5rem 4rem;
 }
 
 /* ── preview banner ─────────────────────────────────────────────── */
@@ -7994,21 +7995,21 @@ body {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 0.75rem 1rem;
-    margin-bottom: 1.5rem;
-    background: rgba(168, 85, 247, 0.08);
-    border: 1px solid rgba(168, 85, 247, 0.2);
+    padding: 0.6rem 1rem;
+    margin-bottom: 1rem;
+    background: rgba(168, 85, 247, 0.06);
+    border: 1px solid rgba(168, 85, 247, 0.18);
     border-radius: 10px;
     flex-wrap: wrap;
+    font-size: 0.8rem;
 }
 
 .sentinel-preview-pill {
-    display: inline-block;
-    padding: 0.2rem 0.55rem;
+    padding: 0.18rem 0.55rem;
     background: rgba(168, 85, 247, 0.2);
     color: #c084fc;
     border-radius: 4px;
-    font-size: 0.65rem;
+    font-size: 0.62rem;
     font-weight: 700;
     letter-spacing: 0.12em;
     flex-shrink: 0;
@@ -8016,7 +8017,6 @@ body {
 
 .sentinel-preview-text {
     color: var(--text-secondary);
-    font-size: 0.85rem;
     line-height: 1.5;
 }
 
@@ -8031,119 +8031,94 @@ body {
     text-decoration: underline;
 }
 
-/* ── status header strip ────────────────────────────────────────── */
-.sentinel-status-header {
+/* ── compact persistent header ──────────────────────────────────── */
+.sentinel-compact-header {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
-    gap: 2rem;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
+    gap: 1.5rem;
+    padding: 0.85rem 1.25rem;
+    margin-bottom: 0;
     background: var(--bg-card);
     border: 1px solid var(--border-color);
-    border-radius: 14px;
+    border-radius: 12px 12px 0 0;
+    border-bottom: none;
     flex-wrap: wrap;
 }
 
-.sentinel-status-header-left {
-    flex: 1;
-    min-width: 280px;
-}
-
-.sentinel-status-header-right {
+.sentinel-compact-left {
     display: flex;
-    flex-direction: column;
-    align-items: flex-end;
+    align-items: center;
     gap: 1rem;
-    min-width: 200px;
+    flex: 1;
+    min-width: 240px;
 }
 
-.sentinel-status-pill-row {
+.sentinel-compact-right {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+}
+
+.sentinel-compact-status {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin-bottom: 0.5rem;
-    flex-wrap: wrap;
-}
-
-.sentinel-status-dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--text-muted);
     flex-shrink: 0;
 }
 
-.sentinel-status-dot-active {
-    background: var(--accent-green);
-    box-shadow: 0 0 10px rgba(34, 197, 94, 0.5);
-}
-
-.sentinel-status-dot-paused {
-    background: var(--text-muted);
-}
-
-.sentinel-status-pill-label {
-    font-size: 0.75rem;
+.sentinel-compact-status-label {
+    font-size: 0.72rem;
     font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-secondary);
+    letter-spacing: 0.12em;
+    color: var(--accent-green);
 }
 
-.sentinel-status-config-summary {
-    font-size: 0.75rem;
-    color: var(--text-muted);
+.sentinel-compact-divider {
+    width: 1px;
+    height: 28px;
+    background: var(--border-color);
+    flex-shrink: 0;
 }
 
-.sentinel-status-title {
-    font-size: 1.85rem;
-    font-weight: 700;
-    color: var(--text-primary);
-    margin: 0 0 0.4rem;
-    letter-spacing: -0.02em;
-}
-
-.sentinel-status-subtitle {
-    color: var(--text-muted);
-    font-size: 0.9rem;
-    margin: 0 0 1rem;
-    line-height: 1.5;
-}
-
-.sentinel-status-subtitle-strong {
-    color: var(--text-secondary);
-    font-weight: 500;
-}
-
-.sentinel-status-stats {
+.sentinel-compact-summary {
     display: flex;
-    gap: 1.75rem;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+}
+
+.sentinel-compact-summary-line {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
     flex-wrap: wrap;
 }
 
-.sentinel-status-stat {
-    display: flex;
-    flex-direction: column;
-}
-
-.sentinel-status-stat-value {
-    font-size: 1.5rem;
+.sentinel-compact-summary-strong {
+    font-size: 1rem;
     font-weight: 700;
     color: var(--text-primary);
-    line-height: 1;
 }
 
-.sentinel-status-stat-label {
-    font-size: 0.7rem;
+.sentinel-compact-summary-meta {
+    font-size: 0.78rem;
     color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-top: 0.25rem;
+}
+
+.sentinel-compact-summary-sub {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 600px;
 }
 
 .sentinel-run-now-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
     padding: 0.5rem 1.1rem;
     background: rgba(168, 85, 247, 0.15);
     color: #c084fc;
@@ -8160,54 +8135,551 @@ body {
     border-color: rgba(168, 85, 247, 0.6);
 }
 
-.sentinel-master-toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    cursor: default;
+.sentinel-run-now-btn span {
+    font-size: 0.65rem;
+    color: #c084fc;
 }
 
-.sentinel-master-toggle-label {
-    font-size: 0.8rem;
+/* ── tabs ───────────────────────────────────────────────────────── */
+.sentinel-tabs {
+    display: flex;
+    gap: 0;
+    padding: 0 1.25rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-top: none;
+    border-radius: 0;
+}
+
+.sentinel-tab {
+    padding: 0.85rem 1rem;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    margin-bottom: -1px;
+}
+
+.sentinel-tab:hover {
     color: var(--text-secondary);
 }
 
-/* ── shared section wrapper ─────────────────────────────────────── */
-.sentinel-section {
-    /* extends .settings-section — no overrides needed at the moment */
+.sentinel-tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--accent-purple);
 }
 
-.sentinel-section-header {
-    margin-bottom: 1rem;
+.sentinel-tab-panel {
+    background: rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--border-color);
+    border-top: none;
+    border-radius: 0 0 12px 12px;
+    padding: 1.5rem;
+    min-height: 60vh;
 }
 
-.sentinel-section-header-row {
+/* ── shared dot indicators ──────────────────────────────────────── */
+.sentinel-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.sentinel-dot-active {
+    background: var(--accent-green);
+    box-shadow: 0 0 10px rgba(34, 197, 94, 0.55);
+}
+
+.sentinel-dot-paused {
+    background: var(--text-muted);
+    box-shadow: none;
+}
+
+@keyframes sentinel-dot-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.55), 0 0 10px rgba(34, 197, 94, 0.55); }
+    50% { box-shadow: 0 0 0 8px rgba(34, 197, 94, 0), 0 0 14px rgba(34, 197, 94, 0.8); }
+}
+
+.sentinel-dot-pulse.sentinel-dot-active {
+    animation: sentinel-dot-pulse 2s ease-in-out infinite;
+}
+
+/* ── shared trigger pill (used in timeline + table) ─────────────── */
+.sentinel-trigger-pill {
+    display: inline-block;
+    padding: 0.18rem 0.55rem;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary);
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: lowercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    line-height: 1.5;
+}
+
+.sentinel-trigger-pill-motion {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+}
+
+.sentinel-trigger-pill-manual {
+    background: rgba(168, 85, 247, 0.15);
+    color: #c084fc;
+}
+
+.sentinel-trigger-pill-scheduled {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+}
+
+.sentinel-trigger-pill-incident_opened {
+    background: rgba(34, 197, 94, 0.12);
+    color: var(--accent-green);
+}
+
+/* ── shared outcome chip ────────────────────────────────────────── */
+.sentinel-outcome-chip {
+    display: inline-block;
+    padding: 0.18rem 0.55rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    white-space: nowrap;
+    line-height: 1.5;
+}
+
+.sentinel-outcome-chip-incident {
+    background: rgba(34, 197, 94, 0.12);
+    color: var(--accent-green);
+}
+
+.sentinel-outcome-chip-incident.sentinel-severity-medium {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+}
+
+.sentinel-outcome-chip-incident.sentinel-severity-high {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+}
+
+.sentinel-outcome-chip-noop {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-muted);
+}
+
+.sentinel-outcome-chip-error {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+}
+
+/* ── overview tab ───────────────────────────────────────────────── */
+.sentinel-overview-grid {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 1.25rem;
+}
+
+.sentinel-overview-main {
     display: flex;
-    align-items: flex-start;
+    flex-direction: column;
+    gap: 1.25rem;
+    min-width: 0;
+}
+
+.sentinel-overview-side {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+/* armed hero */
+.sentinel-armed-hero {
+    position: relative;
+    padding: 1.75rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.sentinel-armed-hero.armed {
+    border-color: rgba(34, 197, 94, 0.35);
+}
+
+.sentinel-armed-hero-bg {
+    position: absolute;
+    inset: 0;
+    background:
+        radial-gradient(600px 200px at 80% 100%, rgba(34, 197, 94, 0.10), transparent 60%),
+        radial-gradient(400px 200px at 20% 0%, rgba(168, 85, 247, 0.06), transparent 60%);
+    pointer-events: none;
+}
+
+.sentinel-armed-hero.paused .sentinel-armed-hero-bg {
+    background:
+        radial-gradient(600px 200px at 80% 100%, rgba(255, 255, 255, 0.04), transparent 60%);
+}
+
+.sentinel-armed-hero-content {
+    position: relative;
+    z-index: 1;
+}
+
+.sentinel-armed-pill-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.85rem;
+}
+
+.sentinel-armed-pill {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: var(--accent-green);
+}
+
+.sentinel-armed-hero.paused .sentinel-armed-pill {
+    color: var(--text-muted);
+}
+
+.sentinel-armed-headline {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0 0 0.5rem;
+    letter-spacing: -0.01em;
+}
+
+.sentinel-armed-sub {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.sentinel-armed-sub strong {
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+/* shared panel (used in overview + configure) */
+.sentinel-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1.25rem;
+}
+
+.sentinel-panel-header {
+    display: flex;
+    align-items: baseline;
     justify-content: space-between;
     gap: 1rem;
-    flex-wrap: wrap;
-}
-
-.sentinel-section-header h2 {
-    font-size: 1rem;
     margin-bottom: 0.4rem;
 }
 
-/* ── triggers ───────────────────────────────────────────────────── */
-.sentinel-trigger-row {
+.sentinel-panel-header h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.sentinel-panel-meta {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.sentinel-panel-desc {
+    margin: 0 0 1rem;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    line-height: 1.55;
+}
+
+/* timeline */
+.sentinel-timeline {
+    list-style: none;
+    margin: 0;
+    padding: 0;
     display: flex;
     flex-direction: column;
 }
 
-.sentinel-trigger-row-main {
+.sentinel-timeline-row {
+    display: grid;
+    grid-template-columns: 90px 24px 1fr;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
     cursor: pointer;
+    border-radius: 6px;
+    transition: background 0.15s;
+}
+
+.sentinel-timeline-row:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.sentinel-timeline-when {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    padding-top: 4px;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.sentinel-timeline-line {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.sentinel-timeline-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    border: 2px solid var(--bg-card);
+    box-shadow: 0 0 0 1px var(--text-muted);
+    flex-shrink: 0;
+    margin-top: 4px;
+    z-index: 1;
+}
+
+.sentinel-timeline-dot-incident.sentinel-severity-low {
+    background: var(--accent-green);
+    box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.6), 0 0 8px rgba(34, 197, 94, 0.4);
+}
+
+.sentinel-timeline-dot-incident.sentinel-severity-medium {
+    background: #f59e0b;
+    box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.6), 0 0 8px rgba(245, 158, 11, 0.4);
+}
+
+.sentinel-timeline-dot-incident.sentinel-severity-high {
+    background: #ef4444;
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.6), 0 0 10px rgba(239, 68, 68, 0.5);
+}
+
+.sentinel-timeline-dot-noop {
+    background: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
+.sentinel-timeline-dot-error {
+    background: #ef4444;
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.6);
+}
+
+.sentinel-timeline-connector {
+    width: 2px;
+    flex: 1;
+    background: rgba(255, 255, 255, 0.06);
+    margin-top: 2px;
+}
+
+.sentinel-timeline-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    min-width: 0;
+}
+
+.sentinel-timeline-row1 {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.sentinel-timeline-camera {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.sentinel-timeline-tools {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.sentinel-timeline-row2 {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.sentinel-timeline-summary {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+    flex: 1;
+    min-width: 200px;
+}
+
+/* side stats */
+.sentinel-stat-card {
+    padding: 1rem 1.1rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+}
+
+.sentinel-stat-card-incidents {
+    border-color: rgba(34, 197, 94, 0.25);
+}
+
+.sentinel-stat-card-value {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+
+.sentinel-stat-card-incidents .sentinel-stat-card-value {
+    color: var(--accent-green);
+}
+
+.sentinel-stat-card-label {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 0.3rem;
+}
+
+/* allowance widget */
+.sentinel-allowance-widget {
+    padding: 1rem 1.1rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    margin-top: 0.5rem;
+}
+
+.sentinel-allowance-widget-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.6rem;
+}
+
+.sentinel-allowance-widget-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.sentinel-allowance-widget-pill {
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: #c084fc;
+    padding: 0.15rem 0.45rem;
+    background: rgba(168, 85, 247, 0.15);
+    border-radius: 4px;
+}
+
+.sentinel-allowance-widget-meter {
+    height: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+}
+
+.sentinel-allowance-widget-meter-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-green), var(--accent-purple));
+    border-radius: 999px;
+    transition: width 0.4s ease;
+}
+
+.sentinel-allowance-widget-text {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.sentinel-allowance-widget-text strong {
+    color: var(--text-primary);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.sentinel-allowance-widget-help {
+    margin: 0.4rem 0 0;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    line-height: 1.45;
+}
+
+/* ── configure tab ──────────────────────────────────────────────── */
+.sentinel-configure {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.sentinel-trigger-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.sentinel-trigger-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.sentinel-trigger-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.85rem 1rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    cursor: pointer;
+    gap: 1rem;
+}
+
+.sentinel-trigger-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.sentinel-trigger-label {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.sentinel-trigger-desc {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    line-height: 1.5;
 }
 
 .sentinel-trigger-extras {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
     padding: 0.85rem 1rem 1rem;
     margin: -2px 0 4px;
     background: rgba(168, 85, 247, 0.04);
@@ -8223,7 +8695,7 @@ body {
 }
 
 .sentinel-trigger-extra > label {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -8238,7 +8710,7 @@ body {
 .sentinel-trigger-cooldown input {
     width: 70px;
     padding: 0.4rem 0.5rem;
-    background: var(--bg-secondary);
+    background: var(--bg-primary);
     border: 1px solid var(--border-color);
     border-radius: 6px;
     color: var(--text-primary);
@@ -8251,14 +8723,13 @@ body {
 }
 
 .sentinel-trigger-extra-help {
-    grid-column: 1 / -1;
     margin: 0;
     font-size: 0.75rem;
     color: var(--text-muted);
     line-height: 1.5;
 }
 
-/* ── schedule ───────────────────────────────────────────────────── */
+/* schedule */
 .sentinel-schedule-radio-row {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -8295,26 +8766,27 @@ body {
 .sentinel-schedule-radio-text {
     display: flex;
     flex-direction: column;
-    gap: 0.15rem;
+    gap: 0.1rem;
 }
 
 .sentinel-schedule-radio-label {
-    font-size: 0.9rem;
+    font-size: 0.88rem;
     font-weight: 600;
     color: var(--text-primary);
 }
 
 .sentinel-schedule-radio-desc {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     color: var(--text-muted);
     line-height: 1.4;
 }
 
 .sentinel-schedule-window {
-    padding: 1.25rem;
+    padding: 1.1rem;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: 10px;
+    margin-bottom: 1rem;
 }
 
 .sentinel-schedule-window-row {
@@ -8322,17 +8794,17 @@ body {
     align-items: flex-end;
     gap: 1.25rem;
     flex-wrap: wrap;
-    margin-bottom: 1.25rem;
+    margin-bottom: 1rem;
 }
 
 .sentinel-schedule-time {
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
+    gap: 0.3rem;
 }
 
 .sentinel-schedule-time label {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -8349,7 +8821,7 @@ body {
 }
 
 .sentinel-schedule-tz {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     color: var(--text-muted);
     margin-bottom: 0.4rem;
 }
@@ -8357,12 +8829,11 @@ body {
 .sentinel-schedule-days {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-    margin-bottom: 1.25rem;
+    gap: 0.4rem;
 }
 
 .sentinel-schedule-days-label {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -8375,12 +8846,12 @@ body {
 }
 
 .sentinel-day-chip {
-    padding: 0.4rem 0.85rem;
+    padding: 0.35rem 0.75rem;
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
     border-radius: 999px;
     color: var(--text-muted);
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s;
@@ -8397,8 +8868,115 @@ body {
     color: #c084fc;
 }
 
+/* weekly schedule grid */
+.sentinel-week-grid {
+    margin: 0 0 1rem;
+    padding: 1rem 1.1rem;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+}
+
+.sentinel-week-grid-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+}
+
+.sentinel-week-grid-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.sentinel-week-grid-meta {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.sentinel-week-grid-table {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.sentinel-week-grid-hours {
+    display: grid;
+    grid-template-columns: 36px 1fr;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.sentinel-week-grid-hours > span:first-child {
+    /* spacer matching the day-label column */
+}
+
+.sentinel-week-grid-hours > .sentinel-week-grid-hour-label {
+    /* hour labels live inside the cells column, positioned via flex */
+}
+
+.sentinel-week-grid-hours {
+    /* lay out hour labels as 4 evenly-spaced markers across the cells column */
+    grid-template-columns: 36px 1fr;
+}
+
+.sentinel-week-grid-hours > div,
+.sentinel-week-grid-hours > span:not(:first-child) {
+    display: flex;
+}
+
+.sentinel-week-grid-hour-label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    flex: 1;
+    text-align: left;
+}
+
+.sentinel-week-grid-row {
+    display: grid;
+    grid-template-columns: 36px 1fr;
+    gap: 8px;
+    align-items: center;
+}
+
+.sentinel-week-grid-day-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-align: right;
+    font-weight: 500;
+}
+
+.sentinel-week-grid-cells {
+    display: grid;
+    grid-template-columns: repeat(24, 1fr);
+    gap: 2px;
+}
+
+.sentinel-week-grid-cell {
+    height: 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 2px;
+    transition: background 0.15s;
+}
+
+.sentinel-week-grid-cell.active {
+    background: rgba(34, 197, 94, 0.45);
+    box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.6);
+}
+
+.sentinel-week-grid-cell:hover {
+    background: rgba(255, 255, 255, 0.10);
+}
+
+.sentinel-week-grid-cell.active:hover {
+    background: rgba(34, 197, 94, 0.65);
+}
+
 .sentinel-schedule-cron-toggle {
-    margin-bottom: 0.5rem;
+    margin-top: 0.5rem;
 }
 
 .sentinel-link-button {
@@ -8409,7 +8987,6 @@ body {
     font-weight: 500;
     cursor: pointer;
     padding: 0;
-    text-align: left;
 }
 
 .sentinel-link-button:hover {
@@ -8421,11 +8998,12 @@ body {
     flex-direction: column;
     gap: 0.4rem;
     padding-top: 0.75rem;
+    margin-top: 0.5rem;
     border-top: 1px solid var(--border-color);
 }
 
 .sentinel-schedule-cron label {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -8445,12 +9023,12 @@ body {
 
 .sentinel-help-text {
     margin: 0.25rem 0 0;
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     color: var(--text-muted);
     line-height: 1.5;
 }
 
-/* ── camera scope ───────────────────────────────────────────────── */
+/* camera scope */
 .sentinel-scope-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
@@ -8461,7 +9039,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.75rem 1rem;
+    padding: 0.7rem 0.95rem;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: 8px;
@@ -8475,19 +9053,43 @@ body {
 }
 
 .sentinel-scope-row-name {
-    font-size: 0.9rem;
+    font-size: 0.88rem;
     font-weight: 500;
     color: var(--text-primary);
 }
 
 .sentinel-scope-row-loc {
-    font-size: 0.7rem;
+    font-size: 0.68rem;
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.06em;
 }
 
-/* ── run history ────────────────────────────────────────────────── */
+/* ── history tab ────────────────────────────────────────────────── */
+.sentinel-history-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.sentinel-history-search {
+    flex: 1;
+    min-width: 240px;
+    padding: 0.55rem 0.85rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+}
+
+.sentinel-history-search:focus {
+    outline: none;
+    border-color: rgba(168, 85, 247, 0.4);
+}
+
 .sentinel-history-filters {
     display: flex;
     gap: 0.4rem;
@@ -8496,7 +9098,7 @@ body {
 
 .sentinel-history-filter-chip {
     padding: 0.35rem 0.75rem;
-    background: var(--bg-secondary);
+    background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: 999px;
     color: var(--text-muted);
@@ -8516,205 +9118,330 @@ body {
     color: #c084fc;
 }
 
-.sentinel-runs-table-wrap {
+.sentinel-history-table-wrap {
     overflow-x: auto;
-    margin: 0 -0.5rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
 }
 
-.sentinel-runs-table {
+.sentinel-history-table {
     width: 100%;
     border-collapse: collapse;
-    min-width: 640px;
+    min-width: 720px;
 }
 
-.sentinel-runs-table thead th {
+.sentinel-history-table thead th {
     text-align: left;
-    padding: 0.55rem 0.75rem;
+    padding: 0.6rem 0.85rem;
     font-size: 0.7rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--text-muted);
     border-bottom: 1px solid var(--border-color);
+    background: rgba(0, 0, 0, 0.15);
 }
 
-.sentinel-runs-table tbody tr {
+.sentinel-history-table tbody tr {
     border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+    transition: background 0.15s;
 }
 
-.sentinel-runs-table tbody tr:hover {
+.sentinel-history-table tbody tr:hover {
     background: rgba(255, 255, 255, 0.02);
 }
 
-.sentinel-runs-table tbody td {
-    padding: 0.7rem 0.75rem;
+.sentinel-history-table tbody tr:last-child {
+    border-bottom: none;
+}
+
+.sentinel-history-table tbody td {
+    padding: 0.7rem 0.85rem;
     font-size: 0.85rem;
     color: var(--text-secondary);
     vertical-align: middle;
 }
 
-.sentinel-runs-when {
+.sentinel-history-when {
     color: var(--text-muted);
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
 }
 
-.sentinel-runs-trigger {
-    display: inline-block;
-    padding: 0.2rem 0.55rem;
-    background: rgba(255, 255, 255, 0.05);
-    color: var(--text-secondary);
-    border-radius: 4px;
-    font-size: 0.72rem;
-    font-weight: 500;
-    text-transform: lowercase;
-    font-variant-caps: all-small-caps;
-    letter-spacing: 0.04em;
-    white-space: nowrap;
-}
-
-.sentinel-runs-trigger-motion {
-    background: rgba(245, 158, 11, 0.15);
-    color: #fbbf24;
-}
-
-.sentinel-runs-trigger-manual {
-    background: rgba(168, 85, 247, 0.15);
-    color: #c084fc;
-}
-
-.sentinel-runs-trigger-scheduled {
-    background: rgba(59, 130, 246, 0.15);
-    color: #60a5fa;
-}
-
-.sentinel-runs-camera {
+.sentinel-history-camera {
     color: var(--text-primary);
     font-weight: 500;
 }
 
-.sentinel-runs-tools {
+.sentinel-history-tools {
     text-align: center;
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
     width: 60px;
 }
 
-.sentinel-runs-outcome {
-    display: inline-block;
-    padding: 0.2rem 0.55rem;
-    border-radius: 4px;
-    font-size: 0.72rem;
-    font-weight: 600;
-    white-space: nowrap;
+.sentinel-history-link-cell {
+    text-align: right;
+    width: 80px;
 }
 
-.sentinel-runs-outcome-incident {
-    background: rgba(34, 197, 94, 0.12);
-    color: var(--accent-green);
+.sentinel-history-link {
+    font-size: 0.78rem;
+    color: var(--accent-purple);
 }
 
-.sentinel-runs-outcome-incident.sentinel-severity-medium {
-    background: rgba(245, 158, 11, 0.15);
-    color: #fbbf24;
-}
-
-.sentinel-runs-outcome-incident.sentinel-severity-high {
-    background: rgba(239, 68, 68, 0.15);
-    color: #f87171;
-}
-
-.sentinel-runs-outcome-noop {
-    background: rgba(255, 255, 255, 0.05);
+.sentinel-history-empty {
+    padding: 2.5rem 1rem !important;
+    text-align: center;
     color: var(--text-muted);
 }
 
-.sentinel-runs-outcome-error {
-    background: rgba(239, 68, 68, 0.15);
-    color: #f87171;
+/* ── run-detail drawer ──────────────────────────────────────────── */
+.sentinel-drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(3px);
+    z-index: 1000;
+    display: flex;
+    justify-content: flex-end;
+    animation: sentinel-fade-in 0.2s ease-out;
 }
 
-.sentinel-runs-link-cell {
-    text-align: right;
-    width: 110px;
+@keyframes sentinel-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
-.sentinel-runs-link {
+.sentinel-drawer {
+    width: 100%;
+    max-width: 560px;
+    height: 100%;
+    background: var(--bg-card);
+    border-left: 1px solid rgba(168, 85, 247, 0.3);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: sentinel-drawer-in 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes sentinel-drawer-in {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+}
+
+.sentinel-drawer-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.5rem 1.5rem 1.25rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.sentinel-drawer-eyebrow {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.4rem;
+}
+
+.sentinel-drawer-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0 0 0.4rem;
+}
+
+.sentinel-drawer-meta {
     font-size: 0.78rem;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.sentinel-drawer-close {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    width: 30px;
+    height: 30px;
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+
+.sentinel-drawer-close:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.sentinel-drawer-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.25rem 1.5rem 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.sentinel-drawer-section h3 {
+    margin: 0 0 0.6rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+}
+
+.sentinel-drawer-section-meta {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+}
+
+.sentinel-drawer-outcome {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.sentinel-drawer-link {
+    font-size: 0.85rem;
     color: var(--accent-purple);
     text-decoration: none;
-    white-space: nowrap;
+    font-weight: 500;
 }
 
-.sentinel-runs-link:hover {
+.sentinel-drawer-link:hover {
     text-decoration: underline;
 }
 
-/* ── usage footer ───────────────────────────────────────────────── */
-.sentinel-usage-section {
-    /* hooks for future per-section overrides */
+.sentinel-drawer-reasoning {
+    margin: 0;
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    padding: 0.85rem 1rem;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border-left: 3px solid rgba(168, 85, 247, 0.3);
 }
 
-.sentinel-usage-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1rem;
-    margin-bottom: 1rem;
-}
-
-/* 3-column variant for the trimmed allowance section. The original
-   4-column version included an "est. cost" tile that no longer makes
-   sense now that Sentinel is bundled with Pro Plus rather than billed
-   per-run; switching to a 3-up layout keeps the cards a comfortable
-   width instead of stretching to fill. */
-.sentinel-usage-grid.sentinel-usage-grid-3 {
-    grid-template-columns: repeat(3, 1fr);
-}
-
-.sentinel-usage-stat {
+.sentinel-tool-trace {
+    list-style: none;
+    margin: 0;
+    padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
-    padding: 0.85rem 1rem;
+    gap: 0.5rem;
+}
+
+.sentinel-tool-trace-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.85rem;
+    padding: 0.6rem 0.85rem;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: 8px;
 }
 
-.sentinel-usage-value {
-    font-size: 1.35rem;
+.sentinel-tool-trace-num {
+    width: 22px;
+    height: 22px;
+    background: rgba(168, 85, 247, 0.18);
+    color: #c084fc;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.72rem;
     font-weight: 700;
-    color: var(--text-primary);
-    line-height: 1;
+    flex-shrink: 0;
 }
 
-.sentinel-usage-label {
-    font-size: 0.7rem;
+.sentinel-tool-trace-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+}
+
+.sentinel-tool-trace-name {
+    background: transparent !important;
+    color: var(--accent-green) !important;
+    padding: 0 !important;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.sentinel-tool-trace-args {
+    font-size: 0.75rem;
     color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
 }
 
-.sentinel-usage-meter {
-    height: 8px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: 999px;
-    overflow: hidden;
-    margin-bottom: 0.5rem;
+.sentinel-tool-trace-args-empty {
+    font-style: italic;
 }
 
-.sentinel-usage-meter-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--accent-green), var(--accent-purple));
-    border-radius: 999px;
-    transition: width 0.3s;
+.sentinel-tool-trace-arg-key {
+    color: var(--text-muted);
 }
 
-.sentinel-usage-meter-text {
-    margin: 0;
+.sentinel-tool-trace-arg-val {
+    color: var(--text-secondary);
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+.sentinel-tool-trace-result {
     font-size: 0.78rem;
-    color: var(--text-muted);
+    color: var(--text-secondary);
+    margin-top: 0.2rem;
+}
+
+.sentinel-drawer-actions {
+    display: flex;
+    gap: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border-color);
+    margin-top: 0.5rem;
+}
+
+.sentinel-drawer-btn-ghost {
+    padding: 0.5rem 1rem;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.sentinel-drawer-btn-ghost:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
 }
 
 /* ── manual run modal ───────────────────────────────────────────── */
@@ -8726,8 +9453,9 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 1000;
+    z-index: 1100;
     padding: 1rem;
+    animation: sentinel-fade-in 0.2s ease-out;
 }
 
 .sentinel-modal {
@@ -8742,7 +9470,7 @@ body {
 
 .sentinel-modal h3 {
     margin: 0 0 0.5rem;
-    font-size: 1.15rem;
+    font-size: 1.1rem;
     color: var(--text-primary);
 }
 
@@ -8818,53 +9546,74 @@ body {
 }
 
 /* ── responsive ─────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+    .sentinel-overview-grid {
+        grid-template-columns: 1fr;
+    }
+    .sentinel-overview-side {
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+    .sentinel-overview-side .sentinel-stat-card {
+        flex: 1;
+        min-width: 140px;
+    }
+    .sentinel-allowance-widget {
+        flex: 1 1 100%;
+        margin-top: 0;
+    }
+}
+
 @media (max-width: 768px) {
-    .sentinel-control-page {
+    .sentinel-page-v3 {
         padding: 1rem 1rem 3rem;
     }
-
-    .sentinel-status-header {
-        flex-direction: column;
-        gap: 1.25rem;
-    }
-
-    .sentinel-status-header-right {
-        flex-direction: row;
-        align-items: center;
-        align-self: stretch;
-        justify-content: space-between;
-        min-width: 0;
-    }
-
-    .sentinel-status-stats {
-        gap: 1.25rem;
-    }
-
-    .sentinel-status-stat-value {
-        font-size: 1.25rem;
-    }
-
-    .sentinel-trigger-extras {
-        grid-template-columns: 1fr;
-    }
-
-    .sentinel-schedule-radio-row {
-        grid-template-columns: 1fr;
-    }
-
-    .sentinel-scope-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .sentinel-section-header-row {
+    .sentinel-compact-header {
         flex-direction: column;
         align-items: stretch;
     }
-
-    .sentinel-usage-grid {
-        grid-template-columns: repeat(2, 1fr);
+    .sentinel-compact-divider {
+        display: none;
     }
-
+    .sentinel-compact-right {
+        justify-content: space-between;
+    }
+    .sentinel-tabs {
+        padding: 0 0.5rem;
+    }
+    .sentinel-tab {
+        padding: 0.7rem 0.85rem;
+        font-size: 0.8rem;
+    }
+    .sentinel-tab-panel {
+        padding: 1rem;
+    }
+    .sentinel-trigger-extras {
+        padding: 0.75rem 0.85rem 0.85rem;
+    }
+    .sentinel-schedule-radio-row {
+        grid-template-columns: 1fr;
+    }
+    .sentinel-scope-grid {
+        grid-template-columns: 1fr;
+    }
+    .sentinel-history-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .sentinel-timeline-row {
+        grid-template-columns: 70px 18px 1fr;
+        gap: 0.5rem;
+    }
+    .sentinel-timeline-when {
+        font-size: 0.7rem;
+    }
+    .sentinel-week-grid-cell {
+        height: 10px;
+    }
+    .sentinel-drawer {
+        max-width: none;
+    }
     .sentinel-modal {
         padding: 1.25rem;
     }
