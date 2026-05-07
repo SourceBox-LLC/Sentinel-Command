@@ -166,5 +166,26 @@ class Config:
     # operator triggers a drain manually.
     SENTINEL_AGENT_WEBHOOK_URL: str = os.getenv("SENTINEL_AGENT_WEBHOOK_URL", "")
 
+    # Multi-tenant MCP credential for the Sentinel agent.  ONE shared
+    # secret used by the single multi-tenant agent across all orgs;
+    # the agent presents this as its Bearer token AND sends an
+    # ``X-Agent-Org-Override`` header per call to declare which org
+    # the request is on behalf of.  The MCP server validates the
+    # bearer against this env var and scopes to the override org.
+    #
+    # Compromise blast radius: same as any service-to-service shared
+    # secret — an attacker with this key can act as any org via the
+    # MCP tools.  Mitigations: only ever set as a Fly secret, audit-
+    # log every call with the override org_id, rotate when needed.
+    #
+    # Leave blank in environments where the agent isn't deployed —
+    # the MCP server then doesn't accept any request via this auth
+    # path, which is the right closed-by-default behaviour.
+    #
+    # Distinct from SENTINEL_AGENT_KEY (which authenticates agent →
+    # CC callbacks for run lifecycle) so a leak of one doesn't
+    # automatically grant the capability of the other.
+    SENTINEL_AGENT_MCP_KEY: str = os.getenv("SENTINEL_AGENT_MCP_KEY", "")
+
 
 settings = Config()

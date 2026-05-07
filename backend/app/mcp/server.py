@@ -13,6 +13,7 @@ import collections
 import contextvars
 import functools
 import hashlib
+import hmac
 import logging
 import threading
 import time
@@ -29,6 +30,7 @@ from pydantic import Field
 from sqlalchemy.orm import Session
 
 from app.api.hls import _segment_cache
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.mcp.activity import McpEvent, tracker
 from app.models.models import (
@@ -277,7 +279,17 @@ mcp.add_middleware(ScopeMiddleware())
 # ---------------------------------------------------------------------------
 
 def _resolve_org(headers: dict | None) -> tuple[str, Session]:
-    """Validate the Bearer token, enforce rate limit, return (org_id, db_session)."""
+    """Validate the Bearer token, enforce rate limit, return (org_id, db_session).
+
+    Two auth paths:
+      1. Per-org MCP key (osc_*) — bearer matches an McpApiKey row;
+         org_id comes from that row.
+      2. Multi-tenant agent key — bearer matches the
+         ``SENTINEL_AGENT_MCP_KEY`` env var; org_id comes from the
+         ``X-Agent-Org-Override`` header.  Used by the SourceBox
+         Sentinel agent to make tool calls on behalf of any org
+         it's processing a pending run for.
+    """
     if not headers:
         raise ToolError("Unauthorized: no headers present")
 
@@ -289,6 +301,16 @@ def _resolve_org(headers: dict | None) -> tuple[str, Session]:
     if not raw_key:
         raise ToolError("Unauthorized: empty Bearer token")
 
+    # ── Path 2: agent multi-tenant key ──────────────────────────────
+    # Constant-time compare against the configured agent key so a
+    # length-leak on `==` doesn't reveal anything about the secret.
+    # Empty agent key (unset env var) hard-rejects every attempt
+    # because hmac.compare_digest("", anything) is False.
+    agent_key = settings.SENTINEL_AGENT_MCP_KEY
+    if agent_key and hmac.compare_digest(raw_key, agent_key):
+        return _resolve_via_agent_key(headers, agent_key)
+
+    # ── Path 1: per-org osc_* key (existing behaviour) ──────────────
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
 
     db = SessionLocal()
@@ -351,9 +373,97 @@ def _resolve_org(headers: dict | None) -> tuple[str, Session]:
         raise ToolError("Authentication error") from None
 
 
+def _resolve_via_agent_key(headers: dict, _agent_key: str) -> tuple[str, Session]:
+    """Auth path for the multi-tenant Sentinel agent.
+
+    The bearer token has already been verified against
+    ``SENTINEL_AGENT_MCP_KEY`` by the caller.  Now:
+
+    1. Read the override org_id from ``X-Agent-Org-Override``.
+    2. Verify the override org actually has a Pro Plus plan
+       (Sentinel is Pro-Plus-only) AND has Sentinel enabled.
+       Otherwise the agent is acting on behalf of an org that
+       shouldn't be served — likely a stale pending run, or
+       impersonation if the secret leaked.
+    3. Apply rate limits scoped to the override org so a runaway
+       agent loop on org X can't burn org Y's tool budget.
+    4. Audit-log via the standard tracker context with key_name
+       set to "<sentinel-agent>" so the audit trail shows the
+       tool call came from the agent (and which org it was for).
+    """
+    override_org = headers.get("x-agent-org-override", "").strip()
+    if not override_org:
+        raise ToolError(
+            "Unauthorized: agent key requires X-Agent-Org-Override header"
+        )
+
+    db = SessionLocal()
+    try:
+        from app.core.plans import resolve_org_plan
+        from app.models.models import SentinelConfig
+
+        plan = resolve_org_plan(db, override_org)
+        # Reuse the same Pro/Pro Plus rate-limit table so the agent
+        # respects per-org plan caps; if the override org isn't a
+        # paying customer, hard-reject (Sentinel is Pro-Plus-only
+        # downstream too, so this is defence in depth).
+        limits = RATE_LIMITS.get(plan)
+        if limits is None:
+            db.close()
+            raise ToolError(
+                f"Agent override target org has no Pro/Pro Plus plan "
+                f"(plan={plan!r})"
+            )
+
+        # Defence in depth — the dispatcher already gates on
+        # sentinel_config.enabled before creating a pending run, but
+        # an operator could disable Sentinel between dispatch and
+        # the agent picking it up.  Don't run tool calls for an org
+        # that's currently disabled.
+        cfg = db.query(SentinelConfig).filter_by(org_id=override_org).first()
+        if cfg is None or not cfg.enabled:
+            db.close()
+            raise ToolError("Sentinel disabled for this org")
+
+        # Per-org bucket so agent traffic for org X doesn't throttle
+        # org Y.  Distinct from per-osc-key buckets so direct dashboard
+        # MCP usage isn't accidentally affected by agent activity on
+        # the same org either.
+        rate_bucket = f"sentinel-agent:{override_org}"
+        allowed, _remaining, breach = _rate_limiter.check(
+            rate_bucket,
+            minute_limit=limits["minute"],
+            daily_limit=limits["daily"],
+        )
+        if not allowed:
+            db.close()
+            if breach == "minute":
+                raise ToolError(
+                    "Sentinel agent rate limit: too many tool calls in one "
+                    "minute for this org. Tune the per-camera cooldown or "
+                    "narrow the scope."
+                )
+            raise ToolError(
+                "Sentinel agent daily cap reached for this org — check the "
+                "agent's run log for a stuck loop."
+            )
+
+        # Activity-tracker context — key_name is the audit handle that
+        # surfaces in the MCP activity log.
+        _ctx_org_id.set(override_org)
+        _ctx_key_name.set("<sentinel-agent>")
+
+        return override_org, db
+    except ToolError:
+        raise
+    except Exception:
+        db.close()
+        raise ToolError("Authentication error") from None
+
+
 def _auth():
     """Shortcut: get headers, resolve org, return (org_id, db)."""
-    headers = get_http_headers(include={"authorization"})
+    headers = get_http_headers(include={"authorization", "x-agent-org-override"})
     return _resolve_org(headers)
 
 
