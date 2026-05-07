@@ -7447,6 +7447,51 @@ body {
 .incidents-list-wrap {
     position: relative;
     z-index: 1;
+    /* Keep the hero + stats + filter strip anchored at the top of the
+       viewport while a busy org's incident list scrolls inside its
+       own panel.  Without this cap the page just stacks indefinitely
+       and the operator has to scroll past everything to reach the
+       newest filter chip / "+ New Incident" button.
+       65vh leaves headroom for the chrome above on standard laptop
+       displays (~1080p), and the panel sizes to content when the
+       list is shorter than that. */
+    max-height: 65vh;
+    overflow-y: auto;
+    /* Subtle inset shadow at top + bottom hints there's more to scroll
+       — the cards have their own shadow-on-hover so we don't want a
+       hard divider, just a soft fade. */
+    mask-image: linear-gradient(
+        to bottom,
+        transparent 0,
+        black 12px,
+        black calc(100% - 12px),
+        transparent 100%
+    );
+    -webkit-mask-image: linear-gradient(
+        to bottom,
+        transparent 0,
+        black 12px,
+        black calc(100% - 12px),
+        transparent 100%
+    );
+    /* Inner padding so card hover-shadow doesn't get clipped against
+       the panel edge. */
+    padding: 4px 12px 4px 4px;
+    margin: -4px -12px -4px -4px;
+}
+
+.incidents-list-wrap::-webkit-scrollbar {
+    width: 6px;
+}
+.incidents-list-wrap::-webkit-scrollbar-track {
+    background: transparent;
+}
+.incidents-list-wrap::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+.incidents-list-wrap::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
 }
 
 .incidents-list {
