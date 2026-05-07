@@ -8909,30 +8909,19 @@ body {
     margin-bottom: 4px;
 }
 
-.sentinel-week-grid-hours > span:first-child {
-    /* spacer matching the day-label column */
-}
-
-.sentinel-week-grid-hours > .sentinel-week-grid-hour-label {
-    /* hour labels live inside the cells column, positioned via flex */
-}
-
-.sentinel-week-grid-hours {
-    /* lay out hour labels as 4 evenly-spaced markers across the cells column */
-    grid-template-columns: 36px 1fr;
-}
-
-.sentinel-week-grid-hours > div,
-.sentinel-week-grid-hours > span:not(:first-child) {
+/* The hour labels live in a flex row inside the second grid column so
+   they spread evenly across the width of the cells row below. The
+   first <span> is a spacer matching the day-label column. */
+.sentinel-week-grid-hour-row {
     display: flex;
+    justify-content: space-between;
+    padding: 0 2px;
 }
 
 .sentinel-week-grid-hour-label {
     font-size: 0.65rem;
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
-    flex: 1;
-    text-align: left;
 }
 
 .sentinel-week-grid-row {

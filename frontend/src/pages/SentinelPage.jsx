@@ -741,12 +741,14 @@ function WeeklyScheduleGrid({ mode, start, end, activeDays }) {
       </div>
       <div className="sentinel-week-grid-table">
         <div className="sentinel-week-grid-hours">
-          <span></span>
-          {[0, 6, 12, 18].map(h => (
-            <span key={h} className="sentinel-week-grid-hour-label">
-              {String(h).padStart(2, "0")}
-            </span>
-          ))}
+          <span aria-hidden="true" />
+          <div className="sentinel-week-grid-hour-row">
+            {[0, 6, 12, 18].map(h => (
+              <span key={h} className="sentinel-week-grid-hour-label">
+                {String(h).padStart(2, "0")}
+              </span>
+            ))}
+          </div>
         </div>
         {DAY_CHIPS.map(d => (
           <div key={d.key} className="sentinel-week-grid-row">
