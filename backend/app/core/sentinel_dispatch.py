@@ -258,6 +258,45 @@ def _can_dispatch_for_kind(
     return True, "ok"
 
 
+def _commit_run_with_cap_check(
+    db: Session,
+    run: SentinelRun,
+    org_id: str,
+) -> bool:
+    """Flush the run row, then recount within the same transaction;
+    roll back if we've gone over the cap.
+
+    The naive `cap_remaining(...) <= 0` gate before INSERT is a
+    classic read-then-write race: two concurrent dispatchers both
+    pass the gate at cap-1, both INSERT, and the org overshoots by
+    one.  Re-counting AFTER `flush()` (so the new row is visible to
+    the COUNT inside this txn) catches the second writer.
+
+    On SQLite — the current prod DB — concurrent writes are already
+    serialised by SQLite's writer lock, so this pattern is sufficient
+    on its own.  On Postgres (future) the per-org `SentinelConfig`
+    row would also need a `with_for_update()` lock at the top of the
+    caller to serialise reads against another transaction's
+    in-progress write.
+
+    Returns True if the run was committed, False if rolled back due
+    to the cap race (caller treats False as "lost the race").
+    """
+    db.add(run)
+    db.flush()
+    used = runs_used_this_month(db, org_id)
+    if used > MONTHLY_RUN_CAP:
+        db.rollback()
+        logger.info(
+            "sentinel: dispatch lost cap race org=%s used_after_flush=%d",
+            org_id, used,
+        )
+        return False
+    db.commit()
+    db.refresh(run)
+    return True
+
+
 def maybe_dispatch_for_notification(
     db: Session,
     org_id: str,
@@ -294,9 +333,8 @@ def maybe_dispatch_for_notification(
             tool_call_count=0,
             outcome="pending",
         )
-        db.add(run)
-        db.commit()
-        db.refresh(run)
+        if not _commit_run_with_cap_check(db, run, org_id):
+            return None  # cap race — silently drop, same UX as gate fail
         logger.info(
             "sentinel: dispatched pending run id=%s org=%s trigger=%s camera=%s",
             run.id, org_id, trigger_type, camera_id,
@@ -355,9 +393,11 @@ def dispatch_manual_run(
         outcome="pending",
         manual_prompt=(prompt or "")[:2000],  # bound prompt size
     )
-    db.add(run)
-    db.commit()
-    db.refresh(run)
+    if not _commit_run_with_cap_check(db, run, org_id):
+        # Lost the cap race against a concurrent dispatcher — surface
+        # the same error the gate-side check raises so the route
+        # handler returns 429 with the existing detail shape.
+        raise ValueError("monthly_cap_reached")
     logger.info(
         "sentinel: manual run id=%s org=%s camera=%s prompt_len=%d",
         run.id, org_id, camera_id, len(prompt or ""),

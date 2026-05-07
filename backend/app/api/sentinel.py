@@ -436,8 +436,23 @@ async def post_run_complete(
     db: Session = Depends(get_db),
 ):
     """Agent → Command Center callback to mark a pending/running run
-    as completed.  Idempotent: safe to call twice with the same body
-    (second call is a no-op if the run is already terminal).
+    as completed.
+
+    Idempotency rules:
+
+      - Same outcome retried (incident → incident, etc.): no-op,
+        return existing row.  Lets the agent safely re-POST a
+        completion if the original ack was lost.
+      - error → incident / no_action: ALLOWED.  The wall-clock
+        timeout cleanup wrapper in process_with_timeout proactively
+        marks an in-flight run as `error` when the 540 s budget is
+        hit; if the agent later finishes successfully (e.g. a future
+        retry path, or the upcoming CC-side stranded-run reaper),
+        we want the real outcome to land instead of being trapped
+        behind a defensive-error stamp.
+      - incident / no_action → error: refused (treated as no-op).
+        Once the agent has reported a real outcome we don't let it
+        get downgraded.
     """
     if body.outcome not in _VALID_TERMINAL_OUTCOMES:
         raise HTTPException(400, f"invalid outcome: {body.outcome!r}")
@@ -449,8 +464,13 @@ async def post_run_complete(
         raise HTTPException(404, "run not found")
 
     if row.is_terminal:
-        # Idempotent no-op — agent retried.
-        return row.to_dict(include_trace=True)
+        # Allow a one-way upgrade error → real outcome; otherwise
+        # short-circuit as a same-outcome retry no-op.
+        is_error_to_real_upgrade = (
+            row.outcome == "error" and body.outcome in ("incident", "no_action")
+        )
+        if not is_error_to_real_upgrade:
+            return row.to_dict(include_trace=True)
 
     # Cross-check that the agent isn't pointing the run at an incident
     # outside the run's org.  The agent is trusted infrastructure (single
