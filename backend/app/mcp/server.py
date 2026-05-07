@@ -399,21 +399,21 @@ def _resolve_via_agent_key(headers: dict, _agent_key: str) -> tuple[str, Session
 
     db = SessionLocal()
     try:
-        from app.core.plans import resolve_org_plan
+        from app.core.plans import effective_plan_for_caps
         from app.models.models import SentinelConfig
 
-        plan = resolve_org_plan(db, override_org)
-        # Reuse the same Pro/Pro Plus rate-limit table so the agent
-        # respects per-org plan caps; if the override org isn't a
-        # paying customer, hard-reject (Sentinel is Pro-Plus-only
-        # downstream too, so this is defence in depth).
-        limits = RATE_LIMITS.get(plan)
-        if limits is None:
+        # Sentinel is Pro-Plus-only end-to-end (UI gate, dispatch gate,
+        # and here).  Use effective_plan_for_caps so a long-past-due org
+        # gets bumped to free_org and rejected — matches the resolver
+        # the rest of the Sentinel surface uses.
+        plan = effective_plan_for_caps(db, override_org)
+        if plan != "pro_plus":
             db.close()
             raise ToolError(
-                f"Agent override target org has no Pro/Pro Plus plan "
+                f"Agent override target org is not on Pro Plus "
                 f"(plan={plan!r})"
             )
+        limits = RATE_LIMITS["pro_plus"]
 
         # Defence in depth — the dispatcher already gates on
         # sentinel_config.enabled before creating a pending run, but

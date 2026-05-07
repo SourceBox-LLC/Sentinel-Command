@@ -39,6 +39,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.plans import effective_plan_for_caps
 from app.models.models import SentinelConfig, SentinelRun, Setting
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,14 @@ def _can_dispatch_for_kind(
     """Run the full dispatch gate.  Returns (ok, reason)."""
     if not cfg.enabled:
         return False, "sentinel_disabled"
+
+    # Plan gate first — Sentinel is Pro-Plus-only.  A downgrade from
+    # Pro Plus → Pro leaves SentinelConfig.enabled=True but the org
+    # is no longer entitled to run the agent; without this check
+    # motion events would keep enqueueing pending rows that the agent
+    # auth path would later reject (and burn the monthly cap).
+    if effective_plan_for_caps(db, cfg.org_id) != "pro_plus":
+        return False, "plan_not_pro_plus"
 
     field = _KIND_TO_TRIGGER_FIELD.get(kind)
     if field is None:
