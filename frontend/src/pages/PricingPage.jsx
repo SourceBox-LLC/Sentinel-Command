@@ -66,6 +66,11 @@ function PricingPage() {
             <h3>Runs on your hardware</h3>
             <p>CloudNode (GPL-3) installs on any Linux, macOS, or Windows machine. Use a Pi, a NUC, or an old laptop.</p>
           </div>
+          <div className="pricing-feature-item">
+            <div className="pricing-feature-icon">🛡️</div>
+            <h3>Sentinel AI agent</h3>
+            <p>Vision-capable AI investigates motion events and incidents, files reports with snapshot evidence, and updates status. Pro: 100 runs/month. Pro Plus: 500 runs/month.</p>
+          </div>
         </div>
       </div>
 
@@ -99,6 +104,10 @@ function PricingPage() {
           <div className="pricing-faq-item">
             <h3>Is the CloudNode software free?</h3>
             <p>Yes, always. CloudNode is open source (GPL-3) and runs on your own hardware — the only thing you pay for is the Command Center cloud service we operate. The Command Center source is also public (AGPL-3) so you can read and audit exactly what runs on the cloud side; you don't need to run it yourself.</p>
+          </div>
+          <div className="pricing-faq-item">
+            <h3>What's Sentinel and how does the run cap work?</h3>
+            <p>Sentinel is the optional AI agent that investigates motion events and incidents on your behalf — it views the camera, decides whether what it sees warrants attention, files an incident report with snapshot evidence, and writes a long-form summary. One "run" = one investigation, regardless of how many tool calls it took. Pro includes 100 runs/month, Pro Plus includes 500 runs/month, and the cap resets on the 1st of each calendar month. There's no overage billing — when you hit the cap, dispatch pauses for the rest of the month and your existing recordings, motion alerts, and dashboard keep working as normal.</p>
           </div>
           <div className="pricing-faq-item">
             <h3>Do you send email or SMS alerts?</h3>

@@ -413,20 +413,26 @@ def _resolve_via_agent_key(headers: dict, _agent_key: str) -> tuple[str, Session
     db = SessionLocal()
     try:
         from app.core.plans import effective_plan_for_caps
+        from app.core.sentinel_dispatch import SENTINEL_PLANS
         from app.models.models import SentinelConfig
 
-        # Sentinel is Pro-Plus-only end-to-end (UI gate, dispatch gate,
-        # and here).  Use effective_plan_for_caps so a long-past-due org
-        # gets bumped to free_org and rejected — matches the resolver
-        # the rest of the Sentinel surface uses.
+        # Sentinel is paid-only (Pro or Pro Plus); the dispatch gate,
+        # the route gates, and this resolver all check the same set.
+        # Use effective_plan_for_caps so a long-past-due org gets
+        # bumped to free_org and rejected — matches the resolver the
+        # rest of the Sentinel surface uses.
         plan = effective_plan_for_caps(db, override_org)
-        if plan != "pro_plus":
+        if plan not in SENTINEL_PLANS:
             db.close()
             raise ToolError(
-                f"Agent override target org is not on Pro Plus "
-                f"(plan={plan!r})"
+                f"Agent override target org is not on a Sentinel-eligible "
+                f"plan (plan={plan!r})"
             )
-        limits = RATE_LIMITS["pro_plus"]
+        # Apply the org's actual plan tier's MCP rate limits — Pro orgs
+        # get Pro's per-minute / per-day caps, Pro Plus gets Pro Plus's.
+        # Without this, a Pro-tier org would (paradoxically) get Pro
+        # Plus's higher MCP budget when the agent acts on its behalf.
+        limits = RATE_LIMITS[plan]
 
         # Defence in depth — the dispatcher already gates on
         # sentinel_config.enabled before creating a pending run, but

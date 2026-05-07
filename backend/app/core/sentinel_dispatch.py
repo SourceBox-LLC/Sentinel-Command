@@ -45,9 +45,40 @@ from app.models.models import SentinelConfig, SentinelRun, Setting
 logger = logging.getLogger(__name__)
 
 
-# 300 runs / month is generous for typical use (10/day) — see plans/
-# for the rationale. Hard-coded until slice 5 introduces per-plan caps.
-MONTHLY_RUN_CAP = 300
+# Per-plan monthly run cap.  Sentinel is now available on both paid
+# tiers; the cap is the differentiator.  100/mo on Pro is roughly
+# 3 runs/day — comfortable for casual home use.  500/mo on Pro Plus
+# is roughly 16 runs/day — commercial-shaped usage.  Anyone past 500
+# is enterprise; we'll talk to them.
+#
+# Drives both the gate-side check (`_can_dispatch_for_kind`,
+# `dispatch_manual_run`) and the in-transaction recount in
+# `_commit_run_with_cap_check`.  Resolved per request via
+# `effective_plan_for_caps` so a downgrade flips the cap immediately
+# (no stale per-month cap that follows the old plan).
+MONTHLY_RUN_CAP_BY_PLAN: dict[str, int] = {
+    "pro": 100,
+    "pro_plus": 500,
+}
+
+# Set of plans that get to use Sentinel at all.  Used as the
+# tier-gate replacement for the previous Pro-Plus-only constant —
+# `_can_dispatch_for_kind` and the MCP agent-key resolver both
+# check membership here.
+SENTINEL_PLANS = frozenset(MONTHLY_RUN_CAP_BY_PLAN.keys())
+
+
+def cap_for_plan(plan: str | None) -> int:
+    """Return the org's monthly Sentinel run cap given its plan slug.
+
+    Defaults to 0 for plans that don't include Sentinel (free,
+    free_org from the past-due grace path) — fail-closed so any
+    code path that reaches `cap_remaining` for a non-Sentinel org
+    sees zero remaining and the dispatch hard-rejects.  The plan
+    gate above the cap check should already reject these orgs;
+    this is the second layer of defence.
+    """
+    return MONTHLY_RUN_CAP_BY_PLAN.get(plan or "", 0)
 
 # Stranded-run reaper threshold.  The agent's wall-clock budget is
 # 540 s (9 min) and the strand-cleanup wrapper marks the in-flight
@@ -103,7 +134,11 @@ def runs_used_this_month(db: Session, org_id: str) -> int:
 
 
 def cap_remaining(db: Session, org_id: str) -> int:
-    return max(0, MONTHLY_RUN_CAP - runs_used_this_month(db, org_id))
+    """Remaining Sentinel runs in the current calendar month, given
+    the org's effective plan.  Returns 0 for orgs that don't have
+    Sentinel access at all (the cap_for_plan default)."""
+    cap = cap_for_plan(effective_plan_for_caps(db, org_id))
+    return max(0, cap - runs_used_this_month(db, org_id))
 
 
 def _is_camera_in_scope(scope_dict: dict | None, camera_id: str | None) -> bool:
@@ -236,13 +271,14 @@ def _can_dispatch_for_kind(
     if not cfg.enabled:
         return False, "sentinel_disabled"
 
-    # Plan gate first — Sentinel is Pro-Plus-only.  A downgrade from
-    # Pro Plus → Pro leaves SentinelConfig.enabled=True but the org
-    # is no longer entitled to run the agent; without this check
+    # Plan gate first — Sentinel is paid-only (Pro or Pro Plus).
+    # A downgrade to free leaves SentinelConfig.enabled=True but the
+    # org is no longer entitled to run the agent; without this check
     # motion events would keep enqueueing pending rows that the agent
-    # auth path would later reject (and burn the monthly cap).
-    if effective_plan_for_caps(db, cfg.org_id) != "pro_plus":
-        return False, "plan_not_pro_plus"
+    # auth path would later reject (and burn the per-plan cap).
+    plan = effective_plan_for_caps(db, cfg.org_id)
+    if plan not in SENTINEL_PLANS:
+        return False, "plan_not_eligible"
 
     field = _KIND_TO_TRIGGER_FIELD.get(kind)
     if field is None:
@@ -337,9 +373,14 @@ def _commit_run_with_cap_check(
     db: Session,
     run: SentinelRun,
     org_id: str,
+    cap: int,
 ) -> bool:
     """Flush the run row, then recount within the same transaction;
     roll back if we've gone over the cap.
+
+    `cap` is passed in (rather than re-resolved here) so the caller
+    can pin the plan-derived cap once at the top of its flow and not
+    pay another resolver round-trip in the hot path.
 
     The naive `cap_remaining(...) <= 0` gate before INSERT is a
     classic read-then-write race: two concurrent dispatchers both
@@ -360,11 +401,11 @@ def _commit_run_with_cap_check(
     db.add(run)
     db.flush()
     used = runs_used_this_month(db, org_id)
-    if used > MONTHLY_RUN_CAP:
+    if used > cap:
         db.rollback()
         logger.info(
-            "sentinel: dispatch lost cap race org=%s used_after_flush=%d",
-            org_id, used,
+            "sentinel: dispatch lost cap race org=%s cap=%d used_after_flush=%d",
+            org_id, cap, used,
         )
         return False
     db.commit()
@@ -408,7 +449,13 @@ def maybe_dispatch_for_notification(
             tool_call_count=0,
             outcome="pending",
         )
-        if not _commit_run_with_cap_check(db, run, org_id):
+        # `_can_dispatch_for_kind` already verified the org's plan is
+        # in SENTINEL_PLANS, so cap_for_plan returns a non-zero value
+        # here.  Resolved fresh for the recount in case the plan has
+        # changed between the gate and the commit (rare, but the
+        # function above is sync-database-call latency-bounded).
+        cap = cap_for_plan(effective_plan_for_caps(db, org_id))
+        if not _commit_run_with_cap_check(db, run, org_id, cap):
             return None  # cap race — silently drop, same UX as gate fail
         logger.info(
             "sentinel: dispatched pending run id=%s org=%s trigger=%s camera=%s",
@@ -438,12 +485,16 @@ def dispatch_manual_run(
     """Operator-initiated run from the "Run now" button.
 
     Skips the schedule + scope checks (the operator overrode those
-    by clicking), but still enforces the cap. Sentinel doesn't have
-    to be enabled either — the operator can run a one-off check on
-    a paused agent.
+    by clicking), but still enforces the per-plan cap.  Sentinel
+    doesn't have to be enabled — the operator can run a one-off
+    check on a paused agent — but the org DOES need to be on a paid
+    plan; the route handler does that check upstream and we re-check
+    here as defence in depth.
 
-    Raises ValueError on cap exhaustion so the API endpoint can
-    surface the right HTTP status.
+    Raises ValueError("monthly_cap_reached") on cap exhaustion so
+    the API endpoint can surface a 429 with the existing detail
+    shape.  Raises ValueError("plan_not_eligible") if the org isn't
+    on a Sentinel-eligible plan.
     """
     # Ensure config exists so the manual-run path works for orgs that
     # have never opened the Sentinel page (an unusual case but
@@ -455,7 +506,15 @@ def dispatch_manual_run(
         db.commit()
         db.refresh(cfg)
 
-    if cap_remaining(db, org_id) <= 0:
+    # Resolve the plan once so the cap check, the recount cap, and
+    # any potential downstream usage all see the same value within
+    # this transaction.
+    plan = effective_plan_for_caps(db, org_id)
+    if plan not in SENTINEL_PLANS:
+        raise ValueError("plan_not_eligible")
+    cap = cap_for_plan(plan)
+
+    if max(0, cap - runs_used_this_month(db, org_id)) <= 0:
         raise ValueError("monthly_cap_reached")
 
     run = SentinelRun(
@@ -468,7 +527,7 @@ def dispatch_manual_run(
         outcome="pending",
         manual_prompt=(prompt or "")[:2000],  # bound prompt size
     )
-    if not _commit_run_with_cap_check(db, run, org_id):
+    if not _commit_run_with_cap_check(db, run, org_id, cap):
         # Lost the cap race against a concurrent dispatcher — surface
         # the same error the gate-side check raises so the route
         # handler returns 429 with the existing detail shape.

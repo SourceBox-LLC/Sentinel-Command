@@ -42,7 +42,8 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.plans import effective_plan_for_caps, get_plan_display_name
 from app.core.sentinel_dispatch import (
-    MONTHLY_RUN_CAP,
+    SENTINEL_PLANS,
+    cap_for_plan,
     dispatch_manual_run,
     runs_used_this_month,
 )
@@ -69,8 +70,12 @@ _VALID_SCHEDULE_MODES = {"always", "scheduled", "off"}
 _VALID_DAY_KEYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 
 
-def _is_pro_plus(db: Session, org_id: str) -> bool:
-    return effective_plan_for_caps(db, org_id) == "pro_plus"
+def _has_sentinel_access(db: Session, org_id: str) -> bool:
+    """True iff the org's effective plan is in the Sentinel-eligible
+    set (Pro or Pro Plus today).  Free / past-due-too-long orgs
+    return False and are gated out of write endpoints / dispatch /
+    the agent MCP path."""
+    return effective_plan_for_caps(db, org_id) in SENTINEL_PLANS
 
 
 def _ensure_config_row(db: Session, org_id: str) -> SentinelConfig:
@@ -150,17 +155,25 @@ async def get_config(
 ):
     """Return the org's Sentinel config (creating defaults on first call).
 
-    Always returns 200 — non-Pro-Plus orgs get the same payload with
-    `plan_gated: true` so the frontend can render a read-only view
-    with a clear upgrade banner.
+    Always returns 200 — orgs without Sentinel access (free /
+    past-due-too-long) get the same payload with `plan_gated: true`
+    so the frontend can render a read-only view with an upgrade
+    banner.  `monthly_cap` reflects the org's plan-specific cap
+    (100 for Pro, 500 for Pro Plus, 0 for ineligible plans).
     """
     cfg = _ensure_config_row(db, user.org_id)
     plan = effective_plan_for_caps(db, user.org_id)
+    has_access = plan in SENTINEL_PLANS
     return {
         "config": cfg.to_dict(),
-        "plan_gated": plan != "pro_plus",
-        "plan_required": "pro_plus",
+        "plan_gated": not has_access,
+        # Minimum tier that gets ANY Sentinel access; the UI uses this
+        # for the "upgrade to Pro" CTA on the locked banner.
+        "plan_required": "pro",
         "plan_current": get_plan_display_name(plan),
+        # Cap for the org's CURRENT plan — drives the run-budget UI.
+        # 0 when the org isn't on a Sentinel-eligible plan.
+        "monthly_cap": cap_for_plan(plan),
     }
 
 
@@ -179,10 +192,10 @@ async def patch_config(
     Returns the full config so the frontend doesn't need a follow-up
     GET to reflect the new state.
     """
-    if not _is_pro_plus(db, user.org_id):
+    if not _has_sentinel_access(db, user.org_id):
         raise HTTPException(
             status_code=402,
-            detail={"error": "plan_required", "plan": "pro_plus"},
+            detail={"error": "plan_required", "plan": "pro"},
         )
 
     cfg = _ensure_config_row(db, user.org_id)
@@ -305,6 +318,7 @@ async def list_runs(
     incident_count = base.filter(SentinelRun.outcome == "incident").count()
     pending_count = base.filter(SentinelRun.outcome.in_(("pending", "running"))).count()
     runs_month = runs_used_this_month(db, user.org_id)
+    cap = cap_for_plan(effective_plan_for_caps(db, user.org_id))
 
     return {
         "runs": [r.to_dict(include_trace=False) for r in rows],
@@ -315,8 +329,11 @@ async def list_runs(
             "runs_this_month": runs_month,
             "incidents_filed": incident_count,
             "pending": pending_count,
-            "monthly_cap": MONTHLY_RUN_CAP,
-            "remaining_this_month": max(0, MONTHLY_RUN_CAP - runs_month),
+            # Plan-aware monthly cap.  Pro = 100, Pro Plus = 500,
+            # ineligible = 0 (read-only UI).  Frontend reads this
+            # directly rather than hardcoding the value.
+            "monthly_cap": cap,
+            "remaining_this_month": max(0, cap - runs_month),
         },
     }
 
@@ -392,16 +409,16 @@ async def post_manual_run(
     db: Session = Depends(get_db),
 ):
     """Operator-initiated agent run.  Creates a pending sentinel_runs
-    row that the agent picks up when it ships (slice 3); meanwhile
-    rows queue and the UI shows pending state.
+    row that the agent picks up.
 
-    Pro Plus only.  Cap-enforced.  Schedule + scope are deliberately
-    NOT enforced — the operator clicked "Run now" to override them.
+    Pro or Pro Plus.  Per-plan cap-enforced.  Schedule + scope are
+    deliberately NOT enforced — the operator clicked "Run now" to
+    override them.
     """
-    if effective_plan_for_caps(db, user.org_id) != "pro_plus":
+    if not _has_sentinel_access(db, user.org_id):
         raise HTTPException(
             status_code=402,
-            detail={"error": "plan_required", "plan": "pro_plus"},
+            detail={"error": "plan_required", "plan": "pro"},
         )
 
     try:
@@ -413,13 +430,19 @@ async def post_manual_run(
         )
     except ValueError as exc:
         if str(exc) == "monthly_cap_reached":
+            cap = cap_for_plan(effective_plan_for_caps(db, user.org_id))
             raise HTTPException(
                 status_code=429,
                 detail={
                     "error": "monthly_cap_reached",
-                    "cap": MONTHLY_RUN_CAP,
+                    "cap": cap,
                     "used": runs_used_this_month(db, user.org_id),
                 },
+            ) from exc
+        if str(exc) == "plan_not_eligible":
+            raise HTTPException(
+                status_code=402,
+                detail={"error": "plan_required", "plan": "pro"},
             ) from exc
         raise
 

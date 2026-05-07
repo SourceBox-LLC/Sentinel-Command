@@ -19,7 +19,7 @@ import { useToasts } from "../hooks/useToasts.jsx"
 // wired up — slice 3 will start producing rows.
 //
 // State load order on mount: getSentinelConfig (always fires —
-// returns plan_gated flag for non-Pro-Plus orgs), getCameras (real
+// returns plan_gated flag for orgs without Sentinel access), getCameras (real
 // cameras for the scope panel), getSentinelRuns (small page).
 // All three settle independently so the UI streams in instead of
 // blocking on the slowest.
@@ -322,7 +322,15 @@ function SentinelPage() {
           runs_today: (prev.runs_today || 0) + 1,
           runs_total: (prev.runs_total || 0) + 1,
           pending: (prev.pending || 0) + 1,
-          remaining_this_month: Math.max(0, (prev.remaining_this_month ?? 300) - 1),
+          // Optimistically tick the cap counter down; fall back to the
+          // monthly_cap the API last reported (plan-aware: 100 for Pro,
+          // 500 for Pro Plus) instead of a hardcoded 300.  Worst case
+          // a missing cap value just means we don't optimistically
+          // decrement — the next poll will reconcile.
+          remaining_this_month: Math.max(
+            0,
+            (prev.remaining_this_month ?? prev.monthly_cap ?? 0) - 1,
+          ),
         }))
         showToast("Sentinel queued — agent will pick it up", "success")
         setShowRunModal(false)
@@ -349,16 +357,17 @@ function SentinelPage() {
 
   return (
     <div className="sentinel-page-v3">
-      {/* ── plan-gate banner (non-Pro-Plus only) ────────── */}
+      {/* ── plan-gate banner (free / past-due-too-long orgs) ───── */}
       {planGated && (
         <div className="sentinel-plan-banner">
-          <span className="sentinel-plan-banner-pill">PRO PLUS</span>
+          <span className="sentinel-plan-banner-pill">PRO</span>
           <span className="sentinel-plan-banner-text">
-            Sentinel is a Pro Plus feature. Your current plan: <strong>{planCurrent}</strong>.
+            Sentinel is a paid feature. Your current plan: <strong>{planCurrent}</strong>.
+            Upgrade to Pro for 100 runs/month or Pro Plus for 500 runs/month.
             You can preview the configuration UI; changes won't save until you upgrade.
           </span>
           <Link to="/pricing" className="sentinel-plan-banner-cta">
-            Upgrade to Pro Plus →
+            See plans →
           </Link>
         </div>
       )}
@@ -500,7 +509,7 @@ function CompactHeader({ enabled, onToggle, triggerCount, scopeCount, totalCamer
           onClick={onRunNow}
           title={interactive
             ? "Queue a one-off agent run with a custom prompt"
-            : "Available on Pro Plus"
+            : "Upgrade to Pro or Pro Plus to use Sentinel"
           }
         >
           <span aria-hidden="true">▶</span> Run now
@@ -520,9 +529,20 @@ function CompactHeader({ enabled, onToggle, triggerCount, scopeCount, totalCamer
 
 function OverviewTab({ enabled, scopeCount, runs, runStats, loadingRuns, onSelectRun }) {
   const recentRuns = runs.slice(0, 8)
-  const monthCap = 300
-  const monthRuns = runStats.runs_total || 0
+  // Plan-aware monthly cap from the API (100 for Pro, 500 for Pro
+  // Plus, 0 for ineligible plans).  `runs_this_month` correctly
+  // counts runs in the current calendar month — was previously
+  // wired to `runs_total` (lifetime), which made the meter only
+  // ever fill up and never reset on month rollover.
+  const monthCap = runStats.monthly_cap ?? 0
+  const monthRuns = runStats.runs_this_month ?? 0
   const usagePct = monthCap > 0 ? Math.min(100, (monthRuns / monthCap) * 100) : 0
+  // Display label for the plan tier — drives the "PRO" / "PRO PLUS"
+  // pill on the allowance widget.  Falls back to PRO since that's
+  // the lower-tier-but-still-eligible plan.
+  const planTierLabel = (planCurrent || "").toLowerCase().includes("plus")
+    ? "PRO PLUS"
+    : "PRO"
 
   return (
     <div className="sentinel-overview">
@@ -640,7 +660,7 @@ function OverviewTab({ enabled, scopeCount, runs, runStats, loadingRuns, onSelec
           <div className="sentinel-allowance-widget">
             <div className="sentinel-allowance-widget-header">
               <span className="sentinel-allowance-widget-title">Monthly allowance</span>
-              <span className="sentinel-allowance-widget-pill">PRO PLUS</span>
+              <span className="sentinel-allowance-widget-pill">{planTierLabel}</span>
             </div>
             <div className="sentinel-allowance-widget-meter">
               <div
@@ -652,7 +672,7 @@ function OverviewTab({ enabled, scopeCount, runs, runStats, loadingRuns, onSelec
               <strong>{monthRuns}</strong> of {monthCap} runs · {Math.max(0, monthCap - monthRuns)} remaining
             </div>
             <p className="sentinel-allowance-widget-help">
-              Included with your plan — no per-run charge. 300 runs / month, enforced at dispatch.
+              Included with your plan — no per-run charge. {monthCap} runs / month, enforced at dispatch.
             </p>
           </div>
         </aside>
