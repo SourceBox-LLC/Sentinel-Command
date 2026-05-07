@@ -8086,6 +8086,11 @@ body {
     flex-direction: column;
     gap: 0.15rem;
     min-width: 0;
+    /* min-width:0 propagates from the flex parent so the text-overflow:
+       ellipsis on the sub line can clip the layout instead of just the
+       paint. Without it the nowrap'd "Last: …" line forces the parent
+       grid item to its intrinsic content width and overflows mobile. */
+    flex: 1;
 }
 
 .sentinel-compact-summary-line {
@@ -8112,7 +8117,9 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 600px;
+    /* No fixed max-width — the parent's flex: 1 + min-width: 0 chain
+       lets this expand to whatever the row has available and ellipsis
+       cleanly when the row gets narrow. */
 }
 
 .sentinel-run-now-btn {
@@ -9561,11 +9568,22 @@ body {
         flex-direction: column;
         align-items: stretch;
     }
+    .sentinel-compact-left {
+        min-width: 0;
+        flex-wrap: wrap;
+    }
     .sentinel-compact-divider {
         display: none;
     }
     .sentinel-compact-right {
         justify-content: space-between;
+    }
+    /* On mobile let the sub line wrap rather than ellipsis-clip — at
+       narrow widths the user wants to see the full last-run summary
+       and there's room below for it to wrap onto a second line. */
+    .sentinel-compact-summary-sub {
+        white-space: normal;
+        line-height: 1.45;
     }
     .sentinel-tabs {
         padding: 0 0.5rem;
