@@ -61,6 +61,8 @@ from app.models.models import (
     MotionEvent,
     Notification,
     OrgMonthlyUsage,
+    SentinelConfig,
+    SentinelRun,
     Setting,
     StreamAccessLog,
     UserNotificationState,
@@ -99,6 +101,10 @@ ORG_SCOPED_MODELS = [
     Notification,
     MotionEvent,
     CameraGroup,
+    # Sentinel — agent config + run history are both org-scoped and
+    # have no inbound FKs, so a plain bulk Query.delete() is correct.
+    SentinelConfig,
+    SentinelRun,
 ]
 
 # Models with cascading children that need session.delete() per row

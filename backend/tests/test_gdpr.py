@@ -55,6 +55,8 @@ from app.models.models import (
     MotionEvent,
     Notification,
     OrgMonthlyUsage,
+    SentinelConfig,
+    SentinelRun,
     Setting,
     StreamAccessLog,
     UserNotificationState,
@@ -121,6 +123,20 @@ def fully_seeded_org(db):
         ))
         db.add(CameraGroup(
             org_id=org_id, name=f"g_{org_id}", color="#000", icon="x",
+        ))
+        # Sentinel — agent config + run history.  Both are org-scoped
+        # bulk-deletable tables; seeded so the cross-tenant isolation
+        # test can verify SentinelConfig/Run rows for OTHER_ORG survive
+        # a TEST_ORG delete.
+        db.add(SentinelConfig(org_id=org_id))
+        db.add(SentinelRun(
+            id=f"run_seed_{org_id}",
+            org_id=org_id,
+            triggered_at=now,
+            trigger_type="motion",
+            camera_id="cam_seed",
+            tool_call_count=2,
+            outcome="no_action",
         ))
 
         # Cascade parents.  Incident → IncidentEvidence; CameraNode → Camera.
