@@ -32,7 +32,7 @@ import hmac
 import logging
 import threading
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Optional
 
 import httpx
@@ -110,14 +110,32 @@ def _is_camera_in_scope(scope_dict: dict | None, camera_id: str | None) -> bool:
     return scope_dict.get(camera_id) is not False
 
 
+def _parse_hhmm_to_minutes(value: str, default: int) -> int:
+    """Parse 'HH:MM' (or 'HH') into minutes-since-midnight.
+
+    The UI accepts HH:MM but the previous version stripped minutes via
+    int(value.split(':')[0]) — '22:30 → 23:00' silently evaluated as
+    '22:00 → 23:00'.  Now both H and HH:MM are honoured, and clamped
+    to [0, 24*60].
+    """
+    try:
+        parts = (value or "").split(":")
+        h = int(parts[0])
+        m = int(parts[1]) if len(parts) > 1 else 0
+        return max(0, min(24 * 60, h * 60 + m))
+    except (AttributeError, ValueError, IndexError):
+        return default
+
+
 def _schedule_allows_now(cfg: SentinelConfig, db: Session) -> bool:
     """Is right-now within the configured schedule window?
 
     "always" mode: yes.
     "off" mode: no.
     "scheduled" mode: yes iff today is an active day AND the current
-    hour is within the start..end window.  Times are interpreted in
-    the org's timezone (Setting key 'timezone', defaults to UTC).
+    minute-of-day is within the start..end window.  Times are
+    interpreted in the org's timezone (Setting key 'timezone',
+    defaults to UTC).
     """
     mode = cfg.schedule_mode or "always"
     if mode == "always":
@@ -141,22 +159,59 @@ def _schedule_allows_now(cfg: SentinelConfig, db: Session) -> bool:
     if today_key not in active_days:
         return False
 
-    # Parse HH:MM strings; defensive — fall back to wide-open if
-    # the values are bad.
-    def _parse_hh(value: str, default: int) -> int:
-        try:
-            return int(value.split(":")[0])
-        except (AttributeError, ValueError, IndexError):
-            return default
+    start_m = _parse_hhmm_to_minutes(cfg.schedule_start or "00:00", 0)
+    end_m = _parse_hhmm_to_minutes(cfg.schedule_end or "24:00", 24 * 60)
+    cur_m = now_local.hour * 60 + now_local.minute
 
-    start_h = _parse_hh(cfg.schedule_start or "00:00", 0)
-    end_h = _parse_hh(cfg.schedule_end or "24:00", 24)
-    cur_h = now_local.hour
+    if start_m < end_m:
+        return start_m <= cur_m < end_m
+    # Wrap-around (e.g. 22:30 → 06:15)
+    return cur_m >= start_m or cur_m < end_m
 
-    if start_h < end_h:
-        return start_h <= cur_h < end_h
-    # Wrap-around (e.g. 22:00 → 06:00)
-    return cur_h >= start_h or cur_h < end_h
+
+def _motion_cooldown_allows(
+    cfg: SentinelConfig,
+    kind: str,
+    camera_id: Optional[str],
+    db: Session,
+) -> bool:
+    """Per-camera cooldown gate for motion triggers.
+
+    The UI promises 'wait N minutes between motion-triggered runs on
+    the same camera'.  Without this gate a busy camera (waving tree,
+    blinking light) burns the monthly cap in hours.
+
+    Only applies to motion (incident_opened is a one-shot human
+    action; manual / scheduled aren't motion-driven).  Skips when
+    the cooldown is 0 or when the trigger isn't camera-scoped.
+
+    Implementation: query the most recent SentinelRun for this
+    (org, camera, motion) tuple — if it fired within the cooldown
+    window, refuse.  The 'fired' includes pending/running/terminal —
+    every dispatch counts, regardless of how it eventually resolved,
+    so a stuck or errored run still suppresses the next trigger.
+    """
+    if kind != "motion" or not camera_id:
+        return True
+
+    cooldown_min = int(cfg.motion_cooldown_min or 0)
+    if cooldown_min <= 0:
+        return True
+
+    cutoff = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(
+        minutes=cooldown_min
+    )
+    recent = (
+        db.query(SentinelRun.id)
+        .filter(
+            SentinelRun.org_id == cfg.org_id,
+            SentinelRun.camera_id == camera_id,
+            SentinelRun.trigger_type == "motion",
+            SentinelRun.triggered_at >= cutoff,
+        )
+        .first()
+    )
+    return recent is None
 
 
 def _can_dispatch_for_kind(
@@ -189,6 +244,13 @@ def _can_dispatch_for_kind(
 
     if not _schedule_allows_now(cfg, db):
         return False, "outside_schedule_window"
+
+    # Motion cooldown — per-camera throttle so a busy camera doesn't
+    # eat the monthly cap.  Checked AFTER the cheap gates (enabled,
+    # plan, trigger flag, scope) so we only do the SentinelRun query
+    # when everything else passed.
+    if not _motion_cooldown_allows(cfg, kind, camera_id, db):
+        return False, "motion_cooldown_active"
 
     if cap_remaining(db, cfg.org_id) <= 0:
         return False, "monthly_cap_reached"
