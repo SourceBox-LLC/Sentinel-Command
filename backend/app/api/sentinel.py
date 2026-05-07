@@ -28,7 +28,6 @@ Pattern notes:
 """
 
 import logging
-import uuid
 from datetime import UTC, datetime
 from typing import Optional
 
@@ -97,8 +96,8 @@ def _validate_hhmm(value: str, field_name: str) -> None:
     try:
         h = int(value[:2])
         m = int(value[3:])
-    except ValueError:
-        raise HTTPException(400, f"{field_name} must be HH:MM")
+    except ValueError as exc:
+        raise HTTPException(400, f"{field_name} must be HH:MM") from exc
     if not (0 <= h <= 23 and 0 <= m <= 59):
         raise HTTPException(400, f"{field_name} out of range")
 
@@ -225,8 +224,8 @@ async def list_runs(
             if since_dt.tzinfo is not None:
                 since_dt = since_dt.replace(tzinfo=None)
             q = q.filter(SentinelRun.triggered_at >= since_dt)
-        except ValueError:
-            raise HTTPException(400, "invalid `since` — expected ISO datetime")
+        except ValueError as exc:
+            raise HTTPException(400, "invalid `since` — expected ISO datetime") from exc
 
     total = q.count()
     rows = (
