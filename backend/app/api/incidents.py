@@ -1,12 +1,17 @@
 """
-AI-generated incident reports.
+Incident reports.
 
-The MCP server writes here via the `create_incident`/`add_observation`/etc.
-tools (see app/mcp/server.py). The dashboard reads here through the
-`/api/incidents` endpoints, which are admin-only — incidents live alongside
-the rest of the MCP audit surface.
+Two write paths into the same `incidents` table:
+  - MCP `create_incident` / `add_observation` / ... tools (agents).  See
+    `app/mcp/server.py` — agent rows land with ``created_by="mcp:<key_name>"``.
+  - This module's `POST /api/incidents` (humans).  Operator-filed rows
+    land with ``created_by="user:<clerk_user_id>"`` so the dashboard can
+    badge AI vs human at a glance.
+
+Reads are dashboard-only (admin) and live under `/api/incidents`.
 """
 
+import logging
 from datetime import UTC, datetime
 from typing import Optional
 
@@ -20,10 +25,12 @@ from app.core.limiter import limiter
 from app.models.models import (
     INCIDENT_SEVERITIES,
     INCIDENT_STATUSES,
+    Camera,
     Incident,
     IncidentEvidence,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/incidents", tags=["incidents"])
 
 
@@ -37,6 +44,112 @@ class IncidentPatch(BaseModel):
     severity: Optional[str] = Field(default=None)
     summary: Optional[str] = Field(default=None)
     report: Optional[str] = Field(default=None)
+
+
+class IncidentCreate(BaseModel):
+    """Operator-filed incident.  Mirrors the MCP `create_incident`
+    tool's input shape so the same DB row layout serves both authors."""
+
+    title: str = Field(..., min_length=1, max_length=200)
+    summary: str = Field(..., min_length=1)
+    severity: str = Field(default="medium")
+    camera_id: Optional[str] = Field(default=None)
+
+
+# ---------------------------------------------------------------------------
+# Create (human-authored)
+# ---------------------------------------------------------------------------
+
+
+@router.post("", status_code=201)
+@limiter.limit("60/minute")
+async def create_incident(
+    request: Request,
+    body: IncidentCreate,
+    user: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """File a new incident manually.
+
+    Mirrors the MCP `create_incident` tool's validation (title and
+    summary required, severity in the allowed enum, camera_id must
+    exist within the org if provided) and fires the same
+    `incident_created` notification so the inbox + email channels
+    don't care which author wrote the row.
+
+    The only difference from the MCP path: ``created_by`` is stamped
+    ``user:<clerk_id>`` instead of ``mcp:<key_name>``.  The dashboard
+    keys off this prefix to badge AI- vs human-authored rows.
+    """
+    if body.severity not in INCIDENT_SEVERITIES:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid severity: {body.severity}"
+        )
+
+    title = body.title.strip()
+    summary = body.summary.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title is required")
+    if not summary:
+        raise HTTPException(status_code=400, detail="summary is required")
+
+    if body.camera_id:
+        cam = (
+            db.query(Camera)
+            .filter_by(org_id=user.org_id, camera_id=body.camera_id)
+            .first()
+        )
+        if not cam:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Camera '{body.camera_id}' not found",
+            )
+
+    incident = Incident(
+        org_id=user.org_id,
+        camera_id=body.camera_id,
+        title=title[:200],
+        summary=summary,
+        severity=body.severity,
+        status="open",
+        created_by=f"user:{user.user_id}",
+    )
+    db.add(incident)
+    db.commit()
+    db.refresh(incident)
+
+    # Fire inbox + email notification.  Same kind/audience the MCP
+    # path uses (`mcp/server.py:1295-1306`) — we want both author
+    # types to flow through identical notification preferences.
+    try:
+        from app.api.notifications import create_notification
+
+        notif_severity = (
+            "critical" if body.severity in ("high", "critical") else "warning"
+        )
+        create_notification(
+            org_id=user.org_id,
+            kind="incident_created",
+            title=f"Incident #{incident.id}: {incident.title}",
+            body=f"[{body.severity.upper()}] {incident.summary}",
+            severity=notif_severity,
+            audience="all",
+            link=f"/incidents/{incident.id}",
+            camera_id=body.camera_id,
+            meta={"incident_id": incident.id, "severity": body.severity},
+            db=db,
+        )
+    except Exception:  # noqa: BLE001
+        # Notification failure must NEVER fail incident creation —
+        # the row is already committed and the operator clicked
+        # submit.  Log and move on; an admin can retry the notify
+        # path manually if needed.
+        logger.exception(
+            "[create_incident] notification emit failed for incident=%s",
+            incident.id,
+        )
+
+    return incident.to_dict(include_evidence=True)
 
 
 # ---------------------------------------------------------------------------

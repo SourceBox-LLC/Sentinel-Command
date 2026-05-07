@@ -7311,6 +7311,187 @@ body {
     .mcp-incident-time { grid-area: time; }
 }
 
+/* ---- /incidents page ---- */
+/* Reuses the .mcp-incident-* row styling; only the page chrome and a
+   widened grid (to make room for the AI/Human badge between time and
+   camera) are page-specific. */
+
+.incidents-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 1.75rem 1.5rem 3rem;
+}
+
+.incidents-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
+}
+
+.incidents-header-left h1 {
+    margin: 0 0 0.25rem;
+    font-size: 1.5rem;
+    color: var(--text-primary);
+}
+
+.incidents-subtitle {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    max-width: 56ch;
+}
+
+.incidents-filters {
+    display: flex;
+    gap: 0.4rem;
+    margin-bottom: 0.75rem;
+}
+
+.incidents-list {
+    /* Override the .mcp-incidents-list height cap on this dedicated
+       page — there's no neighboring panel to compete for vertical
+       space, so let the list grow with the data. */
+    max-height: none;
+    padding: 0.4rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+}
+
+.incidents-list .mcp-incident-row {
+    /* Inject a 56px badge column between time and camera. */
+    grid-template-columns: 12px 130px 56px 140px 1fr auto auto;
+}
+
+.incidents-source-badge {
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
+    text-align: center;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.incidents-source-ai {
+    background: rgba(96, 165, 250, 0.14);
+    color: var(--accent-blue);
+    border-color: rgba(96, 165, 250, 0.35);
+}
+
+.incidents-source-human {
+    background: rgba(34, 211, 238, 0.12);
+    color: var(--accent-cyan);
+    border-color: rgba(34, 211, 238, 0.32);
+}
+
+@media (max-width: 720px) {
+    .incidents-container {
+        padding: 1.25rem 1rem 2rem;
+    }
+    .incidents-list .mcp-incident-row {
+        grid-template-columns: 12px 1fr auto;
+        grid-template-areas:
+            "dot title status"
+            "dot camera evidence"
+            "dot badge time";
+    }
+    .incidents-list .incidents-source-badge {
+        grid-area: badge;
+        justify-self: start;
+    }
+}
+
+/* ---- New-incident modal ---- */
+
+.modal-content.new-incident-modal {
+    max-width: 540px;
+    width: 100%;
+}
+
+.new-incident-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-bottom: 0.95rem;
+}
+
+.new-incident-field label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.new-incident-field input,
+.new-incident-field textarea,
+.new-incident-field select {
+    background: var(--bg-input, var(--bg-card));
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    padding: 0.55rem 0.7rem;
+    font-family: inherit;
+    font-size: 0.88rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.new-incident-field input:focus,
+.new-incident-field textarea:focus,
+.new-incident-field select:focus {
+    outline: none;
+    border-color: var(--accent-purple);
+    box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.18);
+}
+
+.new-incident-field textarea {
+    resize: vertical;
+    min-height: 5.5rem;
+}
+
+.new-incident-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.85rem;
+}
+
+@media (max-width: 540px) {
+    .new-incident-row {
+        grid-template-columns: 1fr;
+        gap: 0;
+    }
+}
+
+.new-incident-error {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: var(--accent-red);
+    padding: 0.55rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    margin: 0.25rem 0 0.85rem;
+}
+
+/* ---- Stat tile rendered as a <Link> on /mcp ---- */
+
+.mcp-stat-item-link {
+    text-decoration: none;
+    color: inherit;
+    display: block;
+    transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.mcp-stat-item-link:hover {
+    transform: translateY(-1px);
+    cursor: pointer;
+}
+
 /* ---- Modal ---- */
 
 .modal-content.incident-modal {

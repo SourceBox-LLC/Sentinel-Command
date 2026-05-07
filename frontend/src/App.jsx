@@ -17,6 +17,7 @@ const AdminPage = lazy(() => import("./pages/AdminPage.jsx"))
 const TestHlsPage = lazy(() => import("./pages/TestHlsPage.jsx"))
 const PricingPage = lazy(() => import("./pages/PricingPage.jsx"))
 const McpPage = lazy(() => import("./pages/McpPage.jsx"))
+const IncidentsPage = lazy(() => import("./pages/IncidentsPage.jsx"))
 const SentinelPage = lazy(() => import("./pages/SentinelPage.jsx"))
 const LegalPage = lazy(() => import("./pages/LegalPage.jsx"))
 const SecurityPage = lazy(() => import("./pages/SecurityPage.jsx"))
@@ -173,6 +174,26 @@ function App() {
             element={
               <RequireAdmin>
                 <McpPage />
+              </RequireAdmin>
+            }
+          />
+          {/* /incidents and /incidents/:incidentId share the same page;
+              the page reads useParams().incidentId to open the report
+              modal on mount when present.  Lets notification deep-links
+              and the SentinelPage RunDetailDrawer link both resolve. */}
+          <Route
+            path="/incidents"
+            element={
+              <RequireAdmin>
+                <IncidentsPage />
+              </RequireAdmin>
+            }
+          />
+          <Route
+            path="/incidents/:incidentId"
+            element={
+              <RequireAdmin>
+                <IncidentsPage />
               </RequireAdmin>
             }
           />

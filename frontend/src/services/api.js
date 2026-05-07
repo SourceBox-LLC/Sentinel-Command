@@ -386,13 +386,21 @@ export async function getMcpLogStats(getToken, days = 7) {
   return fetchWithAuth(`/api/mcp/activity/logs/stats?days=${days}`, getToken)
 }
 
-// AI-generated incident reports
+// Incident reports (both AI-authored via MCP and human-authored via this API)
 export async function getIncidents(getToken, params = {}) {
   const queryString = new URLSearchParams(
     Object.entries(params).filter(([_, v]) => v != null && v !== "")
   ).toString()
   const suffix = queryString ? `?${queryString}` : ""
   return fetchWithAuth(`/api/incidents${suffix}`, getToken)
+}
+
+// Operator-filed incident.  Body shape: { title, summary, severity?, camera_id? }.
+export async function createIncident(getToken, body) {
+  return fetchWithAuth("/api/incidents", getToken, {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
 }
 
 export async function getIncidentCounts(getToken) {

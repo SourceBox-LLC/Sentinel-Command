@@ -1,14 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from "react"
+import { Link } from "react-router-dom"
 import { useAuth, useOrganization } from "@clerk/clerk-react"
 import {
   getMcpKeys, createMcpKey, revokeMcpKey,
   getMcpActivity, getMcpSessions, getMcpStats,
-  getIncidents, getIncidentCounts, getMcpToolCatalog,
+  getMcpToolCatalog,
 } from "../services/api"
 import { useToasts } from "../hooks/useToasts.jsx"
 import { usePlanInfo } from "../hooks/usePlanInfo.jsx"
 import UpgradeModal from "../components/UpgradeModal.jsx"
-import IncidentReportModal from "../components/IncidentReportModal.jsx"
 import HelpTooltip from "../components/HelpTooltip.jsx"
 
 // Trailing slash is intentional: FastAPI mounts the MCP app at "/mcp"
@@ -45,14 +45,6 @@ const TOOLS = [
   { name: "set_camera_recording_policy", desc: "Toggle a camera between continuous / scheduled / off (mutually exclusive)", write: true },
 ]
 
-const SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 }
-const STATUS_LABELS = {
-  open: "Open",
-  acknowledged: "Acknowledged",
-  resolved: "Resolved",
-  dismissed: "Dismissed",
-}
-
 // Status colors for tool call events
 const STATUS_COLORS = {
   completed: "var(--accent-green)",
@@ -87,12 +79,6 @@ function McpPage() {
   const [sseConnected, setSseConnected] = useState(false)
   const eventSourceRef = useRef(null)
   const eventsEndRef = useRef(null)
-
-  // AI incident reports
-  const [incidents, setIncidents] = useState([])
-  const [incidentCounts, setIncidentCountsState] = useState({ open: 0, open_critical: 0, open_high: 0, total: 0 })
-  const [incidentFilter, setIncidentFilter] = useState("open") // "open" | "all"
-  const [openIncidentId, setOpenIncidentId] = useState(null)
 
   // Key management (collapsible)
   const [showKeys, setShowKeys] = useState(false)
@@ -132,20 +118,16 @@ function McpPage() {
     loadActivity()
     loadSessions()
     loadStats()
-    loadIncidents()
-    loadIncidentCounts()
 
-    // Poll sessions, stats, and incidents every 10s
+    // Poll sessions + stats every 10s.
     const interval = setInterval(() => {
       loadSessions()
       loadStats()
-      loadIncidents()
-      loadIncidentCounts()
     }, 10000)
 
     return () => clearInterval(interval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [organization, planInfo, incidentFilter])
+  }, [organization, planInfo])
 
   // SSE stream for real-time events
   useEffect(() => {
@@ -244,35 +226,6 @@ function McpPage() {
       setStats(data)
     } catch (err) {
       console.error("Failed to load stats:", err)
-    }
-  }
-
-  const loadIncidents = async () => {
-    try {
-      const token = await getToken()
-      const params = { limit: 50 }
-      if (incidentFilter === "open") params.status = "open"
-      const data = await getIncidents(() => Promise.resolve(token), params)
-      // Sort by severity (critical first) then by created_at desc — already desc from API
-      const sorted = [...(data.incidents || [])].sort((a, b) => {
-        const sa = SEVERITY_ORDER[a.severity] ?? 9
-        const sb = SEVERITY_ORDER[b.severity] ?? 9
-        if (sa !== sb) return sa - sb
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      })
-      setIncidents(sorted)
-    } catch (err) {
-      console.error("Failed to load incidents:", err)
-    }
-  }
-
-  const loadIncidentCounts = async () => {
-    try {
-      const token = await getToken()
-      const data = await getIncidentCounts(() => Promise.resolve(token))
-      setIncidentCountsState(data)
-    } catch (err) {
-      console.error("Failed to load incident counts:", err)
     }
   }
 
@@ -565,12 +518,10 @@ function McpPage() {
           </div>
           <div className="mcp-stat-label">Errors</div>
         </div>
-        <div className="mcp-stat-item">
-          <div className={`mcp-stat-value ${incidentCounts.open > 0 ? "accent-red" : "accent-green"}`}>
-            {incidentCounts.open ?? 0}
-          </div>
-          <div className="mcp-stat-label">Open Incidents</div>
-        </div>
+        <Link to="/incidents" className="mcp-stat-item mcp-stat-item-link">
+          <div className="mcp-stat-value accent-cyan">→</div>
+          <div className="mcp-stat-label">View Incidents</div>
+        </Link>
       </div>
 
       {/* Main Grid: Activity Feed + Clients Sidebar */}
@@ -661,75 +612,6 @@ function McpPage() {
               ))
             )}
           </div>
-        </div>
-      </div>
-
-      {/* AI Incident Reports */}
-      <div className="mcp-incidents-panel">
-        <div className="mcp-panel-header mcp-incidents-header">
-          <h2>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-              <line x1="12" y1="9" x2="12" y2="13"/>
-              <line x1="12" y1="17" x2="12.01" y2="17"/>
-            </svg>
-            AI Incident Reports
-          </h2>
-          <div className="mcp-incidents-controls">
-            <button
-              className={`mcp-incidents-filter ${incidentFilter === "open" ? "active" : ""}`}
-              onClick={() => setIncidentFilter("open")}
-            >
-              Open ({incidentCounts.open})
-            </button>
-            <button
-              className={`mcp-incidents-filter ${incidentFilter === "all" ? "active" : ""}`}
-              onClick={() => setIncidentFilter("all")}
-            >
-              All ({incidentCounts.total})
-            </button>
-          </div>
-        </div>
-        <div className="mcp-incidents-list">
-          {incidents.length === 0 ? (
-            <div className="mcp-incidents-empty">
-              <div className="mcp-incidents-empty-icon">
-                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.3">
-                  <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>
-                  <polyline points="22 4 12 14.01 9 11.01"/>
-                </svg>
-              </div>
-              <p>{incidentFilter === "open" ? "No open incidents" : "No incidents yet"}</p>
-              <span>Reports filed by your AI agent will appear here</span>
-            </div>
-          ) : (
-            incidents.map((incident) => (
-              <button
-                key={incident.id}
-                className={`mcp-incident-row mcp-incident-${incident.severity} mcp-incident-status-${incident.status}`}
-                onClick={() => setOpenIncidentId(incident.id)}
-              >
-                <span className={`mcp-incident-sev-dot mcp-incident-sev-${incident.severity}`} />
-                <span className="mcp-incident-time">
-                  {new Date(incident.created_at).toLocaleString([], {
-                    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-                  })}
-                </span>
-                <span className="mcp-incident-camera">
-                  {incident.camera_id || "—"}
-                </span>
-                <span className="mcp-incident-title">{incident.title}</span>
-                <span className={`mcp-incident-status mcp-incident-status-badge-${incident.status}`}>
-                  {STATUS_LABELS[incident.status] || incident.status}
-                </span>
-                {incident.evidence_count > 0 && (
-                  <span className="mcp-incident-evidence-count">
-                    {incident.evidence_count} evidence
-                  </span>
-                )}
-              </button>
-            ))
-          )}
         </div>
       </div>
 
@@ -1102,14 +984,6 @@ function McpPage() {
       </div>
 
       <UpgradeModal isOpen={showUpgrade} onClose={() => setShowUpgrade(false)} feature="mcp" currentPlan={planInfo?.plan} />
-
-      {openIncidentId !== null && (
-        <IncidentReportModal
-          incidentId={openIncidentId}
-          onClose={() => setOpenIncidentId(null)}
-          onUpdated={() => { loadIncidents(); loadIncidentCounts() }}
-        />
-      )}
     </div>
   )
 }

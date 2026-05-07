@@ -34,6 +34,7 @@ function AppSidebar({ open, onClose }) {
       ...(hasAdminFeature ? {} : { locked: true, badge: "PRO", badgeClass: "nav-pro-badge" }),
     },
     { to: "/mcp", label: "MCP" },
+    isAdmin && { to: "/incidents", label: "Incidents" },
     { to: "/sentinel", label: "Sentinel" },
     { to: "/docs", label: "Help" },
     { to: "/pricing", label: "Pricing" },
