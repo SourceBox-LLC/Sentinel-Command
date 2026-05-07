@@ -10,55 +10,26 @@ import { Link } from "react-router-dom"
 // clear so a curious user doesn't think they actually configured
 // something.
 
+// Sentinel is intentionally narrow — it's a security role (a "night
+// guard"), not an admin or IT role. Triggers only fire for events a
+// human security guard would actually act on. Infrastructure events
+// (camera offline, node offline, disk low) and admin events (member
+// changes, MCP key audits) deliberately go to your normal notification
+// channels instead — they're not the agent's job.
 const NOTIFICATION_TRIGGERS = [
   {
     key: "motion",
     label: "Motion detected",
     description:
-      "Wake Sentinel when a camera's scene-change scorer crosses its threshold. The most common trigger.",
+      "Wake Sentinel when a camera reports motion. Uses your existing per-camera motion threshold — there's no separate Sentinel threshold to keep in sync.",
     defaultOn: true,
-    extras: ["severity", "cooldown"],
-  },
-  {
-    key: "camera_offline",
-    label: "Camera offline / recovered",
-    description:
-      "When a camera stops or starts reporting segments — Sentinel can investigate whether it's a hardware issue or something tampered.",
-    defaultOn: false,
-  },
-  {
-    key: "node_offline",
-    label: "CloudNode offline / recovered",
-    description:
-      "When a node loses or recovers its heartbeat. Useful for confirming whether a power outage explains the gap.",
-    defaultOn: false,
+    extras: ["cooldown"],
   },
   {
     key: "incident_opened",
     label: "Incident opened by a human",
     description:
-      "When someone files an incident manually, Sentinel can collect supporting evidence from the relevant cameras automatically.",
-    defaultOn: true,
-  },
-  {
-    key: "cloudnode_disk_low",
-    label: "CloudNode disk almost full",
-    description:
-      "When a node crosses 90% disk usage. Sentinel writes a short triage note so it's easy to act on.",
-    defaultOn: false,
-  },
-  {
-    key: "member_audit",
-    label: "Member added / role changed",
-    description:
-      "Org membership changes. Useful as an audit-log enricher — Sentinel writes context about what changed and when.",
-    defaultOn: false,
-  },
-  {
-    key: "mcp_key_audit",
-    label: "MCP API key created / revoked",
-    description:
-      "Security-audit signal. Sentinel notes the timing alongside other recent activity for the audit record.",
+      "When someone files an incident manually, Sentinel auto-collects supporting evidence from the relevant cameras — like a guard helping document a report.",
     defaultOn: true,
   },
 ]
@@ -127,7 +98,6 @@ function SentinelPage() {
   const [triggers, setTriggers] = useState(() =>
     Object.fromEntries(NOTIFICATION_TRIGGERS.map(t => [t.key, t.defaultOn])),
   )
-  const [motionSeverity, setMotionSeverity] = useState("low")
   const [motionCooldownMin, setMotionCooldownMin] = useState(5)
 
   // ── schedule ─────────────────────────────────────────────
@@ -266,10 +236,11 @@ function SentinelPage() {
         <div className="sentinel-section-header">
           <h2>Triggers</h2>
           <p className="section-description">
-            Pick which Command Center notifications wake Sentinel up. Each event
-            flows through your existing audience filter and email gate before
-            reaching the agent — Sentinel sees only what your org is already
-            configured to receive.
+            Sentinel responds only to security-relevant events — it's a guard
+            role, not an admin role. Infrastructure issues (camera offline,
+            disk almost full) and admin events (member changes, MCP key audits)
+            still flow through your normal notification channels; they're just
+            not the agent's job.
           </p>
         </div>
         <div className="settings-toggles">
@@ -289,19 +260,6 @@ function SentinelPage() {
               {t.key === "motion" && triggers.motion && enabled && (
                 <div className="sentinel-trigger-extras">
                   <div className="sentinel-trigger-extra">
-                    <label htmlFor="motion-severity">Minimum severity</label>
-                    <select
-                      id="motion-severity"
-                      className="settings-select"
-                      value={motionSeverity}
-                      onChange={e => setMotionSeverity(e.target.value)}
-                    >
-                      <option value="low">Low (every event)</option>
-                      <option value="medium">Medium and above</option>
-                      <option value="high">High and above</option>
-                    </select>
-                  </div>
-                  <div className="sentinel-trigger-extra">
                     <label htmlFor="motion-cooldown">Per-camera cooldown</label>
                     <div className="sentinel-trigger-cooldown">
                       <input
@@ -318,7 +276,8 @@ function SentinelPage() {
                   <p className="sentinel-trigger-extra-help">
                     A noisy outdoor camera can fire many motion events per minute. Cooldown
                     keeps Sentinel from running over and over for the same camera within
-                    the window.
+                    the window — separate from your email-digest cooldown, which governs
+                    notification volume rather than agent runs.
                   </p>
                 </div>
               )}
