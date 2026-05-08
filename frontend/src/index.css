@@ -8297,6 +8297,14 @@ body {
     flex-wrap: wrap;
 }
 
+/* Push the destructive delete button to the right of the action
+   row so it's visually separated from the safe lifecycle-status
+   buttons (Dismiss / Acknowledge / Mark Resolved / Reopen).  Stops
+   muscle-memory clicks on the wrong button. */
+.incident-modal-delete-btn {
+    margin-left: auto;
+}
+
 /* Lightbox */
 .incident-lightbox {
     position: fixed;

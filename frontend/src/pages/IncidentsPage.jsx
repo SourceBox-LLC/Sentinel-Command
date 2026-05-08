@@ -192,6 +192,33 @@ export default function IncidentsPage() {
     }
   }
 
+  const handleModalDeleted = (deletedId) => {
+    // Optimistic update: drop the row from the list and decrement counts
+    // before any network round-trip.  The backend has already confirmed
+    // the delete (the modal awaits the API response before calling us);
+    // refreshing from server would just be a redundant round-trip, and
+    // the next 10-s poll will reconcile if anything diverged.
+    const removed = incidents.find((r) => r.id === deletedId)
+    setIncidents((prev) => prev.filter((r) => r.id !== deletedId))
+    if (removed) {
+      setIncidentCounts((prev) => ({
+        ...prev,
+        total: Math.max(0, (prev.total || 0) - 1),
+        open: removed.status === "open" ? Math.max(0, (prev.open || 0) - 1) : (prev.open || 0),
+        open_critical:
+          removed.status === "open" && removed.severity === "critical"
+            ? Math.max(0, (prev.open_critical || 0) - 1)
+            : (prev.open_critical || 0),
+        open_high:
+          removed.status === "open" && removed.severity === "high"
+            ? Math.max(0, (prev.open_high || 0) - 1)
+            : (prev.open_high || 0),
+      }))
+    }
+    // Close the modal + clear the URL deep-link if any.
+    handleModalClose()
+  }
+
   if (!organization) {
     return (
       <div className="incidents-container">
@@ -432,6 +459,7 @@ export default function IncidentsPage() {
           incidentId={openIncidentId}
           onClose={handleModalClose}
           onUpdated={handleModalUpdated}
+          onDeleted={handleModalDeleted}
         />
       )}
 

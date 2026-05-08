@@ -4,6 +4,7 @@ import { useAuth } from "@clerk/clerk-react"
 import {
   getIncident,
   patchIncident,
+  deleteIncident,
   fetchIncidentEvidenceBlobUrl,
   incidentEvidencePlaylistUrl,
 } from "../services/api"
@@ -327,7 +328,7 @@ function EvidenceVideo({ incidentId, evidenceId, caption }) {
   )
 }
 
-function IncidentReportModal({ incidentId, onClose, onUpdated }) {
+function IncidentReportModal({ incidentId, onClose, onUpdated, onDeleted }) {
   const { getToken } = useAuth()
   const { showToast } = useToasts()
   const [incident, setIncident] = useState(null)
@@ -382,6 +383,34 @@ function IncidentReportModal({ incidentId, onClose, onUpdated }) {
     } catch (err) {
       showToast(err.message || "Failed to update incident", "error")
     } finally {
+      setActing(null)
+    }
+  }
+
+  const handleDelete = async () => {
+    // Native confirm — destructive op on a single record, real
+    // confirmation prompt is the right friction.  Includes the
+    // incident title so the operator can verify they're deleting
+    // what they think they are.
+    const confirmed = window.confirm(
+      `Permanently delete this incident report?\n\n` +
+      `"${incident?.title || `Incident #${incidentId}`}"\n\n` +
+      `This deletes the report, all attached snapshots, video clips, ` +
+      `and observations. The action cannot be undone.`,
+    )
+    if (!confirmed) return
+    setActing("delete")
+    try {
+      await deleteIncident(getToken, incidentId)
+      showToast("Incident deleted", "success")
+      // Caller decides what to do on delete — IncidentsPage uses this
+      // to close the modal AND drop the row from its in-memory list +
+      // decrement the open/total counts.  We deliberately don't call
+      // onClose() here because the parent's onDeleted handler does it.
+      if (onDeleted) onDeleted(incidentId)
+      else onClose()
+    } catch (err) {
+      showToast(err.message || "Failed to delete incident", "error")
       setActing(null)
     }
   }
@@ -573,6 +602,17 @@ function IncidentReportModal({ incidentId, onClose, onUpdated }) {
                   {acting === "open" ? "Reopening…" : "Reopen"}
                 </button>
               )}
+              {/* Permanent delete — sits on the right of the actions row,
+                  visually separated from the lifecycle-status buttons.
+                  Cascades to all evidence (snapshots, clips, observations). */}
+              <button
+                className="btn btn-danger incident-modal-delete-btn"
+                onClick={handleDelete}
+                disabled={acting !== null}
+                title="Permanently delete this incident and all evidence"
+              >
+                {acting === "delete" ? "Deleting…" : "Delete"}
+              </button>
             </div>
           </>
         ) : null}
