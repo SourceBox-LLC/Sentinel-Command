@@ -384,10 +384,10 @@ def _resolve_via_agent_key(headers: dict, _agent_key: str) -> tuple[str, Session
     ``SENTINEL_AGENT_MCP_KEY`` by the caller.  Now:
 
     1. Read the override org_id from ``X-Agent-Org-Override``.
-    2. Verify the override org actually has a Pro Plus plan
-       (Sentinel is Pro-Plus-only) AND has Sentinel enabled.
-       Otherwise the agent is acting on behalf of an org that
-       shouldn't be served — likely a stale pending run, or
+    2. Verify the override org actually has a Sentinel-eligible plan
+       (Pro or Pro Plus, per ``SENTINEL_PLANS``) AND has Sentinel
+       enabled.  Otherwise the agent is acting on behalf of an org
+       that shouldn't be served — likely a stale pending run, or
        impersonation if the secret leaked.
     3. Apply rate limits scoped to the override org so a runaway
        agent loop on org X can't burn org Y's tool budget.

@@ -321,10 +321,16 @@ function SentinelPage() {
           ...prev,
           runs_today: (prev.runs_today || 0) + 1,
           runs_total: (prev.runs_total || 0) + 1,
+          // Increment runs_this_month too so the allowance-meter fill
+          // moves immediately on dispatch.  The meter reads
+          // runs_this_month / monthly_cap (per the recent meter fix);
+          // without this line the % stays at the pre-dispatch value
+          // until the next 10s poll reconciles.
+          runs_this_month: (prev.runs_this_month || 0) + 1,
           pending: (prev.pending || 0) + 1,
           // Optimistically tick the cap counter down; fall back to the
           // monthly_cap the API last reported (plan-aware: 100 for Pro,
-          // 500 for Pro Plus) instead of a hardcoded 300.  Worst case
+          // 500 for Pro Plus) instead of a hardcoded value.  Worst case
           // a missing cap value just means we don't optimistically
           // decrement — the next poll will reconcile.
           remaining_this_month: Math.max(
@@ -534,15 +540,20 @@ function OverviewTab({ enabled, scopeCount, runs, runStats, loadingRuns, onSelec
   // counts runs in the current calendar month — was previously
   // wired to `runs_total` (lifetime), which made the meter only
   // ever fill up and never reset on month rollover.
+  //
+  // monthly_cap is *undefined* in runStats until the first /runs
+  // fetch lands — distinct from a 0 (ineligible plan).  Use that
+  // distinction to render a "loading" state for the allowance
+  // widget rather than briefly flashing "0 of 0 runs · PRO" while
+  // the request is in flight.
+  const statsLoaded = typeof runStats.monthly_cap === "number"
   const monthCap = runStats.monthly_cap ?? 0
   const monthRuns = runStats.runs_this_month ?? 0
   const usagePct = monthCap > 0 ? Math.min(100, (monthRuns / monthCap) * 100) : 0
   // Tier pill on the allowance widget.  Derive from the cap itself
   // rather than passing planCurrent down as a prop — avoids prop
   // drilling and stays in sync with whatever cap the backend
-  // actually reports.  100 → Pro, 500 → Pro Plus.  When the cap is
-  // 0 the page is plan-gated and OverviewTab isn't rendered, so
-  // this fallback is a defensive default the user shouldn't see.
+  // actually reports.  100 → Pro, 500 → Pro Plus.
   const planTierLabel = monthCap >= 500 ? "PRO PLUS" : "PRO"
 
   return (
@@ -661,7 +672,9 @@ function OverviewTab({ enabled, scopeCount, runs, runStats, loadingRuns, onSelec
           <div className="sentinel-allowance-widget">
             <div className="sentinel-allowance-widget-header">
               <span className="sentinel-allowance-widget-title">Monthly allowance</span>
-              <span className="sentinel-allowance-widget-pill">{planTierLabel}</span>
+              {statsLoaded && (
+                <span className="sentinel-allowance-widget-pill">{planTierLabel}</span>
+              )}
             </div>
             <div className="sentinel-allowance-widget-meter">
               <div
@@ -669,12 +682,18 @@ function OverviewTab({ enabled, scopeCount, runs, runStats, loadingRuns, onSelec
                 style={{ width: `${usagePct}%` }}
               />
             </div>
-            <div className="sentinel-allowance-widget-text">
-              <strong>{monthRuns}</strong> of {monthCap} runs · {Math.max(0, monthCap - monthRuns)} remaining
-            </div>
-            <p className="sentinel-allowance-widget-help">
-              Included with your plan — no per-run charge. {monthCap} runs / month, enforced at dispatch.
-            </p>
+            {statsLoaded ? (
+              <>
+                <div className="sentinel-allowance-widget-text">
+                  <strong>{monthRuns}</strong> of {monthCap} runs · {Math.max(0, monthCap - monthRuns)} remaining
+                </div>
+                <p className="sentinel-allowance-widget-help">
+                  Included with your plan — no per-run charge. {monthCap} runs / month, enforced at dispatch.
+                </p>
+              </>
+            ) : (
+              <div className="sentinel-allowance-widget-text">Loading…</div>
+            )}
           </div>
         </aside>
       </div>
