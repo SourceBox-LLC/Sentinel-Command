@@ -20,6 +20,7 @@ import { render } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 
 import DocsPage from "../../src/pages/DocsPage"
+import { ToastProvider } from "../../src/hooks/useToasts.jsx"
 
 
 // Section IDs the sidebar links to. Keep in sync with DocsPage.jsx's
@@ -38,6 +39,7 @@ const EXPECTED_SECTION_IDS = [
   "camera-groups",
   "notifications",
   "mcp",
+  "sentinel",
   "plans",
   "security-procedures",
   "troubleshooting",
@@ -47,23 +49,27 @@ const EXPECTED_SECTION_IDS = [
 ]
 
 
+// DocsPage uses useToasts() (for the copy-link toast) so every render
+// has to be wrapped in a ToastProvider.  Single helper keeps the four
+// test bodies short.
+function renderDocs() {
+  return render(
+    <MemoryRouter>
+      <ToastProvider>
+        <DocsPage />
+      </ToastProvider>
+    </MemoryRouter>,
+  )
+}
+
+
 describe("DocsPage (post-split)", () => {
   it("mounts without throwing", () => {
-    expect(() =>
-      render(
-        <MemoryRouter>
-          <DocsPage />
-        </MemoryRouter>,
-      ),
-    ).not.toThrow()
+    expect(() => renderDocs()).not.toThrow()
   })
 
   it("renders every section the sidebar links to", () => {
-    const { container } = render(
-      <MemoryRouter>
-        <DocsPage />
-      </MemoryRouter>,
-    )
+    const { container } = renderDocs()
 
     for (const id of EXPECTED_SECTION_IDS) {
       const section = container.querySelector(`section#${id}`)
@@ -72,22 +78,14 @@ describe("DocsPage (post-split)", () => {
   })
 
   it("renders the resources block (the section without an id)", () => {
-    const { container } = render(
-      <MemoryRouter>
-        <DocsPage />
-      </MemoryRouter>,
-    )
+    const { container } = renderDocs()
     // Just check the resource grid is present — that's the only block
     // without an id and we don't want to slip its loss past the suite.
     expect(container.querySelector(".docs-resources")).not.toBeNull()
   })
 
   it("renders the bottom CTA link to /sign-up", () => {
-    const { container } = render(
-      <MemoryRouter>
-        <DocsPage />
-      </MemoryRouter>,
-    )
+    const { container } = renderDocs()
     const ctaLinks = Array.from(container.querySelectorAll(".docs-cta-btn"))
     expect(ctaLinks.length).toBeGreaterThan(0)
     expect(ctaLinks[0].getAttribute("href")).toBe("/sign-up")
