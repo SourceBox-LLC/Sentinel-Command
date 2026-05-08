@@ -29,7 +29,7 @@ SourceBox Sentry Command Center is the cloud hub for the SourceBox Sentry ecosys
 - Multi-tenant with organization-based access control (V2 JWT permissions)
 - Motion detection events from CloudNodes with per-camera aggregates and a live SSE feed
 - Unified notification inbox for motion, camera/node status transitions, MCP key audit, member audit, CloudNode disk warnings, AI-agent incidents, and errors
-- **Email notifications** via Resend — opt-in per-org per-kind, with per-camera cooldown + digest mode for high-volume motion events (12 notification kinds gated by 7 setting toggles)
+- **Email notifications** via Resend — opt-in per-org per-kind, with per-camera cooldown + digest mode for high-volume motion events (13 notification kinds gated by 7 setting toggles)
 - Audit logging for stream access, admin actions, and MCP tool calls
 - MCP server exposing 23 tools (16 read, 7 write) so AI clients can view cameras, file incident reports with snapshots and short video clips, and read back past investigations — with per-key scoping (all / readonly / custom allow-list)
 - **Sentinel AI agent** — webhook-driven serverless agent ([separate repo](https://github.com/SourceBox-LLC/SourceBox-Sentinel)) that auto-investigates motion events and incident_opened notifications using a vision-capable LLM ↔ MCP tool loop. Pro: 100 runs/month. Pro Plus: 500 runs/month. Per-org scoping via signed override header — one deployed agent serves every org with no cross-tenant state.

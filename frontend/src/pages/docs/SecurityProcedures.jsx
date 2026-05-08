@@ -22,7 +22,7 @@ function SecurityProcedures() {
         <li><strong>Rotate the key</strong> — Go to <Link to="/settings">Settings</Link>, find the node, and click <strong>Rotate Key</strong>. The old key is invalidated immediately.</li>
         <li><strong>Update the CloudNode</strong> — The CloudNode will disconnect. Re-run setup with the new API key.</li>
         <li><strong>Review audit logs</strong> — Check stream access logs in the <Link to="/admin">Admin Dashboard</Link> for unusual activity.</li>
-        <li><strong>Verify video integrity</strong> — If you suspect tamppered footage, check your CloudNode logs for upload activity you don't recognize.</li>
+        <li><strong>Verify video integrity</strong> — If you suspect tampered footage, check your CloudNode logs for upload activity you don't recognize.</li>
       </ol>
 
       <h3>Compromised User Account</h3>
