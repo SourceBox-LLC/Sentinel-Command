@@ -336,6 +336,18 @@ function IncidentReportModal({ incidentId, onClose, onUpdated, onDeleted }) {
   const [error, setError] = useState(null)
   const [acting, setActing] = useState(null)
   const [lightbox, setLightbox] = useState(null)
+  // Edit-mode state.  When `editing` is true, the header severity
+  // badge becomes a dropdown, the Summary <p> becomes a textarea,
+  // the Full Report markdown becomes a larger textarea, and the
+  // action row swaps the status buttons for Save / Cancel.  We
+  // keep an `editFields` snapshot so Cancel can revert without a
+  // re-fetch.
+  const [editing, setEditing] = useState(false)
+  const [editFields, setEditFields] = useState({
+    severity: "",
+    summary: "",
+    report: "",
+  })
 
   // Load detail
   useEffect(() => {
@@ -379,6 +391,55 @@ function IncidentReportModal({ incidentId, onClose, onUpdated, onDeleted }) {
       const updated = await patchIncident(getToken, incidentId, { status: newStatus })
       setIncident(updated)
       showToast(`Incident ${STATUS_LABELS[newStatus].toLowerCase()}`, "success")
+      if (onUpdated) onUpdated()
+    } catch (err) {
+      showToast(err.message || "Failed to update incident", "error")
+    } finally {
+      setActing(null)
+    }
+  }
+
+  const handleEditStart = () => {
+    if (!incident) return
+    setEditFields({
+      severity: incident.severity || "medium",
+      summary: incident.summary || "",
+      report: incident.report || "",
+    })
+    setEditing(true)
+  }
+
+  const handleEditCancel = () => {
+    setEditing(false)
+    // editFields stays in state but isn't read again until next edit
+  }
+
+  const handleEditSave = async () => {
+    if (!incident) return
+    // Send only the fields that actually changed — avoids overwriting
+    // server-side updates we didn't know about (motion-cooldown patch
+    // race etc.) and keeps the audit log clean.
+    const patch = {}
+    if (editFields.severity && editFields.severity !== incident.severity) {
+      patch.severity = editFields.severity
+    }
+    if (editFields.summary !== (incident.summary || "")) {
+      patch.summary = editFields.summary
+    }
+    if (editFields.report !== (incident.report || "")) {
+      patch.report = editFields.report
+    }
+    if (Object.keys(patch).length === 0) {
+      // No changes — just exit edit mode silently.
+      setEditing(false)
+      return
+    }
+    setActing("save")
+    try {
+      const updated = await patchIncident(getToken, incidentId, patch)
+      setIncident(updated)
+      setEditing(false)
+      showToast("Incident updated", "success")
       if (onUpdated) onUpdated()
     } catch (err) {
       showToast(err.message || "Failed to update incident", "error")
@@ -453,9 +514,26 @@ function IncidentReportModal({ incidentId, onClose, onUpdated, onDeleted }) {
           <>
             <div className="modal-header incident-modal-header">
               <div className="incident-modal-title">
-                <span className={`incident-severity-badge incident-severity-${incident.severity}`}>
-                  {SEVERITY_LABELS[incident.severity] || incident.severity}
-                </span>
+                {editing ? (
+                  <select
+                    className={`incident-severity-edit incident-severity-${editFields.severity}`}
+                    value={editFields.severity}
+                    onChange={(e) =>
+                      setEditFields((f) => ({ ...f, severity: e.target.value }))
+                    }
+                    disabled={acting !== null}
+                    aria-label="Severity"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                ) : (
+                  <span className={`incident-severity-badge incident-severity-${incident.severity}`}>
+                    {SEVERITY_LABELS[incident.severity] || incident.severity}
+                  </span>
+                )}
                 <h2>{incident.title}</h2>
               </div>
               <button className="modal-close" onClick={onClose}>&times;</button>
@@ -481,15 +559,41 @@ function IncidentReportModal({ incidentId, onClose, onUpdated, onDeleted }) {
 
               <section className="incident-section">
                 <h3 className="incident-section-title">Summary</h3>
-                <p className="incident-summary-text">{incident.summary}</p>
+                {editing ? (
+                  <textarea
+                    className="incident-edit-textarea incident-edit-summary"
+                    value={editFields.summary}
+                    onChange={(e) =>
+                      setEditFields((f) => ({ ...f, summary: e.target.value }))
+                    }
+                    rows={3}
+                    placeholder="One or two sentences — what was observed."
+                    disabled={acting !== null}
+                  />
+                ) : (
+                  <p className="incident-summary-text">{incident.summary}</p>
+                )}
               </section>
 
-              {incident.report && (
+              {(incident.report || editing) && (
                 <section className="incident-section">
                   <h3 className="incident-section-title">Full Report</h3>
-                  <div className="incident-report-body">
-                    {renderMarkdown(incident.report)}
-                  </div>
+                  {editing ? (
+                    <textarea
+                      className="incident-edit-textarea incident-edit-report"
+                      value={editFields.report}
+                      onChange={(e) =>
+                        setEditFields((f) => ({ ...f, report: e.target.value }))
+                      }
+                      rows={12}
+                      placeholder="Long-form markdown report — observations, evidence walk-through, conclusions, recommended actions. Markdown formatting (## headings, **bold**, lists) renders in view mode."
+                      disabled={acting !== null}
+                    />
+                  ) : (
+                    <div className="incident-report-body">
+                      {renderMarkdown(incident.report)}
+                    </div>
+                  )}
                 </section>
               )}
 
@@ -566,53 +670,86 @@ function IncidentReportModal({ incidentId, onClose, onUpdated, onDeleted }) {
             </div>
 
             <div className="modal-actions incident-modal-actions">
-              {incident.status !== "dismissed" && (
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => handleStatus("dismissed")}
-                  disabled={acting !== null}
-                >
-                  {acting === "dismissed" ? "Dismissing…" : "Dismiss"}
-                </button>
+              {editing ? (
+                /* Edit-mode actions: Cancel reverts the local field
+                   snapshot without a re-fetch; Save sends only the
+                   diff via patchIncident.  Lifecycle-status buttons
+                   and Delete are hidden in edit mode to keep the
+                   action surface unambiguous. */
+                <>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={handleEditCancel}
+                    disabled={acting !== null}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn btn-primary incident-modal-save-btn"
+                    onClick={handleEditSave}
+                    disabled={acting !== null}
+                  >
+                    {acting === "save" ? "Saving…" : "Save changes"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  {incident.status !== "dismissed" && (
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => handleStatus("dismissed")}
+                      disabled={acting !== null}
+                    >
+                      {acting === "dismissed" ? "Dismissing…" : "Dismiss"}
+                    </button>
+                  )}
+                  {incident.status === "open" && (
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => handleStatus("acknowledged")}
+                      disabled={acting !== null}
+                    >
+                      {acting === "acknowledged" ? "Acknowledging…" : "Acknowledge"}
+                    </button>
+                  )}
+                  {incident.status !== "resolved" && (
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => handleStatus("resolved")}
+                      disabled={acting !== null}
+                    >
+                      {acting === "resolved" ? "Resolving…" : "Mark Resolved"}
+                    </button>
+                  )}
+                  {(incident.status === "resolved" || incident.status === "dismissed") && (
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => handleStatus("open")}
+                      disabled={acting !== null}
+                    >
+                      {acting === "open" ? "Reopening…" : "Reopen"}
+                    </button>
+                  )}
+                  {/* Edit + Delete sit on the right side, visually
+                      separated from the lifecycle-status buttons. */}
+                  <button
+                    className="btn btn-secondary incident-modal-edit-btn"
+                    onClick={handleEditStart}
+                    disabled={acting !== null}
+                    title="Edit severity, summary, or report body"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    className="btn btn-danger"
+                    onClick={handleDelete}
+                    disabled={acting !== null}
+                    title="Permanently delete this incident and all evidence"
+                  >
+                    {acting === "delete" ? "Deleting…" : "Delete"}
+                  </button>
+                </>
               )}
-              {incident.status === "open" && (
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => handleStatus("acknowledged")}
-                  disabled={acting !== null}
-                >
-                  {acting === "acknowledged" ? "Acknowledging…" : "Acknowledge"}
-                </button>
-              )}
-              {incident.status !== "resolved" && (
-                <button
-                  className="btn btn-primary"
-                  onClick={() => handleStatus("resolved")}
-                  disabled={acting !== null}
-                >
-                  {acting === "resolved" ? "Resolving…" : "Mark Resolved"}
-                </button>
-              )}
-              {(incident.status === "resolved" || incident.status === "dismissed") && (
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => handleStatus("open")}
-                  disabled={acting !== null}
-                >
-                  {acting === "open" ? "Reopening…" : "Reopen"}
-                </button>
-              )}
-              {/* Permanent delete — sits on the right of the actions row,
-                  visually separated from the lifecycle-status buttons.
-                  Cascades to all evidence (snapshots, clips, observations). */}
-              <button
-                className="btn btn-danger incident-modal-delete-btn"
-                onClick={handleDelete}
-                disabled={acting !== null}
-                title="Permanently delete this incident and all evidence"
-              >
-                {acting === "delete" ? "Deleting…" : "Delete"}
-              </button>
             </div>
           </>
         ) : null}

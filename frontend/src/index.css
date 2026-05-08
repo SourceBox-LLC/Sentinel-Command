@@ -8297,12 +8297,81 @@ body {
     flex-wrap: wrap;
 }
 
-/* Push the destructive delete button to the right of the action
-   row so it's visually separated from the safe lifecycle-status
-   buttons (Dismiss / Acknowledge / Mark Resolved / Reopen).  Stops
-   muscle-memory clicks on the wrong button. */
-.incident-modal-delete-btn {
+/* The right-aligned button group.  Whichever class lands first in
+   the row gets the auto margin so everything to its right hugs the
+   right edge of the action area.  In view mode this is the Edit
+   button (Edit + Delete sit together at the right); in edit mode
+   it's the Save button (Save sits on the right of Cancel).  Stops
+   muscle-memory clicks on the wrong button — destructive / bulk
+   actions are visually separated from the safe lifecycle-status
+   buttons (Dismiss / Acknowledge / Mark Resolved / Reopen). */
+.incident-modal-edit-btn,
+.incident-modal-save-btn {
     margin-left: auto;
+}
+
+/* Editable severity dropdown that replaces the static badge in
+   the modal header when in edit mode.  Picks up the same color
+   treatment per severity as the badge classes via the matching
+   .incident-severity-{level} class on the <select>. */
+.incident-severity-edit {
+    appearance: none;
+    -webkit-appearance: none;
+    padding: 0.35rem 1.75rem 0.35rem 0.7rem;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+    background-size: 12px;
+}
+
+.incident-severity-edit:focus-visible {
+    outline: 2px solid var(--accent-purple);
+    outline-offset: 2px;
+}
+
+/* Edit-mode textarea styling — full width, monospace stack so
+   markdown formatting is readable as you type.  Matches the dark
+   form-input treatment used elsewhere. */
+.incident-edit-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.7rem 0.85rem;
+    background: var(--bg-input, rgba(255, 255, 255, 0.03));
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.92rem;
+    line-height: 1.5;
+    resize: vertical;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.incident-edit-textarea:focus-visible {
+    outline: none;
+    border-color: var(--accent-purple);
+    background: rgba(168, 85, 247, 0.04);
+}
+
+.incident-edit-textarea:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.incident-edit-report {
+    /* Markdown report can run long — slightly tighter font + monospace
+       stack helps the writer see structure (headings, bullets) as they
+       go.  Falls back to inherit if monospace stack fails. */
+    font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 0.86rem;
+    min-height: 240px;
 }
 
 /* Lightbox */
