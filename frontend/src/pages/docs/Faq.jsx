@@ -101,6 +101,41 @@ function Faq() {
         the Command Center is operated by us.
       </p>
 
+      <h3>What's Sentinel and how does the run cap work?</h3>
+      <p>
+        Sentinel is the optional AI agent that auto-investigates motion events
+        and incident_opened notifications — it views the camera, decides whether
+        what it sees warrants attention, files an incident report with snapshot
+        evidence, and writes a summary. One "run" = one investigation,
+        regardless of how many tool calls it took. Pro: 100 runs/month. Pro
+        Plus: 500 runs/month. Caps reset on the 1st of each calendar month.
+        When you hit the cap, dispatch pauses for the rest of the month — your
+        recordings, motion alerts, and dashboard playback all keep working as
+        normal. See the <a href="#sentinel">Sentinel section</a>.
+      </p>
+
+      <h3>Does Sentinel send my footage to a cloud LLM?</h3>
+      <p>
+        Yes — only when it fires, only the snapshots it actively investigates.
+        Sentinel passes a JPEG from <code>view_camera</code> to the configured
+        LLM endpoint (Ollama Cloud by default) so the model can see what
+        triggered the run. The persistent video archive (your recordings) still
+        stays on your CloudNode and never syncs to our cloud. If you don't want
+        any footage leaving your hardware, leave Sentinel disabled — motion
+        detection, recording, and notifications all work without it.
+      </p>
+
+      <h3>How is Sentinel scoped per camera and per time-of-day?</h3>
+      <p>
+        From the <a href="/sentinel">Sentinel page</a>: per-camera include /
+        exclude (cameras default to in-scope so newly-added cameras aren't
+        silently skipped), a per-camera motion cooldown (default 5 min), and a
+        schedule mode — <em>always</em>, <em>scheduled</em> (HH:MM window on
+        selected days, in your org's timezone, wrap-around supported), or{" "}
+        <em>off</em>. The manual "Run now" button skips the schedule + scope
+        checks but still counts against the monthly cap.
+      </p>
+
       <h3>Which MCP clients does SourceBox Sentry work with?</h3>
       <p>
         Any MCP client that supports the streamable-HTTP transport. Tested with Claude

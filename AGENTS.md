@@ -146,11 +146,14 @@ frontend/
     │   ├── LandingPage.jsx           # Public landing page
     │   ├── DashboardPage.jsx         # Camera grid with status cards + controls
     │   ├── SettingsPage.jsx          # Nodes, groups, recording, danger zone
-    │   ├── McpPage.jsx               # MCP keys (scope picker) + activity + incident list
+    │   ├── McpPage.jsx               # MCP keys (scope picker) + activity (live SSE)
+    │   ├── IncidentsPage.jsx         # AI- and human-filed incident reports + create flow
     │   ├── AdminPage.jsx             # Stream logs, MCP activity, audit trail
     │   ├── PricingPage.jsx           # Public pricing tiers
     │   ├── SecurityPage.jsx          # Public privacy + security claims page (/security)
-    │   ├── SentinelPage.jsx          # Public marketing page for the Sentinel AI agent
+    │   ├── SentinelPage.jsx          # Sentinel agent dashboard — config (triggers,
+    │   │                              #   schedule, cooldown, scope), run history,
+    │   │                              #   manual "Run now"
     │   ├── LegalPage.jsx             # /legal/:page — Terms, Privacy, etc.
     │   ├── DocsPage.jsx              # /docs — slim composition shell that renders 19 sections
     │   ├── docs/                     # one file per <section> on /docs (extracted from the

@@ -13,6 +13,19 @@ function MotionDetection() {
         much each frame differs from the previous one; above-threshold frames fire a
         <code>motion_detected</code> event.
       </p>
+      <div className="docs-callout docs-callout-info">
+        <p>
+          <span className="docs-callout-icon">🛡️</span>
+          <span>
+            On Pro / Pro Plus orgs with <a href="#sentinel">Sentinel</a>{" "}
+            configured, motion events also dispatch an autonomous AI
+            investigation — the agent looks at the camera, decides whether
+            the scene warrants attention, and (if so) files an incident with
+            snapshot evidence. Sentinel has its own per-camera cooldown that's
+            separate from the FFmpeg-level one below.
+          </span>
+        </p>
+      </div>
 
       <h3>How it works</h3>
       <ol>

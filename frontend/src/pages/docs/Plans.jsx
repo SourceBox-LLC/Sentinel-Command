@@ -38,6 +38,7 @@ function Plans() {
             <tr><td>Danger-zone tools (log wipe, full reset)</td><td>—</td><td>Yes</td><td>Yes</td></tr>
             <tr><td>MCP integration</td><td>—</td><td>Yes</td><td>Yes</td></tr>
             <tr><td>MCP rate limit (per key)</td><td>—</td><td>30 / min · 5,000 / day</td><td>120 / min · 30,000 / day</td></tr>
+            <tr><td><a href="#sentinel">Sentinel AI agent</a></td><td>—</td><td><strong>100 runs / month</strong></td><td><strong>500 runs / month</strong></td></tr>
             <tr><td>Priority support</td><td>—</td><td>—</td><td>Best-effort priority</td></tr>
           </tbody>
         </table>
@@ -61,8 +62,9 @@ function Plans() {
         <li><strong>Viewer-hour cap</strong> — enforced on each HLS segment serve. The dashboard shows a live usage gauge with warn/full states at 80% / 100%.</li>
         <li><strong>Camera / node limits</strong> — when a node registers and you're at your camera cap, additional cameras are skipped with HTTP 402 and a <code>plan_limit_hit</code> detail. They are preserved in the database (soft-disable, not deletion) so upgrading restores them instantly.</li>
         <li><strong>SSE connection cap</strong> — per-org concurrent live-dashboard connections are capped per tier. Hitting the cap returns HTTP 429; close unused tabs or upgrade.</li>
-        <li><strong>Feature gates</strong> — admin dashboard, danger zone, and MCP require Pro or Pro Plus.</li>
+        <li><strong>Feature gates</strong> — admin dashboard, danger zone, MCP, and Sentinel all require Pro or Pro Plus.</li>
         <li><strong>MCP rate limits</strong> — enforced per API key as a sliding window: a per-minute cap for burst control and a 24-hour cap that catches runaway automation loops.</li>
+        <li><strong>Sentinel run cap</strong> — enforced on dispatch. Hits the cap → motion + incident_opened triggers stop firing new runs and the manual "Run now" button returns 429 until the 1st of next month. One run = one investigation regardless of how many tool calls it took. See <a href="#sentinel">Sentinel</a>.</li>
         <li><strong>Log retention</strong> — stream access logs, MCP activity, audit logs, motion events, and notifications are automatically deleted after the per-tier retention window (a nightly cleanup task iterates orgs and applies each org's tier).</li>
       </ul>
 

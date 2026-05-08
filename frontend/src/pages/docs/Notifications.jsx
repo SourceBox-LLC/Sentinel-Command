@@ -26,6 +26,21 @@ function Notifications() {
         </figcaption>
       </figure>
 
+      <div className="docs-callout docs-callout-info">
+        <p>
+          <span className="docs-callout-icon">🛡️</span>
+          <span>
+            On Pro / Pro Plus orgs with the <a href="#sentinel">Sentinel agent</a>{" "}
+            configured, two of the kinds below — <strong>motion</strong> and{" "}
+            <strong>incident_created</strong> — also dispatch an autonomous
+            agent run that investigates the event and may file an incident
+            report. Sentinel reads the same per-camera scope, schedule, and
+            cooldown you set on the Sentinel page, independent of these email
+            toggles.
+          </span>
+        </p>
+      </div>
+
       <h3>What triggers a notification</h3>
       <ul>
         <li><strong>Node offline</strong> — Command Center hasn't received a heartbeat from a node for 90 seconds.</li>

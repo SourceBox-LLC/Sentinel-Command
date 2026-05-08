@@ -113,8 +113,10 @@ function ApiReference() {
 
       <h3>Incident Reports</h3>
       <p>
-        AI-generated incident reports written by the MCP agent and reviewed by
-        admins from the dashboard. All endpoints require admin permission.
+        AI-generated incident reports (written by the <a href="#sentinel">Sentinel
+        agent</a> or by direct MCP-API calls) and human-filed reports — all
+        reviewed and managed from the dashboard. Endpoints require admin
+        permission.
       </p>
 
       <div className="docs-endpoint"><span className="docs-endpoint-method get">GET</span><span className="docs-endpoint-path">/api/incidents</span></div>
@@ -146,6 +148,40 @@ function ApiReference() {
 
       <div className="docs-endpoint"><span className="docs-endpoint-method get">GET</span><span className="docs-endpoint-path">/api/health/detailed</span></div>
       <p>Verbose status — process uptime, DB ping latency in ms, HLS cache occupancy, pending viewer-usage flush queue depth, SSE subscriber counts. Overall <code>status</code> rolls up to <code>healthy</code> / <code>degraded</code> / <code>unhealthy</code>. Public on purpose so a status-page tool can poll it from off-net, but every value is a number — never an org, camera, or user identifier (pinned by a privacy regression test).</p>
+
+      <h3>Sentinel Endpoints</h3>
+      <p>
+        Per-org config and run lifecycle for the <a href="#sentinel">Sentinel
+        AI agent</a>. Admin endpoints surface plan-gated config and run
+        history to the dashboard. Agent-side endpoints are gated by the
+        shared <code>SENTINEL_AGENT_KEY</code> service-to-service header
+        rather than a user JWT — they're called by the agent process
+        itself, not by humans.
+      </p>
+
+      <div className="docs-endpoint"><span className="docs-endpoint-method get">GET</span><span className="docs-endpoint-path">/api/sentinel/config</span></div>
+      <p>Get the org's Sentinel config plus a <code>plan_gated</code> flag and the plan-aware monthly cap (100 for Pro, 500 for Pro Plus, 0 for free / past-due-too-long). Always returns 200 — non-eligible orgs get a read-only payload so the frontend can render the upgrade banner.</p>
+
+      <div className="docs-endpoint"><span className="docs-endpoint-method patch">PATCH</span><span className="docs-endpoint-path">/api/sentinel/config</span></div>
+      <p>Partial update — toggles, schedule mode + window + active days, motion cooldown, camera scope. Pro / Pro Plus only (returns 402 otherwise).</p>
+
+      <div className="docs-endpoint"><span className="docs-endpoint-method get">GET</span><span className="docs-endpoint-path">/api/sentinel/runs</span></div>
+      <p>List recent runs with stats — runs today / this month / total / pending / incidents filed, plus the plan-aware <code>monthly_cap</code> and <code>remaining_this_month</code>. Supports <code>limit</code>, <code>offset</code>, <code>trigger</code>, and <code>since</code> query params.</p>
+
+      <div className="docs-endpoint"><span className="docs-endpoint-method get">GET</span><span className="docs-endpoint-path">/api/sentinel/runs/{"{run_id}"}</span></div>
+      <p>Single run with the full agent tool trace — every tool call with arguments and (truncated) results.</p>
+
+      <div className="docs-endpoint"><span className="docs-endpoint-method post">POST</span><span className="docs-endpoint-path">/api/sentinel/runs/manual</span></div>
+      <p>Operator "Run now" — creates a pending manual run with an optional prompt and camera. Skips the schedule + scope gates (the operator overrode them by clicking) but still cap-enforced; returns 429 with the plan-aware cap when the org is at or over its monthly limit.</p>
+
+      <div className="docs-endpoint"><span className="docs-endpoint-method get">GET</span><span className="docs-endpoint-path">/api/sentinel/runs/pending</span></div>
+      <p>Service-to-service. The Sentinel agent polls this on wakeup to drain pending runs across all orgs (FIFO, oldest-first). Auth: <code>X-Sentinel-Agent-Key</code> header.</p>
+
+      <div className="docs-endpoint"><span className="docs-endpoint-method post">POST</span><span className="docs-endpoint-path">/api/sentinel/runs/{"{run_id}"}/start</span></div>
+      <p>Service-to-service. Agent claims a pending run — transitions <code>pending → running</code>. Idempotent.</p>
+
+      <div className="docs-endpoint"><span className="docs-endpoint-method post">POST</span><span className="docs-endpoint-path">/api/sentinel/runs/{"{run_id}"}/complete</span></div>
+      <p>Service-to-service. Agent posts the terminal outcome — <code>incident</code> (with severity + incident_id), <code>no_action</code>, or <code>error</code> — plus the full tool trace. Cross-checks that <code>incident_id</code> belongs to the run's org. Idempotent on terminal rows.</p>
 
       <h3>MCP Endpoint</h3>
       <p>Streamable HTTP transport at <code>/mcp</code>. Authenticate with <code>Authorization: Bearer osc_...</code> header.</p>
