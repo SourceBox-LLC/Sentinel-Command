@@ -1665,6 +1665,91 @@
   font-size: 0.9rem;
 }
 
+/* MCP tool category accordion — collapsible <details> wrapping
+   each h4-grouped tool list under "Available Tools".  Uses native
+   <details>/<summary> for keyboard accessibility + zero JS;
+   custom marker (chevron span) + hidden default marker. */
+.docs-mcp-category {
+  margin: 0.6rem 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-card);
+  overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+
+.docs-mcp-category[open] {
+  border-color: rgba(168, 85, 247, 0.32);
+}
+
+.docs-mcp-category > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  font-weight: 600;
+  color: var(--text-primary);
+  transition: background 0.15s ease;
+}
+
+/* Hide the default disclosure triangle (Chrome / Safari / Firefox). */
+.docs-mcp-category > summary::-webkit-details-marker { display: none; }
+.docs-mcp-category > summary::marker { content: ""; }
+
+.docs-mcp-category > summary:hover {
+  background: rgba(168, 85, 247, 0.06);
+}
+
+.docs-mcp-category > summary:focus-visible {
+  outline: 2px solid var(--accent-purple);
+  outline-offset: -2px;
+}
+
+.docs-mcp-category-chevron {
+  display: inline-block;
+  width: 14px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.docs-mcp-category[open] > summary > .docs-mcp-category-chevron {
+  transform: rotate(90deg);
+}
+
+.docs-mcp-category-title {
+  flex: 1;
+  font-size: 1.05rem;
+}
+
+.docs-mcp-category-count {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 0.2rem 0.55rem;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.docs-mcp-category > .docs-mcp-tools,
+.docs-mcp-category > .docs-mcp-category-intro {
+  padding: 0 1rem 1rem;
+}
+
+.docs-mcp-category > .docs-mcp-category-intro {
+  padding-top: 0.25rem;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
 /* Plans Table */
 .docs-plans-table {
   overflow-x: auto;

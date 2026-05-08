@@ -110,23 +110,34 @@ function Mcp() {
         READ tools return structured data, and WRITE tools create or update state.
       </p>
 
-      <h4>Live viewing</h4>
-      <div className="docs-mcp-tools">
-        <div className="docs-endpoint">
-          <span className="docs-endpoint-method get">VISUAL</span>
-          <span className="docs-endpoint-path">view_camera</span>
-        </div>
-        <p>See what a camera sees <em>right now</em> — returns a single live JPEG the agent can actually look at. Use for a one-shot situational check ("is anyone in the workshop?"). For motion or change over time, use <code>watch_camera</code>. To preserve what was seen, follow up with <code>attach_snapshot</code>.</p>
+      <details className="docs-mcp-category" open>
+        <summary>
+          <span className="docs-mcp-category-chevron" aria-hidden="true">▶</span>
+          <span className="docs-mcp-category-title">Live viewing</span>
+          <span className="docs-mcp-category-count">2 tools</span>
+        </summary>
+        <div className="docs-mcp-tools">
+          <div className="docs-endpoint">
+            <span className="docs-endpoint-method get">VISUAL</span>
+            <span className="docs-endpoint-path">view_camera</span>
+          </div>
+          <p>See what a camera sees <em>right now</em> — returns a single live JPEG the agent can actually look at. Use for a one-shot situational check ("is anyone in the workshop?"). For motion or change over time, use <code>watch_camera</code>. To preserve what was seen, follow up with <code>attach_snapshot</code>.</p>
 
-        <div className="docs-endpoint">
-          <span className="docs-endpoint-method get">VISUAL</span>
-          <span className="docs-endpoint-path">watch_camera</span>
+          <div className="docs-endpoint">
+            <span className="docs-endpoint-method get">VISUAL</span>
+            <span className="docs-endpoint-path">watch_camera</span>
+          </div>
+          <p>Burst of 2–10 snapshots from one camera, 1–30s apart. Use when a single <code>view_camera</code> frame isn't enough — to confirm whether a subject is moving, whether motion is sustained or fleeting, or whether something is returning to a scene. For longer evidence retention on an incident, use <code>attach_clip</code>.</p>
         </div>
-        <p>Burst of 2–10 snapshots from one camera, 1–30s apart. Use when a single <code>view_camera</code> frame isn't enough — to confirm whether a subject is moving, whether motion is sustained or fleeting, or whether something is returning to a scene. For longer evidence retention on an incident, use <code>attach_clip</code>.</p>
-      </div>
+      </details>
 
-      <h4>Cameras, nodes &amp; groups</h4>
-      <div className="docs-mcp-tools">
+      <details className="docs-mcp-category">
+        <summary>
+          <span className="docs-mcp-category-chevron" aria-hidden="true">▶</span>
+          <span className="docs-mcp-category-title">Cameras, nodes &amp; groups</span>
+          <span className="docs-mcp-category-count">6 tools</span>
+        </summary>
+        <div className="docs-mcp-tools">
         <div className="docs-endpoint">
           <span className="docs-endpoint-method get">READ</span>
           <span className="docs-endpoint-path">list_cameras</span>
@@ -162,10 +173,16 @@ function Mcp() {
           <span className="docs-endpoint-path">list_camera_groups</span>
         </div>
         <p>Camera groups defined in the dashboard — user-defined zones (e.g. "Front yard", "Workshop") that bundle cameras together. Use when the user names a place and you need to find which cameras live there.</p>
-      </div>
+        </div>
+      </details>
 
-      <h4>Settings, logs &amp; system</h4>
-      <div className="docs-mcp-tools">
+      <details className="docs-mcp-category">
+        <summary>
+          <span className="docs-mcp-category-chevron" aria-hidden="true">▶</span>
+          <span className="docs-mcp-category-title">Settings, logs &amp; system</span>
+          <span className="docs-mcp-category-count">5 tools</span>
+        </summary>
+        <div className="docs-mcp-tools">
         <div className="docs-endpoint">
           <span className="docs-endpoint-method get">READ</span>
           <span className="docs-endpoint-path">get_camera_recording_policy</span>
@@ -195,15 +212,21 @@ function Mcp() {
           <span className="docs-endpoint-path">get_system_status</span>
         </div>
         <p>High-level snapshot of the org's deployment: camera count with online/offline split, node count with online/offline split, and the active plan. Good first call to orient before drilling in. For per-camera detail, use <code>list_cameras</code>.</p>
-      </div>
+        </div>
+      </details>
 
-      <h4>Incident reports</h4>
-      <p className="docs-subtle">
-        Let the agent file, investigate, and read back structured incident reports.
-        Everything written by these tools shows up on the <strong>Incident Reports</strong> page
-        of the dashboard, alongside human-filed reports, for review.
-      </p>
-      <div className="docs-mcp-tools">
+      <details className="docs-mcp-category">
+        <summary>
+          <span className="docs-mcp-category-chevron" aria-hidden="true">▶</span>
+          <span className="docs-mcp-category-title">Incident reports</span>
+          <span className="docs-mcp-category-count">10 tools</span>
+        </summary>
+        <p className="docs-subtle docs-mcp-category-intro">
+          Let the agent file, investigate, and read back structured incident reports.
+          Everything written by these tools shows up on the <strong>Incident Reports</strong> page
+          of the dashboard, alongside human-filed reports, for review.
+        </p>
+        <div className="docs-mcp-tools">
         <div className="docs-endpoint">
           <span className="docs-endpoint-method post">WRITE</span>
           <span className="docs-endpoint-path">create_incident</span>
@@ -263,7 +286,8 @@ function Mcp() {
           <span className="docs-endpoint-path">get_incident_clip</span>
         </div>
         <p>Read metadata about a clip (size, approximate duration, mime, source camera) previously attached with <code>attach_clip</code>. Agents can't watch video, but this confirms the clip is saved and tells the human reviewer what to expect.</p>
-      </div>
+        </div>
+      </details>
     </section>
   )
 }
