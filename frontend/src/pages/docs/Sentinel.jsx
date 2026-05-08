@@ -157,32 +157,34 @@ function Sentinel() {
         One "run" = one investigation, regardless of how many tool calls it took. Caps reset on the 1st
         of each calendar month in UTC.
       </p>
-      <table>
-        <thead>
-          <tr>
-            <th>Plan</th>
-            <th>Monthly runs</th>
-            <th>Roughly</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Free</td>
-            <td>0 — Sentinel locked</td>
-            <td>n/a</td>
-          </tr>
-          <tr>
-            <td>Pro</td>
-            <td>100</td>
-            <td>~3 / day, casual home use</td>
-          </tr>
-          <tr>
-            <td>Pro Plus</td>
-            <td>500</td>
-            <td>~16 / day, commercial-shaped</td>
-          </tr>
-        </tbody>
-      </table>
+      <div className="docs-plans-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Plan</th>
+              <th>Monthly runs</th>
+              <th>Roughly</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Free</td>
+              <td>0 — Sentinel locked</td>
+              <td>n/a</td>
+            </tr>
+            <tr>
+              <td>Pro</td>
+              <td><strong>100</strong></td>
+              <td>~3 / day, casual home use</td>
+            </tr>
+            <tr>
+              <td>Pro Plus</td>
+              <td><strong>500</strong></td>
+              <td>~16 / day, commercial-shaped</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <p>
         When you hit the cap, dispatch pauses for the rest of the month. There's no overage billing —
         existing recordings, motion alerts, and dashboard playback all keep working as normal. Need
@@ -215,15 +217,24 @@ function Sentinel() {
       </ul>
 
       <h3>Privacy and data flow</h3>
-      <p>
-        Unlike the rest of SourceBox Sentry, Sentinel <em>does</em> send camera snapshots out of your
-        network — specifically, to whichever LLM endpoint is configured (Ollama Cloud by default).
-        Without that, the model can't see what triggered the run.
-      </p>
+      <div className="docs-callout docs-callout-warning">
+        <p>
+          <span className="docs-callout-icon">⚠️</span>
+          <span>
+            Sentinel is the one part of SourceBox Sentry that sends camera
+            snapshots <em>out of your network</em> — to whichever LLM endpoint
+            is configured (Ollama Cloud by default). Without that the model
+            can't see what triggered the run. <strong>If you don't want any
+            footage leaving your hardware, leave Sentinel disabled</strong> —
+            motion detection, recording, and notifications all work without it.
+          </span>
+        </p>
+      </div>
       <ul>
-        <li>Sentinel only fires on triggers <em>you</em> configure. Disable it and no snapshots leave.</li>
-        <li>Recordings (the persistent video archive) stay on your CloudNode regardless. Sentinel grabs an ephemeral JPEG only at the moment of investigation.</li>
-        <li>The agent runs on hardware we operate (Fly.io, US region). The LLM endpoint is whatever you point <code>OLLAMA_HOST</code> at — the default is Ollama Cloud, but the agent works against a self-hosted Ollama instance just as well.</li>
+        <li><strong>Snapshots only when investigating.</strong> Sentinel grabs an ephemeral JPEG via <code>view_camera</code> at the moment of a run — it doesn't ship a continuous stream. Recordings (the persistent video archive) stay on your CloudNode regardless.</li>
+        <li><strong>Trigger-driven only.</strong> Sentinel fires only on triggers <em>you</em> configure (motion / incident_opened / manual). No background polling, no continuous monitoring.</li>
+        <li><strong>LLM endpoint is yours to point.</strong> The default is Ollama Cloud, but the agent works against a self-hosted Ollama just as well — set <code>OLLAMA_HOST</code> to your own URL and snapshots never leave infrastructure you control.</li>
+        <li><strong>Where the agent runs.</strong> The agent process itself runs on hardware we operate (Fly.io, US region). The auth model is two shared secrets (run-callback + MCP bearer) that scope to whichever org each run was dispatched for.</li>
       </ul>
 
       <h3>Troubleshooting</h3>
