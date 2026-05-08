@@ -1469,15 +1469,6 @@
   color: #f59e0b;
 }
 
-.docs-callout-tip {
-  background: rgba(34, 197, 94, 0.1);
-  border-color: var(--accent-green);
-}
-
-.docs-callout-tip .docs-callout-icon {
-  color: var(--accent-green);
-}
-
 .docs-callout-icon {
   font-size: 1.25rem;
   margin-right: 0.5rem;
@@ -1551,40 +1542,11 @@
   word-break: break-word;
 }
 
-.docs-flow-diagram {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  padding: 1.5rem;
-  background: var(--bg-secondary);
-  border-radius: 8px;
-  margin: 1.5rem 0;
-}
-
-.docs-flow-node {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  padding: 0.5rem 1rem;
-  border-radius: 6px;
-  font-size: 0.875rem;
-}
-
-.docs-flow-node.cloud {
-  border-color: var(--accent-green);
-  color: var(--accent-green);
-}
-
-.docs-flow-arrow {
-  color: var(--text-muted);
-  font-size: 0.75rem;
-}
-
 /* ── Docs diagrams ─────────────────────────────────────────────
    Inline-SVG illustrations embedded in the public docs page. The
-   figure wraps the SVG in a panel that matches .docs-flow-diagram
-   visually so diagrams feel native to the page, and the caption is
-   a small muted line below the illustration.                    */
+   figure wraps the SVG in a panel that visually matches the rest
+   of the docs prose, and the caption is a small muted line below
+   the illustration.                                             */
 .docs-diagram {
   margin: 2rem 0;
   padding: 1.75rem 1.5rem 1.25rem;
@@ -2120,12 +2082,7 @@
   .install-tabs {
     flex-direction: column;
   }
-  
-  .docs-flow-diagram {
-    padding: 1rem;
-    font-size: 0.875rem;
-  }
-  
+
   .docs-resources {
     grid-template-columns: 1fr;
   }
@@ -2535,85 +2492,9 @@
   max-width: 520px;
 }
 
-.landing-privacy-compare {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.75rem;
-  width: 100%;
-  max-width: 520px;
-}
-
-.landing-privacy-card {
-  background: var(--bg-card, rgba(255, 255, 255, 0.04));
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
-  border-radius: 12px;
-  padding: 1.25rem 1rem;
-}
-
-.landing-privacy-card.us {
-  border-color: rgba(34, 197, 94, 0.4);
-  background: linear-gradient(180deg, rgba(34, 197, 94, 0.08), rgba(34, 197, 94, 0.02));
-}
-
-.landing-privacy-card.them {
-  border-color: rgba(239, 68, 68, 0.3);
-  background: linear-gradient(180deg, rgba(239, 68, 68, 0.05), rgba(239, 68, 68, 0.01));
-}
-
-.landing-privacy-card-label {
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 0.85rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.landing-privacy-card ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-}
-
-.landing-privacy-card li {
-  padding: 0.4rem 0;
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  line-height: 1.4;
-}
-
-.landing-privacy-card .chk {
-  flex-shrink: 0;
-  width: 1.1rem;
-  font-weight: 700;
-}
-
-.landing-privacy-card .chk.yes {
-  color: var(--accent-green, #22c55e);
-}
-
-.landing-privacy-card .chk.no {
-  color: #ef4444;
-}
-
 @media (max-width: 900px) {
   .landing-privacy-grid {
     grid-template-columns: 1fr;
     gap: 2.5rem;
-  }
-
-  .landing-privacy-compare {
-    max-width: 100%;
-  }
-}
-
-@media (max-width: 480px) {
-  .landing-privacy-compare {
-    grid-template-columns: 1fr;
   }
 }
