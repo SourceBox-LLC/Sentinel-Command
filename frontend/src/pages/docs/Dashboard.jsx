@@ -9,7 +9,7 @@ function Dashboard() {
           <source srcSet="/images/dashboard-ia.webp" type="image/webp" />
           <img
             src="/images/dashboard-ia.jpg"
-            alt="Dashboard information architecture tree. Root: Dashboard (opensentry-command.fly.dev). Four children: Live view (Camera tiles, Fullscreen + multi-view, Snapshot capture, Manual record); Settings — admin-only (Node Management, Recording Policy, Organization, Subscription, Danger Zone); Admin — admin-only (Stream Access Logs, Usage Statistics, MCP Tool Activity, System Health); Incidents (Open incidents, Evidence viewer, Markdown reports, Triage actions)."
+            alt="Dashboard information architecture tree. Root: Dashboard (opensentry-command.fly.dev). Four children: Live view (Camera tiles, Fullscreen, Snapshot capture, Manual record); Settings — admin-only (Node Management, Recording Policy, Organization, Subscription, Danger Zone); Admin — admin-only (Stream Access Logs, Usage Statistics, MCP Tool Activity, System Health); Incidents (Open incidents, Evidence viewer, Markdown reports, Triage actions)."
             className="docs-diagram-image"
             width="1920"
             height="1080"
@@ -23,16 +23,16 @@ function Dashboard() {
 
       <h3>Live view</h3>
       <p>
-        The default page after sign-in. Every camera appears as a tile with a status
-        pill (online, offline, or stale) and a live HLS player you can expand. Tiles
-        are grouped by camera group and each tile shows its node name for quick
+        The default page after sign-in. Every camera appears as a tile with a live
+        status pill (online, recording, starting, offline, suspended, etc.) and an
+        HLS player you can expand. Each tile shows its node name for quick
         identification.
       </p>
       <ul>
         <li><strong>Live Streams</strong> — HLS video served same-origin through the Command Center proxy, JWT-authenticated per viewer. Starts at the live edge.</li>
         <li><strong>Snapshots</strong> — Click the camera icon to capture a single JPEG and save it on the node. Shows up in the node's snapshots list.</li>
         <li><strong>Recording</strong> — Manual start/stop per camera. Recordings are stored locally on the node in the encrypted SQLite database.</li>
-        <li><strong>Fullscreen + multi-view</strong> — Click a tile to expand to full screen, or select multiple tiles to watch side-by-side.</li>
+        <li><strong>Fullscreen</strong> — Click a tile to expand to full screen.</li>
       </ul>
 
       <h3>Settings</h3>

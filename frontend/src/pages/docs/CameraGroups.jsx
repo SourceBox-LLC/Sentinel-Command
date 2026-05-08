@@ -1,35 +1,64 @@
-import { Link } from "react-router-dom"
-
-
 function CameraGroups() {
   return (
     <section className="docs-section" id="camera-groups">
       <h2>Camera Groups<a href="#camera-groups" className="docs-anchor">#</a></h2>
       <p>
-        Camera groups are user-defined zones — "Front yard", "Workshop", "Main floor" —
-        that bundle cameras together for filtering, display, and MCP agent navigation.
+        Camera groups are an organizational primitive — "Front yard", "Workshop",
+        "Main floor" — that bundle cameras together so AI agents (and
+        eventually a settings UI) can talk about a location instead of a
+        list of camera IDs.
       </p>
 
-      <h3>Creating a group</h3>
-      <ol>
-        <li>Open <Link to="/settings">Settings</Link> &gt; Camera Groups</li>
-        <li>Click <strong>New Group</strong>, give it a name and a color</li>
-        <li>Drag cameras into the group, or assign a group from the camera's settings drawer</li>
-      </ol>
+      <div className="docs-callout docs-callout-info">
+        <p>
+          <span className="docs-callout-icon">ℹ️</span>
+          <span>
+            <strong>Today, groups are MCP / API-only.</strong> A management
+            UI inside Settings is planned but not yet shipped. Until then,
+            groups are created and assigned via the REST API directly — see
+            below — or simply ignored if you don't have an agent workflow
+            that needs them.
+          </span>
+        </p>
+      </div>
 
-      <h3>What groups do for you</h3>
+      <h3>What groups do today</h3>
       <ul>
-        <li><strong>Live view layout</strong> — The dashboard tile grid is grouped by camera group, so related cameras stay adjacent.</li>
-        <li><strong>Color tagging</strong> — Each group has a color. Tiles and tile borders reflect it so you can read a 20-camera grid at a glance.</li>
-        <li><strong>Filter and search</strong> — Filter the live view or access logs by group name.</li>
-        <li><strong>MCP navigation</strong> — Agents call <code>list_camera_groups</code> to resolve a natural-language location ("check the workshop") to a set of <code>camera_id</code>s.</li>
+        <li>
+          <strong>MCP navigation</strong> — Agents call <code>list_camera_groups</code> to
+          resolve a natural-language location ("check the workshop") to a
+          set of <code>camera_id</code>s. This is the primary use case
+          right now.
+        </li>
+        <li>
+          <strong>Sentinel scoping</strong> — Camera scope on the Sentinel
+          page is per-camera; group-aware scope selectors are on the
+          roadmap.
+        </li>
       </ul>
 
-      <h3>Tips</h3>
+      <h3>Managing groups via the API</h3>
+      <p>
+        With an admin Clerk session token, the following endpoints are
+        available:
+      </p>
       <ul>
-        <li>Name groups by <em>place</em>, not purpose. "Driveway" stays meaningful as cameras come and go; "Vehicle monitoring" doesn't.</li>
-        <li>Use a color system your team recognizes — e.g. red for perimeter, blue for interior, green for delivery zones.</li>
-        <li>A camera can only be in one group. If you need multi-group overlap, duplicate the camera tile in a saved view instead (planned feature).</li>
+        <li><code>GET /api/camera-groups</code> — list groups in your org</li>
+        <li><code>POST /api/camera-groups</code> — create a group (<code>name</code>, <code>color</code>, <code>icon</code>)</li>
+        <li><code>DELETE /api/camera-groups/&#123;id&#125;</code> — delete a group; member cameras are unassigned</li>
+        <li><code>PUT /api/cameras/&#123;camera_id&#125;/group</code> — assign a camera to a group (or pass <code>group_id=null</code> to unassign)</li>
+      </ul>
+
+      <h3>Tips for when the UI lands</h3>
+      <ul>
+        <li>
+          Name groups by <em>place</em>, not purpose. "Driveway" stays
+          meaningful as cameras come and go; "Vehicle monitoring" doesn't.
+        </li>
+        <li>
+          A camera can only be in one group. If you need multi-group
+          overlap, that's a planned feature ("saved views").
+        </li>
       </ul>
     </section>
   )
