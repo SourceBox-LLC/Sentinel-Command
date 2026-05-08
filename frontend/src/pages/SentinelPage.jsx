@@ -537,12 +537,13 @@ function OverviewTab({ enabled, scopeCount, runs, runStats, loadingRuns, onSelec
   const monthCap = runStats.monthly_cap ?? 0
   const monthRuns = runStats.runs_this_month ?? 0
   const usagePct = monthCap > 0 ? Math.min(100, (monthRuns / monthCap) * 100) : 0
-  // Display label for the plan tier — drives the "PRO" / "PRO PLUS"
-  // pill on the allowance widget.  Falls back to PRO since that's
-  // the lower-tier-but-still-eligible plan.
-  const planTierLabel = (planCurrent || "").toLowerCase().includes("plus")
-    ? "PRO PLUS"
-    : "PRO"
+  // Tier pill on the allowance widget.  Derive from the cap itself
+  // rather than passing planCurrent down as a prop — avoids prop
+  // drilling and stays in sync with whatever cap the backend
+  // actually reports.  100 → Pro, 500 → Pro Plus.  When the cap is
+  // 0 the page is plan-gated and OverviewTab isn't rendered, so
+  // this fallback is a defensive default the user shouldn't see.
+  const planTierLabel = monthCap >= 500 ? "PRO PLUS" : "PRO"
 
   return (
     <div className="sentinel-overview">
