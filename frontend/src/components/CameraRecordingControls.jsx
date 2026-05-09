@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useAuth } from "@clerk/clerk-react"
-import { updateCameraRecordingPolicy } from "../services/api"
+import { updateCameraRecordingPolicy, assignCameraGroup } from "../services/api"
 import HelpTooltip from "./HelpTooltip.jsx"
 
 /**
@@ -15,18 +15,42 @@ import HelpTooltip from "./HelpTooltip.jsx"
  * operators record some cameras 24/7 while leaving others off for
  * privacy / storage reasons.
  *
+ * Camera Groups Phase 2 (added 2026-05-09): also hosts the per-camera
+ * Group selector — a small `<select>` that assigns the camera to one
+ * of the org's camera groups.  Groups are managed in
+ * Settings > Camera Groups (Phase 1) and are how AI agents resolve
+ * natural-language locations to camera_ids via the
+ * `list_camera_groups` MCP tool.
+ *
  * Props:
- *   - camera: the camera object (must include `recording_policy`)
+ *   - camera: the camera object (must include `recording_policy` and
+ *     optionally `group_id`)
  *   - onUpdated: optional callback invoked with the new policy after
  *     a successful PATCH; parent uses this to refresh local state
  *     so the toggle is immediately reflected in the card.
+ *   - onGroupChanged: optional callback invoked with the new group_id
+ *     after a successful group assignment.  Same purpose as
+ *     onUpdated, scoped to group changes.
+ *   - groups: array of {id, name, color, icon} for this org's camera
+ *     groups.  Empty array hides the selector entirely (no point
+ *     showing a dropdown with nothing to pick).
+ *   - canManageGroups: false hides the group selector for non-admin
+ *     members (the backend rejects with 403 anyway, but better UX
+ *     to not surface a control they can't use).
  *
  * Optimistic UI: the toggle flips immediately; if the PATCH fails
  * we roll back to the previous state and surface a toast.  Avoids
  * the lag where a user clicks twice because nothing visually
  * changed for half a second.
  */
-function CameraRecordingControls({ camera, onUpdated, timezone }) {
+function CameraRecordingControls({
+  camera,
+  onUpdated,
+  onGroupChanged,
+  timezone,
+  groups = [],
+  canManageGroups = true,
+}) {
   const { getToken } = useAuth()
   const policy = camera.recording_policy || {
     continuous_24_7: false,
@@ -39,6 +63,13 @@ function CameraRecordingControls({ camera, onUpdated, timezone }) {
   // props but diverges briefly during a PATCH-in-flight.
   const [local, setLocal] = useState(policy)
   const [saving, setSaving] = useState(false)
+
+  // Group state mirror — kept separate from `local` because the group
+  // selector posts to a different endpoint and uses a different
+  // optimistic-rollback model.  Treats `null` and `undefined` the same
+  // as "(no group)" — backend stores group_id as nullable FK.
+  const [localGroupId, setLocalGroupId] = useState(camera.group_id ?? null)
+  const [savingGroup, setSavingGroup] = useState(false)
 
   const persist = async (next) => {
     const previous = local
@@ -107,6 +138,35 @@ function CameraRecordingControls({ camera, onUpdated, timezone }) {
     persist({ ...local, [field]: value })
   }
 
+  // Group assignment handler — separate save flow from recording-policy
+  // since it hits a different endpoint.  Optimistic UI: flip the local
+  // selection immediately; on failure roll back and let the parent
+  // know nothing changed.
+  const onChangeGroup = async (e) => {
+    const raw = e.target.value
+    // The "(no group)" option uses an empty-string value; coerce to null
+    // so we send null instead of "" to the backend.
+    const next = raw === "" ? null : Number(raw)
+    if (next === localGroupId) return
+    const previous = localGroupId
+    setLocalGroupId(next)
+    setSavingGroup(true)
+    try {
+      const token = await getToken()
+      await assignCameraGroup(
+        () => Promise.resolve(token),
+        camera.camera_id,
+        next,
+      )
+      if (onGroupChanged) onGroupChanged(next)
+    } catch (err) {
+      console.error("Group assignment failed:", err)
+      setLocalGroupId(previous)
+    } finally {
+      setSavingGroup(false)
+    }
+  }
+
   return (
     <div
       className="camera-recording-controls"
@@ -129,6 +189,53 @@ function CameraRecordingControls({ camera, onUpdated, timezone }) {
       >
         {camera.name || camera.camera_id}
       </div>
+
+      {/* Group selector (Camera Groups Phase 2) — render only when the
+          org has at least one group AND the user can manage them.  No
+          group + admin = small "Create one in Camera Groups above" hint. */}
+      {canManageGroups && groups.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            fontSize: "0.85rem",
+            color: "var(--text-muted, #888)",
+            marginBottom: "0.5rem",
+            gap: "0.5rem",
+          }}
+        >
+          <label
+            htmlFor={`group-select-${camera.camera_id}`}
+            style={{ flexShrink: 0 }}
+          >
+            Group
+            <HelpTooltip label="Help: camera group">
+              Bundle this camera with others in the same physical zone.
+              AI agents (Sentinel, Claude, etc.) use group names to
+              resolve queries like &ldquo;check the workshop&rdquo; into
+              the right set of camera_ids.  Manage groups in
+              Settings &gt; Camera Groups.
+            </HelpTooltip>
+          </label>
+          <select
+            id={`group-select-${camera.camera_id}`}
+            className="form-input camera-group-select"
+            value={localGroupId ?? ""}
+            onChange={onChangeGroup}
+            disabled={savingGroup}
+            aria-label={`Camera group for ${camera.name || camera.camera_id}`}
+          >
+            <option value="">(no group)</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.icon ? `${g.icon} ` : ""}
+                {g.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div
         style={{

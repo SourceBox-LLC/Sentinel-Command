@@ -5207,6 +5207,88 @@ body {
     margin-top: 0.5rem;
 }
 
+/* Group <select> inside CameraRecordingControls (Phase 2). */
+.camera-group-select {
+    flex: 1;
+    min-width: 0;
+    max-width: 200px;
+    padding: 0.4rem 0.6rem;
+    background: var(--bg-primary, #0a0a0a);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.camera-group-select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Group filter row above the dashboard camera grid (Phase 3). */
+.dashboard-group-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 1rem;
+}
+
+.dashboard-group-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.32rem 0.7rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.dashboard-group-pill:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+}
+
+.dashboard-group-pill.active {
+    background: rgba(34, 197, 94, 0.12);
+    border-color: rgba(34, 197, 94, 0.45);
+    color: var(--text-primary);
+}
+
+.dashboard-group-pill-swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--group-color, var(--accent-green));
+    flex-shrink: 0;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25) inset;
+}
+
+/* Group pill rendered inside the CameraCard header (Phase 3). */
+.camera-group-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-left: 0.5rem;
+    padding: 0.12rem 0.5rem;
+    background: color-mix(in srgb, var(--group-color, var(--accent-green)) 18%, transparent);
+    color: var(--group-color, var(--accent-green));
+    border: 1px solid color-mix(in srgb, var(--group-color, var(--accent-green)) 40%, transparent);
+    border-radius: 999px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    vertical-align: middle;
+    /* Don't take an entire line on small cards — h3 stays compact. */
+    white-space: nowrap;
+}
+
 .node-item {
     display: flex;
     justify-content: space-between;

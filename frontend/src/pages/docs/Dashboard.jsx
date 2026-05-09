@@ -26,13 +26,15 @@ function Dashboard() {
         The default page after sign-in. Every camera appears as a tile with a live
         status pill (online, recording, starting, offline, suspended, etc.) and an
         HLS player you can expand. Each tile shows its node name for quick
-        identification.
+        identification, plus a color-coded group pill if the camera has been assigned
+        to a <a href="#camera-groups">camera group</a>.
       </p>
       <ul>
         <li><strong>Live Streams</strong> — HLS video served same-origin through the Command Center proxy, JWT-authenticated per viewer. Starts at the live edge.</li>
         <li><strong>Snapshots</strong> — Click the camera icon to capture a single JPEG and save it on the node. Shows up in the node's snapshots list.</li>
         <li><strong>Recording</strong> — Manual start/stop per camera. Recordings are stored locally on the node in the encrypted SQLite database.</li>
         <li><strong>Fullscreen</strong> — Click a tile to expand to full screen.</li>
+        <li><strong>Group filter</strong> — When the org has at least one camera group, a pill row above the grid lets you scope the live view to <em>All</em>, a specific group, or <em>Ungrouped</em>. Each grouped tile gets a colored top stripe and a group-name pill in its header so a 20-camera grid reads at a glance.</li>
       </ul>
 
       <h3>Settings</h3>

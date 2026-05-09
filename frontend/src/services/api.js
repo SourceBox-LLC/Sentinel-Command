@@ -195,6 +195,16 @@ export async function deleteCameraGroup(getToken, groupId) {
   })
 }
 
+// Assign a camera to a group (or pass null/undefined to unassign).
+// Backend takes group_id as a query param — see
+// `assign_camera_group` in backend/app/api/cameras.py.
+export async function assignCameraGroup(getToken, cameraId, groupId) {
+  const url = groupId !== null && groupId !== undefined
+    ? `/api/cameras/${cameraId}/group?group_id=${encodeURIComponent(groupId)}`
+    : `/api/cameras/${cameraId}/group`
+  return fetchWithAuth(url, getToken, { method: "PUT" })
+}
+
 // Node management
 export async function getNodes(getToken) {
   return fetchWithAuth("/api/nodes", getToken)

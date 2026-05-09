@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { Link } from "react-router-dom"
 import { useAuth, useOrganization } from "@clerk/clerk-react"
-import { getCameras } from "../services/api"
+import { getCameras, getCameraGroups } from "../services/api"
 import { useToasts } from "../hooks/useToasts.jsx"
 import { usePlanInfo } from "../hooks/usePlanInfo.jsx"
 import { useMotionAlerts } from "../hooks/useMotionAlerts.jsx"
@@ -21,6 +21,14 @@ function DashboardPage() {
   const [showUpgrade, setShowUpgrade] = useState(false)
   const prevCamerasRef = useRef(null)
   const toastedOfflinesRef = useRef(new Set())
+  // Camera Groups Phase 3: groups list drives both the color-tag
+  // lookup on each tile and the filter row above the grid.  Loaded
+  // once on org switch (and refreshed by the camera-poll cycle below
+  // so a group created in another tab shows up within ~5 s).
+  // groupFilter is null for "show all", a numeric id for a specific
+  // group, or the sentinel "ungrouped" for cameras with no group.
+  const [groups, setGroups] = useState([])
+  const [groupFilter, setGroupFilter] = useState(null)
 
   const isAdmin = membership?.role === "org:admin"
 
@@ -103,13 +111,52 @@ function DashboardPage() {
     }
   }, [organization, getToken])
 
+  // Group fetch — runs alongside the camera fetch but doesn't need
+  // 5-second cadence.  Refresh on org switch + every 30 s so a group
+  // created in another tab shows up without a hard reload.  Soft-fails
+  // (empty array) since the dashboard works fine without groups.
+  const loadGroups = useCallback(async () => {
+    if (!organization) return
+    try {
+      const token = await getToken()
+      const data = await getCameraGroups(() => Promise.resolve(token))
+      if (Array.isArray(data)) setGroups(data)
+    } catch (err) {
+      // Silent — groups are an enhancement, not a blocker.
+      console.error("[Dashboard] Failed to load camera groups:", err)
+    }
+  }, [organization, getToken])
+
   useEffect(() => {
     if (!organization) return
 
     loadCameras()
-    const interval = setInterval(loadCameras, 5000)
-    return () => clearInterval(interval)
-  }, [organization, loadCameras])
+    loadGroups()
+    const cameraInterval = setInterval(loadCameras, 5000)
+    const groupsInterval = setInterval(loadGroups, 30000)
+    return () => {
+      clearInterval(cameraInterval)
+      clearInterval(groupsInterval)
+    }
+  }, [organization, loadCameras, loadGroups])
+
+  // Map of group_id → group object for O(1) color lookup per tile.
+  const groupById = useMemo(() => {
+    const m = new Map()
+    for (const g of groups) m.set(g.id, g)
+    return m
+  }, [groups])
+
+  // Apply the active group filter.  null → all cameras.  "ungrouped" →
+  // only cameras with no group_id.  Number → only that group.
+  const filteredCameraEntries = useMemo(() => {
+    const entries = Object.entries(cameras)
+    if (groupFilter === null) return entries
+    if (groupFilter === "ungrouped") {
+      return entries.filter(([, c]) => !c.group_id)
+    }
+    return entries.filter(([, c]) => c.group_id === groupFilter)
+  }, [cameras, groupFilter])
 
 
   // No manual refresh handler — the auto-refresh interval above
@@ -249,6 +296,46 @@ function DashboardPage() {
         <h2 className="section-title">Camera Feeds</h2>
       </div>
 
+      {/* Group filter pills (Camera Groups Phase 3).  Hidden when the
+          org has no groups defined — there's nothing to filter against. */}
+      {groups.length > 0 && Object.keys(cameras).length > 0 && (
+        <div className="dashboard-group-filter" role="tablist" aria-label="Filter cameras by group">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={groupFilter === null}
+            className={`dashboard-group-pill ${groupFilter === null ? "active" : ""}`}
+            onClick={() => setGroupFilter(null)}
+          >
+            All
+          </button>
+          {groups.map((g) => (
+            <button
+              key={g.id}
+              type="button"
+              role="tab"
+              aria-selected={groupFilter === g.id}
+              className={`dashboard-group-pill ${groupFilter === g.id ? "active" : ""}`}
+              onClick={() => setGroupFilter(g.id)}
+              style={{ "--group-color": g.color }}
+            >
+              <span className="dashboard-group-pill-swatch" aria-hidden="true" />
+              {g.icon ? `${g.icon} ` : ""}
+              {g.name}
+            </button>
+          ))}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={groupFilter === "ungrouped"}
+            className={`dashboard-group-pill ${groupFilter === "ungrouped" ? "active" : ""}`}
+            onClick={() => setGroupFilter("ungrouped")}
+          >
+            Ungrouped
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <div className="empty-state">
           <div className="loading-spinner"></div>
@@ -267,13 +354,30 @@ function DashboardPage() {
         isAdmin
           ? <AdminWelcomeHero />
           : <MemberWelcomeHero orgName={organization?.name} />
+      ) : filteredCameraEntries.length === 0 ? (
+        // Cameras exist but the filter hides them all — show a neutral
+        // empty state with a CTA to clear the filter, NOT the
+        // first-run welcome hero (which would imply zero cameras).
+        <div className="empty-state">
+          <div className="empty-icon">🔍</div>
+          <h3>No cameras match this filter</h3>
+          <p>
+            {groupFilter === "ungrouped"
+              ? "Every camera is currently assigned to a group."
+              : "No cameras are assigned to this group yet."}
+          </p>
+          <button onClick={() => setGroupFilter(null)} className="btn btn-secondary">
+            Show all cameras
+          </button>
+        </div>
       ) : (
         <div className="camera-grid">
-          {Object.entries(cameras).map(([cameraId, camera]) => (
+          {filteredCameraEntries.map(([cameraId, camera]) => (
             <CameraCard
               key={cameraId}
               cameraId={cameraId}
               camera={camera}
+              group={camera.group_id ? groupById.get(camera.group_id) : null}
               onRequestUpgrade={() => setShowUpgrade(true)}
             />
           ))}

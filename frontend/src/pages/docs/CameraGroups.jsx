@@ -8,8 +8,7 @@ function CameraGroups() {
       <p>
         Camera groups are user-defined zones — &ldquo;Front yard&rdquo;,
         &ldquo;Workshop&rdquo;, &ldquo;Main floor&rdquo; — that bundle cameras
-        together so AI agents can talk about a location instead of a list of
-        camera IDs.
+        together for filtering, color tagging, and AI-agent navigation.
       </p>
 
       <h3>Creating a group</h3>
@@ -19,46 +18,19 @@ function CameraGroups() {
         <li>Submit. The group becomes immediately visible to the agent via <code>list_camera_groups</code>.</li>
       </ol>
 
-      <div className="docs-callout docs-callout-info">
-        <p>
-          <span className="docs-callout-icon">ℹ️</span>
-          <span>
-            <strong>Per-camera assignment is on the roadmap.</strong> Phase 1
-            ships group creation + deletion. Phase 2 will add a group selector
-            on each camera card so you can move cameras between groups from
-            the dashboard. For now you can assign cameras programmatically via{" "}
-            <code>PUT /api/cameras/&#123;camera_id&#125;/group</code>.
-          </span>
-        </p>
-      </div>
+      <h3>Assigning cameras</h3>
+      <ol>
+        <li>Stay in <Link to="/settings#nodes">Settings &gt; Camera Nodes</Link>.</li>
+        <li>Find the camera you want to group. Each camera card has a <strong>Group</strong> dropdown alongside its recording-policy toggles.</li>
+        <li>Pick a group from the dropdown — the assignment saves immediately. Pick &ldquo;(no group)&rdquo; to unassign.</li>
+      </ol>
 
-      <h3>What groups do today</h3>
+      <h3>What groups do for you</h3>
       <ul>
-        <li>
-          <strong>MCP navigation</strong> — Agents call{" "}
-          <code>list_camera_groups</code> to resolve a natural-language
-          location (&ldquo;check the workshop&rdquo;) to a set of{" "}
-          <code>camera_id</code>s. This is the primary use case right now and
-          the reason groups exist as a first-class concept.
-        </li>
-        <li>
-          <strong>Sentinel scoping</strong> — Today the Sentinel page&apos;s
-          camera scope is per-camera. Group-aware scope selectors are on the
-          roadmap; once cameras can be assigned to groups, Sentinel will
-          inherit group membership.
-        </li>
-      </ul>
-
-      <h3>Managing groups via the API</h3>
-      <p>
-        With an admin Clerk session token, the same operations the Settings UI
-        uses are available directly:
-      </p>
-      <ul>
-        <li><code>GET /api/camera-groups</code> — list groups in your org (also available to members)</li>
-        <li><code>POST /api/camera-groups</code> — create a group (<code>name</code>, <code>color</code>, <code>icon</code>)</li>
-        <li><code>DELETE /api/camera-groups/&#123;id&#125;</code> — delete a group; member cameras are unassigned</li>
-        <li><code>PUT /api/cameras/&#123;camera_id&#125;/group</code> — assign a camera to a group (or pass <code>group_id=null</code> to unassign)</li>
+        <li><strong>Live view layout</strong> — Camera tiles on the dashboard get a colored top stripe matching their group. A 20-camera grid reads at a glance.</li>
+        <li><strong>Color-coded pill</strong> — Each tile shows a small pill in its header with the group icon + name, tinted in the group color. The dashboard filter row above the grid uses the same color swatches.</li>
+        <li><strong>Filter</strong> — A pill row at the top of the dashboard lets you scope the live view to <em>All</em>, a specific group, or <em>Ungrouped</em>. State is local to the session — no setting to save.</li>
+        <li><strong>MCP navigation</strong> — Agents call <code>list_camera_groups</code> to resolve a natural-language location (&ldquo;check the workshop&rdquo;) to a set of <code>camera_id</code>s. Sentinel uses this for location-aware investigations.</li>
       </ul>
 
       <h3>Tips</h3>
@@ -69,13 +41,29 @@ function CameraGroups() {
           monitoring&rdquo; doesn&apos;t.
         </li>
         <li>
-          Pick contrasting colors for adjacent zones — once dashboard tile
-          color tagging ships (Phase 3), a 20-camera grid reads at a glance.
+          Pick contrasting colors for adjacent zones — the dashboard top
+          stripes are the easiest signal at a glance.
         </li>
         <li>
-          A camera can only be in one group. If you need multi-group overlap,
-          that&apos;s a planned feature (&ldquo;saved views&rdquo;).
+          A camera can only be in one group. If you need multi-group
+          overlap, that&apos;s a planned feature (&ldquo;saved views&rdquo;).
         </li>
+        <li>
+          Deleting a group unassigns its cameras (they don&apos;t get
+          deleted) — useful when reorganizing zones.
+        </li>
+      </ul>
+
+      <h3>Managing groups via the API</h3>
+      <p>
+        For automation, the same operations the UI uses are exposed as REST
+        endpoints (admin-scoped Clerk session token required for writes):
+      </p>
+      <ul>
+        <li><code>GET /api/camera-groups</code> — list groups in your org</li>
+        <li><code>POST /api/camera-groups</code> — create a group (<code>name</code>, <code>color</code>, <code>icon</code>)</li>
+        <li><code>DELETE /api/camera-groups/&#123;id&#125;</code> — delete a group; member cameras are unassigned</li>
+        <li><code>PUT /api/cameras/&#123;camera_id&#125;/group?group_id=N</code> — assign a camera to a group (omit <code>group_id</code> to unassign)</li>
       </ul>
     </section>
   )

@@ -7,6 +7,7 @@ import HlsPlayer from "./HlsPlayer.jsx"
 function CameraCard({
   cameraId,
   camera,
+  group,
   onRequestUpgrade,
 }) {
   const { getToken } = useAuth()
@@ -99,13 +100,33 @@ function CameraCard({
 
   const cardClasses = `camera-card ${isDown ? "offline" : ""}`
 
+  // Camera Groups Phase 3: a thin colored stripe at the top of the
+  // card encodes the group color so a 20-camera grid reads at a
+  // glance, plus a small group pill in the header so the name is
+  // visible.  Both no-op when the camera isn't grouped.
+  const stripeStyle = group?.color
+    ? { borderTop: `3px solid ${group.color}` }
+    : undefined
+
   return (
-    <div className={cardClasses}>
+    <div className={cardClasses} style={stripeStyle}>
       <div className="camera-header">
         <div className="camera-info">
           <div className="camera-icon">{nodeTypeIcon}</div>
           <div className="camera-details">
-            <h3>{camera.name || `Camera ${cameraId.slice(-4)}`}</h3>
+            <h3>
+              {camera.name || `Camera ${cameraId.slice(-4)}`}
+              {group && (
+                <span
+                  className="camera-group-pill"
+                  style={{ "--group-color": group.color }}
+                  title={`Group: ${group.name}`}
+                >
+                  {group.icon ? `${group.icon} ` : ""}
+                  {group.name}
+                </span>
+              )}
+            </h3>
             {/*
                 Node association line.  The camera name itself is
                 auto-generated from the USB descriptor and is often
@@ -202,6 +223,12 @@ export default memo(CameraCard, (prevProps, nextProps) => {
     prevProps.camera.name === nextProps.camera.name &&
     prevProps.camera.last_error === nextProps.camera.last_error &&
     prevProps.camera.disabled_by_plan === nextProps.camera.disabled_by_plan &&
+    // Group identity (re-render when reassigned) and color (re-render
+    // when the group itself is recolored).  null === null short-circuit
+    // covers ungrouped cameras with no allocation churn.
+    (prevProps.group?.id ?? null) === (nextProps.group?.id ?? null) &&
+    (prevProps.group?.color ?? null) === (nextProps.group?.color ?? null) &&
+    (prevProps.group?.name ?? null) === (nextProps.group?.name ?? null) &&
     prevProps.onRequestUpgrade === nextProps.onRequestUpgrade
   )
 })

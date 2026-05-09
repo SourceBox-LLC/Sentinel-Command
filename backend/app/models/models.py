@@ -116,6 +116,13 @@ class Camera(Base):
             "node_name": self.node.name if self.node else None,
             "node_type": self.node_type,
             "capabilities": self.capabilities.split(",") if self.capabilities else [],
+            # Group association: ``group_id`` is the FK (int|None) used by
+            # the frontend dashboard for filter / color-tag lookup against
+            # the groups list it fetches separately.  ``group`` stays as
+            # the human-readable name for back-compat (MCP ``list_cameras``
+            # consumers read this) — the LLM is happiest with a name it
+            # can put in prose.
+            "group_id": self.group_id,
             "group": self.group.name if self.group else None,
             "status": eff,
             "last_error": err,

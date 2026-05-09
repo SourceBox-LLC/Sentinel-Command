@@ -238,6 +238,12 @@ function SettingsPage() {
       const token = await getToken()
       await deleteCameraGroup(() => Promise.resolve(token), group.id)
       setGroups((prev) => prev.filter((g) => g.id !== group.id))
+      // Backend cascade-unassigns member cameras (cameras.py:302-303)
+      // — mirror that locally so the per-camera selectors flip back to
+      // "(no group)" without a re-fetch.
+      setCameras((prev) =>
+        prev.map((c) => (c.group_id === group.id ? { ...c, group_id: null } : c)),
+      )
       showToast(`Deleted "${group.name}"`, "success")
     } catch (err) {
       console.error("Failed to delete group:", err)
@@ -595,6 +601,8 @@ function SettingsPage() {
                           key={cam.camera_id}
                           camera={cam}
                           timezone={orgTimezone}
+                          groups={groups}
+                          canManageGroups={membership?.role === "org:admin"}
                           onUpdated={(newPolicy) => {
                             // Mirror the server's authoritative state
                             // into the local cameras list so a re-render
@@ -606,6 +614,33 @@ function SettingsPage() {
                                   : c,
                               ),
                             )
+                          }}
+                          onGroupChanged={(newGroupId) => {
+                            // Mirror the new assignment into local
+                            // cameras list, AND bump camera_count on
+                            // affected groups so the Camera Groups
+                            // section above reflects the move without
+                            // a re-fetch.
+                            setCameras((prev) =>
+                              prev.map((c) =>
+                                c.camera_id === cam.camera_id
+                                  ? { ...c, group_id: newGroupId }
+                                  : c,
+                              ),
+                            )
+                            setGroups((prev) => {
+                              const oldGroupId = cam.group_id ?? null
+                              if (oldGroupId === newGroupId) return prev
+                              return prev.map((g) => {
+                                if (g.id === oldGroupId) {
+                                  return { ...g, camera_count: Math.max(0, (g.camera_count ?? 0) - 1) }
+                                }
+                                if (g.id === newGroupId) {
+                                  return { ...g, camera_count: (g.camera_count ?? 0) + 1 }
+                                }
+                                return g
+                              })
+                            })
                           }}
                         />
                       ))}
