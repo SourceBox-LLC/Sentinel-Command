@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import { Link } from "react-router-dom"
 import { useAuth, useOrganization } from "@clerk/clerk-react"
-import { getNodes, createNode as createNodeApi, rotateNodeKey, deleteNode as deleteNodeApi, wipeStreamLogs, fullReset, getSettings, updateNotificationSettings, updateOrgTimezone, getCameras, getEmailPreferences, updateEmailPreferences, downloadGdprExport } from "../services/api"
+import { getNodes, createNode as createNodeApi, rotateNodeKey, deleteNode as deleteNodeApi, wipeStreamLogs, fullReset, getSettings, updateNotificationSettings, updateOrgTimezone, getCameras, getEmailPreferences, updateEmailPreferences, downloadGdprExport, getCameraGroups, createCameraGroup, deleteCameraGroup } from "../services/api"
 import { useToasts } from "../hooks/useToasts.jsx"
 import { usePlanInfo } from "../hooks/usePlanInfo.jsx"
 import AddNodeModal from "../components/AddNodeModal.jsx"
@@ -49,6 +49,19 @@ function SettingsPage() {
   // toggles live on each camera in the Camera Nodes section above.
   const [notifications, setNotifications] = useState(null)
   const [notificationsSaving, setNotificationsSaving] = useState(false)
+  // Camera groups (per-org "zones" — Front yard, Workshop, etc.).  Used
+  // by AI agents via the `list_camera_groups` MCP tool to resolve
+  // natural-language locations to camera_id sets.  Per-camera assignment
+  // is on the roadmap; this section ships group CRUD so admins can
+  // populate the structure that Sentinel reads.
+  const [groups, setGroups] = useState([])
+  const [groupsLoading, setGroupsLoading] = useState(false)
+  const [showNewGroupForm, setShowNewGroupForm] = useState(false)
+  const [newGroupName, setNewGroupName] = useState("")
+  const [newGroupColor, setNewGroupColor] = useState("#22c55e")
+  const [newGroupIcon, setNewGroupIcon] = useState("📁")
+  const [creatingGroup, setCreatingGroup] = useState(false)
+  const [deletingGroupId, setDeletingGroupId] = useState(null)
   // Email alert preferences (per-org, per-kind).  Separate from
   // ``notifications`` above — that controls whether events appear
   // in the bell-icon inbox; this controls whether they ALSO email
@@ -100,6 +113,7 @@ function SettingsPage() {
     if (organization) {
       loadNodes()
       loadSettings()
+      loadGroups()
       // Poll nodes every 30s to detect status changes
       const interval = setInterval(loadNodes, 30000)
       return () => clearInterval(interval)
@@ -141,6 +155,95 @@ function SettingsPage() {
     } catch (err) {
       console.error("Failed to load settings:", err)
       showToast("Failed to load settings", "error")
+    }
+  }
+
+  // ── Camera groups ────────────────────────────────────────────────
+  // Read open to all org members; create/delete admin-only on the
+  // backend.  Members will see the list (so they can confirm groups
+  // exist for the agent) but the action buttons render only for admins.
+
+  const loadGroups = async () => {
+    try {
+      setGroupsLoading(true)
+      const token = await getToken()
+      const data = await getCameraGroups(() => Promise.resolve(token))
+      setGroups(Array.isArray(data) ? data : [])
+    } catch (err) {
+      console.error("Failed to load camera groups:", err)
+      // Soft-fail — the section just renders empty.  Don't toast on
+      // initial load; the page has plenty else going on and a missing
+      // groups section is non-blocking.
+    } finally {
+      setGroupsLoading(false)
+    }
+  }
+
+  const resetNewGroupForm = () => {
+    setShowNewGroupForm(false)
+    setNewGroupName("")
+    setNewGroupColor("#22c55e")
+    setNewGroupIcon("📁")
+  }
+
+  const handleCreateGroup = async () => {
+    const name = newGroupName.trim()
+    if (!name) return
+    try {
+      setCreatingGroup(true)
+      const token = await getToken()
+      const result = await createCameraGroup(
+        () => Promise.resolve(token),
+        name,
+        newGroupColor,
+        newGroupIcon || "📁",
+      )
+      if (result?.id) {
+        // Optimistic insert — append the new group locally rather than
+        // re-fetching.  camera_count starts at 0 since assignment is a
+        // separate flow (Phase 2).
+        setGroups((prev) => [
+          ...prev,
+          {
+            id: result.id,
+            name,
+            color: newGroupColor,
+            icon: newGroupIcon || "📁",
+            camera_count: 0,
+          },
+        ])
+        resetNewGroupForm()
+        showToast(`Created "${name}"`, "success")
+      }
+    } catch (err) {
+      const raw = err?.message || ""
+      const dup = raw.includes("already exists") || raw.includes("400")
+      showToast(
+        dup ? "A group with that name already exists" : "Failed to create group",
+        "error",
+      )
+    } finally {
+      setCreatingGroup(false)
+    }
+  }
+
+  const handleDeleteGroup = async (group) => {
+    const confirmMsg =
+      group.camera_count > 0
+        ? `Delete "${group.name}"? ${group.camera_count} ${group.camera_count === 1 ? "camera will be unassigned" : "cameras will be unassigned"} from this group.`
+        : `Delete "${group.name}"?`
+    if (!window.confirm(confirmMsg)) return
+    try {
+      setDeletingGroupId(group.id)
+      const token = await getToken()
+      await deleteCameraGroup(() => Promise.resolve(token), group.id)
+      setGroups((prev) => prev.filter((g) => g.id !== group.id))
+      showToast(`Deleted "${group.name}"`, "success")
+    } catch (err) {
+      console.error("Failed to delete group:", err)
+      showToast("Failed to delete group", "error")
+    } finally {
+      setDeletingGroupId(null)
     }
   }
 
@@ -565,6 +668,142 @@ function SettingsPage() {
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="settings-section" id="settings-camera-groups">
+        <h2>Camera Groups</h2>
+        <p className="section-description">
+          Bundle cameras by location or zone — &ldquo;Front yard&rdquo;, &ldquo;Workshop&rdquo;,
+          &ldquo;Main floor&rdquo;. AI agents (including Sentinel) resolve natural-language
+          places to a camera set via the <code>list_camera_groups</code> MCP tool.
+          Per-camera assignment from the camera card is on the roadmap; this
+          section ships group create / delete so admins can populate the
+          structure that agents read.
+        </p>
+
+        <div className="camera-groups-list">
+          {groupsLoading ? (
+            <div className="loading-spinner"></div>
+          ) : groups.length === 0 && !showNewGroupForm ? (
+            <div className="empty-nodes">
+              <p>No camera groups yet.</p>
+              {membership?.role === "org:admin" && (
+                <button
+                  className="btn btn-primary"
+                  onClick={() => setShowNewGroupForm(true)}
+                >
+                  Create Your First Group
+                </button>
+              )}
+            </div>
+          ) : (
+            groups.map((group) => (
+              <div key={group.id} className="camera-group-row">
+                <div
+                  className="camera-group-swatch"
+                  style={{ background: group.color }}
+                  aria-hidden="true"
+                >
+                  <span className="camera-group-icon">{group.icon}</span>
+                </div>
+                <div className="camera-group-info">
+                  <div className="camera-group-name">{group.name}</div>
+                  <div className="camera-group-meta">
+                    {group.camera_count}{" "}
+                    {group.camera_count === 1 ? "camera" : "cameras"}
+                  </div>
+                </div>
+                {membership?.role === "org:admin" && (
+                  <button
+                    className="btn btn-secondary btn-small"
+                    onClick={() => handleDeleteGroup(group)}
+                    disabled={deletingGroupId === group.id}
+                    aria-label={`Delete ${group.name}`}
+                  >
+                    {deletingGroupId === group.id ? "..." : "Delete"}
+                  </button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+
+        {membership?.role === "org:admin" &&
+          groups.length > 0 &&
+          !showNewGroupForm && (
+            <button
+              className="btn btn-secondary"
+              onClick={() => setShowNewGroupForm(true)}
+              style={{ marginTop: "0.75rem" }}
+            >
+              + New Group
+            </button>
+          )}
+
+        {showNewGroupForm && (
+          <div className="camera-group-form">
+            <div className="form-group">
+              <label className="form-label" htmlFor="new-group-name">
+                Name
+              </label>
+              <input
+                id="new-group-name"
+                type="text"
+                className="form-input"
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+                placeholder="e.g. Front yard"
+                maxLength={100}
+                autoFocus
+              />
+            </div>
+            <div className="camera-group-form-row">
+              <div className="form-group camera-group-form-color">
+                <label className="form-label" htmlFor="new-group-color">
+                  Color
+                </label>
+                <input
+                  id="new-group-color"
+                  type="color"
+                  className="form-input camera-group-color-input"
+                  value={newGroupColor}
+                  onChange={(e) => setNewGroupColor(e.target.value)}
+                  aria-label="Group color"
+                />
+              </div>
+              <div className="form-group camera-group-form-icon">
+                <label className="form-label" htmlFor="new-group-icon">
+                  Icon
+                </label>
+                <input
+                  id="new-group-icon"
+                  type="text"
+                  className="form-input"
+                  value={newGroupIcon}
+                  onChange={(e) => setNewGroupIcon(e.target.value)}
+                  maxLength={10}
+                  placeholder="📁"
+                />
+              </div>
+            </div>
+            <div className="camera-group-form-actions">
+              <button
+                className="btn btn-primary"
+                onClick={handleCreateGroup}
+                disabled={creatingGroup || !newGroupName.trim()}
+              >
+                {creatingGroup ? "Creating..." : "Create Group"}
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={resetNewGroupForm}
+                disabled={creatingGroup}
+              >
+                Cancel
+              </button>
             </div>
           </div>
         )}
