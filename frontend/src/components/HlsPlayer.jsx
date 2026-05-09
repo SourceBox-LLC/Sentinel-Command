@@ -194,7 +194,7 @@ function HlsPlayer({ cameraId, cameraName }) {
                             }
                         } else {
                             // Playback advanced — drop every stall flag.
-                            if (stallCount > 0) {
+                            if (stallCount > 0 && import.meta.env.DEV) {
                                 console.log("[HlsPlayer] Stream resumed after stall")
                             }
                             stallCount = 0

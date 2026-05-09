@@ -71,7 +71,7 @@ export function useNotifications() {
           prev.map((n) => ({ ...n, unread: false })),
         )
       }
-    } catch (e) {
+    } catch {
       // Fall back to a refresh so state isn't lying
       refresh()
     }
@@ -92,7 +92,7 @@ export function useNotifications() {
       if (result?.last_viewed_at) {
         setLastViewedAt(result.last_viewed_at)
       }
-    } catch (e) {
+    } catch {
       // Rollback + resync so the UI reflects reality.
       setNotifications(previous)
       refresh()

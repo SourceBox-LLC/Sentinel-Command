@@ -49,7 +49,6 @@ function SettingsPage() {
   // toggles live on each camera in the Camera Nodes section above.
   const [notifications, setNotifications] = useState(null)
   const [notificationsSaving, setNotificationsSaving] = useState(false)
-  const [settingsLoading, setSettingsLoading] = useState(false)
   // Email alert preferences (per-org, per-kind).  Separate from
   // ``notifications`` above — that controls whether events appear
   // in the bell-icon inbox; this controls whether they ALSO email
@@ -109,7 +108,6 @@ function SettingsPage() {
 
   const loadSettings = async () => {
     try {
-      setSettingsLoading(true)
       const token = await getToken()
       const tokenFn = () => Promise.resolve(token)
       // Parallel: inbox-level + email-level prefs come from different
@@ -143,8 +141,6 @@ function SettingsPage() {
     } catch (err) {
       console.error("Failed to load settings:", err)
       showToast("Failed to load settings", "error")
-    } finally {
-      setSettingsLoading(false)
     }
   }
 

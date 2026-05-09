@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Link } from "react-router-dom"
 import { useAuth, useOrganization } from "@clerk/clerk-react"
 import {
@@ -77,7 +77,6 @@ function McpPage() {
   const [sessions, setSessions] = useState([])
   const [stats, setStats] = useState(null)
   const [sseConnected, setSseConnected] = useState(false)
-  const eventSourceRef = useRef(null)
   const eventsEndRef = useRef(null)
 
   // Key management (collapsible)

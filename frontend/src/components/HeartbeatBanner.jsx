@@ -53,6 +53,11 @@ function HeartbeatBanner() {
   const [node, setNode] = useState(null)
   const [live, setLive] = useState(false)
   const [dismissed, setDismissed] = useState(false)
+  // Derived from wall-clock time inside the polling tick rather than during
+  // render — keeps the component pure and lets ESLint react-hooks/purity
+  // stay happy. The polling interval (5 s) is finer than the 2-min stalled
+  // threshold so the flag flips within one tick of crossing.
+  const [stalled, setStalled] = useState(false)
   const successTimeoutRef = useRef(null)
 
   // Re-read marker when org context changes — someone switching workspaces
@@ -62,10 +67,12 @@ function HeartbeatBanner() {
     setNode(null)
     setLive(false)
     setDismissed(false)
+    setStalled(false)
   }, [orgId])
 
   // Poll the backend until the node reports its first real heartbeat
   // (status transitions off "pending" and last_seen becomes non-null).
+  // Same tick also drives the stalled flag.
   useEffect(() => {
     if (!marker || dismissed || live) return
     if (!orgId) return
@@ -73,6 +80,11 @@ function HeartbeatBanner() {
     let cancelled = false
 
     const tick = async () => {
+      // Update the stalled flag first so even a failed fetch still flips
+      // the banner copy at the right time.
+      if (!cancelled) {
+        setStalled(Date.now() - marker.created_at > STALLED_AFTER_MS)
+      }
       try {
         const token = await getToken()
         const data = await getNode(() => Promise.resolve(token), marker.node_id)
@@ -120,8 +132,6 @@ function HeartbeatBanner() {
 
   if (!marker || dismissed) return null
 
-  const elapsed = Date.now() - marker.created_at
-  const stalled = !live && elapsed > STALLED_AFTER_MS
   const nodeName = node?.name || marker.name || marker.node_id
 
   if (live) {
@@ -146,9 +156,14 @@ function HeartbeatBanner() {
     )
   }
 
+  // While waiting, the success view above doesn't render — so `stalled`
+  // here is meaningful (the live / dismissed paths short-circuit before
+  // we reach this branch).
+  const showStalled = !live && stalled
+
   return (
     <div
-      className={`heartbeat-banner heartbeat-banner-waiting${stalled ? " heartbeat-banner-stalled" : ""}`}
+      className={`heartbeat-banner heartbeat-banner-waiting${showStalled ? " heartbeat-banner-stalled" : ""}`}
       role="status"
     >
       <div className="heartbeat-banner-spinner" aria-hidden="true">
@@ -157,7 +172,7 @@ function HeartbeatBanner() {
         <div className="heartbeat-dot"></div>
       </div>
       <div className="heartbeat-banner-body">
-        {stalled ? (
+        {showStalled ? (
           <>
             <strong>Still waiting for {nodeName}…</strong>
             <span className="heartbeat-banner-subtext">

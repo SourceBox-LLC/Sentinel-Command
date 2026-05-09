@@ -724,7 +724,7 @@ export function McpWorkflowDiagram() {
       {/* Command Center lane: dispatch point for every call */}
       {[130, 260, 390, 520, 650, 780, 880].map((x, i) => step(x, L_CC, String(i + 1), C.green))}
       {/* CloudNode lane: only for calls that need a physical camera */}
-      {[260, 390, 650, 780].map((x, i) => step(x, L_NODE, '✓', C.blue))}
+      {[260, 390, 650, 780].map((x) => step(x, L_NODE, '✓', C.blue))}
 
       {/* Side panel: tool-class legend */}
       <g>
