@@ -109,8 +109,11 @@ function Faq() {
         <p>
           For live streaming to Command Center, yes — segments are pushed as they're
           produced. If the internet drops, the node continues recording locally (if
-          recording is enabled) and backfills motion events over the HTTP fallback once
-          connectivity returns. Live playback resumes automatically on reconnect.
+          recording is enabled) so the durable archive doesn't lose coverage, and live
+          playback resumes automatically once the segment uploader reconnects. Motion
+          events that fire during the outage are logged on the node but not queued for
+          later delivery — there's no backfill today, and the cooldown design means
+          retrying minutes-old motion events would mostly be duplicates anyway.
         </p>
       </details>
 
@@ -215,8 +218,11 @@ function Faq() {
         </summary>
         <p>
           The node database is bound to the host machine (the AES key is derived from
-          hostname). To move a node: on the new machine, run <code>sourcebox-sentry-cloudnode setup</code>
-          with the same <code>node_id</code> and API key — Command Center will re-associate
+          the OS machine ID — <code>/etc/machine-id</code> on Linux, the Cryptography
+          MachineGuid on Windows, the hardware UUID on macOS). Copying{" "}
+          <code>node.db</code> to a different machine won't decrypt. To move a node:
+          on the new machine, run <code>sourcebox-sentry-cloudnode setup</code> with
+          the same <code>node_id</code> and API key — Command Center will re-associate
           the cameras to the new host. The old node should be stopped first to avoid a
           split-brain heartbeat.
         </p>

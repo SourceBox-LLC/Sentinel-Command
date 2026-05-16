@@ -18,8 +18,8 @@ function LandingFooter() {
           <div className="landing-footer-brand">
             <div className="landing-logo">
               <LogoMark size={28} className="landing-logo-icon" />
-              <span>SourceBox </span>
-              <span className="landing-logo-text">Sentry</span>
+              <span className="landing-logo-text">Sentinel</span>
+              <span> by SourceBox</span>
             </div>
             <p>Open-source security for everyone.</p>
           </div>

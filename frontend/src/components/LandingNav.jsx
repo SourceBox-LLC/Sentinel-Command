@@ -53,8 +53,8 @@ function LandingNav() {
       <div className="landing-nav-container">
         <Link to="/" className="landing-logo">
           <LogoMark size={28} className="landing-logo-icon" />
-          <span>SourceBox </span>
-          <span className="landing-logo-text">Sentry</span>
+          <span className="landing-logo-text">Sentinel</span>
+          <span> by SourceBox</span>
         </Link>
 
         {/* Marketing nav. Hidden when signed in — the in-product nav

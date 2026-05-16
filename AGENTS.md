@@ -1,6 +1,8 @@
 # AGENTS.md
 
-SourceBox Sentry Command Center — cloud dashboard for managing and viewing security cameras. FastAPI backend + React 19 frontend with Clerk authentication. Live video is streamed through an in-memory segment cache — **no Tigris, no S3, no presigned URLs in the live path**.
+Sentinel Command Center — cloud dashboard for managing and viewing security cameras under the **Sentinel by SourceBox** product brand. FastAPI backend + React 19 frontend with Clerk authentication. Live video is streamed through an in-memory segment cache — **no Tigris, no S3, no presigned URLs in the live path**.
+
+> **Brand-history note for grep-discoverability:** the product has carried three names — `OpenSentry` (early), `SourceBox Sentry` (mid), and `Sentinel by SourceBox` (current, from May 2026 onward). The `Sentinel AI` name is reserved specifically for the AI-agent feature. Identifiers preserved verbatim across rebrands for backward compatibility: the repo names (`OpenSentry-Command`, `OpenSentry-CloudNode`), the binary `sourcebox-sentry-cloudnode`, the env-var prefix `SOURCEBOX_SENTRY_*`, Windows install path `C:\ProgramData\SourceBoxSentry\`, the AES key-derivation domain string `opensentry-cloudnode-machine-id-v2` (see CloudNode `database.rs::KEY_DOMAIN_V2`), and the production hostname `opensentry-command.fly.dev`. These are load-bearing identifiers, not brand surfaces — do not rename without a migration plan.
 
 ## Build & Run
 

@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">SourceBox Sentry Command Center</h1>
+  <h1 align="center">Sentinel Command Center</h1>
   <p align="center">
     Cloud dashboard for managing and viewing your security cameras in real time.
     <br />
@@ -21,7 +21,7 @@
 
 ---
 
-SourceBox Sentry Command Center is the cloud hub for the SourceBox Sentry ecosystem. It receives live HLS video streams from [CloudNode](https://github.com/SourceBox-LLC/OpenSentry-CloudNode) devices on your local network, caches segments in memory, and proxies them to any browser. Authentication and multi-tenant isolation are handled by Clerk.
+Sentinel Command Center is the cloud hub for the Sentinel ecosystem (Sentinel by SourceBox). It receives live HLS video streams from [CloudNode](https://github.com/SourceBox-LLC/OpenSentry-CloudNode) devices on your local network, caches segments in memory, and proxies them to any browser. Authentication and multi-tenant isolation are handled by Clerk.
 
 **What it does:**
 - Receives live HLS video from CloudNode devices and proxies it to the browser via a same-origin in-memory cache — no object store, no presigned URLs
@@ -29,14 +29,14 @@ SourceBox Sentry Command Center is the cloud hub for the SourceBox Sentry ecosys
 - Multi-tenant with organization-based access control (V2 JWT permissions)
 - Motion detection events from CloudNodes with per-camera aggregates and a live SSE feed
 - Unified notification inbox for motion, camera/node status transitions, MCP key audit, member audit, CloudNode disk warnings, AI-agent incidents, and errors
-- **Email notifications** via Resend — opt-in per-org per-kind, with per-camera cooldown + digest mode for high-volume motion events (13 notification kinds gated by 7 setting toggles)
+- **Email notifications** via Resend — opt-in per-org per-kind, with per-camera cooldown + digest mode for high-volume motion events (14 notification kinds gated by 7 setting toggles; plus a hidden `welcome` kind that has no UI toggle)
 - Audit logging for stream access, admin actions, and MCP tool calls
 - MCP server exposing 23 tools (16 read, 7 write) so AI clients can view cameras, file incident reports with snapshots and short video clips, and read back past investigations — with per-key scoping (all / readonly / custom allow-list)
 - **Sentinel AI agent** — webhook-driven serverless agent ([separate repo](https://github.com/SourceBox-LLC/SourceBox-Sentinel)) that auto-investigates motion events and incident_opened notifications using a vision-capable LLM ↔ MCP tool loop. Pro: 100 runs/month. Pro Plus: 500 runs/month. Per-org scoping via signed override header — one deployed agent serves every org with no cross-tenant state.
 
 ---
 
-> **Looking for the product?** Sign up at the [live app](https://opensentry-command.fly.dev) — we host SourceBox Sentry as a SaaS, you don't run any servers. The repo is public for trust + transparency: every claim on `/security` and `/docs` points at the file that implements it.
+> **Looking for the product?** Sign up at the [live app](https://opensentry-command.fly.dev) — we host Sentinel by SourceBox as a SaaS, you don't run any servers. The repo is public for trust + transparency: every claim on `/security` and `/docs` points at the file that implements it.
 >
 > The Quick Start below is for **engineers who want to clone the repo and run it locally** — for code review, contributing fixes, or auditing what we run. It is **not** the install path for end users; users sign up at the link above. The CloudNode camera daemon (the piece that genuinely runs on customer hardware) is in a [separate repo](https://github.com/SourceBox-LLC/OpenSentry-CloudNode) — its own README walks through installation.
 

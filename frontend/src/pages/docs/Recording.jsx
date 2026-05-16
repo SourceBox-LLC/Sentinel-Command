@@ -80,11 +80,17 @@ function Recording() {
 
       <h3>Playback</h3>
       <p>
-        Recordings are browsable from the node's local HTTP server on port
-        8080: <code>/recordings/list</code> returns the JSON list, and
-        <code>/recordings/&#123;file&#125;</code> streams the bytes. Typically
-        used from the Command Center dashboard in-app; for direct access you
-        must be on the same local network as the node.
+        Recordings live on the node and are played back through the node's own
+        local SPA at <code>http://&lt;node-ip&gt;:8080/</code> — open the
+        <strong>Recordings</strong> tab in any browser on the same LAN. Under
+        the hood the SPA fetches <code>/api/recordings</code> for the list of{" "}
+        <code>(camera, date)</code> buckets, then loads{" "}
+        <code>/api/recordings/&#123;cam&#125;/&#123;date&#125;/playlist.m3u8</code>
+        — a dynamic VOD playlist that points hls.js at each encrypted
+        <code>.ts</code> segment via{" "}
+        <code>/api/recordings/&#123;cam&#125;/&#123;date&#125;/segment_&#123;n&#125;.ts</code>.
+        Recorded video never traverses the Command Center; you must be on the
+        same local network as the node to play it back.
       </p>
 
       <div className="docs-callout docs-callout-info">

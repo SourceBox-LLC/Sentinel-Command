@@ -10,8 +10,8 @@ function SignUpPage() {
       
       <Link to="/" className="auth-logo">
         <span className="auth-logo-icon">🛡️</span>
-        <span className="auth-logo-text">SourceBox </span>
-        <span className="auth-logo-highlight">Sentry</span>
+        <span className="auth-logo-highlight">Sentinel</span>
+        <span className="auth-logo-text"> by SourceBox</span>
       </Link>
       
       <div className="auth-page">

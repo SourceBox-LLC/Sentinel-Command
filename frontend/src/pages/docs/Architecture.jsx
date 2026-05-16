@@ -42,7 +42,7 @@ function Architecture() {
           <source srcSet="/images/hls-pipeline.webp" type="image/webp" />
           <img
             src="/images/hls-pipeline.jpg"
-            alt="HLS segment pipeline. CloudNode lane: Camera → FFmpeg → HLS segments → Segment uploader. Parallel motion branch: Motion probe → scene-change score → WebSocket event. Cloud lane: Segment RAM cache → Same-origin proxy with a ~15 segments rolling-window pill. Client lane: hls.js player fetched via GET .ts."
+            alt="HLS segment pipeline. CloudNode lane: Camera → FFmpeg → HLS segments → Segment uploader. Parallel motion branch: Motion probe → scene-change score → HTTPS POST /motion. Cloud lane: Segment RAM cache → Same-origin proxy with a ~60 segments rolling-window pill. Client lane: hls.js player fetched via GET .ts."
             className="docs-diagram-image"
             width="1920"
             height="1080"

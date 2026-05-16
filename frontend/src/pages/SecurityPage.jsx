@@ -16,7 +16,7 @@ function SecurityPage() {
       <div className="security-hero">
         <div className="landing-container">
           <h1 className="security-title">
-            Security & Privacy at <span className="landing-logo-text">Sentry</span>
+            Security & Privacy at <span className="landing-logo-text">Sentinel</span>
           </h1>
           <p className="security-subtitle">
             How Sentinel handles your video, what stays on your devices,

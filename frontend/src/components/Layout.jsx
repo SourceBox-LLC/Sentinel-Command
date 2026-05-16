@@ -62,7 +62,7 @@ function Layout() {
 
             <Link to="/" className="logo">
               <LogoMark size={32} className="logo-icon" />
-              <div className="logo-text">SourceBox <span>Sentry</span></div>
+              <div className="logo-text"><span>Sentinel</span> by SourceBox</div>
             </Link>
           </div>
 

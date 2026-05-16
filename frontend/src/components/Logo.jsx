@@ -1,7 +1,7 @@
 // Sentinel brand mark.
 //
 // Shield silhouette with a camera-lens iris inside — semantically a
-// portmanteau of the two halves of the name: "Sentry" (guarding /
+// portmanteau of the two halves of the name: "Sentinel" (guarding /
 // shield) and the surveillance-camera context of the product.
 //
 // Stroke uses a green→purple gradient (both brand accents); the
