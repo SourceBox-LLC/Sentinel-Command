@@ -11,7 +11,7 @@ function MotionDetection() {
         Motion detection is built into CloudNode — no extra service, no external API
         calls. Every camera runs a second FFmpeg process in parallel that scores how
         much each frame differs from the previous one; above-threshold frames fire a
-        <code>motion_detected</code> event.
+        <code>motion_detected</code> event delivered to Command Center via HTTP.
       </p>
       <div className="docs-callout docs-callout-info">
         <p>
@@ -31,8 +31,8 @@ function MotionDetection() {
       <ol>
         <li>A lightweight FFmpeg probe runs alongside the HLS encoder for each camera</li>
         <li>It uses the <code>select='gt(scene,THRESHOLD)'</code> filter to emit a scene-change score per frame, between 0.0 (identical) and 1.0 (totally different)</li>
-        <li>When a frame's score crosses your threshold, CloudNode raises a <code>MotionEvent</code></li>
-        <li>The event is sent over the persistent WebSocket to Command Center. If the socket is down, it falls back to <code>POST /api/cameras/{"{id}"}/motion</code></li>
+        <li>When a frame's score crosses your threshold, CloudNode raises a motion event</li>
+        <li>The event is sent to Command Center via <code>POST /api/cameras/{"{id}"}/motion</code>. (Pre-v0.1.61 the codebase carried a parallel WebSocket-forwarding branch as a "future" delivery path, but it was never wired to a producer and was removed in v0.1.61 — the HTTP path was always the only one that actually delivered events.)</li>
         <li>A per-camera cooldown timer prevents flapping (identical wind-blown tree, flickering light) from spamming events</li>
       </ol>
       <figure className="docs-diagram">
@@ -40,7 +40,7 @@ function MotionDetection() {
           <source srcSet="/images/motion-fsm.webp" type="image/webp" />
           <img
             src="/images/motion-fsm.jpg"
-            alt="Motion detection state machine: Idle, Scoring, Fire event, Cooldown — looping clockwise. Side panel labelled Delivery shows three branches: primary (WebSocket — low latency), fallback (POST /cameras/{id}/motion), and consumed by (dashboard + MCP agents)."
+            alt="Motion detection state machine: Idle, Scoring, Fire event, Cooldown — looping clockwise. Side panel labelled Delivery shows the HTTP POST /cameras/{id}/motion path (the only delivery channel post v0.1.61) feeding the dashboard motion feed and any subscribed MCP agents."
             className="docs-diagram-image"
             width="1920"
             height="1080"
@@ -79,19 +79,23 @@ function MotionDetection() {
       </p>
 
       <h3>Event payload</h3>
-      <p>The event sent over WebSocket (or HTTP fallback) looks like:</p>
+      <p>
+        The request body for <code>POST /api/cameras/{"{id}"}/motion</code> looks
+        like this (the <code>camera_id</code> is carried in the URL path, not the
+        body; <code>score</code> is the threshold score multiplied by 100 and
+        rounded to an integer, so a 0.043 raw FFmpeg score lands as <code>4</code>
+        on the wire):
+      </p>
       <div className="docs-code-block">
         <code>{`{
-  "command": "motion_detected",
-  "camera_id": "cam_abc123",
-  "score": 0.043,
-  "timestamp": "2026-04-13T14:23:11Z"
+  "score": 4,
+  "timestamp": "2026-04-13T14:23:11Z",
+  "segment_seq": 142
 }`}</code>
         <button className="docs-copy-btn" onClick={() => copyToClipboard(`{
-  "command": "motion_detected",
-  "camera_id": "cam_abc123",
-  "score": 0.043,
-  "timestamp": "2026-04-13T14:23:11Z"
+  "score": 4,
+  "timestamp": "2026-04-13T14:23:11Z",
+  "segment_seq": 142
 }`)}>Copy</button>
       </div>
 

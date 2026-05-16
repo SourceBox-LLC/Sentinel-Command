@@ -20,8 +20,7 @@ function ApiReference() {
             <tr><th>Scheme</th><th>Header</th><th>Used by</th></tr>
           </thead>
           <tbody>
-            <tr><td>Node API key</td><td><code>X-API-Key: nak_...</code></td><td>CloudNode registering, heartbeating, pushing segments</td></tr>
-            <tr><td>Node API key (alt)</td><td><code>X-Node-API-Key: nak_...</code></td><td>Per-camera endpoints (push-segment, playlist, motion, codec)</td></tr>
+            <tr><td>Node API key</td><td><code>X-Node-API-Key: nak_...</code></td><td>Every CloudNode → Command Center call (register, heartbeat, push-segment, playlist, motion, codec, decommission)</td></tr>
             <tr><td>Clerk JWT</td><td><code>Authorization: Bearer &lt;jwt&gt;</code></td><td>Web dashboard, authenticated viewers</td></tr>
             <tr><td>MCP key</td><td><code>Authorization: Bearer osc_...</code></td><td>AI clients talking to <code>/mcp</code></td></tr>
           </tbody>
@@ -64,9 +63,9 @@ function ApiReference() {
         <summary>
           <span className="docs-accordion-chevron" aria-hidden="true">▶</span>
           <span className="docs-accordion-title">Node Endpoints</span>
-          <span className="docs-accordion-count">5 endpoints</span>
+          <span className="docs-accordion-count">7 endpoints</span>
         </summary>
-        <p className="docs-accordion-intro">Used by CloudNode. Authenticate with <code>X-API-Key: {"your_api_key"}</code> header.</p>
+        <p className="docs-accordion-intro">Used by CloudNode. Authenticate with the <code>X-Node-API-Key: {"your_api_key"}</code> header.</p>
 
         <div className="docs-endpoint"><span className="docs-endpoint-method post">POST</span><span className="docs-endpoint-path">/api/nodes/register</span></div>
         <p>Register a node and its cameras. Returns camera ID mappings.</p>
@@ -82,6 +81,12 @@ function ApiReference() {
 
         <div className="docs-endpoint"><span className="docs-endpoint-method post">POST</span><span className="docs-endpoint-path">/api/cameras/{"{camera_id}"}/codec</span></div>
         <p>Report detected video/audio codec information.</p>
+
+        <div className="docs-endpoint"><span className="docs-endpoint-method post">POST</span><span className="docs-endpoint-path">/api/cameras/{"{camera_id}"}/motion</span></div>
+        <p>Report a motion event scored above the per-camera threshold. Body: <code>{"{score, timestamp, segment_seq}"}</code>. Per-camera cooldown is enforced on the node side, so the backend trusts every event it receives.</p>
+
+        <div className="docs-endpoint"><span className="docs-endpoint-method post">POST</span><span className="docs-endpoint-path">/api/nodes/self/decommission</span></div>
+        <p>Node-initiated factory reset — fired from the TUI&apos;s <code>/wipe confirm</code> flow before the local data is erased. Deletes the <code>CameraNode</code> row (cascades to cameras and any in-memory segment cache) so a freshly-wiped box doesn&apos;t reappear as a stale offline node.</p>
       </details>
 
       <details className="docs-accordion">
