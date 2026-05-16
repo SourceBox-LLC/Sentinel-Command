@@ -6,7 +6,7 @@ function GettingStarted() {
     <section className="docs-section" id="getting-started">
       <h2>Getting Started<a href="#getting-started" className="docs-anchor">#</a></h2>
       <p>
-        SourceBox Sentry turns any USB webcam into a cloud-connected security camera without
+        Sentinel turns any USB webcam into a cloud-connected security camera without
         router changes, VPNs, or third-party cloud storage in the live video path.
         You bring the camera and a machine to plug it into; we handle streaming,
         storage, access control, and agentic review.
@@ -68,7 +68,7 @@ function GettingStarted() {
       <h3>Prerequisites</h3>
       <ul>
         <li>A USB webcam (built-in laptop cameras work too)</li>
-        <li>A SourceBox Sentry account (free tier covers up to 5 cameras across 2 nodes, with 30 viewer-hours/month of live playback)</li>
+        <li>A Sentinel account (free tier covers up to 5 cameras across 2 nodes, with 30 viewer-hours/month of live playback)</li>
         <li>A Linux, Windows, or macOS machine for CloudNode</li>
         <li>FFmpeg installed (or Docker) — the setup wizard offers to install it via your OS package manager (<code>winget</code> on Windows, <code>brew</code> on macOS, <code>apt</code>/<code>dnf</code>/<code>pacman</code> on Linux)</li>
         <li>Outbound HTTPS access from the CloudNode machine to the internet</li>

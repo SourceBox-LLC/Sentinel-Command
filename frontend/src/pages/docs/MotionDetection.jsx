@@ -17,11 +17,11 @@ function MotionDetection() {
         <p>
           <span className="docs-callout-icon">🛡️</span>
           <span>
-            On Pro / Pro Plus orgs with <a href="#sentinel">Sentinel</a>{" "}
+            On Pro / Pro Plus orgs with <a href="#sentinel">Sentinel AI</a>{" "}
             configured, motion events also dispatch an autonomous AI
             investigation — the agent looks at the camera, decides whether
             the scene warrants attention, and (if so) files an incident with
-            snapshot evidence. Sentinel has its own per-camera cooldown that's
+            snapshot evidence. Sentinel AI has its own per-camera cooldown that's
             separate from the FFmpeg-level one below.
           </span>
         </p>

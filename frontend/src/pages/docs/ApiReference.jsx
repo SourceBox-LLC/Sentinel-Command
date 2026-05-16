@@ -170,7 +170,7 @@ function ApiReference() {
       <details className="docs-accordion">
         <summary>
           <span className="docs-accordion-chevron" aria-hidden="true">▶</span>
-          <span className="docs-accordion-title">Sentinel Endpoints</span>
+          <span className="docs-accordion-title">Sentinel AI Endpoints</span>
           <span className="docs-accordion-count">8 endpoints</span>
         </summary>
         <p className="docs-accordion-intro">
@@ -183,7 +183,7 @@ function ApiReference() {
         </p>
 
       <div className="docs-endpoint"><span className="docs-endpoint-method get">GET</span><span className="docs-endpoint-path">/api/sentinel/config</span></div>
-      <p>Get the org's Sentinel config plus a <code>plan_gated</code> flag and the plan-aware monthly cap (100 for Pro, 500 for Pro Plus, 0 for free / past-due-too-long). Always returns 200 — non-eligible orgs get a read-only payload so the frontend can render the upgrade banner.</p>
+      <p>Get the org&#39;s Sentinel AI config plus a <code>plan_gated</code> flag and the plan-aware monthly cap (100 for Pro, 500 for Pro Plus, 0 for free / past-due-too-long). Always returns 200 — non-eligible orgs get a read-only payload so the frontend can render the upgrade banner.</p>
 
       <div className="docs-endpoint"><span className="docs-endpoint-method patch">PATCH</span><span className="docs-endpoint-path">/api/sentinel/config</span></div>
       <p>Partial update — toggles, schedule mode + window + active days, motion cooldown, camera scope. Pro / Pro Plus only (returns 402 otherwise).</p>
@@ -198,7 +198,7 @@ function ApiReference() {
       <p>Operator "Run now" — creates a pending manual run with an optional prompt and camera. Skips the schedule + scope gates (the operator overrode them by clicking) but still cap-enforced; returns 429 with the plan-aware cap when the org is at or over its monthly limit.</p>
 
       <div className="docs-endpoint"><span className="docs-endpoint-method get">GET</span><span className="docs-endpoint-path">/api/sentinel/runs/pending</span></div>
-      <p>Service-to-service. The Sentinel agent polls this on wakeup to drain pending runs across all orgs (FIFO, oldest-first). Auth: <code>X-Sentinel-Agent-Key</code> header.</p>
+      <p>Service-to-service. The Sentinel AI polls this on wakeup to drain pending runs across all orgs (FIFO, oldest-first). Auth: <code>X-Sentinel-Agent-Key</code> header.</p>
 
       <div className="docs-endpoint"><span className="docs-endpoint-method post">POST</span><span className="docs-endpoint-path">/api/sentinel/runs/{"{run_id}"}/start</span></div>
       <p>Service-to-service. Agent claims a pending run — transitions <code>pending → running</code>. Idempotent.</p>

@@ -51,7 +51,7 @@ function CloudNodeSetup() {
       <OsTabs id="cn" />
       <p style={{ marginTop: '0.75rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
         {os === 'windows'
-          ? 'After the MSI finishes, click the SourceBox Sentry CloudNode shortcut from the Start menu — first launch runs the setup wizard, every launch after streams cameras directly.'
+          ? 'After the MSI finishes, click the Sentinel CloudNode shortcut from the Start menu — first launch runs the setup wizard, every launch after streams cameras directly.'
           : 'Run in your terminal. The script downloads the binary and registers the node. After it finishes, run the binary directly to start the foreground dashboard — same recommended path as the Windows MSI Start menu shortcut. For 24/7 unattended operation, append --install-service to register a systemd unit (opt-in).'}
       </p>
 
@@ -115,7 +115,7 @@ Set-Service -Name SourceBoxSentryCloudNode -StartupType Automatic`}</code>
 
           <h3>Uninstalling</h3>
           <p>
-            Use <strong>Settings → Apps → Installed apps → SourceBox Sentry CloudNode → Uninstall</strong>.
+            Use <strong>Settings → Apps → Installed apps → Sentinel CloudNode → Uninstall</strong>.
             That stops the service (if running), removes the binary, removes the Windows Service
             registration, and wipes <code>C:\ProgramData\SourceBoxSentry\</code> — including your
             encrypted config and recordings. FFmpeg installed via <code>winget</code> stays put

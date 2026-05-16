@@ -25,9 +25,9 @@ export function AdminWelcomeHero() {
     <div className="welcome-hero">
       <div className="welcome-hero-header">
         <div className="welcome-hero-icon" aria-hidden="true">👋</div>
-        <h2 className="welcome-hero-title">Welcome to SourceBox Sentry</h2>
+        <h2 className="welcome-hero-title">Welcome to Sentinel</h2>
         <p className="welcome-hero-subtitle">
-          Your control plane is ready. SourceBox Sentry runs on your own hardware &mdash; let&rsquo;s get the first camera online.
+          Your control plane is ready. Sentinel runs on your own hardware &mdash; let&rsquo;s get the first camera online.
         </p>
       </div>
 

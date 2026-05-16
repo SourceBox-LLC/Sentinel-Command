@@ -159,7 +159,7 @@ function DocsSidebar({ activeId }) {
   return (
     <aside className="docs-sidebar">
       <div className="docs-sidebar-header">
-        <h2>SourceBox Sentry</h2>
+        <h2>Sentinel</h2>
         <p>Documentation</p>
       </div>
       <nav className="docs-sidebar-nav">
@@ -324,7 +324,7 @@ function DocsPage() {
 
             <div className="docs-header">
               <h1>Documentation</h1>
-              <p>How to use SourceBox Sentry — installing CloudNode on your camera machine, working with the cloud dashboard, and connecting AI tools over MCP.</p>
+              <p>How to use Sentinel — installing CloudNode on your camera machine, working with the cloud dashboard, and connecting AI tools over MCP.</p>
             </div>
 
             <GettingStarted />

@@ -1,5 +1,5 @@
 /**
- * SourceBox Sentry Command Center
+ * Sentinel Command Center
  * Copyright (C) 2026 SourceBox LLC
  *
  * This program is free software: you can redistribute it and/or modify

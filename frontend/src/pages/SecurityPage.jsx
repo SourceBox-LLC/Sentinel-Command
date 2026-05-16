@@ -19,7 +19,7 @@ function SecurityPage() {
             Security & Privacy at <span className="landing-logo-text">Sentry</span>
           </h1>
           <p className="security-subtitle">
-            How SourceBox Sentry handles your video, what stays on your devices,
+            How Sentinel handles your video, what stays on your devices,
             and what you can independently verify in our source code.
           </p>
         </div>
@@ -305,7 +305,7 @@ function SecurityPage() {
         <section className="security-section">
           <h2>How we compare</h2>
           <p>
-            Where SourceBox Sentry differs from consumer cameras people
+            Where Sentinel differs from consumer cameras people
             already have at home. Every row is sourced from the vendor's
             own policy pages or reputable journalism published in 2024 or
             later — citations are linked at the end of each cell.
@@ -324,7 +324,7 @@ function SecurityPage() {
               <thead>
                 <tr>
                   <th scope="col">Dimension</th>
-                  <th scope="col">SourceBox Sentry</th>
+                  <th scope="col">Sentinel</th>
                   <th scope="col">Ring</th>
                   <th scope="col">Google Nest</th>
                   <th scope="col">Wyze</th>
@@ -398,7 +398,7 @@ function SecurityPage() {
               <strong>Wyze encryption:</strong> AES-128 for streams and TLS in transit. Wyze holds the keys — this is not end-to-end encryption, despite how it is sometimes described in secondary reporting (<a href="https://forums.wyze.com/t/end-to-end-encryption-e2ee/81562" target="_blank" rel="noopener noreferrer">Wyze forum, E2EE request</a>).
             </li>
             <li>
-              <strong>SourceBox Sentry:</strong> Claims in the SourceBox column are implemented in our public source —{" "}
+              <strong>Sentinel:</strong> Claims in the SourceBox column are implemented in our public source —{" "}
               <a href="https://github.com/SourceBox-LLC/opensentry-cloud-node/blob/master/src/storage/database.rs" target="_blank" rel="noopener noreferrer">encryption</a>,{" "}
               <a href="https://github.com/SourceBox-LLC/opensentry-cloud-node/blob/master/src/streaming/motion_detector.rs" target="_blank" rel="noopener noreferrer">motion detection</a>, and{" "}
               <a href="https://github.com/SourceBox-LLC/OpenSentry-Command" target="_blank" rel="noopener noreferrer">Command Center</a>.
@@ -409,7 +409,7 @@ function SecurityPage() {
             <strong>A note on the limits of this comparison.</strong>{" "}
             Ring, Nest, and Wyze ship polished consumer hardware,
             mature mobile apps, and professional monitoring integrations.
-            SourceBox Sentry does not — yet. We compete on <em>data posture</em>,
+            Sentinel does not — yet. We compete on <em>data posture</em>,
             not on feature parity. If 24/7 continuous cloud DVR with mobile
             motion-clip search is your top requirement, one of the incumbents
             will serve you better today.

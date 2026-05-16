@@ -10,7 +10,7 @@ function Faq() {
       <details className="docs-accordion">
         <summary>
           <span className="docs-accordion-chevron" aria-hidden="true">▶</span>
-          <span className="docs-accordion-title">Does SourceBox Sentry record audio?</span>
+          <span className="docs-accordion-title">Does Sentinel record audio?</span>
         </summary>
         <p>
           If a camera's input has audio and its codec is supported (AAC, Opus, MP3),
@@ -30,7 +30,7 @@ function Faq() {
           <a href="https://github.com/SourceBox-LLC/opensentry-cloud-node/releases/latest" target="_blank" rel="noopener noreferrer">latest GitHub release</a>{" "}
           and run it. The MSI is unsigned today, so SmartScreen will warn "Windows protected
           your PC" on first run — click <strong>More info → Run anyway</strong>. After install,
-          click the <strong>SourceBox Sentry CloudNode</strong> shortcut from the Start menu —
+          click the <strong>Sentinel CloudNode</strong> shortcut from the Start menu —
           first launch runs the setup wizard, every launch after streams cameras directly. For
           24/7 unattended operation, the MSI also registers an optional Windows Service named{" "}
           <code>SourceBoxSentryCloudNode</code> that you can flip to auto-start; see the{" "}
@@ -148,10 +148,10 @@ function Faq() {
       <details className="docs-accordion">
         <summary>
           <span className="docs-accordion-chevron" aria-hidden="true">▶</span>
-          <span className="docs-accordion-title">What's Sentinel and how does the run cap work?</span>
+          <span className="docs-accordion-title">What&apos;s Sentinel AI and how does the run cap work?</span>
         </summary>
         <p>
-          Sentinel is the optional AI agent that auto-investigates motion events
+          Sentinel AI is the optional agent that auto-investigates motion events
           and incident_opened notifications — it views the camera, decides whether
           what it sees warrants attention, files an incident report with snapshot
           evidence, and writes a summary. One "run" = one investigation,
@@ -159,22 +159,22 @@ function Faq() {
           Plus: 500 runs/month. Caps reset on the 1st of each calendar month.
           When you hit the cap, dispatch pauses for the rest of the month — your
           recordings, motion alerts, and dashboard playback all keep working as
-          normal. See the <a href="#sentinel">Sentinel section</a>.
+          normal. See the <a href="#sentinel">Sentinel AI section</a>.
         </p>
       </details>
 
       <details className="docs-accordion">
         <summary>
           <span className="docs-accordion-chevron" aria-hidden="true">▶</span>
-          <span className="docs-accordion-title">Does Sentinel send my footage to a cloud LLM?</span>
+          <span className="docs-accordion-title">Does Sentinel AI send my footage to a cloud LLM?</span>
         </summary>
         <p>
           Yes — only when it fires, only the snapshots it actively investigates.
-          Sentinel passes a JPEG from <code>view_camera</code> to the configured
+          Sentinel AI passes a JPEG from <code>view_camera</code> to the configured
           LLM endpoint (Ollama Cloud by default) so the model can see what
           triggered the run. The persistent video archive (your recordings) still
           stays on your CloudNode and never syncs to our cloud. If you don't want
-          any footage leaving your hardware, leave Sentinel disabled — motion
+          any footage leaving your hardware, leave Sentinel AI disabled — motion
           detection, recording, and notifications all work without it.
         </p>
       </details>
@@ -182,10 +182,10 @@ function Faq() {
       <details className="docs-accordion">
         <summary>
           <span className="docs-accordion-chevron" aria-hidden="true">▶</span>
-          <span className="docs-accordion-title">How is Sentinel scoped per camera and per time-of-day?</span>
+          <span className="docs-accordion-title">How is Sentinel AI scoped per camera and per time-of-day?</span>
         </summary>
         <p>
-          From the <a href="/sentinel">Sentinel page</a>: per-camera include /
+          From the <a href="/sentinel">Sentinel AI page</a>: per-camera include /
           exclude (cameras default to in-scope so newly-added cameras aren't
           silently skipped), a per-camera motion cooldown (default 5 min), and a
           schedule mode — <em>always</em>, <em>scheduled</em> (HH:MM window on
@@ -198,7 +198,7 @@ function Faq() {
       <details className="docs-accordion">
         <summary>
           <span className="docs-accordion-chevron" aria-hidden="true">▶</span>
-          <span className="docs-accordion-title">Which MCP clients does SourceBox Sentry work with?</span>
+          <span className="docs-accordion-title">Which MCP clients does Sentinel AI work with?</span>
         </summary>
         <p>
           Any MCP client that supports the streamable-HTTP transport. Tested with Claude
@@ -249,7 +249,7 @@ function Faq() {
       <details className="docs-accordion">
         <summary>
           <span className="docs-accordion-chevron" aria-hidden="true">▶</span>
-          <span className="docs-accordion-title">What license is SourceBox Sentry under?</span>
+          <span className="docs-accordion-title">What license is Sentinel under?</span>
         </summary>
         <p>
           Command Center is AGPL-3.0 and CloudNode is GPL-3.0 — both public so

@@ -6,7 +6,7 @@ function Recording() {
     <section className="docs-section" id="recording">
       <h2>Recording &amp; Retention<a href="#recording" className="docs-anchor">#</a></h2>
       <p>
-        Recording in SourceBox Sentry is <strong>node-local by design</strong>. Each
+        Recording in Sentinel is <strong>node-local by design</strong>. Each
         camera has its own recording policy; CloudNode reconciles its in-memory
         recording state from the backend on every heartbeat (~30 s), and
         encrypted recording segments land in the SQLite database next to the

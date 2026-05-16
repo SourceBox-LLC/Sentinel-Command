@@ -1,4 +1,4 @@
-// SourceBox Sentry brand mark.
+// Sentinel brand mark.
 //
 // Shield silhouette with a camera-lens iris inside — semantically a
 // portmanteau of the two halves of the name: "Sentry" (guarding /
@@ -30,7 +30,7 @@ export function LogoMark({ size = 32, monochrome = false, ...props }) {
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       role="img"
-      aria-label="SourceBox Sentry"
+      aria-label="Sentinel"
       {...props}
     >
       {!monochrome && (

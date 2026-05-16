@@ -3,7 +3,7 @@ function Notifications() {
     <section className="docs-section" id="notifications">
       <h2>Notifications<a href="#notifications" className="docs-anchor">#</a></h2>
       <p>
-        SourceBox Sentry raises events for operational changes (nodes going offline, cameras
+        Sentinel raises events for operational changes (nodes going offline, cameras
         dropping off) and motion activity. Each event flows through three channels:
         the in-app bell-icon panel, the email side-channel (opt-in per kind), and
         the MCP tool activity log.
@@ -14,7 +14,7 @@ function Notifications() {
           <source srcSet="/images/notifications-fanout.webp" type="image/webp" />
           <img
             src="/images/notifications-fanout.jpg"
-            alt="Notifications fan-out: a single platform event passes through the audience filter (admin-only vs all members), then fans out to five destinations — In-app inbox (SSE, real-time), Email (Resend, with per-org opt-in, bounce suppression, and 15-minute motion cooldown), the Incident Reports page at /incidents (when filed as incident), the MCP activity log (admin only), and the Sentinel agent (Pro/Pro Plus only, on motion + incident_created kinds). Motion digest behavior is surfaced near the email channel: 1 immediate + 1 summary, capped at 2 per cycle per camera. Legend in the top-right groups channels by role."
+            alt="Notifications fan-out: a single platform event passes through the audience filter (admin-only vs all members), then fans out to five destinations — In-app inbox (SSE, real-time), Email (Resend, with per-org opt-in, bounce suppression, and 15-minute motion cooldown), the Incident Reports page at /incidents (when filed as incident), the MCP activity log (admin only), and the Sentinel AI (Pro/Pro Plus only, on motion + incident_created kinds). Motion digest behavior is surfaced near the email channel: 1 immediate + 1 summary, capped at 2 per cycle per camera. Legend in the top-right groups channels by role."
             className="docs-diagram-image"
             width="2752"
             height="1536"
@@ -22,7 +22,7 @@ function Notifications() {
           />
         </picture>
         <figcaption className="docs-diagram-caption">
-          One event, five destinations. The audience filter decides whether the event goes to admins only or to every member. The email gate adds per-org opt-in, bounce suppression, and motion-event cooldown — so the in-app inbox can be loud while email volume stays bounded. The Sentinel branch only fires for Pro/Pro Plus orgs that have configured the agent, on motion or incident_created kinds.
+          One event, five destinations. The audience filter decides whether the event goes to admins only or to every member. The email gate adds per-org opt-in, bounce suppression, and motion-event cooldown — so the in-app inbox can be loud while email volume stays bounded. The Sentinel AI branch only fires for Pro/Pro Plus orgs that have configured the agent, on motion or incident_created kinds.
         </figcaption>
       </figure>
 
@@ -30,12 +30,12 @@ function Notifications() {
         <p>
           <span className="docs-callout-icon">🛡️</span>
           <span>
-            On Pro / Pro Plus orgs with the <a href="#sentinel">Sentinel agent</a>{" "}
+            On Pro / Pro Plus orgs with the <a href="#sentinel">Sentinel AI</a>{" "}
             configured, two of the kinds below — <strong>motion</strong> and{" "}
             <strong>incident_created</strong> — also dispatch an autonomous
             agent run that investigates the event and may file an incident
-            report. Sentinel reads the same per-camera scope, schedule, and
-            cooldown you set on the Sentinel page, independent of these email
+            report. Sentinel AI reads the same per-camera scope, schedule, and
+            cooldown you set on the Sentinel AI page, independent of these email
             toggles.
           </span>
         </p>
@@ -48,7 +48,7 @@ function Notifications() {
         <li><strong>Camera offline</strong> — A camera on an online node stopped reporting segments (cable unplugged, USB error, camera held open by another app).</li>
         <li><strong>Camera recovered</strong> — A previously offline camera started reporting segments again.</li>
         <li><strong>Motion detected</strong> — A camera's FFmpeg scene-change scorer crossed the configured threshold. See <a href="#motion-detection">Motion Detection</a>.</li>
-        <li><strong>Incident opened</strong> — A human, an MCP-connected AI tool, or the <a href="#sentinel">Sentinel agent</a> filed a new incident report.</li>
+        <li><strong>Incident opened</strong> — A human, an MCP-connected AI tool, or the <a href="#sentinel">Sentinel AI</a> filed a new incident report.</li>
         <li><strong>MCP API key created</strong> — An admin generated a new MCP API key (full programmatic access to cameras + nodes + incidents). Security-audit signal.</li>
         <li><strong>MCP API key revoked</strong> — An admin revoked an existing MCP key. Paired with the create event so the audit trail is symmetric.</li>
         <li><strong>CloudNode disk almost full</strong> — Your CloudNode hardware crossed 90% disk usage. Recordings will fail when the disk caps out. Customer-actionable (clean up files, expand storage).</li>

@@ -147,7 +147,7 @@ export function OsTabs({ id }) {
             </a>
             <p style={{ marginTop: "0.75rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>
               Run the MSI (UAC prompt; SmartScreen → <strong>More info → Run anyway</strong>),
-              then open the <strong>SourceBox Sentry CloudNode</strong> shortcut from the
+              then open the <strong>Sentinel CloudNode</strong> shortcut from the
               Start menu. First launch runs the setup wizard; every launch after streams
               cameras directly.
             </p>

@@ -14,7 +14,7 @@ function Mcp() {
         </p>
       </div>
       <p>
-        SourceBox Sentry supports the <strong>Model Context Protocol (MCP)</strong>, letting AI tools like
+        Sentinel supports the <strong>Model Context Protocol (MCP)</strong>, letting AI tools like
         Claude Code, Cursor, or custom agents interact with your cameras, nodes, and settings
         through natural language.
       </p>
@@ -22,7 +22,7 @@ function Mcp() {
       <h3>What is MCP?</h3>
       <p>
         MCP is an open protocol that lets AI assistants connect to external tools and data sources.
-        When you connect an AI tool to SourceBox Sentry via MCP, it can list your cameras, check node
+        When you connect an AI tool to Sentinel via MCP, it can list your cameras, check node
         status, get stream URLs, manage recording settings, and more — all through conversation.
       </p>
 

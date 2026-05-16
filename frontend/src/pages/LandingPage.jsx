@@ -96,7 +96,7 @@ function LandingPage() {
               <source srcSet="/images/landing-hero.webp" type="image/webp" />
               <img
                 src="/images/landing-hero.jpg"
-                alt="A private home study at dusk — USB webcam clipped to a monitor showing the SourceBox Sentry dashboard with green and purple camera tiles, on a warm wooden desk with a plant and steaming mug, soft golden window light"
+                alt="A private home study at dusk — USB webcam clipped to a monitor showing the Sentinel dashboard with green and purple camera tiles, on a warm wooden desk with a plant and steaming mug, soft golden window light"
                 className="landing-hero-image"
                 width="1600"
                 height="1200"
@@ -112,7 +112,7 @@ function LandingPage() {
       <section id="features" className="landing-section-alt">
         <div className="landing-container">
           <div className="landing-section-header">
-            <h2 className="landing-section-title">Why SourceBox Sentry?</h2>
+            <h2 className="landing-section-title">Why Sentinel?</h2>
             <p className="landing-section-subtitle">
               Designed for modern security. Cloud-hosted, globally accessible, and secure by default.
             </p>
@@ -606,7 +606,7 @@ function LandingPage() {
           <div className="landing-cta-content">
             <h2>Ready to Get Started?</h2>
             <p>
-              Sign up for SourceBox Sentry today. Cloud-hosted, globally accessible, and free to start.
+              Sign up for Sentinel today. Cloud-hosted, globally accessible, and free to start.
             </p>
             <div className="landing-cta-actions">
               <Link to="/sign-up" className="landing-btn landing-btn-primary landing-btn-lg">

@@ -2,7 +2,7 @@ function Architecture() {
   return (
     <section className="docs-section" id="architecture">
       <h2>Architecture<a href="#architecture" className="docs-anchor">#</a></h2>
-      <p>SourceBox Sentry uses a cloud-first architecture designed for simplicity and security.</p>
+      <p>Sentinel uses a cloud-first architecture designed for simplicity and security.</p>
 
       <h3>Data Flow</h3>
       <figure className="docs-diagram">
@@ -54,21 +54,21 @@ function Architecture() {
         </figcaption>
       </figure>
 
-      <h3>Sentinel agent (optional, Pro+)</h3>
+      <h3>Sentinel AI (optional, Pro+)</h3>
       <p>
         On Pro and Pro Plus, an additional surface joins the architecture:{" "}
-        <a href="#sentinel">Sentinel</a>, a webhook-driven serverless AI agent
+        <a href="#sentinel">Sentinel AI</a>, a webhook-driven serverless AI agent
         that auto-investigates motion and incident_opened events.
       </p>
       <ol>
         <li>A configured trigger fires (motion / incident_opened / manual).</li>
-        <li>Command Center inserts a <code>sentinel_runs</code> row and POSTs an HMAC-signed wakeup webhook to the Sentinel agent on Fly.io.</li>
+        <li>Command Center inserts a <code>sentinel_runs</code> row and POSTs an HMAC-signed wakeup webhook to the Sentinel AI on Fly.io.</li>
         <li>The agent boots if it was sleeping, drains all pending runs across all orgs, and processes each via an LLM ↔ MCP tool loop. Per-call org scoping happens server-side via the <code>X-Agent-Org-Override</code> header — one deployed agent serves every org with no cross-tenant state.</li>
         <li>Each run posts back via <code>/api/sentinel/runs/&#123;id&#125;/complete</code>. The agent returns 200 and Fly auto-stops the machine after the idle window — no idle billing between events.</li>
       </ol>
       <p>
         Per-run isolation comes from a fresh MCP client + fresh messages array
-        per run. See <a href="#sentinel">the Sentinel section</a> for the full
+        per run. See <a href="#sentinel">the Sentinel AI section</a> for the full
         configuration surface, time bounds, and reliability layers.
       </p>
 

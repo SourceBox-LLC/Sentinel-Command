@@ -94,7 +94,7 @@ cargo build --release
       <p>Drop into <code>/etc/systemd/system/sourcebox-sentry-cloudnode.service</code>:</p>
       <div className="docs-code-block">
         <code>{`[Unit]
-Description=SourceBox Sentry CloudNode
+Description=Sentinel CloudNode
 Documentation=https://opensentry-command.fly.dev
 After=network-online.target
 Wants=network-online.target
@@ -126,7 +126,7 @@ StartLimitBurst=5
 [Install]
 WantedBy=multi-user.target`}</code>
         <button className="docs-copy-btn" onClick={() => copyToClipboard(`[Unit]
-Description=SourceBox Sentry CloudNode
+Description=Sentinel CloudNode
 Documentation=https://opensentry-command.fly.dev
 After=network-online.target
 Wants=network-online.target

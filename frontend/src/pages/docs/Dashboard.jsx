@@ -61,7 +61,7 @@ function Dashboard() {
       <p>
         Two paths produce AI-authored incidents: an external <a href="#mcp">MCP client</a>{" "}
         (Claude Code, Cursor, a custom agent) writing through the MCP tool surface, or
-        the built-in <a href="#sentinel">Sentinel agent</a> firing autonomously on motion
+        the built-in <a href="#sentinel">Sentinel AI</a> firing autonomously on motion
         or incident_opened events. Each report has a severity, status, markdown
         write-up, attached snapshots, video clips, and a timeline of observations —
         all editable from the standalone <strong>Incident Reports</strong> page

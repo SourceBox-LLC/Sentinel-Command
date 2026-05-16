@@ -6,7 +6,7 @@ function Plans() {
     <section className="docs-section" id="plans">
       <h2>Plans & Limits<a href="#plans" className="docs-anchor">#</a></h2>
       <p>
-        SourceBox Sentry is priced on <strong>usage</strong> — how much live
+        Sentinel is priced on <strong>usage</strong> — how much live
         video you watch per month — not on how many cameras you connect.
         Hardware counts (cameras, nodes) are generous abuse-rails rather than
         product differentiators; the real tier axis is viewer-hours and
@@ -62,9 +62,9 @@ function Plans() {
         <li><strong>Viewer-hour cap</strong> — enforced on each HLS segment serve. The dashboard shows a live usage gauge with warn/full states at 80% / 100%.</li>
         <li><strong>Camera / node limits</strong> — when a node registers and you're at your camera cap, additional cameras are skipped with HTTP 402 and a <code>plan_limit_hit</code> detail. They are preserved in the database (soft-disable, not deletion) so upgrading restores them instantly.</li>
         <li><strong>SSE connection cap</strong> — per-org concurrent live-dashboard connections are capped per tier. Hitting the cap returns HTTP 429; close unused tabs or upgrade.</li>
-        <li><strong>Feature gates</strong> — admin dashboard, danger zone, MCP, and Sentinel all require Pro or Pro Plus.</li>
+        <li><strong>Feature gates</strong> — admin dashboard, danger zone, MCP, and Sentinel AI all require Pro or Pro Plus.</li>
         <li><strong>MCP rate limits</strong> — enforced per API key as a sliding window: a per-minute cap for burst control and a 24-hour cap that catches runaway automation loops.</li>
-        <li><strong>Sentinel run cap</strong> — enforced on dispatch. Hits the cap → motion + incident_opened triggers stop firing new runs and the manual "Run now" button returns 429 until the 1st of next month. One run = one investigation regardless of how many tool calls it took. See <a href="#sentinel">Sentinel</a>.</li>
+        <li><strong>Sentinel AI run cap</strong> — enforced on dispatch. Hits the cap → motion + incident_opened triggers stop firing new runs and the manual "Run now" button returns 429 until the 1st of next month. One run = one investigation regardless of how many tool calls it took. See <a href="#sentinel">Sentinel AI</a>.</li>
         <li><strong>Log retention</strong> — stream access logs, MCP activity, audit logs, motion events, and notifications are automatically deleted after the per-tier retention window (a nightly cleanup task iterates orgs and applies each org's tier).</li>
       </ul>
 

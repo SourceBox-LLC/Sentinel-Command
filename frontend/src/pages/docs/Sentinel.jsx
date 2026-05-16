@@ -5,20 +5,20 @@ function Sentinel() {
       <div className="docs-callout docs-callout-info">
         <p>
           <span className="docs-callout-icon">🛡️</span>
-          <span>Sentinel requires a <strong>Pro</strong> or <strong>Pro Plus</strong> plan. Pro: 100 runs/month. Pro Plus: 500 runs/month.</span>
+          <span>Sentinel AI requires a <strong>Pro</strong> or <strong>Pro Plus</strong> plan. Pro: 100 runs/month. Pro Plus: 500 runs/month.</span>
         </p>
       </div>
       <p>
-        Sentinel is the optional AI agent that investigates motion events and incidents on your behalf —
+        Sentinel AI is the optional AI agent that investigates motion events and incidents on your behalf —
         it views the camera, decides whether what it sees warrants attention, files an incident report
         with snapshot evidence, and writes a long-form summary. Configure it on the{" "}
-        <a href="/sentinel">Sentinel</a> page; the resulting incidents land in{" "}
+        <a href="/sentinel">Sentinel AI</a> page; the resulting incidents land in{" "}
         <a href="/incidents">Incident Reports</a> alongside any human-filed reports.
       </p>
 
       <h3>How it works</h3>
       <p>
-        Sentinel is a serverless agent — it sleeps until Command Center wakes it. When a configured
+        Sentinel AI is a serverless agent — it sleeps until Command Center wakes it. When a configured
         trigger fires (motion, an incident opened, or a manual "Run now" click), Command Center inserts
         a row into a <code>sentinel_runs</code> queue and POSTs a webhook to the agent. The agent boots,
         drains every pending row across every org, processes each one through an LLM ↔ MCP loop, posts
@@ -30,9 +30,9 @@ function Sentinel() {
         and a fresh conversation, so cross-org state can't leak between runs.
       </p>
 
-      <h3>What triggers a Sentinel run</h3>
+      <h3>What triggers a Sentinel AI run</h3>
       <p>
-        Sentinel only ever runs when something specific tells it to — there's no continuous polling.
+        Sentinel AI only ever runs when something specific tells it to — there's no continuous polling.
         Three trigger types today:
       </p>
       <ul>
@@ -43,11 +43,11 @@ function Sentinel() {
           Default cooldown is 5 minutes per camera so a busy camera doesn't burn the cap.
         </li>
         <li>
-          <strong>Incident opened</strong> — a human filed a new incident from the dashboard. Sentinel
+          <strong>Incident opened</strong> — a human filed a new incident from the dashboard. Sentinel AI
           can investigate further, attach additional snapshots/observations, and finalize the report.
         </li>
         <li>
-          <strong>Manual run</strong> — operator clicks "Run now" on the Sentinel page with an optional
+          <strong>Manual run</strong> — operator clicks "Run now" on the Sentinel AI page with an optional
           custom prompt and optional camera. Skips the schedule + scope checks (the operator overrode
           them by clicking) but still counts against the monthly cap.
         </li>
@@ -124,11 +124,11 @@ function Sentinel() {
 
       <h3>Configuration</h3>
       <p>
-        Everything lives on the <a href="/sentinel">Sentinel page</a>. The configurable knobs:
+        Everything lives on the <a href="/sentinel">Sentinel AI page</a>. The configurable knobs:
       </p>
       <ul>
         <li>
-          <strong>Master enable</strong> — kill switch that turns Sentinel off entirely without
+          <strong>Master enable</strong> — kill switch that turns Sentinel AI off entirely without
           discarding the rest of the configuration.
         </li>
         <li>
@@ -169,7 +169,7 @@ function Sentinel() {
           <tbody>
             <tr>
               <td>Free</td>
-              <td>0 — Sentinel locked</td>
+              <td>0 — Sentinel AI locked</td>
               <td>n/a</td>
             </tr>
             <tr>
@@ -193,7 +193,7 @@ function Sentinel() {
 
       <h3>Run history and the dashboard</h3>
       <p>
-        The <a href="/sentinel">Sentinel page</a> shows recent runs with their trigger type, camera,
+        The <a href="/sentinel">Sentinel AI page</a> shows recent runs with their trigger type, camera,
         outcome, and duration. Clicking a run opens a drawer with the full agent reasoning trace —
         every tool call, with arguments and (truncated) results — so you can see exactly what the
         agent decided to do and why.
@@ -221,18 +221,18 @@ function Sentinel() {
         <p>
           <span className="docs-callout-icon">⚠️</span>
           <span>
-            Sentinel is the one part of SourceBox Sentry that sends camera
+            Sentinel AI is the one part of Sentinel AI that sends camera
             snapshots <em>out of your network</em> — to whichever LLM endpoint
             is configured (Ollama Cloud by default). Without that the model
             can't see what triggered the run. <strong>If you don't want any
-            footage leaving your hardware, leave Sentinel disabled</strong> —
+            footage leaving your hardware, leave Sentinel AI disabled</strong> —
             motion detection, recording, and notifications all work without it.
           </span>
         </p>
       </div>
       <ul>
-        <li><strong>Snapshots only when investigating.</strong> Sentinel grabs an ephemeral JPEG via <code>view_camera</code> at the moment of a run — it doesn't ship a continuous stream. Recordings (the persistent video archive) stay on your CloudNode regardless.</li>
-        <li><strong>Trigger-driven only.</strong> Sentinel fires only on triggers <em>you</em> configure (motion / incident_opened / manual). No background polling, no continuous monitoring.</li>
+        <li><strong>Snapshots only when investigating.</strong> Sentinel AI grabs an ephemeral JPEG via <code>view_camera</code> at the moment of a run — it doesn't ship a continuous stream. Recordings (the persistent video archive) stay on your CloudNode regardless.</li>
+        <li><strong>Trigger-driven only.</strong> Sentinel AI fires only on triggers <em>you</em> configure (motion / incident_opened / manual). No background polling, no continuous monitoring.</li>
         <li><strong>LLM endpoint is yours to point.</strong> The default is Ollama Cloud, but the agent works against a self-hosted Ollama just as well — set <code>OLLAMA_HOST</code> to your own URL and snapshots never leave infrastructure you control.</li>
         <li><strong>Where the agent runs.</strong> The agent process itself runs on hardware we operate (Fly.io, US region). The auth model is two shared secrets (run-callback + MCP bearer) that scope to whichever org each run was dispatched for.</li>
       </ul>
@@ -240,11 +240,11 @@ function Sentinel() {
       <h3>Troubleshooting</h3>
       <ul>
         <li>
-          <strong>"Sentinel is configured but nothing fires."</strong> Check the master enable toggle,
+          <strong>"Sentinel AI is configured but nothing fires."</strong> Check the master enable toggle,
           then the per-trigger toggles. Then verify the camera is in scope (default is in-scope, so
           this only matters if you've explicitly set it to false). Then check whether the schedule
           window allows runs at the current time in your org's timezone. Finally, check the cap —
-          the bottom of the Sentinel page shows runs used vs. cap.
+          the bottom of the Sentinel AI page shows runs used vs. cap.
         </li>
         <li>
           <strong>"Motion fires every few seconds and burns through my cap."</strong> Bump the motion

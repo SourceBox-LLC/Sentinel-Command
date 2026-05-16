@@ -30,7 +30,7 @@ function CameraGroups() {
         <li><strong>Live view layout</strong> — Camera tiles on the dashboard get a colored top stripe matching their group. A 20-camera grid reads at a glance.</li>
         <li><strong>Color-coded pill</strong> — Each tile shows a small pill in its header with the group icon + name, tinted in the group color. The dashboard filter row above the grid uses the same color swatches.</li>
         <li><strong>Filter</strong> — A pill row at the top of the dashboard lets you scope the live view to <em>All</em>, a specific group, or <em>Ungrouped</em>. State is local to the session — no setting to save.</li>
-        <li><strong>MCP navigation</strong> — Agents call <code>list_camera_groups</code> to resolve a natural-language location (&ldquo;check the workshop&rdquo;) to a set of <code>camera_id</code>s. Sentinel uses this for location-aware investigations.</li>
+        <li><strong>MCP navigation</strong> — Agents call <code>list_camera_groups</code> to resolve a natural-language location (&ldquo;check the workshop&rdquo;) to a set of <code>camera_id</code>s. Sentinel AI uses this for location-aware investigations.</li>
       </ul>
 
       <h3>Tips</h3>
