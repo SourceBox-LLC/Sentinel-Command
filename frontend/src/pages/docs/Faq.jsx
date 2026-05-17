@@ -31,12 +31,10 @@ function Faq() {
           and run it. The MSI is unsigned today, so SmartScreen will warn "Windows protected
           your PC" on first run — click <strong>More info → Run anyway</strong>. After install,
           click the <strong>Sentinel CloudNode</strong> shortcut from the Start menu —
-          first launch runs the setup wizard, every launch after streams cameras directly. For
-          24/7 unattended operation, the MSI also registers an optional Windows Service named{" "}
-          <code>SourceBoxSentryCloudNode</code> that you can flip to auto-start; see the{" "}
-          <a href="#cloudnode-setup">CloudNode Setup</a> section for details. There is no
-          PowerShell one-liner installer — that path was retired in v0.1.31 because the MSI
-          is the only Windows install that handles upgrades and Add/Remove Programs cleanly.
+          first launch runs the setup wizard, every launch after streams cameras directly.
+          There is no PowerShell one-liner installer — that path was retired in v0.1.31
+          because the MSI is the only Windows install that handles upgrades and Add/Remove
+          Programs cleanly.
         </p>
       </details>
 

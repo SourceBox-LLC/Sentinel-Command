@@ -52,7 +52,7 @@ function CloudNodeSetup() {
       <p style={{ marginTop: '0.75rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
         {os === 'windows'
           ? 'After the MSI finishes, click the Sentinel CloudNode shortcut from the Start menu — first launch runs the setup wizard, every launch after streams cameras directly.'
-          : 'Run in your terminal. The script downloads the binary and registers the node. After it finishes, run the binary directly to start the foreground dashboard — same recommended path as the Windows MSI Start menu shortcut. For 24/7 unattended operation, append --install-service to register a systemd unit (opt-in).'}
+          : 'Run in your terminal. The script downloads the binary and registers the node. After it finishes, run the binary directly to start the foreground dashboard — same recommended path as the Windows MSI Start menu shortcut.'}
       </p>
 
       <h3>Setup Wizard</h3>
@@ -86,40 +86,17 @@ function CloudNodeSetup() {
           <p>
             The Start menu shortcut launches CloudNode as a foreground app — a terminal window
             opens with the live dashboard, FFmpeg starts pushing segments, and the node stays
-            online for as long as the window is open. This is the recommended path for everyday
-            use: you can see what's happening, hit a slash command, and close it cleanly.
-          </p>
-
-          <h4>Auto-start on boot (optional)</h4>
-          <p>
-            For 24/7 unattended operation, the MSI also registers a Windows Service named{' '}
-            <code>SourceBoxSentryCloudNode</code> set to <strong>manual start</strong>. Flip it
-            to automatic if you want CloudNode to come up after a reboot without anyone logging
-            in:
-          </p>
-          <div className="docs-code-block">
-            <code>{`Start-Service SourceBoxSentryCloudNode
-Set-Service -Name SourceBoxSentryCloudNode -StartupType Automatic`}</code>
-            <button className="docs-copy-btn" onClick={() => copyToClipboard("Start-Service SourceBoxSentryCloudNode\nSet-Service -Name SourceBoxSentryCloudNode -StartupType Automatic")}>Copy</button>
-          </div>
-          <p>Standard service-management commands all work:</p>
-          <ul>
-            <li><code>Get-Service SourceBoxSentryCloudNode</code> — running / stopped status</li>
-            <li><code>Stop-Service SourceBoxSentryCloudNode</code> / <code>Restart-Service SourceBoxSentryCloudNode</code></li>
-            <li><code>Get-Content -Wait C:\ProgramData\SourceBoxSentry\logs\cloudnode-service.<i>YYYY-MM-DD</i></code> — tail today's service log</li>
-          </ul>
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-            Don't run the foreground TUI and the service at the same time — only one process
-            should hold the cameras.
+            online for as long as the window is open. You can see what's happening, hit a slash
+            command, and close it cleanly.
           </p>
 
           <h3>Uninstalling</h3>
           <p>
             Use <strong>Settings → Apps → Installed apps → Sentinel CloudNode → Uninstall</strong>.
-            That stops the service (if running), removes the binary, removes the Windows Service
-            registration, and wipes <code>C:\ProgramData\SourceBoxSentry\</code> — including your
-            encrypted config and recordings. FFmpeg installed via <code>winget</code> stays put
-            because it's a separate package owned by the OS package manager.
+            That removes the binary and wipes <code>C:\ProgramData\SourceBoxSentry\</code> —
+            including your encrypted config and recordings. FFmpeg installed via{' '}
+            <code>winget</code> stays put because it's a separate package owned by the OS
+            package manager.
           </p>
           <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
             Upgrades (re-running a newer MSI) preserve everything under ProgramData; only an
@@ -145,32 +122,8 @@ Set-Service -Name SourceBoxSentryCloudNode -StartupType Automatic`}</code>
           </div>
           <p>
             A terminal dashboard opens with live cameras, segment counts, FFmpeg state, and
-            slash commands. The node stays online for as long as the window is open. This is
-            the recommended path for everyday use — same model as the Windows MSI's Start
-            menu shortcut. You can see what's happening, hit a slash command, and close it
-            cleanly with Ctrl+C.
-          </p>
-
-          <h4>Auto-start on boot (optional)</h4>
-          <p>
-            For 24/7 unattended operation (camera in a closet, no SSH session), append{' '}
-            <code>--install-service</code> to the install command. This registers a systemd
-            unit and starts it:
-          </p>
-          <div className="docs-code-block">
-            <code>curl -fsSL https://opensentry-command.fly.dev/install.sh | bash -s -- --install-service</code>
-            <button className="docs-copy-btn" onClick={() => copyToClipboard("curl -fsSL https://opensentry-command.fly.dev/install.sh | bash -s -- --install-service")}>Copy</button>
-          </div>
-          <p>Standard service-management commands all work:</p>
-          <ul>
-            <li><code>systemctl status sourcebox-sentry-cloudnode</code> — running / stopped status</li>
-            <li><code>sudo systemctl restart sourcebox-sentry-cloudnode</code></li>
-            <li><code>journalctl -u sourcebox-sentry-cloudnode -f</code> — tail live log</li>
-          </ul>
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-            Don't run the foreground TUI and the service at the same time — only one process
-            should hold the cameras. Verify the foreground flow works first before flipping
-            to unattended.
+            slash commands. The node stays online for as long as the window is open — you can
+            see what's happening, hit a slash command, and close it cleanly with Ctrl+C.
           </p>
         </>
       )}
