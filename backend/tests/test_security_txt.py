@@ -85,7 +85,7 @@ def test_security_txt_primary_contact_is_github_security_advisories(
     channel."""
     body = unauthenticated_client.get("/.well-known/security.txt").text
     assert (
-        "https://github.com/SourceBox-LLC/OpenSentry-Command/security/advisories/new"
+        "https://github.com/SourceBox-LLC/Sentinel-Command/security/advisories/new"
         in body
     )
 

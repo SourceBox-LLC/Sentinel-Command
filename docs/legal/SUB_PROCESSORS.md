@@ -153,5 +153,5 @@ example, a privacy-relevant change in their service or a new
 investigation that affects their data-handling — please contact
 SourceBox at the support address in your Order Form, or open a
 GitHub issue at
-<https://github.com/SourceBox-LLC/OpenSentry-Command/issues>
+<https://github.com/SourceBox-LLC/Sentinel-Command/issues>
 (public; do not include sensitive information).

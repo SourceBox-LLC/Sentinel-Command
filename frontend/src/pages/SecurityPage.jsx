@@ -311,7 +311,7 @@ function SecurityPage() {
             later — citations are linked at the end of each cell.
             We'll keep this table current; if you find a stale claim,{" "}
             <a
-              href="https://github.com/SourceBox-LLC/OpenSentry-Command/issues"
+              href="https://github.com/SourceBox-LLC/Sentinel-Command/issues"
               target="_blank"
               rel="noopener noreferrer"
             >
@@ -401,7 +401,7 @@ function SecurityPage() {
               <strong>Sentinel:</strong> Claims in the SourceBox column are implemented in our public source —{" "}
               <a href="https://github.com/SourceBox-LLC/opensentry-cloud-node/blob/master/src/storage/database.rs" target="_blank" rel="noopener noreferrer">encryption</a>,{" "}
               <a href="https://github.com/SourceBox-LLC/opensentry-cloud-node/blob/master/src/streaming/motion_detector.rs" target="_blank" rel="noopener noreferrer">motion detection</a>, and{" "}
-              <a href="https://github.com/SourceBox-LLC/OpenSentry-Command" target="_blank" rel="noopener noreferrer">Command Center</a>.
+              <a href="https://github.com/SourceBox-LLC/Sentinel-Command" target="_blank" rel="noopener noreferrer">Command Center</a>.
             </li>
           </ul>
 
@@ -494,7 +494,7 @@ function SecurityPage() {
               is down, you'll see it from the dashboard but we don't yet
               publish historical uptime. Subscribe to{" "}
               <a
-                href="https://github.com/SourceBox-LLC/OpenSentry-Command/issues"
+                href="https://github.com/SourceBox-LLC/Sentinel-Command/issues"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -553,7 +553,7 @@ function SecurityPage() {
           <p>
             File a private{" "}
             <a
-              href="https://github.com/SourceBox-LLC/OpenSentry-Command/security/advisories/new"
+              href="https://github.com/SourceBox-LLC/Sentinel-Command/security/advisories/new"
               target="_blank"
               rel="noopener noreferrer"
             >

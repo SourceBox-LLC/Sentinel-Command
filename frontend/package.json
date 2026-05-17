@@ -7,7 +7,7 @@
   "author": "SourceBox LLC",
   "repository": {
     "type": "git",
-    "url": "https://github.com/SourceBox-LLC/OpenSentry-Command"
+    "url": "https://github.com/SourceBox-LLC/Sentinel-Command"
   },
   "scripts": {
     "dev": "vite",

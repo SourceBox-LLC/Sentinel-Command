@@ -43,7 +43,7 @@ router = APIRouter()
 # than no email channel at all.  Add one back when MX is live for
 # sourceboxsentry.com (likely security@ or notifications@).
 
-_PRIMARY_CONTACT = "https://github.com/SourceBox-LLC/OpenSentry-Command/security/advisories/new"
+_PRIMARY_CONTACT = "https://github.com/SourceBox-LLC/Sentinel-Command/security/advisories/new"
 
 # Expiry window — RFC 9116 §2.5.5 says ≤ 1 year from generation.
 # We use ~11 months to give ourselves a comfortable buffer; the

@@ -7,8 +7,8 @@ import { LogoMark } from "./Logo.jsx"
 // pattern LegalPage.jsx uses for the `legal@` placeholder.  When the
 // real `support@` mailbox lands, swap to a `mailto:` link.
 const SUPPORT_URL =
-  "https://github.com/SourceBox-LLC/OpenSentry-Command/issues/new?labels=support&template=support.md"
-const STATUS_URL = "https://github.com/SourceBox-LLC/OpenSentry-Command/issues?q=is%3Aissue+label%3Aoutage"
+  "https://github.com/SourceBox-LLC/Sentinel-Command/issues/new?labels=support&template=support.md"
+const STATUS_URL = "https://github.com/SourceBox-LLC/Sentinel-Command/issues?q=is%3Aissue+label%3Aoutage"
 
 function LandingFooter() {
   return (
@@ -35,7 +35,7 @@ function LandingFooter() {
 
             <div className="landing-footer-col">
               <h5>Resources</h5>
-              <a href="https://github.com/SourceBox-LLC/OpenSentry-Command" target="_blank" rel="noopener noreferrer">
+              <a href="https://github.com/SourceBox-LLC/Sentinel-Command" target="_blank" rel="noopener noreferrer">
                 Command Center
               </a>
               <a href="https://github.com/SourceBox-LLC/opensentry-cloud-node" target="_blank" rel="noopener noreferrer">
@@ -55,7 +55,7 @@ function LandingFooter() {
                 Outage status
               </a>
               <a
-                href="https://github.com/SourceBox-LLC/OpenSentry-Command/issues/new?labels=bug"
+                href="https://github.com/SourceBox-LLC/Sentinel-Command/issues/new?labels=bug"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -68,7 +68,7 @@ function LandingFooter() {
               <Link to="/security">Security</Link>
               <Link to="/legal/terms">Terms of Service</Link>
               <Link to="/legal/privacy">Privacy Policy</Link>
-              <a href="https://github.com/SourceBox-LLC/OpenSentry-Command/blob/master/LICENSE" target="_blank" rel="noopener noreferrer">
+              <a href="https://github.com/SourceBox-LLC/Sentinel-Command/blob/master/LICENSE" target="_blank" rel="noopener noreferrer">
                 AGPL-3.0 License
               </a>
             </div>

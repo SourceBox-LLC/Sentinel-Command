@@ -351,7 +351,7 @@ function LandingPage() {
                 </li>
               </ul>
               <a 
-                href="https://github.com/SourceBox-LLC/OpenSentry-Command" 
+                href="https://github.com/SourceBox-LLC/Sentinel-Command" 
                 target="_blank" 
                 rel="noopener noreferrer"
                 className="landing-arch-cta landing-arch-cta-primary"

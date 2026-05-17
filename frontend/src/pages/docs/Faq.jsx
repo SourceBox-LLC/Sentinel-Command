@@ -138,7 +138,7 @@ function Faq() {
         </summary>
         <p>
           Command Center is a SaaS we host and operate — you sign up, we run it.
-          We publish the source at <a href="https://github.com/SourceBox-LLC/OpenSentry-Command" target="_blank" rel="noopener noreferrer">github.com/SourceBox-LLC/OpenSentry-Command</a>{" "}
+          We publish the source at <a href="https://github.com/SourceBox-LLC/Sentinel-Command" target="_blank" rel="noopener noreferrer">github.com/SourceBox-LLC/Sentinel-Command</a>{" "}
           under AGPL-3.0 for transparency: every claim on the security and
           privacy pages points at the file that implements it, and a customer
           or auditor can verify what we actually do — no analytics, no cloud ML

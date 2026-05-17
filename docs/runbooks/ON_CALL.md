@@ -26,7 +26,7 @@ checks**, **Likely causes**, **Fix paths**, **When to escalate**.
 | `fly ssh console -a opensentry-command` | Shell into the live machine |
 | Sentry: project **opensentry-command** | Alert origin, stack traces |
 | Clerk dashboard | Auth issues, billing webhook deliveries |
-| GitHub: `SourceBox-LLC/OpenSentry-Command` | Source, deploy via push to master |
+| GitHub: `SourceBox-LLC/Sentinel-Command` | Source, deploy via push to master |
 
 ---
 
@@ -426,15 +426,15 @@ but the "Deploy to Fly.io" job failed. The live site is fine — just
 not yet on the latest commit.
 
 **First checks.**
-1. `gh run list --workflow="Test & Deploy" --limit 5 -R SourceBox-LLC/OpenSentry-Command` —
+1. `gh run list --workflow="Test & Deploy" --limit 5 -R SourceBox-LLC/Sentinel-Command` —
    recent run history. Multiple failures in a row = real problem,
    single failure = could be transient flake.
-2. `gh run view <run_id> --log-failed -R SourceBox-LLC/OpenSentry-Command | tail -30` —
+2. `gh run view <run_id> --log-failed -R SourceBox-LLC/Sentinel-Command | tail -30` —
    show the failure tail.
 3. Compare to the most recent successful run's log to spot what
    changed:
    ```
-   gh run view <good_run_id> --log -R SourceBox-LLC/OpenSentry-Command \
+   gh run view <good_run_id> --log -R SourceBox-LLC/Sentinel-Command \
      | grep -E "WARN|Error|builder" | tail -10
    ```
 
@@ -454,9 +454,9 @@ not yet on the latest commit.
 - **Registry push 401.** Token in `FLY_API_TOKEN` is dead. Rotate:
   ```
   fly tokens create deploy -x 8760h -a opensentry-command \
-    | gh secret set FLY_API_TOKEN -R SourceBox-LLC/OpenSentry-Command
+    | gh secret set FLY_API_TOKEN -R SourceBox-LLC/Sentinel-Command
   fly tokens revoke <old_id>
-  gh run rerun <failed_run_id> --failed -R SourceBox-LLC/OpenSentry-Command
+  gh run rerun <failed_run_id> --failed -R SourceBox-LLC/Sentinel-Command
   ```
 - **`fly machine update` failed.** The build + push succeeded but
   rolling the live machine hit an error. Check `fly status` and
@@ -466,7 +466,7 @@ not yet on the latest commit.
 
 - **Single transient flake:** retry the failed jobs:
   ```
-  gh run rerun <run_id> --failed -R SourceBox-LLC/OpenSentry-Command
+  gh run rerun <run_id> --failed -R SourceBox-LLC/Sentinel-Command
   ```
   If the next attempt succeeds, log the incident in this runbook
   and move on.

@@ -10,7 +10,7 @@ This file is the GitHub-standard summary; the deployed page above is canonical w
 
 ## Reporting a vulnerability
 
-File a private [Security Advisory on this repository](https://github.com/SourceBox-LLC/OpenSentry-Command/security/advisories/new). This gives us a private channel for triage and the standard CVE workflow if one is warranted. A free GitHub account is enough — you don't need to be a contributor to file one.
+File a private [Security Advisory on this repository](https://github.com/SourceBox-LLC/Sentinel-Command/security/advisories/new). This gives us a private channel for triage and the standard CVE workflow if one is warranted. A free GitHub account is enough — you don't need to be a contributor to file one.
 
 We don't yet operate a `security@` mailbox — the `sourceboxsentry.com` domain isn't provisioned for incoming mail. A bounced report is worse than no email channel at all, so we publish only the GitHub path until MX records are live.
 
@@ -72,5 +72,5 @@ There is no monetary bug bounty today — SourceBox Sentry is pre-PMF. We're upf
 
 Monitor:
 
-- [GitHub Releases](https://github.com/SourceBox-LLC/OpenSentry-Command/releases)
-- [GitHub Security Advisories](https://github.com/SourceBox-LLC/OpenSentry-Command/security/advisories)
+- [GitHub Releases](https://github.com/SourceBox-LLC/Sentinel-Command/releases)
+- [GitHub Security Advisories](https://github.com/SourceBox-LLC/Sentinel-Command/security/advisories)

@@ -542,7 +542,7 @@ You're at the plan's node limit. `GET /api/nodes/plan` returns `{ nodes_used, no
 
 [AGPL-3.0](LICENSE) — source-available. The code is public for trust + transparency: customers can audit the implementation behind the security and privacy claims on the live site, and the file-level pointers from `/security` make every claim verifiable. Command Center is operated by SourceBox LLC as a SaaS — running it yourself is allowed under AGPL but isn't the intended use case, and AGPL §13 obligates anyone who modifies it and offers a network-accessible version to publish their changes.
 
-This project is **not currently accepting external code contributions**. Bug reports and feature requests via [Issues](https://github.com/SourceBox-LLC/OpenSentry-Command/issues) and [Discussions](https://github.com/SourceBox-LLC/OpenSentry-Command/discussions) are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+This project is **not currently accepting external code contributions**. Bug reports and feature requests via [Issues](https://github.com/SourceBox-LLC/Sentinel-Command/issues) and [Discussions](https://github.com/SourceBox-LLC/Sentinel-Command/discussions) are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 

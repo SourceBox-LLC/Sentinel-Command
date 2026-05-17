@@ -12,15 +12,15 @@ External pull requests opened against this repository will be automatically clos
 
 | Channel | What to use it for |
 |---------|--------------------|
-| [Issues](https://github.com/SourceBox-LLC/OpenSentry-Command/issues) | Bug reports, reproducible problems, security disclosures |
-| [Discussions](https://github.com/SourceBox-LLC/OpenSentry-Command/discussions) | Feature ideas, questions about how the platform works |
+| [Issues](https://github.com/SourceBox-LLC/Sentinel-Command/issues) | Bug reports, reproducible problems, security disclosures |
+| [Discussions](https://github.com/SourceBox-LLC/Sentinel-Command/discussions) | Feature ideas, questions about how the platform works |
 | Forks | Audit, study, and private modifications under AGPL-3.0 (see the license for your §13 network-use obligations if you redistribute or run a modified network-accessible copy) |
 
 A clear bug report with steps to reproduce is genuinely valuable — please open one if you hit something broken.
 
 ### Reporting bugs
 
-Before filing, check [existing issues](https://github.com/SourceBox-LLC/OpenSentry-Command/issues). Include:
+Before filing, check [existing issues](https://github.com/SourceBox-LLC/Sentinel-Command/issues). Include:
 
 - Steps to reproduce
 - Expected vs. actual behavior
@@ -39,7 +39,7 @@ Sentinel has two main components:
 
 | Component | Language | Repository |
 |-----------|----------|------------|
-| **Command Center** | Python (FastAPI) + React | [OpenSentry-Command](https://github.com/SourceBox-LLC/OpenSentry-Command) |
+| **Command Center** | Python (FastAPI) + React | [Sentinel-Command](https://github.com/SourceBox-LLC/Sentinel-Command) |
 | **CloudNode** | Rust | [OpenSentry-CloudNode](https://github.com/SourceBox-LLC/OpenSentry-CloudNode) |
 
 ### Command Center

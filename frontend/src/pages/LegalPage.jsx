@@ -16,7 +16,7 @@ const LAST_UPDATED = "April 24, 2026"
 // issue body.  When a real ``legal@`` mailbox lands, swap the
 // helpers below for ``mailto:`` links.
 const CONTACT_GITHUB_ISSUES_URL =
-  "https://github.com/SourceBox-LLC/OpenSentry-Command/issues"
+  "https://github.com/SourceBox-LLC/Sentinel-Command/issues"
 
 function TermsContent() {
   return (
