@@ -117,6 +117,13 @@ ignore = ["B008", "UP045"]
 # client so the vulnerable path isn't reachable, but clearing the
 # Dependabot alert is cheaper than arguing about it.  Remove this
 # line once fastmcp's own pin moves past 1.6.11.
+#
+# urllib3: CVE-2026-44431 + CVE-2026-44432 (both fixed in 2.7.0).
+# Pulled in transitively by httpx / requests / resend / sentry-sdk
+# (whichever resolves first); pip-audit --strict in CI catches it
+# and fails the deploy.  Remove this line once every direct dep we
+# carry has bumped past needing < 2.7.
 constraint-dependencies = [
     "authlib>=1.6.11",
+    "urllib3>=2.7.0",
 ]
