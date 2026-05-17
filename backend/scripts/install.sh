@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# SourceBox Sentry CloudNode Installer
+# Sentinel CloudNode Installer (Sentinel by SourceBox)
 #
 # Default behavior: download binary, register the node, and tell the
 # operator how to start the foreground TUI.  The foreground TUI is the
@@ -107,7 +107,7 @@ fi
 
 # ── Banner ──────────────────────────────────────────────────────────
 echo ""
-echo -e "${GREEN}${BOLD}  SourceBox Sentry CloudNode Installer${NC}"
+echo -e "${GREEN}${BOLD}  Sentinel CloudNode Installer${NC}"
 echo -e "${DIM}  ================================${NC}"
 echo ""
 
@@ -583,7 +583,7 @@ install_systemd_service() {
 
     cat >"$tmp_unit" <<UNIT
 [Unit]
-Description=SourceBox Sentry CloudNode
+Description=Sentinel CloudNode
 Documentation=https://opensentry-command.fly.dev
 After=network-online.target
 Wants=network-online.target

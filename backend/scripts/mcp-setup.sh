@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # ─────────────────────────────────────────────────────
-# SourceBox Sentry MCP Client Setup
+# Sentinel MCP Client Setup
 # Automatically configure AI tools to connect to your
-# SourceBox Sentry cameras via the Model Context Protocol.
+# Sentinel cameras via the Model Context Protocol.
 # ─────────────────────────────────────────────────────
 
 GREEN='\033[0;32m'
@@ -35,7 +35,7 @@ if [[ -z "$API_KEY" || -z "$SERVER_URL" ]]; then
     echo ""
     echo "Usage: bash mcp-setup.sh <api_key> <server_url>"
     echo ""
-    echo "Get your command from the SourceBox Sentry MCP dashboard:"
+    echo "Get your command from the Sentinel MCP dashboard:"
     echo "  https://opensentry-command.fly.dev/mcp"
     exit 1
 fi
@@ -43,7 +43,7 @@ fi
 # ── Header ────────────────────────────────────────────
 
 echo ""
-echo -e "  ${GREEN}${BOLD}SourceBox Sentry MCP Setup${NC}"
+echo -e "  ${GREEN}${BOLD}Sentinel MCP Setup${NC}"
 echo -e "  ${DIM}Configure AI tools to connect to your cameras${NC}"
 echo ""
 
@@ -257,7 +257,7 @@ configure_client() {
         if ! command -v node &>/dev/null; then
             echo -e "    ${YELLOW}Note: Node.js was not found on PATH.${NC}"
             echo -e "    ${DIM}Claude Desktop uses mcp-remote (an npx package) to talk to${NC}"
-            echo -e "    ${DIM}SourceBox Sentry's HTTP MCP server.  Install Node.js from${NC}"
+            echo -e "    ${DIM}Sentinel's HTTP MCP server.  Install Node.js from${NC}"
             echo -e "    ${DIM}https://nodejs.org/ then restart Claude Desktop.${NC}"
         fi
     fi
@@ -500,7 +500,7 @@ else
     # Clean success.
     echo -e "  ${GREEN}${BOLD}Setup Complete${NC}"
     echo ""
-    echo -e "  ${DIM}Your AI tools can now access your SourceBox Sentry cameras.${NC}"
+    echo -e "  ${DIM}Your AI tools can now access your Sentinel cameras.${NC}"
     echo -e "  ${DIM}Restart the clients you configured so they pick up the new MCP server.${NC}"
     echo -e "  ${DIM}Try asking: \"List my cameras\" or \"Show me what the front door sees\"${NC}"
     echo ""

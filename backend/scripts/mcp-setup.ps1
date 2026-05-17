@@ -1,7 +1,7 @@
 # -----------------------------------------------------
-# SourceBox Sentry MCP Client Setup (Windows)
+# Sentinel MCP Client Setup (Windows)
 # Automatically configure AI tools to connect to your
-# SourceBox Sentry cameras via the Model Context Protocol.
+# Sentinel cameras via the Model Context Protocol.
 # -----------------------------------------------------
 
 param(
@@ -31,7 +31,7 @@ if (-not $ApiKey -or -not $ServerUrl) {
     Write-Host "  Usage (local):  .\mcp-setup.ps1 <api_key> <server_url>"
     Write-Host "  Usage (remote): & ([scriptblock]::Create((irm <url>/mcp-setup.ps1))) <api_key> <server_url>"
     Write-Host ""
-    Write-Host "  Get your command from the SourceBox Sentry MCP dashboard:"
+    Write-Host "  Get your command from the Sentinel MCP dashboard:"
     Write-Host "  https://opensentry-command.fly.dev/mcp" -ForegroundColor Cyan
     Write-Host ""
     exit 1
@@ -40,7 +40,7 @@ if (-not $ApiKey -or -not $ServerUrl) {
 # -- Header --------------------------------------------
 
 Write-Host ""
-Write-Host "  SourceBox Sentry MCP Setup" -ForegroundColor Green
+Write-Host "  Sentinel MCP Setup" -ForegroundColor Green
 Write-Host "  Configure AI tools to connect to your cameras" -ForegroundColor DarkGray
 Write-Host ""
 
@@ -410,7 +410,7 @@ function Configure-Client {
         if (-not $nodeAvailable) {
             Write-Host "    Note: Node.js was not found on PATH." -ForegroundColor Yellow
             Write-Host "    Claude Desktop uses mcp-remote (an npx package) to talk to" -ForegroundColor DarkGray
-            Write-Host "    SourceBox Sentry's HTTP MCP server.  Install Node.js from" -ForegroundColor DarkGray
+            Write-Host "    Sentinel's HTTP MCP server.  Install Node.js from" -ForegroundColor DarkGray
             Write-Host "    https://nodejs.org/ then restart Claude Desktop." -ForegroundColor DarkGray
         }
     }
@@ -599,7 +599,7 @@ if ($configuredCount -eq 0) {
     # Clean success.
     Write-Host "  Setup Complete" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  Your AI tools can now access your SourceBox Sentry cameras." -ForegroundColor DarkGray
+    Write-Host "  Your AI tools can now access your Sentinel cameras." -ForegroundColor DarkGray
     Write-Host "  Restart the clients you configured so they pick up the new MCP server." -ForegroundColor DarkGray
     Write-Host "  Try asking: `"List my cameras`" or `"Show me what the front door sees`"" -ForegroundColor DarkGray
     Write-Host ""
