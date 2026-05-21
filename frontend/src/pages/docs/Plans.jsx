@@ -35,7 +35,8 @@ function Plans() {
             <tr><td>Snapshots</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
             <tr><td>Camera groups</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
             <tr><td>Admin dashboard + stream analytics</td><td>—</td><td>Yes</td><td>Yes</td></tr>
-            <tr><td>Danger-zone tools (log wipe, full reset)</td><td>—</td><td>Yes</td><td>Yes</td></tr>
+            <tr><td>Full organization reset (GDPR Article 17 right-to-erasure)</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+            <tr><td>Selective log wipe (stream + MCP activity, keep org running)</td><td>—</td><td>Yes</td><td>Yes</td></tr>
             <tr><td>MCP integration</td><td>—</td><td>Yes</td><td>Yes</td></tr>
             <tr><td>MCP rate limit (per key)</td><td>—</td><td>30 / min · 5,000 / day</td><td>120 / min · 30,000 / day</td></tr>
             <tr><td><a href="#sentinel">Sentinel AI agent</a></td><td>—</td><td><strong>100 runs / month</strong></td><td><strong>500 runs / month</strong></td></tr>

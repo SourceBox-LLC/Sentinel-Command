@@ -483,19 +483,13 @@ def test_full_reset_clears_every_org_scoped_table(
     This is the regression test for the original gap.  If full-reset
     drifts from the shared helper, this test catches it before the
     next customer cancellation does."""
-    # full-reset requires an active paid plan + tries to send wipe_data
-    # to nodes via the WS manager.  Stub the WS call so it doesn't
-    # actually try to talk to a non-existent node.
-    from app.api import cameras as cameras_mod
-
+    # full-reset is now plan-tier-agnostic (GDPR Art. 17, free for all
+    # plans) but still tries to send wipe_data to nodes via the WS
+    # manager.  Stub the WS call so it doesn't actually try to talk to
+    # a non-existent node.
     async def _fake_send(*args, **kwargs):
         return {"status": "success"}
 
-    # Patch require_active_paid_plan to no-op (test admin is on "pro").
-    # Stub the WS manager call.
-    monkeypatch.setattr(
-        cameras_mod, "_require_active_paid_plan", lambda *a, **k: None,
-    )
     from app.api import ws as ws_mod
     monkeypatch.setattr(ws_mod.manager, "send_command", _fake_send)
 

@@ -3007,6 +3007,10 @@ body {
 }
 
 /* ── Danger Zone Locked ────────────────────────────────────────── */
+/* Legacy class — kept for back-compat with anything that imports it.
+   The current Danger Zone uses per-item locking (.danger-item-locked)
+   so free-tier admins can still see + use Full Reset (GDPR Article 17
+   right-to-erasure) while the paid-only Wipe Logs is grayed out. */
 
 .danger-locked {
     display: flex;
@@ -3024,6 +3028,32 @@ body {
 .danger-locked p {
     color: var(--text-secondary);
     font-size: 0.9rem;
+}
+
+/* Per-item lock: same .danger-item layout but visually de-emphasised
+   (dimmer border, Upgrade button instead of the red Wipe button).
+   Used on Wipe Logs for free-tier admins; Full Reset never gets this
+   class because it's available on every plan. */
+
+.danger-item-locked {
+    opacity: 0.7;
+}
+
+.danger-item-locked h3 {
+    color: var(--text-secondary);
+}
+
+.plan-locked-badge {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background: var(--bg-secondary, rgba(255, 255, 255, 0.05));
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+    border-radius: 6px;
+    vertical-align: middle;
 }
 
 /* ── Plan Limit Banners (Dashboard) ────────────────────────────── */

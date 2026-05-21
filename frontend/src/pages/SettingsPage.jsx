@@ -1262,36 +1262,58 @@ function SettingsPage() {
           Irreversible actions that affect your entire organization.
         </p>
 
-        {planInfo && !planInfo.features?.includes("admin") ? (
-          <div className="danger-locked">
-            <div className="locked-icon">🔒</div>
-            <p>Danger zone actions require a <strong>Pro</strong> or <strong>Pro Plus</strong> plan.</p>
-            <button
-              className="btn btn-primary btn-small"
-              onClick={() => setUpgradeFeature("danger-zone")}
-            >
-              Upgrade
-            </button>
-          </div>
-        ) : (
         <div className="danger-actions">
-          <div className="danger-item">
-            <div className="danger-info">
-              <h3>Wipe All Logs</h3>
-              <p>Delete all stream access logs, MCP activity logs, and usage statistics.</p>
+          {/* Wipe Logs is Pro / Pro Plus — selective audit-log hygiene
+              is an operator-convenience feature, not a GDPR obligation.
+              Free-tier admins who want to purge stream-access history
+              can use "Reset Everything" below and re-add their cameras. */}
+          {planInfo && !planInfo.features?.includes("admin") ? (
+            <div className="danger-item danger-item-locked">
+              <div className="danger-info">
+                <h3>Wipe All Logs <span className="plan-locked-badge">🔒 Pro / Pro Plus</span></h3>
+                <p>
+                  Selectively delete stream access logs, MCP activity logs, and
+                  usage statistics while keeping nodes, cameras, and settings
+                  intact.  Available on Pro / Pro Plus.
+                </p>
+              </div>
+              <button
+                className="btn btn-primary btn-small"
+                onClick={() => setUpgradeFeature("danger-zone")}
+              >
+                Upgrade
+              </button>
             </div>
-            <button
-              className="btn btn-danger"
-              onClick={() => setDangerAction("wipe-logs")}
-            >
-              Wipe Logs
-            </button>
-          </div>
+          ) : (
+            <div className="danger-item">
+              <div className="danger-info">
+                <h3>Wipe All Logs</h3>
+                <p>Delete all stream access logs, MCP activity logs, and usage statistics.</p>
+              </div>
+              <button
+                className="btn btn-danger"
+                onClick={() => setDangerAction("wipe-logs")}
+              >
+                Wipe Logs
+              </button>
+            </div>
+          )}
 
+          {/* Full Organization Reset is the GDPR Article 17 right-to-
+              erasure path — available on every plan, including Free.
+              Legal obligation, can't gate behind a paid plan.  Typed-
+              confirmation in the modal protects against accidental
+              clicks; the backend additionally rate-limits to 3/hour. */}
           <div className="danger-item">
             <div className="danger-info">
               <h3>Full Organization Reset</h3>
-              <p>Delete all nodes, cameras, cloud storage, logs, and settings. Nodes will be notified to wipe local data.</p>
+              <p>
+                Delete all nodes, cameras, recordings, snapshots, incidents,
+                logs, and settings for this organization.  Nodes will be
+                notified to wipe local data.  This is your{" "}
+                <strong>GDPR Article 17 right-to-erasure</strong> action and is
+                available on every plan.
+              </p>
             </div>
             <button
               className="btn btn-danger"
@@ -1301,7 +1323,6 @@ function SettingsPage() {
             </button>
           </div>
         </div>
-        )}
 
         {dangerAction && (
           <div className="modal-overlay" onClick={() => !dangerLoading && closeDangerModal()}>

@@ -440,20 +440,31 @@ def test_wipe_logs_succeeds_when_db_plan_is_paid(admin_client, monkeypatch):
     assert "deleted_logs" in body
 
 
-def test_full_reset_requires_paid_plan_in_db_not_just_jwt(
-    admin_client, monkeypatch
-):
-    """Same exploit window as wipe-logs but for full_reset, which is
-    the more destructive of the two — wipes nodes, cameras, settings,
-    audit log."""
+def test_full_reset_works_on_free_plan(admin_client, monkeypatch):
+    """Full reset is the GDPR Article 17 right-to-erasure path and is
+    NOT gated on plan tier — every plan (Free included) can self-serve
+    full erasure of their organization's data.
+
+    Pins the negative direction of the previous test (which required a
+    paid plan): downgrading to Free must NOT block the customer from
+    deleting their data.  The legal obligation outranks the SaaS plan
+    tier.  Sibling ``wipe-logs`` endpoint is still paid-only because
+    it's selective audit hygiene, not erasure — see
+    test_wipe_logs_requires_paid_plan_in_db_not_just_jwt above.
+    """
     _force_org_plan(monkeypatch, "free_org")
 
     resp = admin_client.post("/api/settings/danger/full-reset")
-    assert resp.status_code == 403
-    assert "paid" in resp.json()["detail"].lower()
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert "nodes_deleted" in body
 
 
-def test_full_reset_succeeds_when_db_plan_is_paid(admin_client, monkeypatch):
+def test_full_reset_works_on_pro_plus_too(admin_client, monkeypatch):
+    """Mirror of the free-plan test — same endpoint, paid plan, same
+    success shape.  Pins that lifting the gate didn't break the
+    happy-path-for-paid customer."""
     _force_org_plan(monkeypatch, "pro_plus")
 
     resp = admin_client.post("/api/settings/danger/full-reset")

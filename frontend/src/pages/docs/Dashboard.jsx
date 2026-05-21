@@ -45,7 +45,7 @@ function Dashboard() {
         <li><strong>Time Zone</strong> — set the org's IANA timezone so scheduled-recording windows are interpreted as local wall-clock time, not UTC. DST handled automatically.</li>
         <li><strong>Organization</strong> — Invite members, manage roles (Admin vs Member), view resource usage relative to plan caps.</li>
         <li><strong>Subscription</strong> — Current plan, usage bars for cameras and nodes, and an upgrade/downgrade flow.</li>
-        <li><strong>Danger Zone</strong> — Wipe stream logs or perform a full organization reset. Pro/Pro Plus only and each action requires a typed confirmation.</li>
+        <li><strong>Danger Zone</strong> — <em>Full Organization Reset</em> (the GDPR Article 17 right-to-erasure path) is available on every plan, including Free.  <em>Wipe Logs</em> (selective stream + MCP activity log purge, keeps the org running) is Pro / Pro Plus only.  Both require a typed confirmation in the modal.</li>
       </ul>
 
       <h3>Admin dashboard</h3>

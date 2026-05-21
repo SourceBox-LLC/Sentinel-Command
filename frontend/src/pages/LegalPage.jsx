@@ -543,8 +543,11 @@ function PrivacyContent() {
         20 portability with one click, and the{" "}
         <strong>Reset Everything</strong> action under Danger Zone
         covers Article 17 erasure (every node, camera, log, notification,
-        and config row removed in a single transaction). For anything
-        the in-app actions don&rsquo;t cover, open an issue on our{" "}
+        and config row removed in a single transaction). <strong>Reset
+        Everything is available on every plan, including Free</strong> &mdash;
+        the right to erasure is a legal obligation we cannot gate behind a
+        paid subscription. For anything the in-app actions don&rsquo;t
+        cover, open an issue on our{" "}
         <a
           href={CONTACT_GITHUB_ISSUES_URL}
           target="_blank"

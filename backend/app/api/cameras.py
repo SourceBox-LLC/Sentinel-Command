@@ -785,7 +785,18 @@ async def wipe_stream_logs(
     user: AuthUser = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Permanently delete all stream access logs for this organization."""
+    """Permanently delete all stream access + MCP activity logs for
+    this organization.
+
+    Plan gate: Pro / Pro Plus.  This is operator-convenience —
+    selective audit-log hygiene that keeps the org otherwise running.
+    It is **not** the GDPR right-to-erasure endpoint (that's
+    ``/full-reset`` below, which is available on every plan); a Free
+    -tier customer who wants to purge their stream-access history
+    can always use Full Reset and re-add their cameras after.  The
+    paid gate here is the same JWT + DB double-check pattern used
+    on every Pro-only operation; see ``_require_active_paid_plan``.
+    """
     _require_active_paid_plan(user, db)
     from app.models import StreamAccessLog
 
@@ -817,7 +828,7 @@ async def full_reset(
     db: Session = Depends(get_db),
 ):
     """
-    Full organization reset.
+    Full organization reset — the GDPR Article 17 right-to-erasure path.
 
     Behaviour:
       1. Send each CloudNode a ``wipe_data`` command so the per-node
@@ -835,8 +846,18 @@ async def full_reset(
     events, notifications, incidents, email logs, monthly usage,
     etc.) silently persisted, which was both an Article 17 violation
     and a quiet way for stale data to leak across cancellations.
+
+    Plan gate: **none**.  Every plan (Free included) can self-serve
+    full erasure of their organization's data — this is the GDPR
+    Article 17 right-to-erasure path, which is a legal requirement
+    we cannot gate behind a paid plan.  The sibling ``wipe-logs``
+    endpoint *is* still paid-only because it's an operator-convenience
+    feature (selective audit-log hygiene that keeps the org running),
+    not a right-to-erasure obligation.  Admin-only via
+    ``require_admin``, typed-confirmation in the UI, audit-logged
+    before the cascade runs, and rate-limited to 3/hour so a
+    runaway script can't repeatedly nuke an org by accident.
     """
-    _require_active_paid_plan(user, db)
     from app.api.hls import cleanup_camera_cache
     from app.api.ws import manager
     from app.core.gdpr import delete_org_data

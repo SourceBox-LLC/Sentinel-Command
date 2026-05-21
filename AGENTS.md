@@ -338,8 +338,8 @@ Validation constants (also in `models.py`):
 - `GET /settings/motion-ingestion` — read motion-event ingestion toggle (admin)
 - `POST /settings/motion-ingestion` — toggle motion-event ingestion org-wide (admin, 30/min)
 - `GET /audit-logs` — audit logs (admin, 120/min)
-- `POST /settings/danger/wipe-logs` — permanently delete all stream + MCP + audit logs (admin + Pro/Pro Plus, 5/hour)
-- `POST /settings/danger/full-reset` — wipe all nodes/cameras/logs/settings for the org (admin + Pro/Pro Plus, 3/hour)
+- `POST /settings/danger/wipe-logs` — selectively delete stream + MCP activity logs while keeping the org running (admin + **Pro/Pro Plus**, 5/hour).  Operator-convenience feature, *not* a right-to-erasure obligation.
+- `POST /settings/danger/full-reset` — GDPR Article 17 right-to-erasure: wipe all nodes/cameras/recordings/snapshots/incidents/logs/settings for the org (admin, **every plan**, 3/hour).  Routes through the shared `app.core.gdpr.delete_org_data` helper so this end-state matches what `organization.deleted` Clerk webhook produces.
 
 **nodes.py** (prefix `/api/nodes`):
 - `POST /validate` — validate node_id + API key pair, used by CloudNode setup wizard (10/min)
