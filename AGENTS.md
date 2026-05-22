@@ -409,7 +409,7 @@ Validation constants (also in `models.py`):
 - `GET /mcp-setup.sh` / `GET /mcp-setup.ps1` — MCP client config helpers (separate from CloudNode install — these configure Claude / Cursor / etc. to talk to this Command Center)
 
 **ws.py** (no prefix):
-- `WS /ws/node` — WebSocket channel for CloudNode realtime (API key in query)
+- `WS /ws/node` — WebSocket channel for CloudNode realtime.  Preferred auth (v0.1.65+): `X-Node-API-Key` + `X-Node-Id` headers on the upgrade request.  Back-compat fallback (pre-v0.1.65 clients): `?api_key=…&node_id=…` query string — still accepted, but the handler logs a deprecation warning on every successful auth so we can sunset the path once the install base has rolled forward.  Headers > query because URLs land in too many log sinks (uvicorn access, Fly platform logs, log-shipper exports).
   - Node → Backend: `heartbeat`, `command_result`
   - Backend → Node: `ack`, `command` (`take_snapshot`, `list_snapshots`, `list_recordings`, `wipe_data`), `error`
   - Motion events do **not** flow over WS — they reach Command Center via `POST /api/cameras/{id}/motion`.  The pre-v0.1.61 wire format reserved an `event` / `motion_detected` frame for this path but it was never produced; the unused branch was removed in v0.1.61.
@@ -429,7 +429,7 @@ Validation constants (also in `models.py`):
 - `POST /resend` — Resend bounce / complaint / unsubscribe webhooks (Svix signature when `RESEND_WEBHOOK_SECRET` is set); writes to `EmailSuppression` so subsequent sends short-circuit before the API call
 
 **Top-level** (`main.py`):
-- `GET /api/health` — minimal liveness for load balancers: `{"status": "healthy", "version": "2.1.1"}` (no auth)
+- `GET /api/health` — minimal liveness for load balancers: `{"status": "healthy", "version": "2.1.2"}` (no auth)
 - `GET /api/health/detailed` — verbose status for status-page polling and on-call diagnostics: `{status, version, uptime_seconds, started_at, time, checks: {database: {status, latency_ms}, hls_cache: {playlists_cached, segment_cameras}, viewer_usage: {pending_writes, status}, sse: {subscriber_orgs, subscriber_total}}}`. Public on purpose — every value is metric-shaped, never an org/camera/user identifier (pinned by a privacy regression test in `tests/test_health.py`).
 - FastAPI docs: `/api-docs` (Swagger), `/api-redoc` (ReDoc), OpenAPI at `/api/openapi.json`. `/docs` is the React `DocsPage`.
 

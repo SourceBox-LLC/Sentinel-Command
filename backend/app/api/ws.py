@@ -1,8 +1,28 @@
 """
 WebSocket command channel for CloudNode ↔ Backend communication.
 
-Nodes connect outbound to ws://<backend>/ws/node?api_key=<key>&node_id=<id>
-and maintain a persistent bidirectional JSON message channel.
+Auth:
+
+    The node sends its API key + node_id as request HEADERS during the
+    WS upgrade handshake:
+
+        X-Node-API-Key: nak_<32-byte-hex>
+        X-Node-Id: <node_id>
+
+    Pre-v0.1.65 CloudNode clients send these as URL query-string
+    parameters instead (`?api_key=…&node_id=…`).  We still accept that
+    path for back-compat with older nodes, but log a deprecation
+    warning each time — every node we ship from v0.1.65+ uses the
+    header path so that path will eventually be retired.
+
+    Header-vs-query matters because URLs end up in many more log
+    sinks than headers do (uvicorn access log, Fly platform access
+    log, log-shipping pipeline exports, browser referer headers if
+    the URL ever escapes the process).  Sentry already scrubs the
+    query string (`app/core/sentry.py::_scrub_event`), but defense
+    in depth says don't put credentials in URLs at all when you
+    have a choice.  Custom WS clients (which CloudNode is — it's
+    not a browser) can set arbitrary headers on the upgrade request.
 
 Message format (both directions):
     {"type": "<message_type>", "id": "<optional_correlation_id>", "payload": {...}}
@@ -200,13 +220,45 @@ manager = ConnectionManager()
 @router.websocket("/ws/node")
 async def node_websocket(
     ws: WebSocket,
-    api_key: str = Query(...),
-    node_id: str = Query(...),
+    api_key: Optional[str] = Query(None),
+    node_id: Optional[str] = Query(None),
 ):
     """
     Persistent WebSocket channel for a CloudNode.
-    Authentication happens during handshake via query params.
+    Authentication happens during handshake via headers (preferred)
+    or — for pre-v0.1.65 clients — query-string parameters.  See the
+    module docstring for the rationale.
     """
+    # --- Auth credential resolution (headers preferred) ---
+    # FastAPI's WebSocket.headers preserves the canonical lower-case
+    # form that the ASGI spec normalises to, so we look up the
+    # lowercased header names.
+    header_api_key = ws.headers.get("x-node-api-key")
+    header_node_id = ws.headers.get("x-node-id")
+
+    auth_path: str  # "header" | "query" — only used for the deprecation log below.
+    if header_api_key:
+        api_key = header_api_key
+        auth_path = "header"
+    else:
+        auth_path = "query"
+    if header_node_id:
+        node_id = header_node_id
+
+    if not api_key or not node_id:
+        # Either path must provide both — reject before we even try
+        # the DB.  4001 = the same code we use below for a key that
+        # mismatched a real node; intentional, so a client probing
+        # for "is this auth-required" can't distinguish missing-cred
+        # from wrong-cred.
+        logger.warning(
+            "[WS] Connect rejected — missing api_key or node_id "
+            "(api_key_present=%s, node_id_present=%s)",
+            api_key is not None, node_id is not None,
+        )
+        await ws.close(code=4001, reason="Missing api_key or node_id")
+        return
+
     # --- Connect-rate throttle (BEFORE auth) ---
     # Reject the handshake without burning a DB query if this node_id
     # has already attempted ``WS_MAX_CONNECTS_PER_MINUTE`` connects in
@@ -228,13 +280,30 @@ async def node_websocket(
     try:
         node = db.query(CameraNode).filter_by(node_id=node_id).first()
         if not node or node.api_key_hash != api_key_hash:
-            print(f"[WS] Auth failed for node_id={node_id} (found={node is not None})")
+            logger.warning(
+                "[WS] Auth failed for node_id=%s (found=%s)",
+                node_id, node is not None,
+            )
             await ws.close(code=4001, reason="Invalid node_id or API key")
             return
         org_id = node.org_id
         node_db_id = node.id
     finally:
         db.close()
+
+    # Auth succeeded.  Log the deprecation warning AFTER auth so we
+    # don't spam the warning for invalid-key probes that never had
+    # legitimate credentials — only authenticated nodes still on the
+    # old path generate this signal.
+    if auth_path == "query":
+        logger.warning(
+            "[WS] Node %s authenticated via deprecated query-string "
+            "api_key — upgrade CloudNode to v0.1.65+ to move the "
+            "credential into request headers (X-Node-API-Key / "
+            "X-Node-Id).  Query-string auth is still accepted but "
+            "logs the key in uvicorn / Fly access pipelines.",
+            node_id,
+        )
 
     await ws.accept()
     await manager.connect(node_id, ws)

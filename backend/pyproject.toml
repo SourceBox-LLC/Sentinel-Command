@@ -1,6 +1,6 @@
 [project]
 name = "opensentry-backend"
-version = "2.1.1"
+version = "2.1.2"
 description = "Sentinel Command Center Backend - FastAPI with Clerk Auth"
 readme = "README.md"
 requires-python = ">=3.12"

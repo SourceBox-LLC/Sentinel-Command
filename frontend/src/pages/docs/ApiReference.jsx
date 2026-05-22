@@ -167,7 +167,7 @@ function ApiReference() {
       <p>Two unauthenticated endpoints for monitoring. Use the minimal one for load balancers; use the detailed one for status pages and on-call diagnostics.</p>
 
       <div className="docs-endpoint"><span className="docs-endpoint-method get">GET</span><span className="docs-endpoint-path">/api/health</span></div>
-      <p>Always-200 liveness check. Returns <code>{`{ "status": "healthy", "version": "2.1.1" }`}</code>. Right shape for load-balancer probes — keep it cheap.</p>
+      <p>Always-200 liveness check. Returns <code>{`{ "status": "healthy", "version": "2.1.2" }`}</code>. Right shape for load-balancer probes — keep it cheap.</p>
 
       <div className="docs-endpoint"><span className="docs-endpoint-method get">GET</span><span className="docs-endpoint-path">/api/health/detailed</span></div>
       <p>Verbose status — process uptime, DB ping latency in ms, HLS cache occupancy, pending viewer-usage flush queue depth, SSE subscriber counts. Overall <code>status</code> rolls up to <code>healthy</code> / <code>degraded</code> / <code>unhealthy</code>. Public on purpose so a status-page tool can poll it from off-net, but every value is a number — never an org, camera, or user identifier (pinned by a privacy regression test).</p>

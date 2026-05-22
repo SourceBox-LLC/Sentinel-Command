@@ -236,7 +236,7 @@ async def lifespan(app):
 app = FastAPI(
     title="Sentinel Command Center API",
     description="FastAPI backend with Clerk authentication for Sentinel Command Center",
-    version="2.1.1",
+    version="2.1.2",
     lifespan=lifespan,
     # Move FastAPI's auto docs off /docs so the React DocsPage can own that path.
     docs_url="/api-docs",
@@ -1291,7 +1291,7 @@ async def health_check():
     Use ``/api/health/detailed`` for the fully-verbose admin/status
     page snapshot.
     """
-    return {"status": "healthy", "version": "2.1.1"}
+    return {"status": "healthy", "version": "2.1.2"}
 
 
 # ── /api/health/ready cache ──────────────────────────────────────
@@ -1350,7 +1350,7 @@ async def health_check_ready(nocache: bool = False):
     report = await run_readiness_probes(uptime_s)
     body = {
         **report.to_dict(),
-        "version": "2.1.1",
+        "version": "2.1.2",
         "uptime_seconds": round(uptime_s, 3),
     }
     status_code = 200 if report.ready else 503
@@ -1504,7 +1504,7 @@ async def health_check_detailed():
 
     return {
         "status": overall,
-        "version": "2.1.1",
+        "version": "2.1.2",
         "uptime_seconds": uptime_s,
         "started_at": _STARTED_AT_WALL.isoformat(),
         "time": now_wall.isoformat(),

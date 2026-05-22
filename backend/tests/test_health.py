@@ -31,7 +31,7 @@ def test_health_detailed_returns_full_shape(unauthenticated_client):
     data = resp.json()
 
     assert data["status"] in ("healthy", "degraded", "unhealthy")
-    assert data["version"] == "2.1.1"
+    assert data["version"] == "2.1.2"
     assert isinstance(data["uptime_seconds"], (int, float))
     assert data["uptime_seconds"] >= 0
     assert "started_at" in data
@@ -346,7 +346,7 @@ def test_health_ready_returns_200_when_all_probes_pass(unauthenticated_client):
     assert resp.status_code == 200, f"non-200 body: {resp.text}"
     body = resp.json()
     assert body["ready"] is True
-    assert body["version"] == "2.1.1"
+    assert body["version"] == "2.1.2"
     assert isinstance(body["uptime_seconds"], (int, float))
     # Same probe set as /detailed's dependency-probe section.
     assert set(body["checks"].keys()) == {
