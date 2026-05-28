@@ -89,7 +89,19 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
     # row isn't recorded and Svix retries — operations are designed
     # to be safe to re-run, so the eventual consistency wins.  Only
     # an already-recorded msg short-circuits.
-    svix_msg_id = headers.get("svix-id")
+    #
+    # Read the id from BOTH header conventions.  `wh.verify()` above
+    # accepts either the `svix-*` headers or the Standard-Webhooks
+    # `webhook-*` set (and raises if a complete set is absent from both),
+    # so post-verify exactly one namespace is populated.  Clerk sends
+    # `svix-*` today, but if it ever migrates to `webhook-*` the signature
+    # would still verify while a `svix-id`-only read went None — that
+    # silently disables idempotency AND skips the gated commit below,
+    # which is the sole commit that persists enforce_camera_cap's
+    # disabled_by_plan flips (enforce_camera_cap leaves the commit to its
+    # caller).  An org that upgraded/cancelled would get its plan Setting
+    # written but its cameras left in the wrong enabled/disabled state.
+    svix_msg_id = headers.get("svix-id") or headers.get("webhook-id")
     if svix_msg_id:
         already = (
             db.query(ProcessedWebhook)
@@ -483,7 +495,10 @@ async def resend_webhook(request: Request, db: Session = Depends(get_db)):
     data = event.get("data") or {}
 
     # ── Idempotency check (mirrors Clerk handler) ──────────────────
-    svix_msg_id = headers.get("svix-id")
+    # Read both header conventions — see the Clerk handler for the full
+    # rationale (svix.verify accepts svix-* or webhook-*; reading only
+    # svix-id would silently break dedup under the webhook-* variant).
+    svix_msg_id = headers.get("svix-id") or headers.get("webhook-id")
     if svix_msg_id:
         already = (
             db.query(ProcessedWebhook)

@@ -225,6 +225,59 @@ def test_duplicate_svix_id_is_no_op(webhook_client, db):
     )
 
 
+def test_standard_webhooks_header_variant_is_processed_and_deduped(webhook_client, db):
+    """Svix's verify() accepts the Standard-Webhooks ``webhook-*`` headers
+    in addition to ``svix-*``, and the ecosystem is migrating that way.
+    Under that variant the handler must STILL record the ProcessedWebhook
+    row and short-circuit a redelivery.
+
+    This is the regression guard for a money-flavored bug: the id was
+    read only from ``svix-id``, so under ``webhook-*`` headers (which
+    still pass signature verification) ``svix_msg_id`` went None. That
+    disabled idempotency AND skipped the gated commit — the sole commit
+    that persists ``enforce_camera_cap``'s ``disabled_by_plan`` flips — so
+    an org that upgraded or cancelled would get its plan Setting written
+    (``Setting.set`` self-commits) while its cameras were left in the
+    wrong state.  The ProcessedWebhook row's existence below proves that
+    gated commit executed under the variant.
+    """
+    from app.models.models import ProcessedWebhook
+
+    payload = json.dumps({
+        "type": "subscription.created",
+        "data": {
+            "payer": {"organization_id": TEST_ORG_ID},
+            "items": [{"status": "active", "plan": {"slug": "pro"}}],
+        },
+    })
+    msg_id = "msg_stdwebhooks_variant_7"
+    ts = datetime.now(tz=UTC)
+    # The signature is over {id}.{timestamp}.{payload} regardless of which
+    # header NAMES carry them, so signing normally then sending the values
+    # under webhook-* headers verifies fine.
+    sig = Webhook(TEST_WEBHOOK_SECRET).sign(msg_id, ts, payload)
+    headers = {
+        "webhook-id": msg_id,
+        "webhook-timestamp": str(int(ts.timestamp())),
+        "webhook-signature": sig,
+        "content-type": "application/json",
+    }
+
+    first = webhook_client.post("/api/webhooks/clerk", content=payload, headers=headers)
+    assert first.status_code == 200
+    assert first.json() == {"received": True}
+    assert Setting.get(db, TEST_ORG_ID, "org_plan") == "pro"
+    # Dedup row recorded under the webhook-id → svix_msg_id was populated
+    # from the webhook-* namespace and the gated commit ran.
+    assert db.query(ProcessedWebhook).filter_by(svix_msg_id=msg_id).count() == 1
+
+    # Redelivery with the same webhook-id short-circuits as a duplicate.
+    second = webhook_client.post("/api/webhooks/clerk", content=payload, headers=headers)
+    assert second.status_code == 200
+    assert second.json()["status"] == "duplicate"
+    assert db.query(ProcessedWebhook).filter_by(svix_msg_id=msg_id).count() == 1
+
+
 # ─── Security ──────────────────────────────────────────────────────
 
 def test_invalid_signature_rejected(webhook_client, db):
