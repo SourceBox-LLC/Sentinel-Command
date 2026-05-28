@@ -26,6 +26,7 @@ from app.api.hls import snapshot_recent_segment_bytes
 def _clear_cache():
     with hls._segment_cache_lock:
         hls._segment_cache.clear()
+        hls._segment_cache_byte_total = 0
 
 
 def test_snapshot_vs_eviction_no_dict_mutation_error(monkeypatch):
@@ -125,5 +126,45 @@ def test_snapshot_helper_return_contract():
 
     # count larger than available → all of them, oldest-first.
     assert snapshot_recent_segment_bytes(camera_id, 99) == [b"one", b"two", b"three"]
+
+    _clear_cache()
+
+
+def test_running_byte_counter_matches_recompute_through_push_and_evict(
+    unauthenticated_client, db, monkeypatch
+):
+    """The O(1) running byte counter (`_segment_cache_byte_total`) must
+    stay exactly equal to the authoritative O(N) re-walk
+    (`_recompute_segment_cache_bytes`) across the full push→per-camera-
+    evict→global-evict lifecycle.  If a mutation site ever forgets to
+    adjust the counter, the global byte cap silently stops firing (or
+    fires wrongly) — this catches that drift.
+    """
+    from app.core.config import settings
+    from tests.test_hls import _seed_node_with_camera
+
+    _clear_cache()
+    # Small per-camera + global caps so both eviction paths fire during
+    # the push loop, exercising every counter-mutation site.
+    monkeypatch.setattr(settings, "SEGMENT_CACHE_MAX_PER_CAMERA", 6)
+    monkeypatch.setattr(settings, "SEGMENT_CACHE_MAX_TOTAL_BYTES", 4096)
+
+    raw_key, cam_id = _seed_node_with_camera(db)
+    for i in range(1, 30):  # well over both caps
+        resp = unauthenticated_client.post(
+            f"/api/cameras/{cam_id}/push-segment?filename=segment_{i:05d}.ts",
+            content=b"z" * 512,
+            headers={"X-Node-API-Key": raw_key},
+        )
+        assert resp.status_code == 200
+
+    with hls._segment_cache_lock:
+        counter = hls._segment_cache_byte_total
+        truth = hls._recompute_segment_cache_bytes()
+    assert counter == truth, (
+        f"running byte counter ({counter}) drifted from ground truth "
+        f"({truth}) — a mutation site isn't maintaining it"
+    )
+    assert counter >= 0, "counter must never go negative"
 
     _clear_cache()

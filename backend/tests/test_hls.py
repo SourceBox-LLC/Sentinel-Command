@@ -321,6 +321,7 @@ def test_global_cache_cap_evicts_across_cameras(db, monkeypatch):
     """
     import time
 
+    import app.api.hls as hls
     from app.api.hls import _evict_global_oldest, _segment_cache
 
     # Reset the module-level cache so the test is hermetic.  Other
@@ -341,6 +342,11 @@ def test_global_cache_cap_evicts_across_cameras(db, monkeypatch):
             ts = base_ts + (seg_idx * 3.0) + cam_idx
             body = b"x" * 100  # 100 bytes per segment
             _segment_cache.setdefault(cam_id, {})[f"segment_{seg_idx:05d}.ts"] = (body, ts)
+
+    # This test populates _segment_cache directly (not via push_segment),
+    # so the running byte counter that _evict_global_oldest reads isn't
+    # maintained.  Reconcile it to ground truth before eviction.
+    hls._segment_cache_byte_total = hls._recompute_segment_cache_bytes()
 
     # 9 segments × 100 bytes = 900 total.  Cap at 500 → must evict
     # the 4 oldest to land at 500.
@@ -373,10 +379,14 @@ def test_global_cache_cap_no_op_when_under_budget(db):
     touch anything.  Cheap-path correctness."""
     import time
 
+    import app.api.hls as hls
     from app.api.hls import _evict_global_oldest, _segment_cache
 
     _segment_cache.clear()
     _segment_cache["cam_a"] = {"segment_00001.ts": (b"x" * 100, time.monotonic())}
+    # Direct population bypasses the push path's counter maintenance —
+    # reconcile so the O(1) under-budget fast path reads the truth.
+    hls._segment_cache_byte_total = hls._recompute_segment_cache_bytes()
 
     evicted = _evict_global_oldest(10_000)  # cap way above 100 bytes
     assert evicted == 0

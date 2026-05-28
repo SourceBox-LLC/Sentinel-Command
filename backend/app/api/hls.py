@@ -138,6 +138,17 @@ _segment_cache: dict[str, dict[str, tuple[bytes, float]]] = {}
 # on the event-loop thread can't stall the loop meaningfully.
 _segment_cache_lock = threading.RLock()
 
+# Running total of bytes held in `_segment_cache`, maintained
+# incrementally at every insert/delete site (all of which hold
+# `_segment_cache_lock`).  The global byte-cap check on the push hot
+# path reads this in O(1) instead of re-walking all ~30K cached
+# segments (500 cameras × 60) on every one of up to 1200 pushes/min
+# per camera — the previous `sum(len(body) for ...)` recompute.
+# `_recompute_segment_cache_bytes()` is the authoritative re-derivation,
+# kept for the reconciliation assert in tests; the hot path trusts the
+# counter.
+_segment_cache_byte_total: int = 0
+
 # Track playlist update count per camera — used to throttle cache eviction sweeps.
 _playlist_update_count: dict[str, int] = {}
 
@@ -287,8 +298,11 @@ def flush_viewer_usage() -> int:
 def cleanup_camera_cache(camera_id: str):
     """Remove all cached segments and playlist for a camera.
     Called when a camera or node is deleted."""
+    global _segment_cache_byte_total
     with _segment_cache_lock:
-        _segment_cache.pop(camera_id, None)
+        removed = _segment_cache.pop(camera_id, None)
+        if removed:
+            _segment_cache_byte_total -= sum(len(body) for body, _ts in removed.values())
     _playlist_cache.pop(camera_id, None)
     _playlist_update_count.pop(camera_id, None)
     _first_playlist_logged.discard(camera_id)
@@ -297,6 +311,7 @@ def cleanup_camera_cache(camera_id: str):
 
 def _evict_segment_cache(camera_id: str):
     """Keep only the newest SEGMENT_CACHE_MAX_PER_CAMERA segments for a camera."""
+    global _segment_cache_byte_total
     with _segment_cache_lock:
         cam_cache = _segment_cache.get(camera_id)
         if not cam_cache or len(cam_cache) <= settings.SEGMENT_CACHE_MAX_PER_CAMERA:
@@ -305,24 +320,34 @@ def _evict_segment_cache(camera_id: str):
         sorted_keys = sorted(cam_cache.keys())
         to_remove = sorted_keys[: len(sorted_keys) - settings.SEGMENT_CACHE_MAX_PER_CAMERA]
         for key in to_remove:
-            del cam_cache[key]
+            body, _ts = cam_cache.pop(key)
+            _segment_cache_byte_total -= len(body)
 
 
 def _segment_cache_total_bytes() -> int:
-    """Compute the live total bytes held in _segment_cache.
+    """O(1) read of the running byte total held in `_segment_cache`.
 
-    Cheap O(N) walk — N is bounded by
-    SEGMENT_CACHE_MAX_PER_CAMERA × <active cameras> which sits at
-    ~30K entries even at 500 cameras, fine to call on the post-push
-    hot path.  An incremental running counter would be marginally
-    faster but races with the existing pop/del paths in
-    _evict_segment_cache / cleanup_camera_cache / _evict_stale_cameras
-    that don't go through a helper.  Recomputing keeps the cap
-    honest without forcing a refactor of every dict mutation.
+    Reads the incrementally-maintained `_segment_cache_byte_total`
+    counter instead of re-walking every cached segment.  This is the
+    value the global byte-cap check reads on every push, so O(1) here
+    is the difference between the cap check being free vs. a ~30K-entry
+    walk per push at scale.  `_recompute_segment_cache_bytes()` is the
+    authoritative re-derivation if you ever need to distrust the
+    counter.
+    """
+    with _segment_cache_lock:
+        return _segment_cache_byte_total
 
-    Holds `_segment_cache_lock` for the walk so a worker-thread reader
-    (attach_clip) can't be mutating a per-camera dict underneath the
-    nested `.values()` iteration.
+
+def _recompute_segment_cache_bytes() -> int:
+    """Authoritative O(N) re-derivation of the cache byte total by
+    walking every cached segment.
+
+    NOT on the hot path — used by the periodic stale-camera sweep to
+    reconcile the running counter against ground truth (cheap drift
+    insurance), and as the oracle in the counter-correctness test.
+    Holds the lock so a worker-thread reader can't mutate a per-camera
+    dict underneath the nested `.values()` iteration.
     """
     with _segment_cache_lock:
         return sum(
@@ -335,19 +360,26 @@ def _segment_cache_total_bytes() -> int:
 def _evict_global_oldest(max_total_bytes: int) -> int:
     """Drop the oldest segments globally until the total fits the cap.
 
-    Called after each push.  Sort by timestamp ascending across ALL
-    cameras and pop the oldest entries until total <= cap.  Returns
-    the number of segments evicted (mostly for tests / observability).
+    Called after each push.  The fast exit (total <= cap) is an O(1)
+    counter read; the O(N) candidate-build + sort only runs on the rare
+    push that actually pushes us over the global ceiling.  Returns the
+    number of segments evicted (mostly for tests / observability).
 
     Policy choice: prefer freshness.  When the cap is hit, the live
     edge of every active camera is more valuable than the tail of
     any single camera — so global oldest-first beats per-camera
     fairness.  A camera that hasn't received a segment in a while is
     the natural sacrifice; an active stream's recent segments stay.
+
+    Note on overshoot: because the push path holds `_segment_cache_lock`
+    across insert+evict, there's no multi-push overshoot — the only
+    transient over-cap state is the single segment just inserted, which
+    this call immediately trims.  (Pre-lock, N concurrent pushes could
+    each insert before any evicted, overshooting by N segments.)
     """
+    global _segment_cache_byte_total
     with _segment_cache_lock:
-        total = _segment_cache_total_bytes()
-        if total <= max_total_bytes:
+        if _segment_cache_byte_total <= max_total_bytes:
             return 0
 
         # Build a flat list of (ts, camera_id, filename, byte_size).
@@ -361,30 +393,32 @@ def _evict_global_oldest(max_total_bytes: int) -> int:
 
         evicted = 0
         for _ts, cam_id, fname, size in candidates:
-            if total <= max_total_bytes:
+            if _segment_cache_byte_total <= max_total_bytes:
                 break
             cam_cache = _segment_cache.get(cam_id)
             if cam_cache is None:
                 continue
             if cam_cache.pop(fname, None) is not None:
-                total -= size
+                _segment_cache_byte_total -= size
                 evicted += 1
             # If the camera's cache is now empty, drop the empty bucket
             # too so _segment_cache size stays accurate for monitoring.
             if cam_cache is not None and not cam_cache:
                 _segment_cache.pop(cam_id, None)
+        total_now = _segment_cache_byte_total
 
     if evicted:
         logger.warning(
             "[HLS] Global cache cap hit — evicted %d oldest segments "
             "(total now %d bytes, cap %d bytes)",
-            evicted, total, max_total_bytes,
+            evicted, total_now, max_total_bytes,
         )
     return evicted
 
 
 def _evict_stale_cameras():
     """Remove segment caches for cameras that haven't received data recently."""
+    global _segment_cache_byte_total
     cutoff = time.monotonic() - 60.0  # 1 minute
     with _segment_cache_lock:
         stale = []
@@ -397,6 +431,11 @@ def _evict_stale_cameras():
                 stale.append(camera_id)
         for camera_id in stale:
             del _segment_cache[camera_id]
+        # Reconcile the running byte counter against ground truth on this
+        # background sweep.  Drift insurance: if any mutation site ever
+        # forgets to adjust the counter, this 60s-cadence recompute
+        # self-heals it.  O(N) is fine here — it's off the push hot path.
+        _segment_cache_byte_total = _recompute_segment_cache_bytes()
     # Sibling caches aren't iterated cross-thread (event-loop only), so
     # they don't need the segment lock — clear them outside the critical
     # section to keep it tight.
@@ -754,14 +793,23 @@ async def push_segment(
     # was already `await`-read above, so nothing in this critical section
     # blocks on I/O — it's pure dict work, microseconds, safe to hold on
     # the event-loop thread.
+    global _segment_cache_byte_total
     with _segment_cache_lock:
-        _segment_cache.setdefault(camera_id, {})[filename] = (body, time.monotonic())
+        cam_bucket = _segment_cache.setdefault(camera_id, {})
+        # A re-push of an existing filename (same camera+seq pushed twice —
+        # rare, but a flaky-network retry can do it) overwrites the entry,
+        # so subtract the old size before adding the new one to keep the
+        # running counter exact.
+        prev = cam_bucket.get(filename)
+        if prev is not None:
+            _segment_cache_byte_total -= len(prev[0])
+        cam_bucket[filename] = (body, time.monotonic())
+        _segment_cache_byte_total += len(body)
         _evict_segment_cache(camera_id)
         # Global byte ceiling — bounds the SUM of all camera caches.
-        # Cheap when under budget (single comparison after the bytes-sum
-        # walk); fires the eviction loop only when an unexpected surge in
-        # active cameras would otherwise OOM the box.  See
-        # SEGMENT_CACHE_MAX_TOTAL_BYTES in config.py for the rationale.
+        # The fast path is now an O(1) counter comparison; the eviction
+        # loop only walks the cache on the rare push that exceeds the
+        # global cap.  See SEGMENT_CACHE_MAX_TOTAL_BYTES in config.py.
         _evict_global_oldest(settings.SEGMENT_CACHE_MAX_TOTAL_BYTES)
         cached_count = len(_segment_cache.get(camera_id, {}))
 
