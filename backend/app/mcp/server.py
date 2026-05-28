@@ -29,7 +29,7 @@ from fastmcp.utilities.types import Image
 from pydantic import Field
 from sqlalchemy.orm import Session
 
-from app.api.hls import _segment_cache
+from app.api.hls import snapshot_recent_segment_bytes
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.mcp.activity import McpEvent, tracker
@@ -1521,31 +1521,29 @@ def attach_clip(
         db.close()
 
     # Pull the most recent segments from the live cache.
-    cam_cache = _segment_cache.get(camera_id)
-    if not cam_cache:
+    #
+    # `attach_clip` is a SYNC tool — FastMCP runs it in an AnyIO worker
+    # thread, off the event loop.  We must NOT iterate `_segment_cache`
+    # directly here: the event loop's push→evict path mutates it
+    # concurrently, and `sorted(cam_cache.keys())` mid-eviction raises
+    # `RuntimeError: dictionary changed size during iteration`.
+    # `snapshot_recent_segment_bytes` does the whole read under
+    # `_segment_cache_lock` and hands back immutable bytes.
+    wanted = max(1, int(round(duration_seconds / _APPROX_SEGMENT_SECONDS)))
+    chunks = snapshot_recent_segment_bytes(camera_id, wanted)
+    if chunks is None:
         raise ToolError(
             f"No buffered segments for camera '{camera_id}'. The stream must be "
             "live (or have been live very recently) for attach_clip to work."
         )
-
-    wanted = max(1, int(round(duration_seconds / _APPROX_SEGMENT_SECONDS)))
-    sorted_filenames = sorted(cam_cache.keys())
-    selected = sorted_filenames[-wanted:]
-    if not selected:
-        raise ToolError(f"No segments available in buffer for camera '{camera_id}'")
-
-    # Concatenate raw .ts bytes — MPEG-TS is byte-concat-safe (PCR timestamps
-    # carry through) so the result plays end-to-end without remuxing.
-    chunks: list[bytes] = []
-    for filename in selected:
-        entry = cam_cache.get(filename)
-        if entry:
-            chunks.append(entry[0])
     if not chunks:
         raise ToolError(
             f"Buffer entries for '{camera_id}' were evicted before they could "
             "be read; try again."
         )
+
+    # Concatenate raw .ts bytes — MPEG-TS is byte-concat-safe (PCR timestamps
+    # carry through) so the result plays end-to-end without remuxing.
     blob = b"".join(chunks)
     segment_count = len(chunks)
     approx_duration = round(segment_count * _APPROX_SEGMENT_SECONDS, 1)

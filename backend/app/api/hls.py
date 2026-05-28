@@ -118,6 +118,26 @@ _CACHE_MAX_CAMERAS = 500
 # (which is a separate org-scoped insert path that we do gate).
 _segment_cache: dict[str, dict[str, tuple[bytes, float]]] = {}
 
+# Guards every iteration-or-mutation of `_segment_cache`.
+#
+# Why a lock when the HTTP handlers are async (and therefore serialized
+# on the event loop)?  Because `attach_clip` (an MCP `@mcp.tool`) is a
+# *sync* function — FastMCP runs sync tools in an AnyIO worker thread,
+# off the event loop.  That worker can be mid-`sorted(cam_cache.keys())`
+# while the event loop's push→evict path is doing `del cam_cache[k]`.
+# CPython raises `RuntimeError: dictionary changed size during
+# iteration` when a dict is mutated while another thread iterates it —
+# the GIL makes single `.get()`/`.pop()` atomic but NOT a multi-bytecode
+# iteration.  The race window opens exactly when the cache is full
+# (eviction active) and an agent grabs a clip — i.e. under load.
+#
+# RLock (not Lock) because the push path acquires the lock and then
+# calls `_evict_segment_cache` / `_evict_global_oldest`, which acquire
+# it again on the same thread.  Every critical section is pure dict
+# work (microseconds) and never spans an `await` or I/O, so holding it
+# on the event-loop thread can't stall the loop meaningfully.
+_segment_cache_lock = threading.RLock()
+
 # Track playlist update count per camera — used to throttle cache eviction sweeps.
 _playlist_update_count: dict[str, int] = {}
 
@@ -267,7 +287,8 @@ def flush_viewer_usage() -> int:
 def cleanup_camera_cache(camera_id: str):
     """Remove all cached segments and playlist for a camera.
     Called when a camera or node is deleted."""
-    _segment_cache.pop(camera_id, None)
+    with _segment_cache_lock:
+        _segment_cache.pop(camera_id, None)
     _playlist_cache.pop(camera_id, None)
     _playlist_update_count.pop(camera_id, None)
     _first_playlist_logged.discard(camera_id)
@@ -276,14 +297,15 @@ def cleanup_camera_cache(camera_id: str):
 
 def _evict_segment_cache(camera_id: str):
     """Keep only the newest SEGMENT_CACHE_MAX_PER_CAMERA segments for a camera."""
-    cam_cache = _segment_cache.get(camera_id)
-    if not cam_cache or len(cam_cache) <= settings.SEGMENT_CACHE_MAX_PER_CAMERA:
-        return
-    # Sort by filename (monotonically increasing sequence numbers)
-    sorted_keys = sorted(cam_cache.keys())
-    to_remove = sorted_keys[: len(sorted_keys) - settings.SEGMENT_CACHE_MAX_PER_CAMERA]
-    for key in to_remove:
-        del cam_cache[key]
+    with _segment_cache_lock:
+        cam_cache = _segment_cache.get(camera_id)
+        if not cam_cache or len(cam_cache) <= settings.SEGMENT_CACHE_MAX_PER_CAMERA:
+            return
+        # Sort by filename (monotonically increasing sequence numbers)
+        sorted_keys = sorted(cam_cache.keys())
+        to_remove = sorted_keys[: len(sorted_keys) - settings.SEGMENT_CACHE_MAX_PER_CAMERA]
+        for key in to_remove:
+            del cam_cache[key]
 
 
 def _segment_cache_total_bytes() -> int:
@@ -297,12 +319,17 @@ def _segment_cache_total_bytes() -> int:
     _evict_segment_cache / cleanup_camera_cache / _evict_stale_cameras
     that don't go through a helper.  Recomputing keeps the cap
     honest without forcing a refactor of every dict mutation.
+
+    Holds `_segment_cache_lock` for the walk so a worker-thread reader
+    (attach_clip) can't be mutating a per-camera dict underneath the
+    nested `.values()` iteration.
     """
-    return sum(
-        len(body)
-        for cam_cache in _segment_cache.values()
-        for body, _ts in cam_cache.values()
-    )
+    with _segment_cache_lock:
+        return sum(
+            len(body)
+            for cam_cache in _segment_cache.values()
+            for body, _ts in cam_cache.values()
+        )
 
 
 def _evict_global_oldest(max_total_bytes: int) -> int:
@@ -318,33 +345,34 @@ def _evict_global_oldest(max_total_bytes: int) -> int:
     fairness.  A camera that hasn't received a segment in a while is
     the natural sacrifice; an active stream's recent segments stay.
     """
-    total = _segment_cache_total_bytes()
-    if total <= max_total_bytes:
-        return 0
-
-    # Build a flat list of (ts, camera_id, filename, byte_size).
-    # Snapshot the keys we're about to mutate so we don't iterate
-    # the dict while modifying it (CPython would raise RuntimeError).
-    candidates: list[tuple[float, str, str, int]] = []
-    for cam_id, cam_cache in _segment_cache.items():
-        for fname, (body, ts) in cam_cache.items():
-            candidates.append((ts, cam_id, fname, len(body)))
-    candidates.sort()
-
-    evicted = 0
-    for _ts, cam_id, fname, size in candidates:
+    with _segment_cache_lock:
+        total = _segment_cache_total_bytes()
         if total <= max_total_bytes:
-            break
-        cam_cache = _segment_cache.get(cam_id)
-        if cam_cache is None:
-            continue
-        if cam_cache.pop(fname, None) is not None:
-            total -= size
-            evicted += 1
-        # If the camera's cache is now empty, drop the empty bucket
-        # too so _segment_cache size stays accurate for monitoring.
-        if cam_cache is not None and not cam_cache:
-            _segment_cache.pop(cam_id, None)
+            return 0
+
+        # Build a flat list of (ts, camera_id, filename, byte_size).
+        # Snapshot the keys we're about to mutate so we don't iterate
+        # the dict while modifying it (CPython would raise RuntimeError).
+        candidates: list[tuple[float, str, str, int]] = []
+        for cam_id, cam_cache in _segment_cache.items():
+            for fname, (body, ts) in cam_cache.items():
+                candidates.append((ts, cam_id, fname, len(body)))
+        candidates.sort()
+
+        evicted = 0
+        for _ts, cam_id, fname, size in candidates:
+            if total <= max_total_bytes:
+                break
+            cam_cache = _segment_cache.get(cam_id)
+            if cam_cache is None:
+                continue
+            if cam_cache.pop(fname, None) is not None:
+                total -= size
+                evicted += 1
+            # If the camera's cache is now empty, drop the empty bucket
+            # too so _segment_cache size stays accurate for monitoring.
+            if cam_cache is not None and not cam_cache:
+                _segment_cache.pop(cam_id, None)
 
     if evicted:
         logger.warning(
@@ -357,22 +385,65 @@ def _evict_global_oldest(max_total_bytes: int) -> int:
 
 def _evict_stale_cameras():
     """Remove segment caches for cameras that haven't received data recently."""
-    now = time.monotonic()
-    cutoff = now - 60.0  # 1 minute
-    stale = []
-    for camera_id, segments in _segment_cache.items():
-        if not segments:
-            stale.append(camera_id)
-            continue
-        newest_ts = max(ts for _, ts in segments.values())
-        if newest_ts < cutoff:
-            stale.append(camera_id)
+    cutoff = time.monotonic() - 60.0  # 1 minute
+    with _segment_cache_lock:
+        stale = []
+        for camera_id, segments in _segment_cache.items():
+            if not segments:
+                stale.append(camera_id)
+                continue
+            newest_ts = max(ts for _, ts in segments.values())
+            if newest_ts < cutoff:
+                stale.append(camera_id)
+        for camera_id in stale:
+            del _segment_cache[camera_id]
+    # Sibling caches aren't iterated cross-thread (event-loop only), so
+    # they don't need the segment lock — clear them outside the critical
+    # section to keep it tight.
     for camera_id in stale:
-        del _segment_cache[camera_id]
         _playlist_cache.pop(camera_id, None)
         _playlist_update_count.pop(camera_id, None)
         _first_playlist_logged.discard(camera_id)
         _first_stream_get_logged.discard(camera_id)
+
+
+def snapshot_recent_segment_bytes(camera_id: str, count: int) -> list[bytes] | None:
+    """Atomically snapshot the newest `count` cached segments' bytes for a
+    camera, oldest-first.
+
+    The single safe entry point for an off-event-loop reader (currently
+    `attach_clip`, which runs in a FastMCP worker thread) to pull from
+    `_segment_cache`.  Holds `_segment_cache_lock` across both the
+    `sorted(keys())` snapshot and the per-segment byte reads, so the
+    event loop's eviction path can't mutate the per-camera dict mid-read
+    (the `RuntimeError: dictionary changed size during iteration` this
+    whole lock exists to prevent).
+
+    Returns:
+      - ``None``  if the camera has no cache bucket at all (stream never
+                  went live, or its bucket was already fully evicted) —
+                  caller surfaces "stream must be live".
+      - ``[]``    if the bucket existed but yielded no readable segments
+                  (raced an eviction that emptied it) — caller surfaces
+                  "try again".
+      - ``list``  the selected segments' bytes, oldest-first.
+
+    Bytes objects are immutable, so the caller may use the returned list
+    freely after the lock releases.
+    """
+    with _segment_cache_lock:
+        cam_cache = _segment_cache.get(camera_id)
+        if not cam_cache:
+            return None
+        if count <= 0:
+            return []
+        selected = sorted(cam_cache.keys())[-count:]
+        out: list[bytes] = []
+        for fname in selected:
+            entry = cam_cache.get(fname)
+            if entry:
+                out.append(entry[0])
+        return out
 
 
 def _evict_caches():
@@ -587,18 +658,25 @@ async def get_hls_segment(
                 headers={"Retry-After": "3600"},
             )
 
-    cam_cache = _segment_cache.get(camera_id)
-    if cam_cache:
-        entry = cam_cache.get(filename)
-        if entry:
-            # Count this segment against the org's monthly viewer-second budget.
-            # Only count on successful serves — a 404 or cap-block never charges.
-            record_viewer_second(user.org_id)
-            return Response(
-                content=entry[0],
-                media_type="video/mp2t",
-                headers={"Cache-Control": "public, max-age=3600"},
-            )
+    # Snapshot the bytes under the lock so the worker-thread reader vs
+    # event-loop eviction race can't surface here either.  `.get()` is
+    # individually GIL-atomic, but taking the lock keeps every cache
+    # access on the same discipline and the bytes ref we pull out is
+    # immutable, so it's safe to use after release.
+    with _segment_cache_lock:
+        cam_cache = _segment_cache.get(camera_id)
+        entry = cam_cache.get(filename) if cam_cache else None
+        body = entry[0] if entry else None
+
+    if body is not None:
+        # Count this segment against the org's monthly viewer-second budget.
+        # Only count on successful serves — a 404 or cap-block never charges.
+        record_viewer_second(user.org_id)
+        return Response(
+            content=body,
+            media_type="video/mp2t",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
 
     raise HTTPException(status_code=404, detail="Segment not found")
 
@@ -669,19 +747,25 @@ async def push_segment(
 
     body = await _read_capped_body(request, settings.SEGMENT_PUSH_MAX_BYTES)
 
-    # Cache the segment.  setdefault is atomic on CPython dicts; avoids
-    # the check-then-insert race that would drop segments if two async
-    # handlers for the same camera interleaved around an await point.
-    _segment_cache.setdefault(camera_id, {})[filename] = (body, time.monotonic())
-    _evict_segment_cache(camera_id)
-    # Global byte ceiling — bounds the SUM of all camera caches.
-    # Cheap when under budget (single comparison after the bytes-sum
-    # walk); fires the eviction loop only when an unexpected surge in
-    # active cameras would otherwise OOM the box.  See
-    # SEGMENT_CACHE_MAX_TOTAL_BYTES in config.py for the rationale.
-    _evict_global_oldest(settings.SEGMENT_CACHE_MAX_TOTAL_BYTES)
+    # Cache the segment + run both eviction passes under the cache lock
+    # so a worker-thread reader (attach_clip) never observes a partially
+    # mutated cache.  The lock is an RLock, so the nested acquires inside
+    # `_evict_segment_cache` / `_evict_global_oldest` are free.  `body`
+    # was already `await`-read above, so nothing in this critical section
+    # blocks on I/O — it's pure dict work, microseconds, safe to hold on
+    # the event-loop thread.
+    with _segment_cache_lock:
+        _segment_cache.setdefault(camera_id, {})[filename] = (body, time.monotonic())
+        _evict_segment_cache(camera_id)
+        # Global byte ceiling — bounds the SUM of all camera caches.
+        # Cheap when under budget (single comparison after the bytes-sum
+        # walk); fires the eviction loop only when an unexpected surge in
+        # active cameras would otherwise OOM the box.  See
+        # SEGMENT_CACHE_MAX_TOTAL_BYTES in config.py for the rationale.
+        _evict_global_oldest(settings.SEGMENT_CACHE_MAX_TOTAL_BYTES)
+        cached_count = len(_segment_cache.get(camera_id, {}))
 
-    return {"success": True, "cached_segments": len(_segment_cache.get(camera_id, {}))}
+    return {"success": True, "cached_segments": cached_count}
 
 
 @router.post("/playlist")
