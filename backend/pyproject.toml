@@ -129,7 +129,21 @@ ignore = ["B008", "UP045"]
 # (whichever resolves first); pip-audit --strict in CI catches it
 # and fails the deploy.  Remove this line once every direct dep we
 # carry has bumped past needing < 2.7.
+#
+# idna: CVE-2026-45409 (fixed in 3.15).  Transitive via httpx / anyio /
+# requests.  Surfaced in the PyPA advisory DB ~2026-05-24, after the
+# last green deploy — pip-audit --strict started failing on it even
+# though no code changed.  Remove once a direct dep's own pin clears
+# idna 3.15.
+#
+# starlette: PYSEC-2026-161 (fixed in 1.0.1).  Transitive via fastapi.
+# Same story — advisory landed during a quiet week and turned the
+# deploy red.  1.0.0 → 1.0.1 is a patch; fastapi's starlette range
+# accepts it (uv resolves cleanly).  Remove once fastapi's own pin
+# moves past 1.0.1.
 constraint-dependencies = [
     "authlib>=1.7.1",
     "urllib3>=2.7.0",
+    "idna>=3.15",
+    "starlette>=1.0.1",
 ]

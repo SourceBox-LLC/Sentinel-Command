@@ -27,7 +27,6 @@ from app.core.database import SessionLocal
 from app.models import CameraNode
 from tests.conftest import TestSession
 
-
 # ── Fixtures ────────────────────────────────────────────────────────
 
 
