@@ -314,3 +314,73 @@ def test_enforce_cap_suspends_cameras_when_grace_expires():
             assert rows[c.camera_id] is True
     finally:
         db.close()
+
+
+# ── Live-lookup throttle cache prune (unbounded-dict leak fix) ──────────
+
+# `resolve_org_plan` throttles live Clerk lookups per org via
+# `_last_resolve_at`. Without a sweep that dict grows one entry per org
+# that ever hit the live-lookup path, forever — dominated by free-tier
+# orgs hammering MCP, exactly the throttle's target population. These
+# tests pin that `_prune_resolve_cache` drops inert entries, keeps still-
+# throttled ones, and stays time-gated so it isn't an O(orgs) walk per call.
+
+
+def test_prune_resolve_cache_drops_stale_entries(monkeypatch):
+    """An entry older than the throttle window is inert (the throttle check
+    already treats it as expired) so the sweep drops it, while an entry
+    still inside the window is kept."""
+    import app.core.plans as plans
+
+    now = 10_000.0
+    monkeypatch.setattr(plans, "_last_resolve_prune_at", 0.0)
+    monkeypatch.setattr(
+        plans,
+        "_last_resolve_at",
+        {
+            "org_stale": now - plans._RESOLVE_THROTTLE_SECONDS - 1.0,  # aged out
+            "org_fresh": now - 5.0,  # still inside the throttle window
+        },
+    )
+
+    plans._prune_resolve_cache(now)
+
+    assert "org_stale" not in plans._last_resolve_at
+    assert "org_fresh" in plans._last_resolve_at
+
+
+def test_prune_resolve_cache_is_time_gated(monkeypatch):
+    """Within `_RESOLVE_PRUNE_INTERVAL` the sweep is a no-op — it must not
+    walk the dict on every call. A stale entry planted right after a recent
+    prune survives until the gate reopens."""
+    import app.core.plans as plans
+
+    now = 10_000.0
+    # Pretend we pruned 1s ago → gate closed (interval is 600s).
+    monkeypatch.setattr(plans, "_last_resolve_prune_at", now - 1.0)
+    monkeypatch.setattr(
+        plans,
+        "_last_resolve_at",
+        {"org_stale": now - plans._RESOLVE_THROTTLE_SECONDS - 1.0},
+    )
+
+    plans._prune_resolve_cache(now)
+
+    assert "org_stale" in plans._last_resolve_at  # gate held → not swept yet
+
+
+def test_prune_resolve_cache_records_sweep_time(monkeypatch):
+    """A sweep that actually runs stamps `_last_resolve_prune_at` so the
+    next call within the interval short-circuits."""
+    import app.core.plans as plans
+
+    now = 10_000.0
+    monkeypatch.setattr(plans, "_last_resolve_prune_at", 0.0)
+    monkeypatch.setattr(plans, "_last_resolve_at", {})
+
+    plans._prune_resolve_cache(now)
+    assert plans._last_resolve_prune_at == now
+
+    # A call 1s later is gated off, so the stamp does not advance.
+    plans._prune_resolve_cache(now + 1.0)
+    assert plans._last_resolve_prune_at == now

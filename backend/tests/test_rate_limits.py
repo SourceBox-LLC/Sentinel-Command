@@ -29,6 +29,9 @@ order-independent and each starts from a clean bucket.
 
 from __future__ import annotations
 
+import collections
+import time
+
 import pytest
 
 from app.api.ws import (
@@ -36,6 +39,7 @@ from app.api.ws import (
     NodeRateLimiter,
     _ws_connect_throttle,
 )
+from app.mcp.server import _RateLimiter
 
 # ── Helpers ─────────────────────────────────────────────────────────
 
@@ -273,7 +277,6 @@ def test_ws_connect_throttle_window_evicts_old_attempts():
     assert not throttle.allow("node_window")  # at cap
 
     # Wait past the window and try again — bucket should be empty.
-    import time
     time.sleep(0.06)
     assert throttle.allow("node_window")
 
@@ -287,3 +290,94 @@ def test_ws_connect_throttle_singleton_actually_wired():
     assert throttle_ref is _ws_connect_throttle
     # Default cap matches the documented constant.
     assert throttle_ref._max == WS_MAX_CONNECTS_PER_MINUTE
+
+
+# ── MCP rate-limiter idle-key prune (unbounded-dict leak fix) ──────
+
+# The MCP `_RateLimiter` keyed its two windows by API-key hash and never
+# forgot a key, so every key that ever called MCP — revoked, rotated,
+# one-off — kept a dict entry forever.  `_prune` sweeps fully-aged-out
+# keys; `check()` fires it opportunistically once per `_PRUNE_INTERVAL`.
+# These tests pin that the sweep drops dead keys, keeps live ones, and
+# stays off the hot path inside the interval.
+
+
+def test_mcp_rate_limiter_prune_drops_fully_aged_out_key():
+    """A key whose 24h daily window has fully expired is forgotten
+    entirely — both its minute and daily deques are dropped."""
+    rl = _RateLimiter()
+    now = time.time()
+    stale_ts = now - 86_400.0 - 100.0  # past the 24h window
+    rl._minute["dead_key"] = collections.deque([stale_ts])
+    rl._daily["dead_key"] = collections.deque([stale_ts])
+
+    rl._prune(now)
+
+    assert "dead_key" not in rl._daily
+    assert "dead_key" not in rl._minute
+
+
+def test_mcp_rate_limiter_prune_keeps_active_key():
+    """A key with a hit inside the 24h window survives, and its still-valid
+    timestamp is not discarded by the sweep."""
+    rl = _RateLimiter()
+    now = time.time()
+    fresh_ts = now - 10.0  # 10s ago — inside both windows
+    rl._minute["live_key"] = collections.deque([fresh_ts])
+    rl._daily["live_key"] = collections.deque([fresh_ts])
+
+    rl._prune(now)
+
+    assert "live_key" in rl._daily
+    assert "live_key" in rl._minute
+    assert list(rl._daily["live_key"]) == [fresh_ts]
+
+
+def test_mcp_rate_limiter_prune_is_selective():
+    """Mixed population: only the aged-out key is dropped; the active one
+    and its timestamps are untouched."""
+    rl = _RateLimiter()
+    now = time.time()
+    rl._daily["dead"] = collections.deque([now - 86_400.0 - 1.0])
+    rl._minute["dead"] = collections.deque([now - 86_400.0 - 1.0])
+    rl._daily["alive"] = collections.deque([now - 30.0])
+    rl._minute["alive"] = collections.deque([now - 30.0])
+
+    rl._prune(now)
+
+    assert "dead" not in rl._daily and "dead" not in rl._minute
+    assert "alive" in rl._daily and "alive" in rl._minute
+
+
+def test_mcp_rate_limiter_check_triggers_prune_after_interval():
+    """The opportunistic sweep fires from check() once _PRUNE_INTERVAL has
+    elapsed, so the leak is bounded without a background task.  We force
+    the time-gate open by backdating _last_prune."""
+    rl = _RateLimiter()
+    # A key untouched for over a day (epoch timestamp is unambiguously old).
+    rl._daily["ancient"] = collections.deque([0.0])
+    rl._minute["ancient"] = collections.deque([0.0])
+    rl._last_prune = 0.0  # pretend we last swept long ago → gate open
+
+    allowed, _, _ = rl.check("newcomer", minute_limit=10, daily_limit=100)
+    assert allowed
+
+    # The ancient key was swept; the newcomer is now tracked.
+    assert "ancient" not in rl._daily
+    assert "ancient" not in rl._minute
+    assert "newcomer" in rl._daily
+
+
+def test_mcp_rate_limiter_check_does_not_prune_within_interval():
+    """Within the interval the sweep must NOT run — otherwise it'd be an
+    O(keys) walk on every request.  A stale key present just before a
+    check() (with a recent _last_prune) must still be there afterward."""
+    rl = _RateLimiter()
+    rl._daily["ancient"] = collections.deque([0.0])
+    rl._minute["ancient"] = collections.deque([0.0])
+    rl._last_prune = time.time()  # just pruned → gate closed
+
+    rl.check("newcomer", minute_limit=10, daily_limit=100)
+
+    # check() only touches its own key, and the gate held, so "ancient" stays.
+    assert "ancient" in rl._daily

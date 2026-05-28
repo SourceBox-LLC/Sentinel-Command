@@ -14,6 +14,7 @@ was removed after every known org had rolled over.  See ADR
 """
 
 import logging
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -74,6 +75,38 @@ PAID_PLAN_SLUGS = frozenset({"pro", "pro_plus"})
 _RESOLVE_THROTTLE_SECONDS = 60.0
 _last_resolve_at: dict[str, float] = {}
 
+# `_last_resolve_at` is read+written from both the event loop (async
+# handlers calling resolve_org_plan via Depends) and MCP worker threads.
+# A lock keeps the throttle read/write atomic AND makes the prune sweep
+# below safe to iterate without racing an insert ("dict changed size
+# during iteration").  Held only for the dict ops — never across the
+# Clerk network call.
+_resolve_lock = threading.Lock()
+# An entry older than the throttle window is inert (the throttle check
+# already treats it as expired), so it can be dropped.  Without this
+# sweep, _last_resolve_at accumulates one entry per org that ever hit
+# the live-lookup path forever — a slow leak dominated by free-tier orgs
+# hammering MCP, which is exactly the throttle's target population.
+_RESOLVE_PRUNE_INTERVAL = 600.0  # 10 min
+_last_resolve_prune_at: float = 0.0
+
+
+def _prune_resolve_cache(now: float) -> None:
+    """Drop `_last_resolve_at` entries older than the throttle window.
+
+    Caller must hold `_resolve_lock`.  Time-gated to at most once per
+    `_RESOLVE_PRUNE_INTERVAL` so it's a single comparison on the common
+    path and an O(orgs) walk only every ~10 min.
+    """
+    global _last_resolve_prune_at
+    if now - _last_resolve_prune_at < _RESOLVE_PRUNE_INTERVAL:
+        return
+    _last_resolve_prune_at = now
+    cutoff = now - _RESOLVE_THROTTLE_SECONDS
+    stale = [org for org, ts in _last_resolve_at.items() if ts < cutoff]
+    for org in stale:
+        _last_resolve_at.pop(org, None)
+
 
 def get_plan_limits(plan: str) -> dict:
     """Return the limits dict for a plan slug. Falls back to free tier."""
@@ -104,11 +137,15 @@ def resolve_org_plan(db, org_id: str) -> str:
     if cached in PAID_PLAN_SLUGS:
         return cached
 
-    # Throttle live re-checks per org.
+    # Throttle live re-checks per org.  Lock only the dict read/modify +
+    # the periodic prune — NOT the Clerk call below (which must not
+    # serialize across orgs).
     now = time.monotonic()
-    if now - _last_resolve_at.get(org_id, 0.0) < _RESOLVE_THROTTLE_SECONDS:
-        return cached or "free_org"
-    _last_resolve_at[org_id] = now
+    with _resolve_lock:
+        _prune_resolve_cache(now)
+        if now - _last_resolve_at.get(org_id, 0.0) < _RESOLVE_THROTTLE_SECONDS:
+            return cached or "free_org"
+        _last_resolve_at[org_id] = now
 
     try:
         sub = clerk.organizations.get_billing_subscription(organization_id=org_id)

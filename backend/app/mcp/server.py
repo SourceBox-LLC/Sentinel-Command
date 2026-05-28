@@ -137,6 +137,13 @@ class _RateLimiter:
     headroom; the failure message tells the caller which window they tripped.
     """
 
+    # How often to sweep fully-aged-out key_hashes out of the maps.
+    # Without this, every API key that ever called MCP keeps an entry
+    # forever — revoked keys, rotated keys, one-off keys — a slow leak
+    # over months of uptime.  Hourly is plenty; the sweep is O(keys) and
+    # runs under the lock we already hold.
+    _PRUNE_INTERVAL = 3600.0
+
     def __init__(self):
         # {key_hash: deque of timestamps} — two separate maps so the purges
         # stay cheap (the minute deque stays small, the daily deque is bigger
@@ -144,6 +151,23 @@ class _RateLimiter:
         self._minute: dict[str, collections.deque] = {}
         self._daily: dict[str, collections.deque] = {}
         self._lock = threading.Lock()
+        self._last_prune = time.time()
+
+    def _prune(self, now: float) -> None:
+        """Drop key_hashes whose windows have fully aged out.  Caller holds
+        the lock.  A key whose 24h (daily) deque is empty after expiry is
+        dead — its 60s (minute) deque is necessarily empty too — so we can
+        forget it entirely until it calls again."""
+        daily_cutoff = now - 86_400.0
+        dead: list[str] = []
+        for key_hash, daily_dq in self._daily.items():
+            while daily_dq and daily_dq[0] < daily_cutoff:
+                daily_dq.popleft()
+            if not daily_dq:
+                dead.append(key_hash)
+        for key_hash in dead:
+            self._daily.pop(key_hash, None)
+            self._minute.pop(key_hash, None)
 
     def check(
         self,
@@ -163,6 +187,12 @@ class _RateLimiter:
         daily_cutoff = now - 86_400.0
 
         with self._lock:
+            # Opportunistic memory sweep — time-gated so it's a single
+            # comparison on the hot path and an O(keys) walk at most hourly.
+            if now - self._last_prune >= self._PRUNE_INTERVAL:
+                self._prune(now)
+                self._last_prune = now
+
             minute_dq = self._minute.setdefault(key_hash, collections.deque())
             daily_dq = self._daily.setdefault(key_hash, collections.deque())
 
