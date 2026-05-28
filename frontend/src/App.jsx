@@ -1,10 +1,11 @@
-import { lazy, Suspense } from "react"
-import { Routes, Route, Navigate } from "react-router-dom"
-import { useAuth, useOrganization, CreateOrganization } from "@clerk/clerk-react"
+import { lazy, Suspense, useEffect } from "react"
+import { Routes, Route, Navigate, useNavigate } from "react-router-dom"
+import { useAuth, useClerk, useOrganization, CreateOrganization } from "@clerk/clerk-react"
 import Layout from "./components/Layout.jsx"
 import PublicLayout from "./components/PublicLayout.jsx"
 import LoadingSpinner from "./components/LoadingSpinner.jsx"
 import ErrorBoundary from "./components/ErrorBoundary.jsx"
+import { setUnauthorizedHandler } from "./services/api.js"
 
 // Lazy-load pages to reduce initial bundle size
 const LandingPage = lazy(() => import("./pages/LandingPage.jsx"))
@@ -107,6 +108,22 @@ function RequireAdmin({ children }) {
 }
 
 function App() {
+  const { signOut } = useClerk()
+  const navigate = useNavigate()
+
+  // Register the app-wide reaction to a 401 from any API call (see
+  // setUnauthorizedHandler in services/api.js).  A 401 means the session
+  // credential was rejected — revoked, expired beyond refresh, or the org
+  // was deleted — so we end the Clerk session and bounce to sign-in.
+  // Without this, a dead session left every component throwing its own
+  // 401 error while the UI sat broken behind the toasts.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      signOut().finally(() => navigate("/sign-in", { replace: true }))
+    })
+    return () => setUnauthorizedHandler(null)
+  }, [signOut, navigate])
+
   return (
     <ErrorBoundary>
       <Suspense fallback={<div className="loading-container"><LoadingSpinner /></div>}>

@@ -13,7 +13,7 @@
 // need to import from a wrapper. ``getToken`` is just a function we hand in.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { fetchWithAuth } from '../../src/services/api.js'
+import { fetchWithAuth, setUnauthorizedHandler } from '../../src/services/api.js'
 
 describe('fetchWithAuth', () => {
   let originalFetch
@@ -196,5 +196,98 @@ describe('fetchWithAuth', () => {
 
     const headers = globalThis.fetch.mock.calls[0][1].headers
     expect(headers.Authorization).toBeUndefined()
+  })
+})
+
+// ── Central 401 (dead-session) handling ──────────────────────────────
+//
+// A 401 means the credential itself was rejected — the only sane recovery
+// is to end the session and bounce to sign-in, handled once centrally
+// instead of by every call site.  A 403 (authenticated-but-forbidden) must
+// NOT trigger that — it's a legitimate permission denial the component
+// surfaces.  These pin that boundary plus the fire-once latch.
+describe('fetchWithAuth — central 401 handling', () => {
+  let originalFetch
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch
+    // Reset the module-level "already handled" latch by forcing one
+    // successful request through (a success clears it).  Keeps these
+    // tests independent of execution order.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 200, json: async () => ({}),
+    })
+    setUnauthorizedHandler(null)
+    await fetchWithAuth('/__reset_latch__', async () => 't')
+  })
+
+  afterEach(() => {
+    setUnauthorizedHandler(null)
+    globalThis.fetch = originalFetch
+    vi.restoreAllMocks()
+  })
+
+  it('invokes the registered handler on 401 and still throws the API error', async () => {
+    const handler = vi.fn()
+    setUnauthorizedHandler(handler)
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false, status: 401, json: async () => ({ detail: 'invalid token' }),
+    })
+
+    await expect(
+      fetchWithAuth('/api/cameras', async () => 'stale'),
+    ).rejects.toThrow(/invalid token/)
+    expect(handler).toHaveBeenCalledTimes(1)
+  })
+
+  it('does NOT invoke the handler on 403 (permission denial, not a dead session)', async () => {
+    const handler = vi.fn()
+    setUnauthorizedHandler(handler)
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false, status: 403, json: async () => ({ detail: 'forbidden' }),
+    })
+
+    await expect(
+      fetchWithAuth('/api/admin/thing', async () => 'tok'),
+    ).rejects.toThrow(/forbidden/)
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('fires once across a burst of 401s, then re-arms after a success', async () => {
+    const handler = vi.fn()
+    setUnauthorizedHandler(handler)
+
+    // Three back-to-back 401s — the latch means the handler fires once.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false, status: 401, json: async () => ({ detail: 'nope' }),
+    })
+    for (let i = 0; i < 3; i++) {
+      await fetchWithAuth('/api/x', async () => 't').catch(() => {})
+    }
+    expect(handler).toHaveBeenCalledTimes(1)
+
+    // A success re-arms the latch…
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 200, json: async () => ({}),
+    })
+    await fetchWithAuth('/api/ok', async () => 't')
+
+    // …so a later genuine expiry fires the handler again.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false, status: 401, json: async () => ({ detail: 'again' }),
+    })
+    await fetchWithAuth('/api/x', async () => 't').catch(() => {})
+    expect(handler).toHaveBeenCalledTimes(2)
+  })
+
+  it('a 401 with no handler registered is a safe no-op (still throws)', async () => {
+    setUnauthorizedHandler(null)
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false, status: 401, json: async () => ({ detail: 'unauthorized' }),
+    })
+
+    await expect(
+      fetchWithAuth('/api/cameras', async () => 'stale'),
+    ).rejects.toThrow(/unauthorized/)
   })
 })

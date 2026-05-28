@@ -16,10 +16,18 @@ function HlsPlayer({ cameraId, cameraName }) {
     const videoRef = useRef(null)
     const hlsRef = useRef(null)
     const stallRef = useRef(null)
+    // Holds the pending backoff setTimeout id between a fatal NETWORK_ERROR
+    // and its retry, so unmount can cancel an in-flight retry.
+    const retryRef = useRef(null)
     const { getCurrentToken, refreshNow, ready } = useSharedToken()
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
     const [isLive, setIsLive] = useState(false)
+    // Bumped by the manual Retry button to force the effect to tear down
+    // and rebuild the hls.js instance from scratch (resetting the recovery
+    // budget).  Without this, Retry only cleared the error overlay — it
+    // never re-ran setup, so a player that gave up stayed dead.
+    const [retryNonce, setRetryNonce] = useState(0)
     // `stalled` is post-connect: MANIFEST_PARSED has fired (loading is
     // false) but the video element hasn't advanced in N seconds.
     // Common cause is a backend segment-cache hole that hls.js is
@@ -126,6 +134,33 @@ function HlsPlayer({ cameraId, cameraName }) {
 
                     hlsRef.current = hls
 
+                    // Bounded fatal-error recovery budget (consumed in the
+                    // ERROR handler below).  A genuinely dead stream fires
+                    // fatal errors back-to-back; capping the attempts keeps a
+                    // black tile from looping playlist fetches forever.  The
+                    // budget resets to 0 whenever playback actually advances
+                    // (stall-check below), so a stream that blips occasionally
+                    // over hours never exhausts it — only a *sustained*
+                    // failure with no recovery in between gives up.
+                    const MAX_RECOVERY_ATTEMPTS = 5
+                    let networkRetries = 0
+                    let mediaRetries = 0
+
+                    // Tear down all timers + the hls instance.  Used by the
+                    // give-up branches and the non-recoverable default case.
+                    const stopPlayback = () => {
+                        if (stallRef.current) {
+                            clearInterval(stallRef.current)
+                            stallRef.current = null
+                        }
+                        if (retryRef.current) {
+                            clearTimeout(retryRef.current)
+                            retryRef.current = null
+                        }
+                        hls.destroy()
+                        hlsRef.current = null
+                    }
+
                     hls.loadSource(playlistUrl)
                     hls.attachMedia(video)
 
@@ -193,11 +228,17 @@ function HlsPlayer({ cameraId, cameraName }) {
                                 setStalled(true)
                             }
                         } else {
-                            // Playback advanced — drop every stall flag.
+                            // Playback advanced — drop every stall flag and
+                            // refill the recovery budget: a stream that's
+                            // healthy now has "earned back" its retries, so a
+                            // later blip starts from a full budget instead of
+                            // inheriting exhaustion from an earlier hiccup.
                             if (stallCount > 0 && import.meta.env.DEV) {
                                 console.log("[HlsPlayer] Stream resumed after stall")
                             }
                             stallCount = 0
+                            networkRetries = 0
+                            mediaRetries = 0
                             setLoading(false)
                             setStalled(false)
                         }
@@ -206,31 +247,69 @@ function HlsPlayer({ cameraId, cameraName }) {
                     stallRef.current = stallCheck
 
                     hls.on(Hls.Events.ERROR, (event, data) => {
-                        if (data.fatal) {
-                            switch (data.type) {
-                                case Hls.ErrorTypes.NETWORK_ERROR:
-                                    // Network errors are often caused by an expired
-                                    // auth token (401). Refresh the shared token
-                                    // immediately before retrying.
-                                    console.warn("[HlsPlayer] Network error, refreshing token and retrying:", data.details)
+                        if (!data.fatal) return
+                        switch (data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR: {
+                                // A fatal NETWORK_ERROR on a live stream is
+                                // often a transient 401 (expired token) or a
+                                // momentary segment-cache hole — worth a retry.
+                                // But on a *dead* stream it repeats forever, and
+                                // the old code retried unconditionally: every
+                                // failure triggered a token refresh + startLoad,
+                                // re-fetching the playlist in a tight loop that
+                                // burned the org's monthly viewer-hour cap,
+                                // hammered Clerk, and flooded the backend log
+                                // behind a black tile.  Cap the attempts and
+                                // back off exponentially instead.
+                                if (networkRetries >= MAX_RECOVERY_ATTEMPTS) {
+                                    console.warn(
+                                        `[HlsPlayer] Giving up after ${networkRetries} network retries:`,
+                                        data.details,
+                                    )
+                                    setError("Stream unavailable — the camera may be offline.")
+                                    stopPlayback()
+                                    break
+                                }
+                                networkRetries++
+                                // 1s, 2s, 4s, 8s, 8s… (capped) so a dead stream
+                                // backs off rather than spinning at full tilt.
+                                const delay = Math.min(1000 * 2 ** (networkRetries - 1), 8000)
+                                console.warn(
+                                    `[HlsPlayer] Network error (attempt ${networkRetries}/${MAX_RECOVERY_ATTEMPTS}), `
+                                    + `retrying in ${delay}ms:`, data.details,
+                                )
+                                retryRef.current = setTimeout(() => {
+                                    retryRef.current = null
+                                    // Refresh the (possibly expired) token, then
+                                    // resume — but only if we're still mounted.
                                     refreshNow().then(() => {
-                                        hls.startLoad()
+                                        if (hlsRef.current === hls) hls.startLoad()
                                     })
-                                    break
-                                case Hls.ErrorTypes.MEDIA_ERROR:
-                                    console.warn("[HlsPlayer] Media error, recovering:", data.details)
-                                    hls.recoverMediaError()
-                                    break
-                                default:
-                                    setError(`Fatal error: ${data.type}`)
-                                    if (stallRef.current) {
-                                        clearInterval(stallRef.current)
-                                        stallRef.current = null
-                                    }
-                                    hls.destroy()
-                                    hlsRef.current = null
-                                    break
+                                }, delay)
+                                break
                             }
+                            case Hls.ErrorTypes.MEDIA_ERROR: {
+                                if (mediaRetries >= MAX_RECOVERY_ATTEMPTS) {
+                                    console.warn(
+                                        `[HlsPlayer] Giving up after ${mediaRetries} media retries:`,
+                                        data.details,
+                                    )
+                                    setError("Stream playback error — please retry.")
+                                    stopPlayback()
+                                    break
+                                }
+                                mediaRetries++
+                                console.warn(
+                                    `[HlsPlayer] Media error (attempt ${mediaRetries}/${MAX_RECOVERY_ATTEMPTS}), recovering:`,
+                                    data.details,
+                                )
+                                hls.recoverMediaError()
+                                break
+                            }
+                            default:
+                                setError(`Fatal error: ${data.type}`)
+                                stopPlayback()
+                                break
                         }
                     })
                 } else {
@@ -253,23 +332,32 @@ function HlsPlayer({ cameraId, cameraName }) {
                 clearInterval(stallRef.current)
                 stallRef.current = null
             }
+            if (retryRef.current) {
+                clearTimeout(retryRef.current)
+                retryRef.current = null
+            }
             if (hlsRef.current) {
                 hlsRef.current.destroy()
                 hlsRef.current = null
             }
         }
-    }, [cameraId, getCurrentToken, ready])
+    }, [cameraId, getCurrentToken, refreshNow, ready, retryNonce])
 
     if (error) {
         return (
             <div className="hls-player-error">
                 <div className="error-icon">⚠️</div>
                 <div className="error-text">{error}</div>
-                <button 
+                <button
                     className="btn btn-small"
                     onClick={() => {
                         setError(null)
                         setLoading(true)
+                        setStalled(false)
+                        // Force the effect to re-run: tears down the old
+                        // (destroyed) hls instance and builds a fresh one with
+                        // a full recovery budget.
+                        setRetryNonce((n) => n + 1)
                     }}
                 >
                     Retry

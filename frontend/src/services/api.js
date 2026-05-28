@@ -1,5 +1,49 @@
 const API_URL = import.meta.env.VITE_API_URL || ""
 
+// ── Central 401 (dead-session) handling ──────────────────────────────
+//
+// api.js is a plain module, not a React component, so it can't reach
+// Clerk's signOut() or the router directly.  The app registers a handler
+// once at mount (see App.jsx) and we invoke it the first time any request
+// comes back 401.
+//
+// Why 401 only, never 403:
+//   - 401 means the *credential itself* was rejected — expired/revoked
+//     session, deleted org, bad signature.  The session is dead; the only
+//     sane recovery is to end it locally and send the user to sign-in.
+//     Before this, a dead session left every screen throwing its own 401
+//     toast while the UI sat broken behind them.
+//   - 403 means "authenticated but not allowed" (e.g. a viewer hitting an
+//     admin-only endpoint).  That's a legitimate permission denial the
+//     calling component should surface — forcing a logout on a 403 would
+//     be hostile and confusing.  So 403 falls through to parseErrorBody
+//     like any other error.
+let _onUnauthorized = null
+// Latch so a burst of in-flight requests all 401-ing at once fires the
+// handler (and any redirect) exactly once.  Cleared on the next success
+// so a genuine later expiry still triggers a fresh sign-out.
+let _unauthorizedHandled = false
+
+/**
+ * Register the app-level reaction to a 401 (typically: Clerk signOut +
+ * redirect to /sign-in).  Pass null to unregister (effect cleanup).
+ */
+export function setUnauthorizedHandler(handler) {
+  _onUnauthorized = handler
+}
+
+function _handleUnauthorized() {
+  if (_unauthorizedHandled) return
+  _unauthorizedHandled = true
+  if (typeof _onUnauthorized === "function") {
+    try {
+      _onUnauthorized()
+    } catch (e) {
+      console.error("[API] Unauthorized handler threw:", e)
+    }
+  }
+}
+
 /**
  * Parse a non-2xx response body into a usable Error.
  *
@@ -111,9 +155,14 @@ export async function fetchWithAuth(endpoint, getToken, options = {}) {
   }
 
   if (!response.ok) {
+    if (response.status === 401) _handleUnauthorized()
     const body = await response.json().catch(() => null)
     throw parseErrorBody(body, response.status)
   }
+
+  // A success means the session is valid again — clear the latch so a
+  // future genuine expiry re-triggers the sign-out flow.
+  _unauthorizedHandled = false
 
   if (response.status === 204) {
     return null
@@ -444,6 +493,7 @@ export async function fetchIncidentEvidenceBlobUrl(getToken, incidentId, evidenc
     { headers }
   )
   if (!response.ok) {
+    if (response.status === 401) _handleUnauthorized()
     throw new Error(`Failed to load evidence (${response.status})`)
   }
   const blob = await response.blob()
@@ -513,6 +563,7 @@ async function _downloadFile(
     headers,
   })
   if (!response.ok) {
+    if (response.status === 401) _handleUnauthorized()
     // Try to surface the API's error envelope so the toast in the
     // caller can show something useful (rate-limit detail, 403, etc.)
     let detail = `HTTP ${response.status}`
