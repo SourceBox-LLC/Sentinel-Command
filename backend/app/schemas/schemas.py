@@ -156,3 +156,14 @@ class McpKeyCreate(BaseModel):
             seen.add(name)
             out.append(name)
         return out
+
+
+class IntegrationKeyCreate(BaseModel):
+    """Create a REST integration API key (osi_) — e.g. for Home Assistant.
+
+    Unlike MCP keys, integration keys have no per-tool scoping: they grant
+    access to the whole /api/integration/* surface (camera list, snapshots,
+    recording control, motion). Org isolation is enforced per-request from
+    the key's org_id, same as every other authenticated endpoint.
+    """
+    name: str = Field("Home Assistant", max_length=100)

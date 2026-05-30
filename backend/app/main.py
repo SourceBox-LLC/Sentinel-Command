@@ -31,6 +31,7 @@ from app.api import (
     hls,
     incidents,
     install,
+    integration,
     mcp_activity,
     mcp_keys,
     motion,
@@ -466,6 +467,7 @@ app.include_router(hls.router)
 app.include_router(ws.router)
 app.include_router(install.router)
 app.include_router(mcp_keys.router)
+app.include_router(integration.router)
 app.include_router(mcp_activity.router)
 app.include_router(incidents.router)
 app.include_router(motion.router)

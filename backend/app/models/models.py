@@ -378,6 +378,17 @@ class McpApiKey(Base):
     scope_mode = Column(String(20), nullable=True, default="all")
     scope_tools = Column(Text, nullable=True)
 
+    # Distinguishes an MCP-protocol key (osc_, the default) from a REST
+    # integration key (osi_, e.g. Home Assistant). Both kinds live in this
+    # one table to reuse the minting / hashing / revocation / audit
+    # machinery, but every auth AND management query filters on `kind` so
+    # a key of one kind can NEVER authenticate as — or be listed/revoked
+    # alongside — the other. server_default backfills every legacy row to
+    # "mcp" on the next boot, so existing keys keep working. The default is
+    # SQL-quoted ("'mcp'") because migrations.py emits the value verbatim
+    # into the ADD COLUMN DDL (an unquoted "mcp" would be invalid SQL).
+    kind = Column(String(20), nullable=False, default="mcp", server_default="'mcp'")
+
     def get_scope_tools(self) -> list[str]:
         """Return the parsed scope_tools list, or [] if unset/invalid."""
         if not self.scope_tools:
@@ -400,6 +411,7 @@ class McpApiKey(Base):
             "revoked": self.revoked,
             "scope_mode": self.scope_mode or "all",
             "scope_tools": self.get_scope_tools(),
+            "kind": self.kind or "mcp",
         }
 
 

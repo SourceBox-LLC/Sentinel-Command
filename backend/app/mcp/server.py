@@ -270,7 +270,10 @@ class ScopeMiddleware(Middleware):
         try:
             mcp_key = (
                 db.query(McpApiKey)
-                .filter_by(key_hash=key_hash, revoked=False)
+                # kind="mcp" is load-bearing: an integration key (osi_,
+                # kind="integration") lives in the same table and must
+                # NOT be able to authenticate to the MCP tool surface.
+                .filter_by(key_hash=key_hash, revoked=False, kind="mcp")
                 .first()
             )
             if not mcp_key:
@@ -347,7 +350,10 @@ def _resolve_org(headers: dict | None) -> tuple[str, Session]:
     try:
         mcp_key = (
             db.query(McpApiKey)
-            .filter_by(key_hash=key_hash, revoked=False)
+            # kind="mcp" is load-bearing: an integration key (osi_,
+            # kind="integration") shares this table and must NOT be able
+            # to authenticate to the MCP tool surface.
+            .filter_by(key_hash=key_hash, revoked=False, kind="mcp")
             .first()
         )
         if not mcp_key:

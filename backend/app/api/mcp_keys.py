@@ -63,6 +63,7 @@ async def create_mcp_key(
         name=payload.name,
         scope_mode=scope_mode,
         scope_tools=json.dumps(scope_tools) if scope_tools else None,
+        kind="mcp",  # explicit; integration keys (osi_) are minted in api/integration.py
     )
     db.add(mcp_key)
     db.commit()
@@ -184,7 +185,9 @@ async def list_mcp_keys(
     """List all MCP API keys for the organization (without the actual key values)."""
     keys = (
         db.query(McpApiKey)
-        .filter_by(org_id=user.org_id, revoked=False)
+        # kind="mcp": this page lists ONLY MCP keys. Integration keys
+        # (osi_) live in the same table but are managed at /api/integration/keys.
+        .filter_by(org_id=user.org_id, revoked=False, kind="mcp")
         .order_by(McpApiKey.created_at.desc())
         .all()
     )
@@ -202,7 +205,9 @@ async def revoke_mcp_key(
     """Revoke an MCP API key."""
     mcp_key = (
         db.query(McpApiKey)
-        .filter_by(id=key_id, org_id=user.org_id)
+        # kind="mcp": this endpoint revokes ONLY MCP keys. An integration
+        # key id passed here 404s rather than crossing surfaces.
+        .filter_by(id=key_id, org_id=user.org_id, kind="mcp")
         .first()
     )
     if not mcp_key:
