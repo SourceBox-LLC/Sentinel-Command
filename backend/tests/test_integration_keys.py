@@ -30,9 +30,14 @@ def _request_with_auth(token: str | None) -> Request:
     return Request({"type": "http", "method": "GET", "path": "/", "headers": headers})
 
 
-def _resolve(token: str | None, db):
-    """Drive the async dependency from a sync test (no running loop here)."""
-    return asyncio.run(require_integration_org(_request_with_auth(token), db))
+def _resolve(token: str | None):
+    """Drive the async dependency from a sync test (no running loop here).
+
+    The dependency uses its own short-lived session internally (see
+    integration_auth), so we don't pass one — keys created via admin_client
+    are committed to the shared in-memory DB and visible to that session.
+    """
+    return asyncio.run(require_integration_org(_request_with_auth(token)))
 
 
 # ── CRUD ────────────────────────────────────────────────────────────
@@ -101,30 +106,30 @@ def test_cross_kind_revoke_404s(admin_client):
 
 # ── require_integration_org dependency ──────────────────────────────
 
-def test_dependency_resolves_org(admin_client, db):
+def test_dependency_resolves_org(admin_client):
     raw = admin_client.post("/api/integration/keys", json={"name": "HA"}).json()["key"]
-    user = _resolve(raw, db)
+    user = _resolve(raw)
     assert user.org_id == ORG
     assert user.is_admin is False  # integration role is not admin
 
 
-def test_dependency_rejects_missing_header(db):
+def test_dependency_rejects_missing_header():
     with pytest.raises(HTTPException) as ei:
-        _resolve(None, db)
+        _resolve(None)
     assert ei.value.status_code == 401
 
 
-def test_dependency_rejects_unknown_key(db):
+def test_dependency_rejects_unknown_key():
     with pytest.raises(HTTPException) as ei:
-        _resolve("osi_deadbeefdeadbeefdeadbeefdeadbeef", db)
+        _resolve("osi_deadbeefdeadbeefdeadbeefdeadbeef")
     assert ei.value.status_code == 401
 
 
-def test_dependency_rejects_revoked_key(admin_client, db):
+def test_dependency_rejects_revoked_key(admin_client):
     created = admin_client.post("/api/integration/keys", json={"name": "HA"}).json()
     admin_client.delete(f"/api/integration/keys/{created['id']}")
     with pytest.raises(HTTPException) as ei:
-        _resolve(created["key"], db)
+        _resolve(created["key"])
     assert ei.value.status_code == 401
 
 
@@ -138,10 +143,10 @@ def test_integration_key_rejected_by_mcp_auth(admin_client):
         _resolve_org({"authorization": f"Bearer {raw}"})
 
 
-def test_mcp_key_rejected_by_integration_auth(admin_client, db):
+def test_mcp_key_rejected_by_integration_auth(admin_client):
     """An MCP key (osc_) must NOT authenticate to the integration surface —
     require_integration_org filters kind='integration'."""
     raw = admin_client.post("/api/mcp/keys", json={"name": "Agent"}).json()["key"]
     with pytest.raises(HTTPException) as ei:
-        _resolve(raw, db)
+        _resolve(raw)
     assert ei.value.status_code == 401
