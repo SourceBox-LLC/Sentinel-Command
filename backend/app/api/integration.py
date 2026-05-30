@@ -105,7 +105,7 @@ async def create_integration_key(
             ),
             severity="warning",
             audience="admin",
-            link="/mcp",
+            link="/integrations",
             meta={
                 "key_id": key.id,
                 "key_name": payload.name,

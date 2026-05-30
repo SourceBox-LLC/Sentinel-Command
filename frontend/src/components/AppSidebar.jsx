@@ -34,6 +34,8 @@ function AppSidebar({ open, onClose }) {
       ...(hasAdminFeature ? {} : { locked: true, badge: "PRO", badgeClass: "nav-pro-badge" }),
     },
     { to: "/mcp", label: "MCP" },
+    // No PRO lock — Home Assistant integration is available on every tier.
+    isAdmin && { to: "/integrations", label: "Integrations" },
     isAdmin && { to: "/incidents", label: "Incidents" },
     { to: "/sentinel", label: "Sentinel" },
     { to: "/docs", label: "Help" },

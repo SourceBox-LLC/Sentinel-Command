@@ -18,6 +18,7 @@ const AdminPage = lazy(() => import("./pages/AdminPage.jsx"))
 const TestHlsPage = lazy(() => import("./pages/TestHlsPage.jsx"))
 const PricingPage = lazy(() => import("./pages/PricingPage.jsx"))
 const McpPage = lazy(() => import("./pages/McpPage.jsx"))
+const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage.jsx"))
 const IncidentsPage = lazy(() => import("./pages/IncidentsPage.jsx"))
 const SentinelPage = lazy(() => import("./pages/SentinelPage.jsx"))
 const LegalPage = lazy(() => import("./pages/LegalPage.jsx"))
@@ -195,6 +196,14 @@ function App() {
             element={
               <RequireAdmin>
                 <McpPage />
+              </RequireAdmin>
+            }
+          />
+          <Route
+            path="/integrations"
+            element={
+              <RequireAdmin>
+                <IntegrationsPage />
               </RequireAdmin>
             }
           />

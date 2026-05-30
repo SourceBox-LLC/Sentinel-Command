@@ -407,6 +407,25 @@ export async function revokeMcpKey(getToken, keyId) {
   })
 }
 
+// Integration API keys (osi_) — REST keys for external integrations like
+// Home Assistant. Separate from MCP keys (osc_); see /api/integration/keys.
+export async function getIntegrationKeys(getToken) {
+  return fetchWithAuth("/api/integration/keys", getToken)
+}
+
+export async function createIntegrationKey(getToken, { name } = {}) {
+  return fetchWithAuth("/api/integration/keys", getToken, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  })
+}
+
+export async function revokeIntegrationKey(getToken, keyId) {
+  return fetchWithAuth(`/api/integration/keys/${keyId}`, getToken, {
+    method: "DELETE",
+  })
+}
+
 export async function getMcpToolCatalog(getToken) {
   return fetchWithAuth(`/api/mcp/tools`, getToken)
 }
