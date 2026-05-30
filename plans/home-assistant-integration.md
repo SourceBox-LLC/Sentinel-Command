@@ -1,5 +1,21 @@
 # Home Assistant integration — implementation plan
 
+## Status (updated 2026-05-30)
+
+| Phase | What | Status |
+|---|---|---|
+| 1 | Integration API key + auth (`osi_`, `kind` column, cross-kind guard) | ✅ shipped + deployed |
+| 1b | Dashboard `/integrations` page to mint/copy/revoke keys | ✅ shipped + deployed |
+| 2 | `/api/integration/*` — cameras (LAN-direct URLs), snapshot, recording, status | ✅ shipped + deployed |
+| 3 | Motion SSE (`/api/integration/motion/stream`, separate subscriber pool) | ✅ shipped + deployed |
+| 4 | HACS custom component (config flow + camera/switch/binary_sensor/sensor) | ✅ built — separate repo `Sentinel-HomeAssistant`, pending publish + on-HA testing |
+| 2b | Off-LAN proxy (integration-authed HLS proxy + viewer-hour metering) | ⬜ deferred |
+
+The entire Command Center side (Phases 1–3 + 1b) is live; the HA component
+(Phase 4) lives in its own repo and is validated on a real Home Assistant
+instance. Notable post-build fix: `require_integration_org` uses a one-shot DB
+session so the long-lived motion SSE doesn't pin a connection for its lifetime.
+
 ## Context
 
 Sentinel's core design is **one Command Center org owning many CloudNodes**, each

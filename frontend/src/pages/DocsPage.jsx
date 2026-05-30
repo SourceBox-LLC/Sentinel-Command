@@ -18,6 +18,7 @@ import Recording from "./docs/Recording"
 import CameraGroups from "./docs/CameraGroups"
 import Notifications from "./docs/Notifications"
 import Mcp from "./docs/Mcp"
+import HomeAssistant from "./docs/HomeAssistant"
 import Sentinel from "./docs/Sentinel"
 import Plans from "./docs/Plans"
 import Architecture from "./docs/Architecture"
@@ -44,6 +45,7 @@ const DOC_SECTIONS = [
   "camera-groups",
   "notifications",
   "mcp",
+  "home-assistant",
   "sentinel",
   "plans",
   "security-procedures",
@@ -186,6 +188,7 @@ function DocsSidebar({ activeId }) {
         <div className="docs-sidebar-group">
           <div className="docs-sidebar-group-label">Integrations</div>
           <a href="#mcp" className={linkClass("mcp")}>MCP Integration</a>
+          <a href="#home-assistant" className={linkClass("home-assistant")}>Home Assistant</a>
         </div>
         <div className="docs-sidebar-group">
           <div className="docs-sidebar-group-label">AI Agent</div>
@@ -338,6 +341,7 @@ function DocsPage() {
             <CameraGroups />
             <Notifications />
             <Mcp />
+            <HomeAssistant />
             <Sentinel />
             <Plans />
             <Architecture />

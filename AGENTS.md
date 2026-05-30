@@ -88,6 +88,8 @@ backend/
 │   │   ├── mcp_keys.py           # MCP API key management + tool catalog + audit
 │   │   │                         # notifications (mcp_key_created/revoked)
 │   │   ├── mcp_activity.py       # MCP activity logs, stats, SSE stream
+│   │   ├── integration.py        # Home Assistant REST API (osi_ keys): key mgmt +
+│   │   │                         # camera discovery, snapshot, recording, status, motion SSE
 │   │   ├── motion.py             # Motion event queries, stats, SSE stream
 │   │   ├── notifications.py      # Notification inbox, unread count, SSE, broadcaster,
 │   │   │                         # email kind map, email cooldown gate (motion v1.1),
@@ -264,8 +266,23 @@ CloudNode endpoints validate `X-Node-API-Key`:
 
 MCP endpoint (`POST /mcp`) validates `Authorization: Bearer osc_<hex>`:
 1. SHA-256 hash the raw key
-2. Match against `McpApiKey.key_hash` with `revoked=False`
+2. Match against `McpApiKey.key_hash` with `revoked=False` AND `kind="mcp"`
 3. `ScopeMiddleware` (see below) filters tool discovery + invocation per-key
+
+### Integration API key
+
+`/api/integration/*` endpoints (Home Assistant) validate `Authorization: Bearer osi_<hex>`
+via `core/integration_auth.py::require_integration_org`:
+1. SHA-256 hash the raw key
+2. Match against `McpApiKey.key_hash` with `revoked=False` AND `kind="integration"`
+3. Derive `org_id` from the matched row
+
+Integration keys share the `mcp_api_keys` table with MCP keys, split by `kind`
+(`mcp` vs `integration`). The `kind` filter is applied to **every** `McpApiKey`
+query — both auth paths and both management list/revoke endpoints — so the two
+key kinds can never cross surfaces. `require_integration_org` uses a **one-shot
+DB session** (not `Depends(get_db)`) so the long-lived motion SSE doesn't pin a
+connection for its lifetime. No plan gate — available on all tiers.
 
 ## Data Models
 
@@ -279,7 +296,7 @@ All 20 models in `backend/app/models/models.py`. Every model has `org_id` for te
 | `Setting` | `key`, `value` | Per-org key/value store. Used for plan slug, recording config, email toggles, motion email cooldown anchors (`motion_email_cooldown_start:{camera_id}`), CloudNode disk debounce (`cloudnode_disk_low_emit_at:{node_id}`), payment past-due flags. |
 | `AuditLog` | `event`, `user_id`, `ip_address`, `details`, `(org_id, timestamp)` index | Security audit trail |
 | `StreamAccessLog` | `user_id`, `camera_id`, `ip_address`, `user_agent`, `accessed_at`, `(org_id, accessed_at)` index | Stream playback audit |
-| `McpApiKey` | `name`, `key_hash`, `scope_mode`, `scope_tools` (JSON text), `last_used_at`, `revoked` | MCP API keys — **scope_mode**: `all` / `readonly` / `custom` |
+| `McpApiKey` | `name`, `key_hash`, `kind` (`mcp`/`integration`), `scope_mode`, `scope_tools` (JSON text), `last_used_at`, `revoked` | Both MCP keys (`osc_`, AI agents) AND Home Assistant integration keys (`osi_`) — one table, split by `kind`; **scope_mode** (MCP only): `all` / `readonly` / `custom` |
 | `McpActivityLog` | `tool_name`, `key_name`, `status`, `duration_ms`, `args_summary`, `error`, `timestamp`, `(org_id, timestamp)` index | Per-call MCP audit log |
 | `Incident` | `title`, `summary`, `report` (markdown), `severity`, `status`, `camera_id`, `created_by`, `resolved_at`, `resolved_by` | AI-generated incident (`open` / `acknowledged` / `resolved` / `dismissed`) |
 | `IncidentEvidence` | `incident_id` (FK cascade), `kind` (`snapshot` / `clip` / `observation`), `text`, `camera_id`, `data` (LargeBinary), `data_mime` | Snapshot JPEG, clip (MPEG-TS bytes), or text observation — evidence travels inline with the incident |
@@ -311,6 +328,7 @@ Validation constants (also in `models.py`):
 | `incidents.py` | `/api/incidents` | incidents |
 | `mcp_keys.py` | `/api/mcp` | mcp |
 | `mcp_activity.py` | `/api/mcp/activity` | mcp-activity |
+| `integration.py` | `/api/integration` | integration |
 | `motion.py` | `/api/motion` | motion |
 | `notifications.py` | `/api/notifications` | notifications |
 | `sentinel.py` | `/api/sentinel` | sentinel |
@@ -387,6 +405,16 @@ Validation constants (also in `models.py`):
 - `GET /stats` — aggregated stats by tool / key / time (admin)
 - `GET /logs` — filterable MCP tool call log (admin)
 - `GET /logs/stats` — summary counts for logs (admin)
+
+**integration.py** (prefix `/api/integration`) — Home Assistant; key mgmt is admin (Clerk JWT), data plane is `osi_` integration-key auth (all tiers):
+- `POST /keys` — mint an `osi_` integration key; returns plaintext once (admin)
+- `GET /keys` — list integration keys (admin)
+- `DELETE /keys/{key_id}` — revoke (admin)
+- `GET /cameras` — all cameras across all nodes with LAN-direct `local_url`, snapshot URL, recording state (integration key)
+- `GET /cameras/{id}/snapshot` — live JPEG via the node round-trip (integration key)
+- `POST /cameras/{id}/recording` — toggle `continuous_24_7`; body `{recording: bool}` (integration key)
+- `GET /status` — org rollup: camera/node online counts, per-node disk + version, plan (integration key)
+- `GET /motion/stream` — SSE motion feed for HA `binary_sensor`s; separate subscriber pool from the dashboard's `/api/motion/events/stream` (integration key)
 
 **motion.py** (prefix `/api/motion`):
 - `GET /events` — list motion events; filters: `camera_id`, `hours`, `limit`, `offset` (view)
