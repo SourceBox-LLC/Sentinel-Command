@@ -591,17 +591,24 @@ async def _handle_motion_event(node_id: str, org_id: str, payload: dict):
             camera_id, score_int, node_id,
         )
 
-        # Broadcast to the motion SSE stream so live dashboards show
+        # Broadcast to the motion SSE streams so live dashboards show
         # toasts immediately; the inbox notification below handles the
         # durable history.
-        from app.api.motion import motion_broadcaster
-        motion_broadcaster.notify(org_id, {
+        from app.api.motion import (
+            integration_motion_broadcaster,
+            motion_broadcaster,
+        )
+        motion_payload = {
             "type": "motion",
             "camera_id": camera_id,
             "node_id": node_id,
             "score": score_int,
             "timestamp": ts.isoformat(),
-        })
+        }
+        motion_broadcaster.notify(org_id, motion_payload)
+        # Mirror to the Home Assistant integration SSE (separate pool so HA
+        # doesn't consume dashboard subscriber slots — see motion.py).
+        integration_motion_broadcaster.notify(org_id, motion_payload)
 
 
         # Also emit an inbox notification so the user can see motion

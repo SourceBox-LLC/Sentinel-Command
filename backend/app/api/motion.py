@@ -92,6 +92,13 @@ class MotionBroadcaster:
 # Singleton — imported by ws.py to broadcast events.
 motion_broadcaster = MotionBroadcaster()
 
+# Second, independent pool for the Home Assistant integration SSE
+# (app/api/integration.py). The motion publisher in ws.py fans out to BOTH,
+# so integration subscribers get the same org-wide events — but a persistent
+# HA connection lives in its own pool and never consumes a dashboard SSE
+# subscriber slot (the dashboard cap and the integration cap are separate).
+integration_motion_broadcaster = MotionBroadcaster()
+
 
 @router.get("/events")
 async def list_motion_events(

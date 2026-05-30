@@ -10,11 +10,14 @@ model plus the cross-kind guards in ``app/mcp/server.py`` and
 ``app/api/mcp_keys.py`` for why the two key kinds can't cross surfaces.
 """
 
+import asyncio
 import hashlib
+import json
 import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.audit import audit_label, write_audit
@@ -30,6 +33,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/integration", tags=["integration"])
 
 KEY_PREFIX = "osi_"
+
+# Per-org cap on concurrent integration motion-SSE streams. This is a
+# SEPARATE pool from the dashboard (see integration_motion_broadcaster in
+# motion.py), so an HA connection never consumes a dashboard subscriber
+# slot. A small fixed cap is plenty — a home runs one or two HA instances —
+# and bounds memory against a scripted connect loop.
+INTEGRATION_MAX_SSE_SUBSCRIBERS = 10
 
 
 def _generate_key() -> str:
@@ -355,3 +365,63 @@ async def integration_status(
             "items": node_items,
         },
     }
+
+
+@router.get("/motion/stream")
+@limiter.limit("60/minute")
+async def integration_motion_stream(
+    request: Request,
+    user: AuthUser = Depends(require_integration_org),
+):
+    """Server-Sent Events feed of motion detections across ALL of the org's
+    cameras — the source for Home Assistant motion ``binary_sensor``s.
+
+    Reuses the same org-wide motion pipeline the dashboard consumes (nodes
+    push motion over WS → broadcast), but via a SEPARATE subscriber pool
+    (``integration_motion_broadcaster``) so a persistent HA connection never
+    eats into the dashboard's per-tier SSE cap.
+
+    Each event is ``{type:"motion", camera_id, node_id, score, timestamp}``;
+    a ``": keepalive"`` comment is sent every 25s to hold the connection
+    open. Capped at ``INTEGRATION_MAX_SSE_SUBSCRIBERS`` streams per org (429
+    past that).
+    """
+    from app.api.motion import integration_motion_broadcaster
+
+    org_id = user.org_id
+    queue = integration_motion_broadcaster.subscribe(
+        org_id, INTEGRATION_MAX_SSE_SUBSCRIBERS
+    )
+    if queue is None:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Too many open integration motion streams for this org "
+                f"(cap: {INTEGRATION_MAX_SSE_SUBSCRIBERS}). Close unused "
+                f"connections and retry."
+            ),
+        )
+
+    async def event_generator():
+        try:
+            yield f"data: {json.dumps({'type': 'connected', 'org_id': org_id})}\n\n"
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=25.0)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except TimeoutError:
+                    yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            integration_motion_broadcaster.unsubscribe(org_id, queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
