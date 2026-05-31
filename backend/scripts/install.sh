@@ -57,23 +57,28 @@ ARG_NODE_ID=""
 ARG_KEY=""
 ARG_INSTALL_SERVICE=false
 
+# The space-separated forms (`--flag value`) consume two tokens, but a bare
+# `shift 2` trips "shift count out of range" when the flag is the trailing
+# token with no value — and under `set -e` that aborts with a cryptic error
+# instead of letting the all-or-nothing validation below print a friendly
+# one. `shift $(( $# > 1 ? 2 : 1 ))` shifts 2 normally, 1 in that edge case.
 while [ $# -gt 0 ]; do
     case "$1" in
         --url)
             ARG_URL="${2:-}"
-            shift 2 ;;
+            shift "$(( $# > 1 ? 2 : 1 ))" ;;
         --url=*)
             ARG_URL="${1#*=}"
             shift ;;
         --node-id)
             ARG_NODE_ID="${2:-}"
-            shift 2 ;;
+            shift "$(( $# > 1 ? 2 : 1 ))" ;;
         --node-id=*)
             ARG_NODE_ID="${1#*=}"
             shift ;;
         --key)
             ARG_KEY="${2:-}"
-            shift 2 ;;
+            shift "$(( $# > 1 ? 2 : 1 ))" ;;
         --key=*)
             ARG_KEY="${1#*=}"
             shift ;;
