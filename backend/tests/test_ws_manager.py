@@ -86,3 +86,40 @@ def test_stale_disconnect_preserves_live_connections_pending_commands():
         fut.cancel()  # tidy up the dangling future
 
     asyncio.run(scenario())
+
+
+def test_heartbeat_closes_session_on_node_not_found(monkeypatch):
+    """The node-not-found early return in _handle_heartbeat must close its DB
+    session, not leak it to GC. Heartbeats fire every ~30s per node forever,
+    so a path that skips close() accumulates connections under load."""
+    import app.api.ws as ws_mod
+
+    class _FakeQuery:
+        def filter_by(self, **kwargs):
+            return self
+
+        def filter(self, *args):
+            return self
+
+        def first(self):
+            return None  # node not found → early return path
+
+    class _FakeSession:
+        def __init__(self):
+            self.closed = False
+
+        def query(self, *args):
+            return _FakeQuery()
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    fake = _FakeSession()
+    monkeypatch.setattr(ws_mod, "SessionLocal", lambda: fake)
+
+    asyncio.run(ws_mod._handle_heartbeat("ghost_node", 1, "org_x", {}))
+    assert fake.closed is True
+

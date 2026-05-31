@@ -428,6 +428,7 @@ async def _handle_heartbeat(node_id: str, node_db_id: int, org_id: str, payload:
     try:
         node = db.query(CameraNode).filter_by(node_id=node_id).first()
         if not node:
+            db.close()
             return response
 
         reported_version = payload.get("node_version")
@@ -485,10 +486,13 @@ async def _handle_heartbeat(node_id: str, node_db_id: int, org_id: str, payload:
     except Exception as e:
         logger.error("Heartbeat DB error for node %s: %s", node_id, e)
         db.rollback()
+        db.close()
         return response
     finally:
-        # We leave db open briefly below to reuse for notification writes,
-        # then close in the emit block's finally.
+        # NOTE: db is intentionally NOT closed here — the post-commit
+        # notification writes below reuse this same session. It's closed on
+        # every exit path instead: the two early returns above close
+        # explicitly, and the success path closes after the emit block.
         pass
 
     # Emit transitions post-commit — any failure here must not fail the
