@@ -157,7 +157,20 @@ class ConnectionManager:
         # Use print() so it always appears in fly logs (logger.info is filtered by default)
         print(f"[WS] Node {node_id} connected via WebSocket")
 
-    def disconnect(self, node_id: str):
+    def disconnect(self, node_id: str, ws: WebSocket | None = None):
+        # Identity guard for the reconnect race: when a node reconnects to
+        # the SAME process, `connect()` replaces the old socket with the new
+        # one, but the OLD socket's receive loop then exits and calls
+        # disconnect(node_id). A blind pop(node_id) would evict the NEW
+        # (live) connection — leaving a node that keeps heartbeating yet
+        # reports `is_connected() == False`, so every command (snapshot /
+        # view / recording over WS) fails until it reconnects again. Only
+        # tear down if the stored socket is the one actually disconnecting.
+        current = self._connections.get(node_id)
+        if ws is not None and current is not None and current is not ws:
+            # A newer connection already replaced us — leave the registry and
+            # the new connection's pending commands untouched.
+            return
         self._connections.pop(node_id, None)
         # Cancel pending command futures so callers don't wait until
         # timeout for a node that's already gone.
@@ -379,7 +392,9 @@ async def node_websocket(
     except Exception as e:
         logger.error("WebSocket error for node %s: %s", node_id, e)
     finally:
-        manager.disconnect(node_id)
+        # Pass THIS socket so a stale old connection's cleanup can't evict a
+        # newer one that already replaced it (see ConnectionManager.disconnect).
+        manager.disconnect(node_id, ws)
         _ws_rate_limiter.forget(node_id)
 
 
