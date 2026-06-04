@@ -78,9 +78,11 @@ class NodeRateLimiter:
         self._windows: dict[str, deque[float]] = {}
         self._max = max_per_window
         self._window = window_seconds
+        self._last_sweep = 0.0
 
     def allow(self, node_id: str) -> bool:
         now = time.monotonic()
+        self._maybe_sweep(now)
         window = self._windows.setdefault(node_id, deque())
         # Evict entries older than the window.
         cutoff = now - self._window
@@ -90,6 +92,21 @@ class NodeRateLimiter:
             return False
         window.append(now)
         return True
+
+    def _maybe_sweep(self, now: float):
+        # Drop buckets that have fully aged out so `_windows` can't grow
+        # without bound when keyed by an untrusted node_id.  The connect
+        # throttle calls allow() PRE-auth, so a peer cycling random node_ids
+        # would otherwise leak one dict entry per id forever; forget() only
+        # runs for nodes that authenticated and reached the receive loop.
+        # Amortised to at most one O(n) pass per window.
+        if now - self._last_sweep < self._window:
+            return
+        self._last_sweep = now
+        cutoff = now - self._window
+        dead = [nid for nid, w in self._windows.items() if not w or w[-1] < cutoff]
+        for nid in dead:
+            del self._windows[nid]
 
     def forget(self, node_id: str):
         self._windows.pop(node_id, None)
@@ -153,9 +170,25 @@ class ConnectionManager:
                 await old.close(code=1000, reason="Replaced by new connection")
             except Exception:
                 pass
+            # The replaced socket can never answer its in-flight commands, and
+            # the old socket's own receive-loop cleanup will early-return on the
+            # identity guard in disconnect() (it no longer owns the slot).  So
+            # cancel those futures here, where the replacement is unambiguous —
+            # otherwise their callers block for the full command timeout
+            # instead of failing fast on the reconnect.
+            self._cancel_pending(node_id)
         self._connections[node_id] = ws
         # Use print() so it always appears in fly logs (logger.info is filtered by default)
         print(f"[WS] Node {node_id} connected via WebSocket")
+
+    def _cancel_pending(self, node_id: str):
+        """Cancel + drop every pending command future for a node so its
+        callers fail fast (ValueError) instead of waiting for the timeout."""
+        stale = [cid for cid, (nid, _) in self._pending_commands.items() if nid == node_id]
+        for cid in stale:
+            _, future = self._pending_commands.pop(cid)
+            if not future.done():
+                future.cancel()
 
     def disconnect(self, node_id: str, ws: WebSocket | None = None):
         # Identity guard for the reconnect race: when a node reconnects to
@@ -174,11 +207,7 @@ class ConnectionManager:
         self._connections.pop(node_id, None)
         # Cancel pending command futures so callers don't wait until
         # timeout for a node that's already gone.
-        stale = [cid for cid, (nid, _) in self._pending_commands.items() if nid == node_id]
-        for cid in stale:
-            _, future = self._pending_commands.pop(cid)
-            if not future.done():
-                future.cancel()
+        self._cancel_pending(node_id)
         print(f"[WS] Node {node_id} disconnected from WebSocket")
 
     async def send_command(
@@ -201,12 +230,21 @@ class ConnectionManager:
         self._pending_commands[correlation_id] = (node_id, future)
 
         try:
-            await ws.send_json({
-                "type": "command",
-                "id": correlation_id,
-                "command": command,
-                "payload": payload or {},
-            })
+            try:
+                await ws.send_json({
+                    "type": "command",
+                    "id": correlation_id,
+                    "command": command,
+                    "payload": payload or {},
+                })
+            except Exception as e:
+                # The socket was already half-closed (TCP reset, node crashed)
+                # but the receive loop hadn't noticed yet, so it was still in
+                # the registry when is_connected() was checked.  Evict it now
+                # and surface a clean ValueError (callers map this to 503)
+                # instead of letting a raw send error bubble up as a 500.
+                self.disconnect(node_id, ws)
+                raise ValueError(f"Node {node_id} send failed: {e}") from None
             return await asyncio.wait_for(future, timeout=timeout)
         except TimeoutError:
             raise TimeoutError(f"Command {command} to node {node_id} timed out") from None
@@ -215,14 +253,20 @@ class ConnectionManager:
         finally:
             self._pending_commands.pop(correlation_id, None)
 
-    def resolve_command(self, correlation_id: str, result: dict):
-        """Called when a command_result message arrives from a node."""
+    def resolve_command(self, correlation_id: str, node_id: str, result: dict):
+        """Called when a command_result message arrives from a node.
+
+        The result is delivered only if the responding node matches the node
+        the command was actually sent to.  Correlation IDs are unguessable
+        (uuid4), so this is defense-in-depth — but it means a stray or forged
+        command_result from a *different* node can never satisfy someone
+        else's pending command.
+        """
         entry = self._pending_commands.get(correlation_id)
         if entry:
-            _, future = entry
-            if not future.done():
+            target_node_id, future = entry
+            if target_node_id == node_id and not future.done():
                 future.set_result(result)
-
 
 # Singleton — imported by other modules to send commands to nodes.
 manager = ConnectionManager()
@@ -369,7 +413,7 @@ async def node_websocket(
             elif msg_type == "command_result":
                 correlation_id = data.get("id")
                 if correlation_id:
-                    manager.resolve_command(correlation_id, data.get("payload", {}))
+                    manager.resolve_command(correlation_id, node_id, data.get("payload", {}))
 
             elif msg_type == "event":
                 command = data.get("command")
