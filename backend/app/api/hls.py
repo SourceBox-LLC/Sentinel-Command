@@ -95,7 +95,9 @@ _playlist_cache: dict[str, tuple[str, float]] = {}
 # CloudNode playlist pushes — otherwise one or two dropped pushes expires
 # the cache and the browser gets 404 "Stream not started yet" even though
 # fresh segments are still being uploaded.  Segment cache eviction runs on
-# its own 60s inactivity cutoff so stale-ref risk is bounded.
+# its own 60s inactivity cutoff — driven by the _segment_cache_evict_loop
+# background task in main.py, plus opportunistically on playlist push — so
+# stale-ref risk is bounded even when every node goes quiet.
 _PLAYLIST_CACHE_MAX_AGE = 30.0
 _CACHE_MAX_CAMERAS = 500
 

@@ -190,6 +190,7 @@ async def lifespan(app):
     cleanup_task = asyncio.create_task(_log_cleanup_loop())
     offline_sweep_task = asyncio.create_task(_offline_sweep_loop())
     viewer_usage_task = asyncio.create_task(_viewer_usage_flush_loop())
+    segment_evict_task = asyncio.create_task(_segment_cache_evict_loop())
     release_refresh_task = asyncio.create_task(_release_cache_refresh_loop())
     # Email worker drains EmailOutbox via Resend.  Ships always-on so
     # the kill-switch can be flipped via env var without a redeploy;
@@ -226,6 +227,7 @@ async def lifespan(app):
     cleanup_task.cancel()
     offline_sweep_task.cancel()
     viewer_usage_task.cancel()
+    segment_evict_task.cancel()
     release_refresh_task.cancel()
     email_worker_task.cancel()
     disk_check_task.cancel()
@@ -833,6 +835,31 @@ async def _viewer_usage_flush_loop():
             await asyncio.to_thread(flush_viewer_usage)
         except Exception:
             logger.exception("[ViewerUsage] Flush loop tick failed")
+
+
+async def _segment_cache_evict_loop():
+    """Background task — evict stale per-camera HLS segment buckets and
+    reconcile the global byte counter on a fixed 60s cadence.
+
+    Eviction is ALSO triggered opportunistically from the CloudNode
+    playlist-push path, but that only fires while some camera is actively
+    pushing.  When every node goes quiet (a network outage, a mass restart,
+    or simply a small org whose cameras stopped), nothing would reap the
+    last-cached segments — they'd sit in memory until the daily log-cleanup
+    loop.  This timer makes the advertised "60s inactivity cutoff" hold
+    regardless of push activity, and ensures the byte-counter reconciliation
+    runs on its stated cadence rather than only on push.
+    """
+    while True:
+        await asyncio.sleep(60)
+        try:
+            from app.api.hls import _evict_caches
+            # _evict_caches does all its mutation under _segment_cache_lock;
+            # run it off the event loop so a large sweep can't stall request
+            # handling (mirrors the viewer-usage flush above).
+            await asyncio.to_thread(_evict_caches)
+        except Exception:
+            logger.exception("[SegmentCache] Eviction loop tick failed")
 
 
 # Per-process debounce for the disk_critical alert.  Reset on
