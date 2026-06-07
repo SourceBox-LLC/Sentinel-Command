@@ -144,9 +144,16 @@ ignore = ["B008", "UP045"]
 # deploy red.  1.0.0 → 1.0.1 is a patch; fastapi's starlette range
 # accepts it (uv resolves cleanly).  Remove once fastapi's own pin
 # moves past 1.0.1.
+#
+# pip: PYSEC-2026-196 (fixed in 26.1.2).  Present only because pip-audit
+# (our dev-time scanner) pulls pip in to resolve deps, then --strict audits
+# pip itself.  Advisory landed ~2026-06 and turned the scan red even though
+# no code changed.  Dev/CI surface only — pip isn't shipped in the app
+# image.  Remove once pip-audit's own pin clears 26.1.2.
 constraint-dependencies = [
     "authlib>=1.7.1",
     "urllib3>=2.7.0",
     "idna>=3.15",
     "starlette>=1.0.1",
+    "pip>=26.1.2",
 ]
