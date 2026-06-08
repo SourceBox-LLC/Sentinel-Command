@@ -1,0 +1,113 @@
+name: Weekly dependency refresh
+
+# Proactively refresh the dependency locks within their existing semver
+# ranges, so a newly-disclosed CVE doesn't turn the Test & Deploy
+# pip-audit / npm-audit gate red out of nowhere. It has happened more than
+# once — see the [tool.uv] constraint comments in backend/pyproject.toml.
+#
+# This runs the SAME gates the deploy pipeline runs, then opens ONE PR with
+# the refreshed locks. deploy.yml only triggers on push-to-master, so the
+# verification has to happen here: a green run means the PR is safe to merge,
+# and merging it triggers the normal Test & Deploy. If a gate fails (an
+# upgrade breaks a test, or a CVE has no fix yet) the run goes red and NO PR
+# is opened — that red run is the signal to look manually.
+#
+# Scope is lock-only and within-range: `uv lock --upgrade` respects the
+# floors in pyproject.toml and `npm update` stays inside the package.json
+# semver ranges. Major-version bumps stay deliberate and manual.
+#
+# One-time setup: Settings → Actions → General → Workflow permissions →
+# enable "Allow GitHub Actions to create and approve pull requests", or the
+# final PR step fails with a 403.
+
+on:
+  schedule:
+    # Mondays 06:00 UTC — a fresh PR waiting at the start of the week.
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: weekly-deps-refresh
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    name: Refresh + verify locks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # ── Backend — uv lock --upgrade, then deploy.yml's backend gates ──
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Upgrade backend lock (within pyproject constraints)
+        working-directory: backend
+        run: uv lock --upgrade
+      - name: Install backend deps
+        working-directory: backend
+        run: uv sync --extra dev
+      - name: Backend dependency scan (pip-audit --strict)
+        working-directory: backend
+        run: uv run pip-audit --strict
+      - name: Backend tests
+        working-directory: backend
+        run: uv run pytest -q
+
+      # ── Frontend — npm update, then deploy.yml's frontend gates ──
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend deps from the current lock
+        working-directory: frontend
+        run: npm ci
+      - name: Upgrade frontend lock (within package.json ranges)
+        working-directory: frontend
+        run: npm update
+      - name: Frontend audit (production deps, high+critical)
+        working-directory: frontend
+        run: npm audit --audit-level=high --omit=dev
+      - name: Frontend tests (vitest)
+        working-directory: frontend
+        run: npm test
+      - name: Frontend production build
+        working-directory: frontend
+        run: npm run build
+
+      # ── Open / update one PR with the refreshed locks ──
+      # No changes → no PR (the action also tidies up the stale branch).
+      # The PR is authored by github-actions[bot] (user.type == 'Bot'),
+      # which close-external-prs.yml explicitly exempts, so it survives.
+      - name: Open dependency-refresh PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          add-paths: |
+            backend/uv.lock
+            frontend/package-lock.json
+          branch: deps/weekly-refresh
+          delete-branch: true
+          commit-message: "chore(deps): weekly lock refresh"
+          title: "chore(deps): weekly dependency lock refresh"
+          labels: dependencies
+          body: |
+            Automated weekly refresh of `backend/uv.lock` and
+            `frontend/package-lock.json`, bounded to the existing semver
+            ranges (`uv lock --upgrade` + `npm update`).
+
+            Every deploy gate passed in the refresh run **before** this PR
+            was opened:
+
+            - `pip-audit --strict` — backend advisory scan
+            - `pytest` — backend suite
+            - `npm audit --audit-level=high --omit=dev` — frontend
+            - `vitest` + production build — frontend
+
+            Merge to ship: the push to `master` triggers the normal
+            Test & Deploy pipeline, which re-runs all of the above.
