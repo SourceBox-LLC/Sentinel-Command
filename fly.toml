@@ -10,6 +10,12 @@ primary_region = "sjc"
 [env]
   FRONTEND_URL = "https://opensentry-command.fly.dev"
   DATABASE_URL = "sqlite:////data/opensentry.db"
+  # Segment-cache ceiling MUST stay well under [[vm]].memory_mb below —
+  # above physical RAM, the kernel OOM-killer fires (killing every
+  # org's streams at once) long before the cache's own eviction can.
+  # 384 MiB on the 1 GiB machine leaves ~600 MiB for Python + SQLite
+  # (~25 concurrent live cameras). Scale this and memory_mb TOGETHER.
+  SEGMENT_CACHE_MAX_TOTAL_BYTES = "402653184"
 
 [[mounts]]
   source = "opensentry_data"

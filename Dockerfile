@@ -63,4 +63,9 @@ EXPOSE 8000
 # refuse the HTTPS->HTTP downgrade and the request fails with
 # "Unexpected content type: text/html". "*" is safe here because Fly's
 # private network ensures only their edge can reach this container.
-CMD ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-keep-alive", "65", "--forwarded-allow-ips=*"]
+# --no-access-log: at 20 segment-pushes/s/node plus ~2 req/s per live
+# viewer, uvicorn's per-request access line is a measurable slice of the
+# single shared CPU and drowns the app's structured logs in Fly's
+# ingest. Request-id app logging (request_context.py) already covers
+# the forensic need.
+CMD ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-keep-alive", "65", "--forwarded-allow-ips=*", "--no-access-log"]

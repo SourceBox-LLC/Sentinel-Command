@@ -52,6 +52,14 @@ jobs:
       - name: Install backend deps
         working-directory: backend
         run: uv sync --extra dev
+      # Gate parity with deploy.yml: ruff floats (>=0.6.0), so a lock
+      # refresh can pull a ruff release whose rules changed.  Without
+      # this step the weekly PR verifies green, merges, and the
+      # post-merge deploy goes red on the ruff gate — the exact
+      # "red out of nowhere" failure this workflow exists to prevent.
+      - name: Lint with ruff
+        working-directory: backend
+        run: uv run ruff check
       - name: Backend dependency scan (pip-audit --strict)
         working-directory: backend
         run: uv run pip-audit --strict
