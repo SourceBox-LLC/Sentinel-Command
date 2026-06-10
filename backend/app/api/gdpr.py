@@ -126,20 +126,24 @@ def _build_zip_stream(
     """Yield bytes of a ZIP archive containing one JSON file per
     org-scoped table.
 
-    Memory profile: zipfile.ZipFile is happy to stream into a
-    BytesIO buffer that we drain after each ``writestr`` call.
-    Each table is written as one file (we don't chunk individual
-    tables) — the cap on ZIP-internal-file size is "what fits in
-    RAM as a JSON list".  For our schemas + retention windows
-    (motion events tiered at 30/90/365 days), a year-old org
-    tops out around 10-50 MB — bounded by retention, not by
-    the absence of streaming.
+    The archive is assembled fully in memory and yielded once after
+    ``ZipFile`` closes.  It MUST NOT be drained mid-archive: ZipFile
+    records each member's offset via the buffer's absolute position
+    (``start_dir``), so a seek(0)+truncate() between members makes it
+    seek back past the drained region, zero-fill the gap, and bake
+    offsets into the central directory that don't match the
+    concatenated stream.  The resulting ZIP lists fine (the central
+    directory at the tail is intact) and its LAST member reads fine —
+    but every earlier member fails with "Bad magic number for file
+    header".  That exact corruption shipped once; the regression test
+    now reads back every member, not just the manifest.
 
-    If an org ever grows to where a single table doesn't fit in
-    RAM, switch the inner JSON encoding to a streaming
-    ``json.JSONEncoder.iterencode`` and pipe through
-    ``ZipFile.open(name, mode='w').write(chunk)`` — that's the
-    next-step refactor for scale, not a v1 concern.
+    Memory profile: each table is one JSON file; with our retention
+    windows (motion events tiered at 30/90/365 days) a year-old org
+    tops out around 10-50 MB — bounded by retention, so whole-archive
+    buffering is fine.  If an org ever outgrows RAM, swap in a
+    sequential-write streaming zipper (e.g. zipstream-ng) rather than
+    reintroducing a drain.
     """
     buf = io.BytesIO()
 
@@ -168,9 +172,9 @@ def _build_zip_stream(
             },
         }
 
-        # Stream tables one at a time.  After each writestr, drain
-        # the buffer so we don't accumulate the whole ZIP in
-        # memory before yielding the first byte.
+        # Write tables one at a time into the in-memory archive.
+        # No draining between members — see the docstring for why
+        # that corrupts the offsets.
         table_count = 0
         row_count = 0
         for table_name, rows in export_org_data(db, org_id):
@@ -184,17 +188,6 @@ def _build_zip_stream(
             table_count += 1
             row_count += len(rows)
 
-            # Yield whatever the zipfile has produced so far.  This
-            # is what makes the response start flowing to the
-            # client immediately rather than waiting for the
-            # whole archive to assemble.
-            if buf.tell() > 0:
-                buf.seek(0)
-                chunk = buf.read()
-                buf.seek(0)
-                buf.truncate()
-                yield chunk
-
         # Manifest goes LAST so it can include the row counts.
         # Some re-importers (and human auditors) read the manifest
         # first to plan the import; that's a UX nicety vs a
@@ -207,8 +200,6 @@ def _build_zip_stream(
         )
 
     # zipfile finalises the central directory on context-manager
-    # exit.  Yield whatever's left in the buffer — that's the
-    # central directory + final block.
-    if buf.tell() > 0 or buf.getbuffer().nbytes > 0:
-        buf.seek(0)
-        yield buf.read()
+    # exit.  Yield the complete, internally-consistent archive in
+    # one chunk (StreamingResponse still streams it to the socket).
+    yield buf.getvalue()

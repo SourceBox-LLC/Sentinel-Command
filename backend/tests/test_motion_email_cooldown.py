@@ -14,9 +14,10 @@ Key invariants pinned here:
   * Anchor expiry resumes immediate emails (and overwrites the anchor).
   * Email-disabled paths NEVER write an anchor (so flipping the toggle
     on later starts a clean window).
-  * Inbox-disabled (``motion_notifications=false``) short-circuits
-    EVERYTHING, including the cooldown logic — proving the new gate
-    doesn't bypass the existing notifications_enabled check.
+  * Inbox-disabled (``motion_notifications=false``) suppresses the
+    inbox row + SSE only — the email side-channel is an INDEPENDENT
+    toggle and still emails (anchor included) when ``email_motion``
+    is on.  Both toggles off → nothing anywhere.
   * Default state for ``email_motion`` is OFF (deliberate inversion
     of every other email kind — see comment block in
     ``_EMAIL_KIND_TO_SETTING``).
@@ -213,23 +214,42 @@ def test_motion_per_camera_independence(db, monkeypatch, stub_recipients):
 # ── Existing-gate compatibility ────────────────────────────────────
 
 
-def test_motion_inbox_disabled_short_circuits_everything(
+def test_motion_inbox_disabled_still_emails_when_email_enabled(
     db, monkeypatch, stub_recipients
 ):
-    """Setting.motion_notifications=false → ``notifications_enabled``
-    returns False at the existing gate in ``create_notification``,
-    so NOTHING runs: no inbox row, no SSE, no email branch, no
-    anchor.  Pins that the new cooldown logic doesn't bypass the
-    existing inbox kill-switch."""
+    """Setting.motion_notifications=false suppresses the INBOX row (and
+    the caller gets None), but the email side-channel is an independent
+    toggle: with ``email_motion=true`` the email must still flow, anchor
+    included.  Pins the decoupling — the Settings UI presents inbox and
+    email as separate per-kind switches, so muting bell noise must not
+    silently kill alert emails (an earlier early-return did exactly
+    that)."""
     _enable_motion_email(db, monkeypatch)
     Setting.set(db, "org_test123", "motion_notifications", "false")
 
     notif = _emit_motion(db)
 
-    assert notif is None  # short-circuited at the inbox gate
+    assert notif is None  # inbox suppressed → caller sees None
+    assert db.query(Notification).filter_by(kind="motion").count() == 0
+    # Email side-channel still ran: outbox row enqueued, anchor armed.
+    assert db.query(EmailOutbox).count() == 1
+    assert Setting.get(db, "org_test123", _anchor_key("cam_front_door"), "") != ""
+
+
+def test_motion_both_toggles_off_short_circuits_everything(
+    db, monkeypatch, stub_recipients
+):
+    """Inbox AND email both off → nothing anywhere: no row, no outbox,
+    no anchor."""
+    monkeypatch.setattr(notifications_mod.settings, "EMAIL_ENABLED", True)
+    Setting.set(db, "org_test123", "motion_notifications", "false")
+    Setting.set(db, "org_test123", "email_motion", "false")
+
+    notif = _emit_motion(db)
+
+    assert notif is None
     assert db.query(Notification).filter_by(kind="motion").count() == 0
     assert db.query(EmailOutbox).count() == 0
-    # Anchor NEVER written when inbox is disabled.
     assert Setting.get(db, "org_test123", _anchor_key("cam_front_door"), "") == ""
 
 

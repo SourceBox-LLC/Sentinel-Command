@@ -1119,11 +1119,15 @@ def test_post_email_preferences_requires_admin(viewer_client):
 
 # ── Unsubscribe endpoint ────────────────────────────────────────────
 
-def test_unsubscribe_endpoint_disables_setting(unauthenticated_client, db):
-    """Click the link → org-level setting flips to "false"."""
+def test_unsubscribe_endpoint_suppresses_recipient_address(unauthenticated_client, db):
+    """Click the link → the RECIPIENT ADDRESS is suppressed (the send
+    worker skips all future emails to it).  The org-wide kind toggle
+    must NOT flip: tokens outlive membership, and the v1 behaviour let
+    any past recipient disable a whole org's security-alert emails."""
     from app.core.email_unsubscribe import make_token
+    from app.models.models import EmailSuppression
 
-    token = make_token("org_test123", "camera_offline")
+    token = make_token("org_test123", "camera_offline", "clicker@example.com")
 
     resp = unauthenticated_client.get(
         f"/api/notifications/email/unsubscribe?t={token}"
@@ -1131,8 +1135,16 @@ def test_unsubscribe_endpoint_disables_setting(unauthenticated_client, db):
 
     assert resp.status_code == 200
     assert "text/html" in resp.headers.get("content-type", "")
-    # Setting is now "false" — no future enqueue for this kind in this org.
-    assert Setting.get(db, "org_test123", "email_camera_offline") == "false"
+    row = (
+        db.query(EmailSuppression)
+        .filter_by(address="clicker@example.com")
+        .first()
+    )
+    assert row is not None
+    assert row.reason == "unsubscribe"
+    assert row.source == "unsubscribe_link"
+    # Org-wide toggle untouched — other members keep their emails.
+    assert Setting.get(db, "org_test123", "email_camera_offline") is None
 
 
 def test_unsubscribe_endpoint_writes_audit(unauthenticated_client, db):
@@ -1141,7 +1153,7 @@ def test_unsubscribe_endpoint_writes_audit(unauthenticated_client, db):
     from app.core.email_unsubscribe import make_token
     from app.models.models import AuditLog
 
-    token = make_token("org_test123", "node_offline")
+    token = make_token("org_test123", "node_offline", "auditee@example.com")
     unauthenticated_client.get(
         f"/api/notifications/email/unsubscribe?t={token}"
     )
@@ -1159,6 +1171,9 @@ def test_unsubscribe_endpoint_writes_audit(unauthenticated_client, db):
     parsed = json.loads(audit.details or "{}")
     assert parsed["kind"] == "node_offline"
     assert parsed["via_link"] is True
+    # Address is MASKED in the audit trail — not an email directory.
+    assert parsed["address"] == "a***@example.com"
+    assert "auditee@example.com" not in (audit.details or "")
 
 
 def test_unsubscribe_endpoint_renders_friendly_html(unauthenticated_client):
@@ -1167,7 +1182,7 @@ def test_unsubscribe_endpoint_renders_friendly_html(unauthenticated_client):
     rather than silently producing a worse page."""
     from app.core.email_unsubscribe import make_token
 
-    token = make_token("org_test123", "camera_offline")
+    token = make_token("org_test123", "camera_offline", "reader@example.com")
     resp = unauthenticated_client.get(
         f"/api/notifications/email/unsubscribe?t={token}"
     )
@@ -1196,8 +1211,9 @@ def test_unsubscribe_endpoint_idempotent(unauthenticated_client, db):
     links for security scans, so a non-idempotent unsubscribe would
     flip the setting AND then 500 when the user actually clicks."""
     from app.core.email_unsubscribe import make_token
+    from app.models.models import EmailSuppression
 
-    token = make_token("org_test123", "camera_offline")
+    token = make_token("org_test123", "camera_offline", "twice@example.com")
 
     r1 = unauthenticated_client.get(
         f"/api/notifications/email/unsubscribe?t={token}"
@@ -1208,7 +1224,14 @@ def test_unsubscribe_endpoint_idempotent(unauthenticated_client, db):
 
     assert r1.status_code == 200
     assert r2.status_code == 200
-    assert Setting.get(db, "org_test123", "email_camera_offline") == "false"
+    # Exactly one suppression row — the second click is a no-op, not
+    # an IntegrityError (address is UNIQUE).
+    rows = (
+        db.query(EmailSuppression)
+        .filter_by(address="twice@example.com")
+        .all()
+    )
+    assert len(rows) == 1
 
 
 def test_unsubscribe_endpoint_html_escapes_kind(unauthenticated_client):
@@ -1224,17 +1247,25 @@ def test_unsubscribe_endpoint_html_escapes_kind(unauthenticated_client):
     this code path, at which point they have everything anyway —
     but the escape protects against future paths that might surface
     less-trusted input here."""
-    import jwt
-
-    from app.core.email_unsubscribe import _get_secret
-
     # Use an unknown kind so we hit the "not in _EMAIL_KIND_TO_SETTING"
     # path that interpolates the raw kind verbatim (the known-kind
     # path uses a pretty-printed version which would obscure the
     # escape).
+    import time as _time
+
+    import jwt
+
+    from app.core.email_unsubscribe import _get_secret
+
     bad_kind = "<script>alert('xss')</script>"
     token = jwt.encode(
-        {"org_id": "org_x", "kind": bad_kind, "sub": "email-unsubscribe"},
+        {
+            "org_id": "org_x",
+            "kind": bad_kind,
+            "rcpt": "x@example.com",
+            "exp": int(_time.time()) + 3600,
+            "sub": "email-unsubscribe",
+        },
         _get_secret(),
         algorithm="HS256",
     )

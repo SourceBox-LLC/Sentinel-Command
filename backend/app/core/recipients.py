@@ -91,6 +91,17 @@ def get_recipient_emails(org_id: str, audience: str) -> list[str]:
 
     addrs = _fetch_from_clerk(org_id, audience)
 
+    if addrs is None:
+        # Fetch FAILED (Clerk outage / network error) — distinct from a
+        # genuinely empty membership list.  Do NOT cache the failure:
+        # the enqueue path writes zero outbox rows when recipients are
+        # empty, so caching [] for the TTL would convert one transient
+        # Clerk hiccup into 5 minutes of silently dropped alert emails
+        # with no retry (the outbox IS the retry mechanism, and it was
+        # never reached).  Return empty for THIS call only; the next
+        # notification re-attempts the lookup immediately.
+        return []
+
     with _cache_lock:
         _cache[cache_key] = (time.monotonic() + _CACHE_TTL_SECONDS, list(addrs))
 
@@ -112,14 +123,15 @@ def invalidate_org(org_id: str) -> None:
 
 # ── Internals ────────────────────────────────────────────────────────
 
-def _fetch_from_clerk(org_id: str, audience: str) -> list[str]:
+def _fetch_from_clerk(org_id: str, audience: str) -> list[str] | None:
     """Call Clerk to list memberships and extract email addresses.
 
-    Errors are logged and swallowed — returns ``[]`` on any failure.
-    The trade-off: a Clerk outage suppresses email alerts entirely
-    instead of crashing the worker.  Acceptable because (a) Clerk
-    going down is also breaking the dashboard so the operator already
-    knows, and (b) the worker keeps trying on the next tick.
+    Returns ``None`` on a FAILED fetch (Clerk outage, network error) so
+    the caller can skip caching it, vs ``[]`` for an org that genuinely
+    has no matching members (cacheable).  Errors are logged, never
+    raised — a Clerk outage must degrade to "no email this time", not
+    crash the notification path.  Because failures aren't cached, the
+    very next notification retries the lookup immediately.
 
     Pagination: we cap at 100 members per org (Clerk's max page size)
     because a single org is unlikely to exceed that in our target
@@ -137,7 +149,7 @@ def _fetch_from_clerk(org_id: str, audience: str) -> list[str]:
             "[Recipients] Clerk list failed for org=%s audience=%s",
             org_id, audience,
         )
-        return []
+        return None
 
     members = getattr(result, "data", None) or []
     if not members:

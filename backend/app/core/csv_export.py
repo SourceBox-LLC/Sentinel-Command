@@ -104,7 +104,7 @@ def stream_csv_response(
         buf.truncate()
 
         for row in rows:
-            writer.writerow(row)
+            writer.writerow([_defang_formula(cell) for cell in row])
             yield buf.getvalue().encode("utf-8")
             buf.seek(0)
             buf.truncate()
@@ -139,3 +139,26 @@ _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
 
 def _safe_filename_segment(text: str) -> str:
     return _SAFE_RE.sub("-", text or "")
+
+
+# Characters that make Excel / Sheets / LibreOffice treat a cell as a
+# live formula (incl. DDE `=cmd|...` payloads).  Tab and CR cover the
+# legacy-Excel variants that re-trigger formula parsing after a strip.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _defang_formula(cell: Any) -> Any:
+    """Neutralize CSV formula injection (OWASP) for string cells.
+
+    Several exported columns carry caller-controlled text — MCP key
+    names and node names inside audit ``details`` JSON, MCP
+    ``args_summary``, Clerk-supplied emails — so a value like
+    ``=HYPERLINK(...)`` or ``=cmd|' /C ...'!A0`` would execute when an
+    admin opens the export in a spreadsheet.  Prefixing a single quote
+    makes the spreadsheet render it as inert text (the standard
+    mitigation); non-strings (ints, datetimes, None) pass through
+    untouched so numeric columns keep sorting numerically.
+    """
+    if isinstance(cell, str) and cell.startswith(_FORMULA_PREFIXES):
+        return f"'{cell}"
+    return cell

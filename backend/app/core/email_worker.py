@@ -206,7 +206,12 @@ async def email_worker_loop():
         try:
             db = SessionLocal()
             try:
-                summary = run_one_tick(db)
+                # to_thread: run_one_tick does up to EMAIL_WORKER_BATCH_SIZE
+                # sequential sync Resend HTTPS calls — inline, that froze
+                # the event loop 2-10s per tick whenever email was flowing
+                # (worst during a node-offline storm, exactly when
+                # operators are watching streams).
+                summary = await asyncio.to_thread(run_one_tick, db)
             finally:
                 db.close()
         except Exception:

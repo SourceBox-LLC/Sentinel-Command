@@ -416,6 +416,16 @@ def test_export_endpoint_returns_zip(admin_client, fully_seeded_org):
         expected = f"{Model.__tablename__}.json"
         assert expected in names, f"export ZIP missing {expected}"
 
+    # EVERY member must decompress and parse — not just the manifest.
+    # Regression pin: the old mid-archive drain produced a ZIP whose
+    # central directory and LAST member were fine while every earlier
+    # member raised "Bad magic number for file header".  namelist() +
+    # read("manifest.json") alone cannot catch that corruption.
+    assert zf.testzip() is None, "export ZIP has a corrupt member"
+    for name in names:
+        data = zf.read(name)  # raises BadZipFile on offset corruption
+        json.loads(data)      # every member is JSON, including manifest
+
 
 def test_export_manifest_shape(admin_client, fully_seeded_org):
     """Pin the manifest.json schema so external re-importers built on

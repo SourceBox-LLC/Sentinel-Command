@@ -332,14 +332,25 @@ def _build_email_content(notif: Notification) -> tuple[str, str, str]:
     template module's import shape.
     """
     from app.core import email_templates
-    from app.core.email_unsubscribe import build_unsubscribe_url
 
-    unsubscribe_url = build_unsubscribe_url(notif.org_id, notif.kind)
+    # Render ONCE with a placeholder; the enqueue loop substitutes a
+    # per-recipient signed URL into each outbox row.  Unsubscribe tokens
+    # carry the recipient address (per-address suppression), so a shared
+    # URL across recipients is no longer possible — and re-rendering the
+    # full template per recipient would be pure waste.  The placeholder
+    # contains no HTML-special characters, so it passes through both the
+    # text and autoescaped HTML templates verbatim.
     return email_templates.render(
         notif.kind,
         notif,
-        unsubscribe_url=unsubscribe_url,
+        unsubscribe_url=_UNSUB_URL_PLACEHOLDER,
     )
+
+
+# Substituted per-recipient at enqueue time — see _build_email_content.
+# No &, <, >, ", or % so it survives both the text template and Jinja2
+# autoescape unchanged.
+_UNSUB_URL_PLACEHOLDER = "UNSUB-URL-PLACEHOLDER-7f3a"
 
 
 def _enqueue_email_for_notification(
@@ -379,12 +390,17 @@ def _enqueue_email_for_notification(
     enqueued = 0
     for addr in recipients:
         try:
+            # Per-recipient unsubscribe URL — the token binds the
+            # recipient address so a click suppresses THAT address,
+            # not the whole org's toggle.
+            from app.core.email_unsubscribe import build_unsubscribe_url
+            unsub_url = build_unsubscribe_url(notif.org_id, notif.kind, addr)
             session.add(EmailOutbox(
                 org_id=notif.org_id,
                 recipient_email=addr,
                 subject=subject,
-                body_text=body_text,
-                body_html=body_html,
+                body_text=body_text.replace(_UNSUB_URL_PLACEHOLDER, unsub_url),
+                body_html=body_html.replace(_UNSUB_URL_PLACEHOLDER, unsub_url),
                 kind=notif.kind,
                 notification_id=notif.id,
                 status="pending",
@@ -529,14 +545,23 @@ def create_notification(
     if severity not in ("info", "warning", "error", "critical"):
         severity = "info"
 
-    # Per-org preference gate — an operator who turned off "motion
-    # notifications" in Settings should stop seeing new motion rows in
-    # the inbox without affecting the motion-event pipeline itself.
-    # Done here (vs. at each call site) so every emitter, current and
-    # future, automatically respects the toggle.
+    # Per-org INBOX preference gate — an operator who turned off
+    # "motion notifications" in Settings should stop seeing new motion
+    # rows in the inbox without affecting the motion-event pipeline
+    # itself.  Done here (vs. at each call site) so every emitter,
+    # current and future, automatically respects the toggle.
+    #
+    # Scope: this gate controls ONLY the inbox row + SSE broadcast.
+    # The email side-channel and the Sentinel-agent dispatch below run
+    # regardless, because the UI presents them as independent controls:
+    # the Settings page has separate inbox and email toggles per kind,
+    # and Sentinel has its own enabled/trigger/scope config.  (An
+    # earlier version early-returned here, which silently killed
+    # "email ON + inbox OFF" combinations and blinded the agent when
+    # bell noise was muted.)
+    inbox_enabled = True
     try:
-        if not notifications_enabled(session, org_id, kind):
-            return None
+        inbox_enabled = notifications_enabled(session, org_id, kind)
     except Exception:
         # Gate failures must not block notifications — fall through to
         # the normal create path so we're no worse off than before the
@@ -556,16 +581,21 @@ def create_notification(
             node_id=node_id,
             meta_json=json.dumps(meta) if meta else None,
         )
-        session.add(notif)
-        session.commit()
-        session.refresh(notif)
+        if inbox_enabled:
+            session.add(notif)
+            session.commit()
+            session.refresh(notif)
 
-        # Broadcast after commit so subscribers never see a row that
-        # could later be rolled back.
-        payload = notif.to_dict()
-        payload["type"] = "notification"
-        payload["audience"] = audience
-        notification_broadcaster.notify(org_id, payload)
+            # Broadcast after commit so subscribers never see a row that
+            # could later be rolled back.
+            payload = notif.to_dict()
+            payload["type"] = "notification"
+            payload["audience"] = audience
+            notification_broadcaster.notify(org_id, payload)
+        # else: notif stays transient — never added to the session.  The
+        # email templates only read constructor-set fields (title, body,
+        # link, meta…), and EmailOutbox.notification_id is a nullable
+        # soft reference, so the side-channels below work unchanged.
 
         # Email side-channel.  Same gate pattern as the inbox
         # preference, different setting key.  Failure never blocks
@@ -611,7 +641,10 @@ def create_notification(
                 kind,
             )
 
-        return notif
+        # Preserve the long-standing contract: callers get the persisted
+        # row, or None when the inbox preference suppressed it (even
+        # though the side-channels above may still have fired).
+        return notif if inbox_enabled else None
     except Exception:
         logger.exception("[Notifications] Failed to create notification")
         try:
@@ -1164,9 +1197,11 @@ _UNSUBSCRIBE_HTML_OK = """<!DOCTYPE html>
 </style></head>
 <body>
   <h1><span class="ok">✓</span> You're unsubscribed</h1>
-  <p>We won't email you about <strong>{kind}</strong> alerts anymore.</p>
-  <p>You can re-enable this (or fine-tune any other email type) any time
-     in your <a href="{frontend}/settings#settings-notifications">notification settings</a>.</p>
+  <p>This email address won't receive Sentinel notification emails
+     anymore (you clicked unsubscribe on a <strong>{kind}</strong> alert).</p>
+  <p>Other members of your organization are unaffected.  Org-wide email
+     preferences can be fine-tuned any time in your
+     <a href="{frontend}/settings#settings-notifications">notification settings</a>.</p>
 </body></html>"""
 
 _UNSUBSCRIBE_HTML_ERROR = """<!DOCTYPE html>
@@ -1211,27 +1246,28 @@ async def email_unsubscribe(
 ):
     """Process an unsubscribe link click.
 
-    Verifies the JWT, identifies the (org_id, kind) it was issued
-    for, flips the corresponding setting to "false", and renders a
-    confirmation HTML page.
+    Verifies the JWT and suppresses the RECIPIENT ADDRESS it was issued
+    to (an EmailSuppression row, which the send worker already checks
+    before every send), then renders a confirmation page.
 
-    Also writes an EmailSuppression row keyed on the recipient's
-    address — wait, we don't know the recipient from the token.
-    The token only carries (org_id, kind), which is the right
-    granularity: "this org no longer wants this kind of email."
-    Per-recipient suppression for cases where one user wants to
-    opt out while their org-mates keep receiving them is a v1.1
-    feature gated on per-user prefs landing.
+    Why per-address and not the org-wide toggle (the v1 behaviour):
+    tokens live in inboxes forever-ish, including the inboxes of people
+    since REMOVED from the org — flipping the org Setting let any past
+    recipient permanently disable a whole org's security-alert emails.
+    Suppressing the clicking address honours the actual promise of an
+    unsubscribe link ("stop emailing ME") with no cross-member blast
+    radius; org-wide kind toggles remain available to admins in
+    Settings → Notifications.
 
     Rate-limited via slowapi.  This endpoint is PUBLIC (no auth —
     the JWT in the URL is the auth) so without an explicit limit,
-    one leaked link could be hammered to write Setting + AuditLog
-    rows in a tight loop.  60/min per (org_id-from-JWT|client-IP)
-    is well above any plausible legitimate use (a user clicks the
-    link once, maybe twice if they're confused) but rules out
+    one leaked link could be hammered to write rows in a tight loop.
+    60/min is well above any plausible legitimate use but rules out
     burst attacks.  The shared Limiter does NOT apply default
     limits, so explicit @limiter.limit is required here.
     """
+    from app.models.models import EmailSuppression
+
     frontend = (settings.FRONTEND_URL or "").rstrip("/")
     frontend_safe = _safe_html(frontend)
 
@@ -1242,36 +1278,41 @@ async def email_unsubscribe(
             status_code=400,
         )
 
-    org_id, kind = decoded
+    org_id, kind, rcpt = decoded
 
-    # Validate the kind is one we know about.  A token signed for a
-    # kind we since removed should still acknowledge gracefully.
-    cfg = _EMAIL_KIND_TO_SETTING.get(kind)
-    if cfg is None:
-        return HTMLResponse(
-            _UNSUBSCRIBE_HTML_OK.format(
-                kind=_safe_html(kind), frontend=frontend_safe,
-            ),
-        )
-
-    setting_key, _default = cfg
     try:
-        Setting.set(db, org_id, setting_key, "false")
-    except Exception:
-        logger.exception(
-            "[Unsubscribe] failed to update setting org=%s key=%s",
-            org_id, setting_key,
+        existing = (
+            db.query(EmailSuppression)
+            .filter(EmailSuppression.address == rcpt)
+            .first()
         )
+        if not existing:
+            db.add(EmailSuppression(
+                address=rcpt,
+                reason="unsubscribe",
+                source="unsubscribe_link",
+            ))
+            db.commit()
+    except Exception:
+        logger.exception("[Unsubscribe] failed to write suppression row")
+        try:
+            db.rollback()
+        except Exception:
+            pass
         # Don't surface the DB error to the user — they clicked an
         # unsubscribe link, they want to feel unsubscribed.  The
         # link is idempotent; they can click again or use the
         # settings page.
 
-    # Audit (no user_id since this is a public link click).
+    # Audit (no user_id since this is a public link click).  Mask the
+    # local part of the address — audit details shouldn't be an email
+    # directory.
     try:
+        local, _, domain = rcpt.partition("@")
+        masked = f"{local[:1]}***@{domain}" if domain else "***"
         write_audit(
             db, org_id=org_id, event="email_unsubscribed",
-            details={"kind": kind, "via_link": True},
+            details={"kind": kind, "via_link": True, "address": masked},
         )
     except Exception:
         logger.exception("[Unsubscribe] audit write failed")
