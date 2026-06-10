@@ -166,3 +166,16 @@ def viewer_client():
 def unauthenticated_client():
     """Test client with no auth overrides."""
     return TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_effective_plan_cache():
+    """The 30s effective-plan TTL cache (app.core.plans) must never leak
+    state across tests — a test that sets past_due/org_plan and then
+    asserts cap behavior would otherwise read the previous test's cached
+    slug.  Production invalidates explicitly on webhook plan writes."""
+    from app.core.plans import invalidate_effective_plan_cache
+
+    invalidate_effective_plan_cache()
+    yield
+    invalidate_effective_plan_cache()

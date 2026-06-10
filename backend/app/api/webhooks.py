@@ -49,12 +49,32 @@ def set_org_member_limit(org_id: str, limit: int):
 
 
 def get_active_plan_slug(items: list) -> str:
-    """Extract the active plan slug from subscription items."""
+    """Extract the entitled plan slug from subscription items.
+
+    The first ``active`` item wins.  A ``canceled`` item whose
+    ``period_end`` is still in the future ALSO counts: Clerk fires the
+    cancellation immediately when the payer clicks cancel, but they
+    retain plan features until the period ends — and a
+    ``subscription.updated`` snapshot taken after a cancel click
+    contains only that canceled-but-paid-through item.  Without this
+    rule, that snapshot downgraded paying customers on the spot.
+    """
+    from app.core.plans import _item_period_end_utc
+
+    entitled_canceled = None
+    now = datetime.now(tz=UTC)
     for item in items:
         plan = item.get("plan", {})
-        if item.get("status") == "active" and plan.get("slug"):
-            return plan["slug"]
-    return "free_org"
+        slug = plan.get("slug")
+        if not slug:
+            continue
+        if item.get("status") == "active":
+            return slug
+        if item.get("status") == "canceled" and entitled_canceled is None:
+            period_end = _item_period_end_utc(item)
+            if period_end is not None and period_end > now:
+                entitled_canceled = slug
+    return entitled_canceled or "free_org"
 
 
 @router.post("/clerk")
@@ -121,7 +141,9 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
     if event_type in ("subscription.created", "subscription.updated", "subscription.active"):
         org_id = data.get("payer", {}).get("organization_id")
         if org_id:
+            from app.core.plans import invalidate_effective_plan_cache
             plan_slug = get_active_plan_slug(data.get("items", []))
+            invalidate_effective_plan_cache(org_id)
             limit = PLAN_MEMBER_LIMITS.get(plan_slug, PLAN_MEMBER_LIMITS["free_org"])
             set_org_member_limit(org_id, limit)
             # Persist plan in DB so API-key-authenticated endpoints can look it up
@@ -137,6 +159,9 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
             if plan_slug in PAID_PLAN_SLUGS_WEBHOOK:
                 Setting.set(db, org_id, "payment_past_due", "false")
                 Setting.set(db, org_id, "payment_past_due_at", "")
+                # Re-subscribe / un-cancel: an active paid item supersedes
+                # any pending scheduled cancellation.
+                Setting.set(db, org_id, "plan_cancel_pending", "")
             # Re-evaluate camera cap — a plan change (up or down) may flip
             # rows in either direction. Flushing the Setting first ensures
             # `resolve_org_plan` inside enforce_camera_cap reads the new value.
@@ -149,6 +174,34 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
                 )
             logger.info("Org %s subscription active on plan '%s'", org_id, plan_slug)
 
+    # ── Subscription item activated (upgrade landed) ────────────────
+    # Clerk's authoritative "this plan's payment went through" signal is
+    # the ITEM-level event; if an upgrade is delivered only via
+    # subscriptionItem.* the org's plan self-heals through
+    # resolve_org_plan, but the Clerk member limit never moved — a
+    # paying org stayed capped at 2 seats until some subscription.*
+    # event happened to fire.
+    elif event_type == "subscriptionItem.active":
+        org_id = data.get("payer", {}).get("organization_id")
+        item_slug = (data.get("plan") or {}).get("slug")
+        if org_id and item_slug in PLAN_MEMBER_LIMITS:
+            from app.core.plans import invalidate_effective_plan_cache
+            invalidate_effective_plan_cache(org_id)
+            set_org_member_limit(org_id, PLAN_MEMBER_LIMITS[item_slug])
+            Setting.set(db, org_id, "org_plan", item_slug)
+            Setting.set(db, org_id, "plan_cancel_pending", "")
+            if item_slug in PAID_PLAN_SLUGS_WEBHOOK:
+                Setting.set(db, org_id, "payment_past_due", "false")
+                Setting.set(db, org_id, "payment_past_due_at", "")
+            db.flush()
+            result = enforce_camera_cap(db, org_id)
+            if result["changed"]:
+                logger.info(
+                    "Org %s item-activated plan change: disabled=%d enabled=%d",
+                    org_id, len(result["disabled"]), len(result["enabled"]),
+                )
+            logger.info("Org %s subscription item active on plan '%s'", org_id, item_slug)
+
     # ── Payment failure ─────────────────────────────────────────────
     elif event_type in ("subscription.pastDue", "subscriptionItem.pastDue"):
         org_id = data.get("payer", {}).get("organization_id")
@@ -156,9 +209,35 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
             # Record past-due timestamp for grace period tracking.
             # Clerk will retry payment via Stripe dunning. We keep current
             # plan access during the grace period but flag the org.
+            #
+            # Only stamp the timestamp when the org is ENTERING past-due.
+            # Clerk re-emits pastDue per dunning retry while the card
+            # keeps failing; overwriting the anchor on each one restarted
+            # the 7-day grace clock every cycle — an org with a dead card
+            # could ride paid caps indefinitely.
+            from app.core.plans import invalidate_effective_plan_cache
+            invalidate_effective_plan_cache(org_id)
+            already_past_due = (
+                Setting.get(db, org_id, "payment_past_due", "false") == "true"
+            )
             Setting.set(db, org_id, "payment_past_due", "true")
-            past_due_at = data.get("pastDueAt") or datetime.now(tz=UTC).isoformat()
-            Setting.set(db, org_id, "payment_past_due_at", str(past_due_at))
+            if not already_past_due:
+                # Clerk billing payloads use snake_case epoch-MILLISECOND
+                # ints for *_at fields; normalize to ISO so
+                # effective_plan_for_caps' fromisoformat parse works.
+                # (Read camelCase too in case the shape ever shifted.)
+                raw_at = data.get("past_due_at") or data.get("pastDueAt")
+                past_due_at = datetime.now(tz=UTC).isoformat()
+                if raw_at is not None:
+                    try:
+                        val = float(raw_at)
+                        if val > 1e12:  # epoch ms
+                            val /= 1000.0
+                        past_due_at = datetime.fromtimestamp(val, tz=UTC).isoformat()
+                    except (TypeError, ValueError):
+                        # Already a string timestamp — keep as-is.
+                        past_due_at = str(raw_at)
+                Setting.set(db, org_id, "payment_past_due_at", past_due_at)
             logger.warning("Org %s subscription is past due — payment failed", org_id)
 
     # ── Payment attempt result ──────────────────────────────────────
@@ -185,26 +264,71 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
         elif org_id and payment_status == "failed":
             logger.warning("Org %s payment attempt failed", org_id)
 
-    # ── Cancellation / end ──────────────────────────────────────────
-    elif event_type in ("subscriptionItem.canceled", "subscriptionItem.ended"):
+    # ── Cancellation (scheduled — payer keeps features until period end) ──
+    elif event_type == "subscriptionItem.canceled":
         org_id = data.get("payer", {}).get("organization_id")
         if org_id:
-            # Clerk auto-assigns the free default plan on cancellation,
-            # so the JWT pla claim will revert. Just reset member limit.
-            set_org_member_limit(org_id, PLAN_MEMBER_LIMITS["free_org"])
-            Setting.set(db, org_id, "org_plan", "free_org")
+            # Clerk fires this the moment the payer clicks cancel, but
+            # per Clerk's billing semantics they RETAIN plan features
+            # until the current period ends (the .ended event).  An
+            # earlier version downgraded to free right here — revoking
+            # a paid-through month on day 1, and turning a scheduled
+            # pro_plus→pro downgrade into a drop to FREE.  Record the
+            # pending cancel for UI/banners and leave entitlements alone.
+            Setting.set(db, org_id, "plan_cancel_pending", "true")
+            logger.info(
+                "Org %s cancellation scheduled — plan retained until period end",
+                org_id,
+            )
+
+    # ── Period actually ended — resolve what the org is entitled to NOW ──
+    elif event_type == "subscriptionItem.ended":
+        org_id = data.get("payer", {}).get("organization_id")
+        if org_id:
+            import asyncio as _asyncio
+
+            from app.core.plans import (
+                fetch_live_plan_slug,
+                invalidate_effective_plan_cache,
+            )
+
+            # One item ending doesn't necessarily mean "free": a
+            # scheduled pro_plus→pro downgrade ends the pro_plus item
+            # while a pro item becomes active.  Ask Clerk what the org
+            # is entitled to right now instead of assuming free.
+            # (to_thread: the SDK call is sync + network-bound; this
+            # handler runs on the event loop.)
+            live_slug = await _asyncio.to_thread(fetch_live_plan_slug, org_id)
+            if live_slug is None:
+                # Clerk lookup failed.  Choose the revenue-safe direction
+                # (free) — the hourly plan reconciler restores a paid slug
+                # within the hour if this was a scheduled downgrade.
+                live_slug = "free_org"
+                logger.warning(
+                    "Org %s item ended but live plan lookup failed — "
+                    "defaulting to free until the reconciler verifies",
+                    org_id,
+                )
+            invalidate_effective_plan_cache(org_id)
+            limit = PLAN_MEMBER_LIMITS.get(live_slug, PLAN_MEMBER_LIMITS["free_org"])
+            set_org_member_limit(org_id, limit)
+            Setting.set(db, org_id, "org_plan", live_slug)
+            Setting.set(db, org_id, "plan_cancel_pending", "")
             Setting.set(db, org_id, "payment_past_due", "false")
-            # Suspend over-cap cameras now that the org is back on free tier.
+            # Suspend over-cap cameras for the new (possibly lower) tier.
             # Rows are preserved (not deleted) so a re-subscribe immediately
             # re-enables them without any reconfiguration.
             db.flush()
             result = enforce_camera_cap(db, org_id)
             if result["changed"]:
                 logger.info(
-                    "Org %s cancellation: disabled %d over-cap camera(s)",
+                    "Org %s period end: disabled %d over-cap camera(s)",
                     org_id, len(result["disabled"]),
                 )
-            logger.info("Org %s subscription canceled — reverted to free limits", org_id)
+            logger.info(
+                "Org %s subscription period ended — now on plan '%s'",
+                org_id, live_slug,
+            )
 
     # ── Free trial ending soon ──────────────────────────────────────
     elif event_type == "subscriptionItem.freeTrialEnding":

@@ -113,6 +113,75 @@ def get_plan_limits(plan: str) -> dict:
     return PLAN_LIMITS.get(plan, PLAN_LIMITS["free_org"])
 
 
+def _item_period_end_utc(item) -> datetime | None:
+    """Best-effort parse of a subscription item's period end.
+
+    Clerk surfaces it as ``period_end`` — epoch milliseconds in webhook
+    JSON, and either a datetime or an int on SDK objects.  Returns an
+    aware UTC datetime, or None when absent/unparseable.
+    """
+    raw = getattr(item, "period_end", None)
+    if raw is None and isinstance(item, dict):
+        raw = item.get("period_end") or item.get("periodEnd")
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo else raw.replace(tzinfo=UTC)
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if val > 1e12:  # epoch milliseconds
+        val /= 1000.0
+    try:
+        return datetime.fromtimestamp(val, tz=UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def fetch_live_plan_slug(org_id: str) -> str | None:
+    """Resolve the org's CURRENT entitlement from Clerk, live.
+
+    Returns the plan slug, or ``None`` when the lookup itself failed
+    (network/Clerk error) so callers can distinguish "Clerk says free"
+    from "couldn't ask Clerk".
+
+    Entitlement rules (matches Clerk billing semantics):
+      - the first ``active`` item wins;
+      - a ``canceled`` item whose ``period_end`` is still in the future
+        counts as entitled — the payer keeps plan features until the
+        period ends (cancellation is *scheduled*, not immediate).
+
+    SYNC + network-bound: call via ``asyncio.to_thread`` from async
+    contexts, or from background threads/loops.
+    """
+    from app.core.clerk import clerk
+
+    try:
+        sub = clerk.organizations.get_billing_subscription(organization_id=org_id)
+    except Exception:
+        logger.warning(
+            "Live Clerk plan lookup failed for org %s", org_id, exc_info=True,
+        )
+        return None
+
+    entitled_canceled: str | None = None
+    now = datetime.now(tz=UTC)
+    for item in (sub.subscription_items or []):
+        status = getattr(item, "status", None)
+        plan = getattr(item, "plan", None)
+        slug = getattr(plan, "slug", None) if plan else None
+        if not slug:
+            continue
+        if status == "active":
+            return slug
+        if status == "canceled" and entitled_canceled is None:
+            period_end = _item_period_end_utc(item)
+            if period_end is not None and period_end > now:
+                entitled_canceled = slug
+    return entitled_canceled or "free_org"
+
+
 def resolve_org_plan(db, org_id: str) -> str:
     """Return the current plan slug for an org, with a Clerk fallback.
 
@@ -130,7 +199,6 @@ def resolve_org_plan(db, org_id: str) -> str:
     Live lookups for the same org are throttled to once per 60 seconds
     so a free-tier caller hammering MCP can't drive Clerk API spend.
     """
-    from app.core.clerk import clerk
     from app.models.models import Setting
 
     cached = Setting.get(db, org_id, "org_plan", "")
@@ -147,23 +215,11 @@ def resolve_org_plan(db, org_id: str) -> str:
             return cached or "free_org"
         _last_resolve_at[org_id] = now
 
-    try:
-        sub = clerk.organizations.get_billing_subscription(organization_id=org_id)
-    except Exception:
-        logger.warning(
-            "Live Clerk plan lookup failed for org %s — returning cached value %r",
-            org_id, cached, exc_info=True,
-        )
+    live_slug = fetch_live_plan_slug(org_id)
+    if live_slug is None:
+        # Lookup failed — keep whatever we had rather than downgrading
+        # on a Clerk hiccup.
         return cached or "free_org"
-
-    # Mirror the webhook handler's logic: take the first active item's plan slug.
-    live_slug = "free_org"
-    for item in (sub.subscription_items or []):
-        status = getattr(item, "status", None)
-        plan = getattr(item, "plan", None)
-        if status == "active" and plan and getattr(plan, "slug", None):
-            live_slug = plan.slug
-            break
 
     if live_slug != cached:
         Setting.set(db, org_id, "org_plan", live_slug)
@@ -203,7 +259,42 @@ def get_plan_display_name(plan: str) -> str:
     return names.get(plan, "Free")
 
 
-def effective_plan_for_caps(db, org_id: str) -> str:
+# Short-TTL cache for effective_plan_for_caps.  The HLS segment-serve
+# path calls it on EVERY segment of EVERY viewer (~1/s each); without a
+# cache that's 2-3 Setting queries per request, and — for orgs whose
+# cached slug isn't paid — a throttled-but-blocking live Clerk lookup on
+# the event loop.  30s of staleness is harmless for cap enforcement;
+# webhook handlers call invalidate_effective_plan_cache() after plan
+# writes so upgrades/cancellations apply immediately, not after TTL.
+_EFFECTIVE_TTL_SECONDS = 30.0
+_effective_cache: dict[str, tuple[float, str]] = {}
+_effective_lock = threading.Lock()
+
+
+def invalidate_effective_plan_cache(org_id: str | None = None) -> None:
+    """Drop the cached effective plan for one org (or all)."""
+    with _effective_lock:
+        if org_id is None:
+            _effective_cache.clear()
+        else:
+            _effective_cache.pop(org_id, None)
+
+
+def _cache_effective(org_id: str, slug: str) -> str:
+    """Store the computed effective plan and return it (single exit path
+    for every return in effective_plan_for_caps)."""
+    with _effective_lock:
+        _effective_cache[org_id] = (time.monotonic() + _EFFECTIVE_TTL_SECONDS, slug)
+        # Opportunistic bound: one entry per org ever seen; prune
+        # expired entries when the dict grows past a sane fleet size.
+        if len(_effective_cache) > 10_000:
+            now = time.monotonic()
+            for k in [k for k, v in _effective_cache.items() if v[0] <= now]:
+                _effective_cache.pop(k, None)
+    return slug
+
+
+def effective_plan_for_caps(db, org_id: str, *, use_cache: bool = True) -> str:
     """Return the plan slug to use for *cap enforcement*, accounting for
     the past-due grace period.
 
@@ -230,18 +321,25 @@ def effective_plan_for_caps(db, org_id: str) -> str:
     """
     from app.models.models import Setting
 
+    if use_cache:
+        now_mono = time.monotonic()
+        with _effective_lock:
+            hit = _effective_cache.get(org_id)
+            if hit and hit[0] > now_mono:
+                return hit[1]
+
     nominal = resolve_org_plan(db, org_id)
 
     past_due = Setting.get(db, org_id, "payment_past_due", "false") == "true"
     if not past_due:
-        return nominal
+        return _cache_effective(org_id, nominal)
 
     past_due_at = Setting.get(db, org_id, "payment_past_due_at", "")
     if not past_due_at:
         # Flag is set but no timestamp — conservative: assume grace hasn't
         # expired yet, since we can't tell how long it's been past-due.
         # Operator-visible banner still fires; MCP still blocked.
-        return nominal
+        return _cache_effective(org_id, nominal)
 
     # Timestamps from Clerk come in ISO 8601 (with or without a Z suffix).
     # If we can't parse it, don't tighten — surfacing a bug loudly is
@@ -254,7 +352,7 @@ def effective_plan_for_caps(db, org_id: str) -> str:
             "keeping nominal plan",
             past_due_at, org_id,
         )
-        return nominal
+        return _cache_effective(org_id, nominal)
 
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
@@ -266,9 +364,9 @@ def effective_plan_for_caps(db, org_id: str) -> str:
             "tightening caps to free tier",
             org_id, age, PAYMENT_GRACE_DAYS,
         )
-        return "free_org"
+        return _cache_effective(org_id, "free_org")
 
-    return nominal
+    return _cache_effective(org_id, nominal)
 
 
 def enforce_camera_cap(db, org_id: str) -> dict:
@@ -309,7 +407,11 @@ def enforce_camera_cap(db, org_id: str) -> dict:
     # Use the *effective* plan — after PAYMENT_GRACE_DAYS past-due, this
     # returns "free_org" even if the nominal plan is Pro/Pro Plus, so the
     # cap tightens automatically without requiring a cancellation webhook.
-    plan_slug = effective_plan_for_caps(db, org_id)
+    # CACHE BYPASS: enforcement always reads fresh state.  It runs right
+    # after plan writes (webhooks, reconciler, register) where a 30s-stale
+    # cached slug would flip cameras against the OLD plan; the TTL cache
+    # exists for the per-segment serve path, not for writes.
+    plan_slug = effective_plan_for_caps(db, org_id, use_cache=False)
     limits = get_plan_limits(plan_slug)
     cap = int(limits["max_cameras"])
 

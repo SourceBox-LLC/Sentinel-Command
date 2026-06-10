@@ -369,10 +369,14 @@ def _resolve_org(headers: dict | None) -> tuple[str, Session]:
         _ctx_key_name.set(mcp_key.name)
 
         # Look up org plan and enforce access + rate limit. Uses the
-        # resolver so orgs whose subscription webhook never landed
-        # still get checked against the live Clerk subscription state.
-        from app.core.plans import resolve_org_plan
-        plan = resolve_org_plan(db, mcp_key.org_id)
+        # EFFECTIVE plan (grace-aware), not the nominal one: a Pro org
+        # past-due beyond the 7-day grace window is tightened to free
+        # for cameras/viewer-hours/Sentinel — its MCP keys must tighten
+        # with it, not keep full Pro limits until a cancellation webhook
+        # that may never arrive.  (The sentinel-agent auth path below
+        # already used the effective plan; this aligns the key path.)
+        from app.core.plans import effective_plan_for_caps
+        plan = effective_plan_for_caps(db, mcp_key.org_id)
         limits = RATE_LIMITS.get(plan)
         if limits is None:
             db.close()
@@ -1500,7 +1504,12 @@ async def attach_snapshot(
 # This is only used to map a requested duration_seconds to a segment count and
 # to populate EXTINF in the synthetic playlist; the actual playback duration
 # comes from the TS PCR timestamps and will be exactly correct.
-_APPROX_SEGMENT_SECONDS = 2.0
+# CloudNode emits 1-second segments (config default `segment_duration: 1`
+# → ffmpeg `-hls_time 1`).  This constant only shapes clip-duration
+# estimates for MCP tools — but keep it matched to the node's reality:
+# at the stale 2.0 value every clip request fetched HALF the segments
+# the caller asked for and reported double the real duration.
+_APPROX_SEGMENT_SECONDS = 1.0
 
 
 @mcp.tool(

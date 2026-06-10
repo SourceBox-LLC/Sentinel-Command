@@ -96,28 +96,79 @@ def test_subscription_active_also_sets_plan(webhook_client, db):
     assert Setting.get(db, TEST_ORG_ID, "org_plan") == "pro"
 
 
-def test_subscription_item_canceled_reverts_to_free_org(webhook_client, db):
-    """Cancellation reverts the cached plan and clears past-due."""
+def test_subscription_item_canceled_keeps_plan_until_period_end(webhook_client, db):
+    """Cancellation is SCHEDULED, not immediate: per Clerk semantics the
+    payer retains plan features until the period ends.  The handler must
+    only record the pending cancel — downgrading here revoked a paid
+    month on day 1 (and turned scheduled pro_plus→pro downgrades into a
+    drop to free)."""
     Setting.set(db, TEST_ORG_ID, "org_plan", "pro")
-    Setting.set(db, TEST_ORG_ID, "payment_past_due", "true")
 
     resp = _signed_post(webhook_client, "subscriptionItem.canceled", {
         "payer": {"organization_id": TEST_ORG_ID},
     })
     assert resp.status_code == 200
-    assert Setting.get(db, TEST_ORG_ID, "org_plan") == "free_org"
-    assert Setting.get(db, TEST_ORG_ID, "payment_past_due") == "false"
+    # Plan untouched; cancel recorded for UI.
+    assert Setting.get(db, TEST_ORG_ID, "org_plan") == "pro"
+    assert Setting.get(db, TEST_ORG_ID, "plan_cancel_pending") == "true"
 
 
-def test_subscription_item_ended_also_reverts(webhook_client, db):
-    """`subscriptionItem.ended` should behave like canceled."""
+def test_subscription_item_ended_applies_live_entitlement(webhook_client, db, monkeypatch):
+    """`subscriptionItem.ended` (period actually over) re-resolves the
+    org's CURRENT entitlement from Clerk — free after a full cancel, but
+    the next tier down after a scheduled downgrade."""
+    import app.api.webhooks  # noqa: F401 — ensure module import for patch target
+    from app.core import plans as plans_mod
+
     Setting.set(db, TEST_ORG_ID, "org_plan", "pro_plus")
+    monkeypatch.setattr(plans_mod, "fetch_live_plan_slug", lambda org_id: "free_org")
 
     resp = _signed_post(webhook_client, "subscriptionItem.ended", {
         "payer": {"organization_id": TEST_ORG_ID},
     })
     assert resp.status_code == 200
     assert Setting.get(db, TEST_ORG_ID, "org_plan") == "free_org"
+    assert Setting.get(db, TEST_ORG_ID, "plan_cancel_pending") == ""
+
+
+def test_subscription_item_ended_scheduled_downgrade_lands_on_pro(
+    webhook_client, db, monkeypatch
+):
+    """pro_plus item ends while a pro item is active → org lands on pro,
+    NOT free."""
+    from app.core import plans as plans_mod
+
+    Setting.set(db, TEST_ORG_ID, "org_plan", "pro_plus")
+    monkeypatch.setattr(plans_mod, "fetch_live_plan_slug", lambda org_id: "pro")
+
+    resp = _signed_post(webhook_client, "subscriptionItem.ended", {
+        "payer": {"organization_id": TEST_ORG_ID},
+    })
+    assert resp.status_code == 200
+    assert Setting.get(db, TEST_ORG_ID, "org_plan") == "pro"
+
+
+def test_updated_snapshot_with_canceled_but_paid_through_item_keeps_plan(
+    webhook_client, db
+):
+    """A subscription.updated snapshot taken right after a cancel click
+    contains only a canceled item with a future period_end — the org is
+    still entitled until then, so the plan must NOT drop to free."""
+    import time as _time
+
+    Setting.set(db, TEST_ORG_ID, "org_plan", "pro")
+    future_ms = int((_time.time() + 14 * 86400) * 1000)
+
+    resp = _signed_post(webhook_client, "subscription.updated", {
+        "payer": {"organization_id": TEST_ORG_ID},
+        "items": [{
+            "status": "canceled",
+            "period_end": future_ms,
+            "plan": {"slug": "pro"},
+        }],
+    })
+    assert resp.status_code == 200
+    assert Setting.get(db, TEST_ORG_ID, "org_plan") == "pro"
 
 
 # ─── Payment states ────────────────────────────────────────────────
