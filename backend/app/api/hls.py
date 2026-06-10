@@ -384,6 +384,14 @@ def _evict_global_oldest(max_total_bytes: int) -> int:
         if _segment_cache_byte_total <= max_total_bytes:
             return 0
 
+        # Low-water mark: evict down to 95% of the cap, not exactly TO
+        # the cap.  Once the cache legitimately sits at the ceiling,
+        # evicting only to the exact cap makes EVERY subsequent push
+        # over-cap by one segment — re-running this O(N) full walk +
+        # sort under the lock 20-50x/second.  Overshooting the eviction
+        # by 5% amortizes the walk to once per few hundred pushes.
+        low_water = int(max_total_bytes * 0.95)
+
         # Build a flat list of (ts, camera_id, filename, byte_size).
         # Snapshot the keys we're about to mutate so we don't iterate
         # the dict while modifying it (CPython would raise RuntimeError).
@@ -395,7 +403,7 @@ def _evict_global_oldest(max_total_bytes: int) -> int:
 
         evicted = 0
         for _ts, cam_id, fname, size in candidates:
-            if _segment_cache_byte_total <= max_total_bytes:
+            if _segment_cache_byte_total <= low_water:
                 break
             cam_cache = _segment_cache.get(cam_id)
             if cam_cache is None:
@@ -592,18 +600,20 @@ async def get_hls_playlist(
     camera = db.query(Camera).filter_by(camera_id=camera_id, org_id=user.org_id).first()
     if not camera:
         raise HTTPException(status_code=404, detail="Camera not found")
-
-    node = db.query(CameraNode).filter_by(id=camera.node_id, org_id=user.org_id).first()
-    if not node:
+    if not camera.node_id:
         raise HTTPException(status_code=404, detail="Camera node not found")
 
+    # No CameraNode query here — this route is polled ~1/s per viewer
+    # and the only consumer of the node was the access log's node_id
+    # string, which camera.node_id already provides.  (The log itself
+    # self-throttles to once per 5 min per user+camera.)
     _maybe_log_access(
         db=db,
         user_id=user.user_id,
         user_email=user.email,
         org_id=user.org_id,
         camera_id=camera_id,
-        node_id=str(node.id),
+        node_id=str(camera.node_id),
         ip_address=request.client.host if request.client else "unknown",
         user_agent=request.headers.get("user-agent", "")[:500],
     )

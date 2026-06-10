@@ -37,9 +37,19 @@ async def list_cameras(
     user: AuthUser = Depends(require_view), db: Session = Depends(get_db)
 ):
     """List all cameras for the user's organization."""
+    from sqlalchemy.orm import selectinload
+
     from app.models.models import CameraNode
 
-    cameras = db.query(Camera).filter_by(org_id=user.org_id).all()
+    # selectinload: Camera.to_dict() reads .node and .group — without
+    # eager loading that's an N+1 lazy query per distinct node/group on
+    # a route the dashboard polls every 5 seconds per open tab.
+    cameras = (
+        db.query(Camera)
+        .options(selectinload(Camera.node), selectinload(Camera.group))
+        .filter_by(org_id=user.org_id)
+        .all()
+    )
 
     # Check for orphaned cameras in a single query instead of N+1
     if cameras:
@@ -888,9 +898,16 @@ async def full_reset(
             cleanup_camera_cache(camera.camera_id)
 
     # 2. Single-source-of-truth cascade.  ``delete_org_data`` flushes
-    # but doesn't commit so we can append the audit row and commit
-    # everything atomically below.
+    # but doesn't commit — commit it HERE, before the audit write.
+    # ``write_audit`` commits internally and, on a failed commit,
+    # swallows the error and rolls the session back; with the cascade
+    # still uncommitted that rollback silently reverted the entire
+    # erasure while the handler went on to return success — a false
+    # "your data was erased" on an Article-17 obligation.  Committing
+    # first makes the deletes durable; the audit row is best-effort
+    # after the fact (matching every other commit-then-audit caller).
     counts = delete_org_data(db, user.org_id)
+    db.commit()
 
     results = {
         "nodes_wiped": nodes_wiped,
@@ -913,5 +930,4 @@ async def full_reset(
         details=counts,
         request=request,
     )
-    db.commit()
     return {"success": True, **results}

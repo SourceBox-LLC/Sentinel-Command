@@ -46,7 +46,7 @@ from app.core.config import settings
 from app.core.database import Base, SessionLocal, engine
 from app.core.limiter import limiter, tenant_aware_key
 from app.core.logging_setup import configure_logging
-from app.core.migrations import sync_schema
+from app.core.migrations import sync_indexes, sync_schema
 from app.core.request_context import (
     new_request_id,
     reset_request_id,
@@ -76,6 +76,11 @@ Base.metadata.create_all(bind=engine)
 # Patch in any columns that were added to existing models after the table was first
 # created. See app/core/migrations.py for the "why" — this is our stand-in for Alembic.
 sync_schema(engine, Base.metadata)
+# Indexes declared on models AFTER their table first shipped never get
+# created by create_all (it skips existing tables entirely) — several
+# hot-path composites were missing in prod because of this.  See
+# migrations.sync_indexes.
+sync_indexes(engine, Base.metadata)
 
 # NOTE: ``drop_orphan_tables`` and ``sanitize_existing_codecs`` USED to
 # run here on every boot.  Both are one-shot fixes for problems that
@@ -191,6 +196,7 @@ async def lifespan(app):
     offline_sweep_task = asyncio.create_task(_offline_sweep_loop())
     viewer_usage_task = asyncio.create_task(_viewer_usage_flush_loop())
     segment_evict_task = asyncio.create_task(_segment_cache_evict_loop())
+    plan_reconcile_task = asyncio.create_task(_plan_reconcile_loop())
     release_refresh_task = asyncio.create_task(_release_cache_refresh_loop())
     # Email worker drains EmailOutbox via Resend.  Ships always-on so
     # the kill-switch can be flipped via env var without a redeploy;
@@ -228,6 +234,7 @@ async def lifespan(app):
     offline_sweep_task.cancel()
     viewer_usage_task.cancel()
     segment_evict_task.cancel()
+    plan_reconcile_task.cancel()
     release_refresh_task.cancel()
     email_worker_task.cancel()
     disk_check_task.cancel()
@@ -448,10 +455,18 @@ async def request_context(request: Request, call_next):
     return response
 
 
-@app.middleware("http")
-async def security_headers(request: Request, call_next):
-    """Add security headers to all responses."""
-    response = await call_next(request)
+def _apply_security_headers(response, request: Request):
+    """Stamp the security headers onto a response.
+
+    Factored out because the SPA middleware below is registered LAST —
+    making it the OUTERMOST middleware — and it returns FileResponse
+    objects directly, without calling down through this middleware.
+    Result before the factor-out: the dashboard HTML document and every
+    /assets/* file shipped with NO X-Frame-Options / nosniff / HSTS —
+    i.e. the one response where frame-ancestors actually matters (the
+    document) was the one being skipped, leaving the dashboard
+    clickjackable.  The SPA paths now call this helper explicitly.
+    """
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -459,6 +474,13 @@ async def security_headers(request: Request, call_next):
     if request.url.scheme == "https" or os.getenv("FLY_APP_NAME"):
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Add security headers to all responses."""
+    response = await call_next(request)
+    return _apply_security_headers(response, request)
 
 # Include API routers
 app.include_router(cameras.router)
@@ -547,6 +569,7 @@ def run_log_cleanup(db, *, default_retention_days: int = LOG_RETENTION_DAYS) -> 
         McpActivityLog,
         MotionEvent,
         Notification,
+        ProcessedWebhook,
         StreamAccessLog,
     )
 
@@ -631,6 +654,21 @@ def run_log_cleanup(db, *, default_retention_days: int = LOG_RETENTION_DAYS) -> 
         .delete(synchronize_session=False)
     )
 
+    # ProcessedWebhook dedup markers: global (no org_id — can't be
+    # per-org tiered), one row per Clerk AND Resend delivery forever.
+    # The model docstring always promised "a periodic sweep can drop
+    # rows older than 30 days" — this is that sweep, finally written.
+    # 30 days comfortably exceeds Svix's ~5-day retry window, so a
+    # swept marker can never let a retried delivery double-process.
+    # Without this, the table was the fastest-growing in the DB under
+    # multi-org load (every webhook of every org, indefinitely).
+    webhook_cutoff = now - timedelta(days=30)
+    totals["processed_webhooks"] = (
+        db.query(ProcessedWebhook)
+        .filter(ProcessedWebhook.processed_at < webhook_cutoff)
+        .delete(synchronize_session=False)
+    )
+
     db.commit()
 
     return {
@@ -658,7 +696,11 @@ async def _log_cleanup_loop():
         try:
             db = SessionLocal()
             try:
-                summary = run_log_cleanup(db)
+                # to_thread: per-org plan resolution can hit Clerk (sync
+                # HTTPS) and the bulk DELETEs over 100K+ motion/notification
+                # rows hold the write lock for seconds — inline, that froze
+                # the event loop for every tenant once a day.
+                summary = await asyncio.to_thread(run_log_cleanup, db)
                 if summary["total_deleted"] > 0:
                     t = summary["totals"]
                     logger.info(
@@ -837,6 +879,80 @@ async def _viewer_usage_flush_loop():
             logger.exception("[ViewerUsage] Flush loop tick failed")
 
 
+def _reconcile_org_plans() -> int:
+    """Re-verify every org whose cached plan is PAID against Clerk.
+
+    The webhook handler is the only path that ever writes free over a
+    paid `org_plan` Setting, and `resolve_org_plan`'s live fallback only
+    fires when the cached slug is NOT paid — so a single missed
+    cancellation webhook (endpoint down past Svix's retry window, secret
+    rotation, out-of-order redelivery rewriting an old snapshot) left an
+    org on Pro caps forever, free of charge.  This sweep closes that:
+    paid slugs are re-verified hourly; drift is corrected in BOTH
+    directions (it also rescues a scheduled downgrade that the .ended
+    handler defaulted to free on a failed lookup).
+
+    Sync + network-bound — run via asyncio.to_thread.  Returns the
+    number of orgs whose plan changed.
+    """
+    from app.api.webhooks import PLAN_MEMBER_LIMITS, set_org_member_limit
+    from app.core.plans import (
+        PAID_PLAN_SLUGS,
+        enforce_camera_cap,
+        fetch_live_plan_slug,
+        invalidate_effective_plan_cache,
+    )
+    from app.models.models import Setting
+
+    db = SessionLocal()
+    changed = 0
+    try:
+        paid_rows = (
+            db.query(Setting)
+            .filter(Setting.key == "org_plan", Setting.value.in_(list(PAID_PLAN_SLUGS)))
+            .all()
+        )
+        for row in paid_rows:
+            live = fetch_live_plan_slug(row.org_id)
+            if live is None or live == row.value:
+                continue
+            logger.warning(
+                "[PlanReconcile] org=%s cached=%r but Clerk says %r — correcting",
+                row.org_id, row.value, live,
+            )
+            invalidate_effective_plan_cache(row.org_id)
+            Setting.set(db, row.org_id, "org_plan", live)
+            set_org_member_limit(
+                row.org_id,
+                PLAN_MEMBER_LIMITS.get(live, PLAN_MEMBER_LIMITS["free_org"]),
+            )
+            db.flush()
+            enforce_camera_cap(db, row.org_id)
+            db.commit()
+            changed += 1
+    except Exception:
+        logger.exception("[PlanReconcile] sweep failed")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    finally:
+        db.close()
+    return changed
+
+
+async def _plan_reconcile_loop():
+    """Hourly billing-truth reconciliation — see _reconcile_org_plans."""
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            changed = await asyncio.to_thread(_reconcile_org_plans)
+            if changed:
+                logger.warning("[PlanReconcile] corrected %d org plan(s)", changed)
+        except Exception:
+            logger.exception("[PlanReconcile] tick failed")
+
+
 async def _segment_cache_evict_loop():
     """Background task — evict stale per-camera HLS segment buckets and
     reconcile the global byte counter on a fixed 60s cadence.
@@ -854,10 +970,17 @@ async def _segment_cache_evict_loop():
         await asyncio.sleep(60)
         try:
             from app.api.hls import _evict_caches
-            # _evict_caches does all its mutation under _segment_cache_lock;
-            # run it off the event loop so a large sweep can't stall request
-            # handling (mirrors the viewer-usage flush above).
-            await asyncio.to_thread(_evict_caches)
+            # Called INLINE on the event loop, deliberately — NOT via
+            # asyncio.to_thread.  _evict_caches mutates the playlist /
+            # access-log sibling caches without a lock, which is safe
+            # only under hls.py's documented invariant that those dicts
+            # are touched from the event loop exclusively (the segment
+            # cache itself has a lock for its one worker-thread reader).
+            # Running this in a worker thread would race the playlist-
+            # push path's own _evict_caches call and the per-request
+            # writers.  The sweep is small in-memory dict work — the
+            # push path already runs it inline every ~20 pushes.
+            _evict_caches()
         except Exception:
             logger.exception("[SegmentCache] Eviction loop tick failed")
 
@@ -1030,6 +1153,10 @@ async def _motion_digest_loop():
                             db.delete(anchor_row)
                             db.commit()
                             continue
+                        # Snapshot the exact stored string — the conditional
+                        # delete at the bottom compares against THIS, not a
+                        # fromisoformat→isoformat round-trip.
+                        anchor_value = anchor_row.value
                         try:
                             anchor_ts = datetime.fromisoformat(anchor_row.value)
                         except ValueError:
@@ -1108,10 +1235,26 @@ async def _motion_digest_loop():
                                 db=db,
                             )
 
-                        # Always delete the anchor — window has closed.  Next
-                        # motion on this camera starts a fresh cycle.
-                        db.delete(anchor_row)
-                        db.commit()
+                        # Delete the anchor — the window has closed — but only
+                        # if it still holds the timestamp WE processed.  The
+                        # count/emit work above takes real time (Clerk lookup,
+                        # outbox commit); a motion event landing in that gap
+                        # sees the same expired anchor, sends its own immediate
+                        # email, and re-arms the row with a fresh timestamp.
+                        # An unconditional delete would erase that brand-new
+                        # cooldown window, so the NEXT event would email
+                        # immediately again — double "immediate" emails on
+                        # exactly the busy cameras digests exist for.
+                        db.expire(anchor_row)
+                        try:
+                            current_value = anchor_row.value
+                        except Exception:
+                            current_value = None  # row already gone
+                        if current_value == anchor_value:
+                            db.delete(anchor_row)
+                            db.commit()
+                        else:
+                            db.rollback()  # drop the expired-state txn cleanly
                     except Exception:
                         logger.exception(
                             "[MotionDigest] anchor processing failed key=%s org=%s",
@@ -1142,7 +1285,7 @@ async def _offline_sweep_loop():
         try:
             db = SessionLocal()
             try:
-                summary = run_offline_sweep(db)
+                summary = await asyncio.to_thread(run_offline_sweep, db)
                 total = summary["nodes_flipped"] + summary["cameras_flipped"]
                 if total > 0:
                     logger.info(
@@ -1233,6 +1376,7 @@ async def _sentinel_reaper_loop():
 _MCP_PRE_AUTH_LIMIT_PER_MINUTE = 600
 _mcp_pre_auth_buckets: dict[str, list[float]] = defaultdict(list)
 _mcp_pre_auth_lock = threading.Lock()
+_mcp_pre_auth_last_sweep: float = 0.0
 
 
 def _check_mcp_pre_auth_rate(request: Request) -> bool:
@@ -1248,6 +1392,19 @@ def _check_mcp_pre_auth_rate(request: Request) -> bool:
     now = monotonic()
     cutoff = now - 60.0
     with _mcp_pre_auth_lock:
+        # Bound the KEY count too, not just per-bucket entries: keys are
+        # attacker-controlled (IP / bearer-derived), so an IP-spraying
+        # client adds one dict entry per key forever.  Time-gated O(n)
+        # sweep of fully-aged-out buckets, at most once per window.
+        global _mcp_pre_auth_last_sweep
+        if now - _mcp_pre_auth_last_sweep > 60.0:
+            _mcp_pre_auth_last_sweep = now
+            dead = [
+                k for k, b in _mcp_pre_auth_buckets.items()
+                if not b or b[-1] <= cutoff
+            ]
+            for k in dead:
+                del _mcp_pre_auth_buckets[k]
         bucket = _mcp_pre_auth_buckets[bucket_key]
         # Drop stale entries in-place so the bucket size doesn't grow
         # unbounded for a noisy tenant.
@@ -1293,14 +1450,18 @@ if static_dir.exists():
                 )
             return await call_next(request)
 
+        # These two FileResponse paths return WITHOUT calling down the
+        # middleware stack (this middleware is outermost), so the
+        # security_headers middleware never sees them — stamp the
+        # headers explicitly or the SPA document ships without them.
         static_file = static_dir / request.url.path.lstrip("/")
         if static_file.exists() and static_file.is_file():
-            return FileResponse(static_file)
+            return _apply_security_headers(FileResponse(static_file), request)
 
         if not request.url.path.startswith("/api"):
             index_file = static_dir / "index.html"
             if index_file.exists():
-                return FileResponse(index_file)
+                return _apply_security_headers(FileResponse(index_file), request)
 
         return await call_next(request)
 

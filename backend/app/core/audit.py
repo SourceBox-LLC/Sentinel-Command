@@ -25,9 +25,20 @@ logger = logging.getLogger(__name__)
 
 
 def _client_ip(request: Optional[Request]) -> str:
-    if request is None or request.client is None:
+    if request is None:
         return ""
-    return request.client.host or ""
+    # Behind Fly's edge, request.client.host can be the proxy hop rather
+    # than the real client.  The rate limiter already solved this —
+    # Fly-Client-IP → XFF first hop → socket — and the audit trail (a
+    # paid compliance surface) must record the same real source IP, not
+    # an edge address.  Reuse that resolver.
+    try:
+        from app.core.limiter import _real_client_ip
+        return _real_client_ip(request) or ""
+    except Exception:
+        if request.client is None:
+            return ""
+        return request.client.host or ""
 
 
 def write_audit(

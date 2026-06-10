@@ -47,11 +47,18 @@ class Config:
     # the global eviction in hls.py drops the oldest segments across
     # ALL cameras until the total is back under the cap — preserves
     # the live-edge for active cameras at the cost of dropping the
-    # tail of less-active ones.  Default 2 GiB chosen to leave the
-    # 1 GiB Fly machine headroom for the rest of the app on a 4 GiB
-    # box (typical production size).  Bump when you scale the box.
+    # tail of less-active ones.
+    #
+    # Default 384 MiB, sized for the PRODUCTION VM: fly.toml runs a
+    # 1 GiB machine, and the Python/uvicorn/SQLAlchemy baseline plus
+    # SQLite page cache needs the rest.  The previous 2 GiB default was
+    # sized for a 4 GiB box that doesn't exist — being ABOVE physical
+    # RAM meant the kernel OOM-killer (taking down every org's streams
+    # at once) would always fire long before this eviction could.  At
+    # ~15 MB per active camera this covers ~25 concurrent live cameras;
+    # raise the env var only TOGETHER with fly.toml memory_mb.
     SEGMENT_CACHE_MAX_TOTAL_BYTES: int = int(
-        os.getenv("SEGMENT_CACHE_MAX_TOTAL_BYTES", str(2 * 1024 * 1024 * 1024))
+        os.getenv("SEGMENT_CACHE_MAX_TOTAL_BYTES", str(384 * 1024 * 1024))
     )
     # Max size of a single pushed segment (safety valve).  Enforced
     # via Content-Length BEFORE the body is read, plus a post-read

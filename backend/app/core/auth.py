@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 from clerk_backend_api.security import AuthenticateRequestOptions
 from fastapi import Depends, HTTPException, Request, status
@@ -110,7 +112,14 @@ async def get_current_user(request: Request) -> AuthUser:
     httpx_request = convert_to_httpx_request(request)
 
     try:
-        request_state = clerk.authenticate_request(
+        # to_thread: verification is local RS256 most of the time, but the
+        # SDK refreshes its JWKS cache every 5 minutes via a SYNC HTTPS
+        # fetch (httpx transport with retries=10).  Inline, that fetch —
+        # and especially its multi-second retry ladder during a Clerk
+        # blip — froze the entire event loop for every tenant.  The
+        # steady-state cost of the thread hop is microseconds.
+        request_state = await asyncio.to_thread(
+            clerk.authenticate_request,
             httpx_request,
             AuthenticateRequestOptions(authorized_parties=[settings.FRONTEND_URL]),
         )

@@ -171,6 +171,18 @@ class Setting(Base):
     value = Column(Text)
     updated_at = Column(DateTime, default=lambda: datetime.now(tz=UTC).replace(tzinfo=None), onupdate=lambda: datetime.now(tz=UTC).replace(tzinfo=None))
 
+    # Setting.get(org_id, key) is the single most-executed query after
+    # auth (plan resolution, toggles, anchors — several per request on
+    # some paths).  The composite lets SQLite satisfy it with one index
+    # seek instead of intersecting the two single-column indexes.
+    # NOT unique: concurrent first-writers can transiently duplicate a
+    # (org, key) pair (Setting.set is check-then-insert); a UNIQUE index
+    # would make sync_indexes fail on any existing dup.  Created by
+    # sync_indexes() on next boot.
+    __table_args__ = (
+        Index("ix_settings_org_key", "org_id", "key"),
+    )
+
     @staticmethod
     def get(db, org_id: str, key: str, default: str = None) -> str:
         setting = db.query(Setting).filter_by(org_id=org_id, key=key).first()
@@ -231,7 +243,10 @@ class CameraNode(Base):
     id = Column(Integer, primary_key=True)
     node_id = Column(String(100), unique=True, nullable=False, index=True)
     org_id = Column(String(100), nullable=False, index=True)
-    api_key_hash = Column(String(128), nullable=False)
+    # Indexed: every node-authenticated request (push-segment at up to
+    # 20/s/node, playlist, heartbeat, motion, codec) looks the node up
+    # by this hash — unindexed it was a full table scan per request.
+    api_key_hash = Column(String(128), nullable=False, index=True)
     name = Column(String(100), nullable=False)
     hostname = Column(String(100))
     local_ip = Column(String(45))
@@ -633,6 +648,15 @@ class Notification(Base):
         DateTime,
         default=lambda: datetime.now(tz=UTC).replace(tzinfo=None),
         index=True,
+    )
+
+    # The bell polls unread-count (COUNT WHERE org_id=? AND created_at>?)
+    # and the inbox lists WHERE org_id=? ORDER BY created_at DESC on
+    # every mount — an active org accumulates 100K+ rows within
+    # retention, so the single-column indexes force a full org-partition
+    # scan per poll.  Created by sync_indexes() on next boot.
+    __table_args__ = (
+        Index("ix_notifications_org_created", "org_id", "created_at"),
     )
 
     def to_dict(self) -> dict:

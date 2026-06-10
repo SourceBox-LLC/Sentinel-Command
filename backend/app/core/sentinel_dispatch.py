@@ -29,8 +29,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import threading
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Optional
@@ -340,33 +342,107 @@ def reap_stranded_runs(db: Session) -> dict:
     cutoff = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(
         minutes=STRANDED_RUN_AGE_MINUTES
     )
-    stranded = (
-        db.query(SentinelRun)
+    stranded_ids = [
+        row.id
+        for row in db.query(SentinelRun.id)
         .filter(
             SentinelRun.outcome == "running",
             SentinelRun.started_at != None,  # noqa: E711 — SQLAlchemy IS NOT NULL
             SentinelRun.started_at < cutoff,
         )
         .all()
-    )
-    if not stranded:
-        return {"reaped": 0}
+    ]
 
-    now = datetime.now(tz=UTC).replace(tzinfo=None)
-    for row in stranded:
-        row.outcome = "error"
-        row.summary = (
-            f"Stranded — agent never completed within "
-            f"{STRANDED_RUN_AGE_MINUTES} min.  Reaped automatically."
+    reaped = 0
+    if stranded_ids:
+        now = datetime.now(tz=UTC).replace(tzinfo=None)
+        # Conditional bulk UPDATE, re-checking outcome=='running' in the
+        # WRITE statement itself.  The previous load-then-stamp pattern
+        # had a window between the SELECT and the commit where a
+        # concurrent /complete could land — its real outcome was then
+        # silently overwritten with 'error' (leaving an inconsistent row:
+        # outcome=error with severity/incident_id from the completion,
+        # and no repair path since the agent's POST already succeeded).
+        reaped = (
+            db.query(SentinelRun)
+            .filter(
+                SentinelRun.id.in_(stranded_ids),
+                SentinelRun.outcome == "running",
+            )
+            .update(
+                {
+                    SentinelRun.outcome: "error",
+                    SentinelRun.summary: (
+                        f"Stranded — agent never completed within "
+                        f"{STRANDED_RUN_AGE_MINUTES} min.  Reaped automatically."
+                    ),
+                    SentinelRun.completed_at: now,
+                },
+                synchronize_session=False,
+            )
         )
-        row.completed_at = now
-    db.commit()
+        db.commit()
+        logger.warning("sentinel: reaper marked %d stranded run(s) as error", reaped)
 
-    logger.warning(
-        "sentinel: reaper marked %d stranded run(s) as error",
-        len(stranded),
+    # ── Stale-PENDING recovery ──────────────────────────────────────
+    # A lost wakeup (the single fire-and-forget POST timing out against
+    # a cold-starting agent) used to strand rows at `pending` FOREVER on
+    # a quiet system: the reaper only handled `running`, /runs/pending
+    # only helps an agent that's already awake, and "the next wakeup"
+    # never comes when this org's motion was the only trigger.  Re-fire
+    # the wakeup whenever pending work has sat unclaimed for a couple of
+    # minutes — one webhook wakes the agent, which then drains EVERY
+    # pending run across all orgs.
+    pending_cutoff = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(minutes=2)
+    stale_pending = (
+        db.query(SentinelRun)
+        .filter(
+            SentinelRun.outcome == "pending",
+            SentinelRun.triggered_at < pending_cutoff,
+        )
+        .count()
     )
-    return {"reaped": len(stranded), "ids": [r.id for r in stranded]}
+    if stale_pending:
+        logger.warning(
+            "sentinel: %d pending run(s) unclaimed for >2 min — re-firing wakeup",
+            stale_pending,
+        )
+        _fire_wakeup_webhook()
+
+    # Terminal backstop: pending rows older than 6 hours mean the agent
+    # has been unreachable across ~70+ re-fired wakeups — surface the
+    # failure instead of holding a cap slot + UI spinner forever.  (The
+    # documented error → incident/no_action upgrade path still applies
+    # if the agent ever completes one of these later.)
+    abandoned_cutoff = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(hours=6)
+    abandoned = (
+        db.query(SentinelRun)
+        .filter(
+            SentinelRun.outcome == "pending",
+            SentinelRun.triggered_at < abandoned_cutoff,
+        )
+        .update(
+            {
+                SentinelRun.outcome: "error",
+                SentinelRun.summary: (
+                    "Abandoned — agent never claimed this run within 6 hours "
+                    "(wakeup webhook unreachable?).  Marked errored automatically."
+                ),
+                SentinelRun.completed_at: datetime.now(tz=UTC).replace(tzinfo=None),
+            },
+            synchronize_session=False,
+        )
+    )
+    if abandoned:
+        db.commit()
+        logger.warning("sentinel: marked %d abandoned pending run(s) as error", abandoned)
+
+    return {
+        "reaped": reaped,
+        "ids": stranded_ids if reaped else [],
+        "rewoken_pending": stale_pending,
+        "abandoned": abandoned,
+    }
 
 
 def _commit_run_with_cap_check(
@@ -543,9 +619,18 @@ def dispatch_manual_run(
 
 # ── Wakeup webhook firing ────────────────────────────────────────────
 # After a pending run is created we POST a fire-and-forget request to
-# SENTINEL_AGENT_WEBHOOK_URL.  The body is opaque (`{}`) — the agent
-# re-fetches pending runs via the API.  We HMAC-sign the body with
-# SENTINEL_AGENT_KEY so a leaked URL alone can't trigger the agent.
+# SENTINEL_AGENT_WEBHOOK_URL.  The body carries only a timestamp — the
+# agent re-fetches pending runs via the API.  We HMAC-sign the body
+# with SENTINEL_AGENT_KEY so a leaked URL alone can't trigger the
+# agent.
+#
+# Why a timestamp (vs the old static `{}`): the signature of a fixed
+# body under a fixed key is a CONSTANT — one captured request (proxy
+# log, agent access log) could be replayed forever to force agent
+# cold-starts at will.  Signing `{"ts": <unix>}` makes each request's
+# signature unique and lets the agent reject stale timestamps (skew
+# window ~5 min).  The signature is still plain HMAC(secret, raw_body),
+# so agents that haven't shipped the skew check yet keep verifying.
 #
 # Fire-and-forget runs in a background thread so the request handler
 # that triggered the dispatch (motion ingestion, manual run, etc.) is
@@ -555,7 +640,9 @@ def dispatch_manual_run(
 # wakeup that fires (the agent always drains, not just the run that
 # triggered the wakeup).
 
-_WAKEUP_PAYLOAD = b"{}"
+
+def _wakeup_payload() -> bytes:
+    return json.dumps({"ts": int(time.time())}).encode("utf-8")
 
 
 def _compute_signature(body: bytes, secret: str) -> str:
@@ -580,11 +667,12 @@ def _fire_wakeup_webhook_blocking() -> None:
         return
 
     try:
-        signature = _compute_signature(_WAKEUP_PAYLOAD, secret)
+        payload = _wakeup_payload()
+        signature = _compute_signature(payload, secret)
         with httpx.Client(timeout=5.0) as client:
             resp = client.post(
                 url,
-                content=_WAKEUP_PAYLOAD,
+                content=payload,
                 headers={
                     "Content-Type": "application/json",
                     "X-Sentinel-Signature": signature,

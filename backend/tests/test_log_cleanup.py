@@ -100,7 +100,7 @@ def test_run_log_cleanup_deletes_rows_past_free_tier_retention():
         assert summary["total_deleted"] == 6
         assert summary["totals"] == {
             "stream": 1, "mcp": 1, "audit": 1, "motion": 1, "notif": 1,
-            "email_log": 1, "email_outbox": 0,
+            "email_log": 1, "email_outbox": 0, "processed_webhooks": 0,
         }
 
         # Spot-check that the recent rows weren't touched.
@@ -197,7 +197,7 @@ def test_run_log_cleanup_handles_empty_database():
             "orgs_processed": 0,
             "totals": {
                 "stream": 0, "mcp": 0, "audit": 0, "motion": 0, "notif": 0,
-                "email_log": 0, "email_outbox": 0,
+                "email_log": 0, "email_outbox": 0, "processed_webhooks": 0,
             },
             "total_deleted": 0,
         }
@@ -225,7 +225,7 @@ def test_run_log_cleanup_returns_summary_shape():
         assert set(summary.keys()) == {"orgs_processed", "totals", "total_deleted"}
         assert set(summary["totals"].keys()) == {
             "stream", "mcp", "audit", "motion", "notif",
-            "email_log", "email_outbox",
+            "email_log", "email_outbox", "processed_webhooks",
         }
         assert isinstance(summary["orgs_processed"], int)
         assert isinstance(summary["total_deleted"], int)

@@ -237,12 +237,17 @@ class ConnectionManager:
                     "command": command,
                     "payload": payload or {},
                 })
-            except Exception as e:
+            except (WebSocketDisconnect, RuntimeError, OSError) as e:
                 # The socket was already half-closed (TCP reset, node crashed)
                 # but the receive loop hadn't noticed yet, so it was still in
                 # the registry when is_connected() was checked.  Evict it now
                 # and surface a clean ValueError (callers map this to 503)
                 # instead of letting a raw send error bubble up as a 500.
+                # Deliberately NARROW: these are the transport-dead classes.
+                # A TypeError from a non-JSON-serializable payload is a CODE
+                # bug — evicting a healthy socket for it would strand the node
+                # (it keeps heartbeating, never reconnects, every command
+                # 503s); let that propagate loudly instead.
                 self.disconnect(node_id, ws)
                 raise ValueError(f"Node {node_id} send failed: {e}") from None
             return await asyncio.wait_for(future, timeout=timeout)

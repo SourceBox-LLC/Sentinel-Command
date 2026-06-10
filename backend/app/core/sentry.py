@@ -129,7 +129,15 @@ def _scrub_event(event: dict, hint: dict) -> Optional[dict]:
         if isinstance(headers, dict):
             for name in list(headers.keys()):
                 lname = name.lower()
-                if lname in {"authorization", "cookie", "x-node-api-key"}:
+                if lname in {
+                    "authorization",
+                    "cookie",
+                    "x-node-api-key",
+                    # Shared service secrets — never let them ride into
+                    # Sentry if header capture is ever enabled.
+                    "x-sentinel-agent-key",
+                    "x-agent-org-override",
+                }:
                     headers[name] = "[redacted]"
 
     # Tags are our own — keep them. Extras are our own — keep them.

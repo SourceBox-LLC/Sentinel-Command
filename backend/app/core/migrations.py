@@ -131,6 +131,58 @@ def sync_schema(engine: Engine, metadata) -> list[str]:
     return changes
 
 
+def sync_indexes(engine: Engine, metadata) -> list[str]:
+    """Create any model-declared indexes missing from the live DB.
+
+    ``create_all(checkfirst=True)`` skips tables that already exist —
+    ENTIRELY, indexes included — and ``sync_schema`` above only does
+    ADD COLUMN.  So every ``Index(...)``/``index=True`` added to a
+    model AFTER its table first shipped silently never materialized in
+    prod (several composite-index commits carried comments claiming
+    "picked up on next boot"; they were not).  This walks the declared
+    indexes and issues ``CREATE INDEX IF NOT EXISTS`` for each —
+    idempotent, WAL-friendly, and a no-op once in sync.
+
+    Returns the list of index names created.
+    """
+    created: list[str] = []
+    existing_tables = _existing_tables(engine)
+    inspector = inspect(engine)
+
+    for table in metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue  # create_all built this table fresh, indexes included
+        try:
+            db_indexes = {ix["name"] for ix in inspector.get_indexes(table.name)}
+        except Exception:  # noqa: BLE001
+            logger.exception("migrations: index inspect failed for %s", table.name)
+            continue
+        for index in table.indexes:
+            if not index.name or index.name in db_indexes:
+                continue
+            cols = ", ".join(f'"{c.name}"' for c in index.columns)
+            unique = "UNIQUE " if index.unique else ""
+            stmt = (
+                f'CREATE {unique}INDEX IF NOT EXISTS "{index.name}" '
+                f'ON "{table.name}" ({cols})'
+            )
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(stmt))
+                created.append(index.name)
+                logger.info("migrations: created index %s on %s", index.name, table.name)
+            except Exception:  # noqa: BLE001
+                # One bad index must not block app start.
+                logger.exception("migrations: failed to create index %s", index.name)
+
+    if created:
+        logger.info("migrations: created %d missing index(es): %s",
+                    len(created), ", ".join(created))
+    else:
+        logger.debug("migrations: indexes already in sync")
+    return created
+
+
 # ─────────────────────────────────────────────────────────────────
 # Orphan-table sweep (one-shot helper, NOT in the boot path)
 # ─────────────────────────────────────────────────────────────────

@@ -139,10 +139,17 @@ async def require_sentinel_agent(
         raise HTTPException(401, "agent auth not configured")
     # Constant-time compare so a timing side-channel can't reveal
     # prefix matches against the configured secret.  Empty header
-    # short-circuits before the compare (compare_digest on length-zero
-    # is False but raises on type mismatch in some Python builds).
+    # short-circuits before the compare.
+    #
+    # Compare BYTES, not str: ``hmac.compare_digest(str, str)`` raises
+    # TypeError when either side contains non-ASCII, and Starlette
+    # decodes header values as latin-1 — so an unauthenticated probe
+    # with any byte >0x7F in the header produced an unhandled 500 on
+    # all three agent endpoints instead of a clean 401.  latin-1 can
+    # encode every such header value back losslessly.
     if not x_sentinel_agent_key or not hmac.compare_digest(
-        x_sentinel_agent_key, settings.SENTINEL_AGENT_KEY
+        x_sentinel_agent_key.encode("latin-1", "replace"),
+        settings.SENTINEL_AGENT_KEY.encode("utf-8"),
     ):
         raise HTTPException(401, "invalid agent key")
 

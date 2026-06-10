@@ -28,6 +28,13 @@ def set_sqlite_pragma(dbapi_conn, connection_record):
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.execute("PRAGMA busy_timeout=5000")
+    # NORMAL is the standard WAL pairing: an fsync per checkpoint
+    # instead of per COMMIT.  Default FULL was fsyncing every commit —
+    # heartbeats (every 30s x every node), motion events, access logs —
+    # each holding the event loop 1-10ms on the Fly volume.  Worst case
+    # on power loss is the last few commits; WAL guarantees no
+    # corruption either way.
+    cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.close()
 
 

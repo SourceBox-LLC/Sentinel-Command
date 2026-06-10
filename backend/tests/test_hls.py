@@ -348,30 +348,38 @@ def test_global_cache_cap_evicts_across_cameras(db, monkeypatch):
     # maintained.  Reconcile it to ground truth before eviction.
     hls._segment_cache_byte_total = hls._recompute_segment_cache_bytes()
 
-    # 9 segments × 100 bytes = 900 total.  Cap at 500 → must evict
-    # the 4 oldest to land at 500.
+    # 9 segments × 100 bytes = 900 total.  Cap at 500 → eviction runs
+    # to the LOW-WATER mark (95% of cap = 475), not exactly to the cap:
+    # once the cache legitimately sits at the ceiling, evicting only TO
+    # the cap would re-run the O(N) walk on every subsequent push.  So
+    # 5 oldest are evicted (900→400 ≤ 475); 4 would stop at 500 > 475.
     evicted = _evict_global_oldest(500)
-    assert evicted == 4
+    assert evicted == 5
+    assert hls._segment_cache_byte_total == 400
+    assert hls._segment_cache_byte_total <= int(500 * 0.95)
 
-    # The 4 oldest-by-ts evictees: cam_0/seg_0, cam_1/seg_0,
-    # cam_2/seg_0, cam_0/seg_1.  The remaining 5 segments must all
-    # have ts >= base_ts + 4.0 (cam_1/seg_1).
+    # The 5 oldest-by-ts evictees: cam_0/seg_0, cam_1/seg_0,
+    # cam_2/seg_0, cam_0/seg_1, cam_1/seg_1.
     remaining = [
         (cam_id, fname, ts)
         for cam_id, cache in _segment_cache.items()
         for fname, (_body, ts) in cache.items()
     ]
-    assert len(remaining) == 5
+    assert len(remaining) == 4
 
     # cam_0 should have lost both seg_0 and seg_1; only seg_2 remains.
     assert "segment_00000.ts" not in _segment_cache.get("cam_0", {})
     assert "segment_00001.ts" not in _segment_cache.get("cam_0", {})
     assert "segment_00002.ts" in _segment_cache.get("cam_0", {})
 
-    # cam_1 should have lost seg_0; seg_1 + seg_2 remain.
+    # cam_1 should have lost seg_0 AND seg_1 (low-water); seg_2 remains.
     assert "segment_00000.ts" not in _segment_cache.get("cam_1", {})
-    assert "segment_00001.ts" in _segment_cache.get("cam_1", {})
+    assert "segment_00001.ts" not in _segment_cache.get("cam_1", {})
     assert "segment_00002.ts" in _segment_cache.get("cam_1", {})
+
+    # cam_2 keeps seg_1 + seg_2 (its seg_0 was 3rd-oldest).
+    assert "segment_00001.ts" in _segment_cache.get("cam_2", {})
+    assert "segment_00002.ts" in _segment_cache.get("cam_2", {})
 
 
 def test_global_cache_cap_no_op_when_under_budget(db):
