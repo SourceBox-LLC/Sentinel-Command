@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { useAuth } from "@clerk/clerk-react"
+import { useAuth, useOrganization } from "@clerk/clerk-react"
 import {
   clearAllNotifications,
   getNotifications,
@@ -25,6 +25,14 @@ const API_URL = import.meta.env.VITE_API_URL || ""
  */
 export function useNotifications() {
   const { getToken } = useAuth()
+  // getToken is referentially stable for the app's lifetime in
+  // clerk-react 5, so effects keyed only on it never re-run.  The
+  // bell must rebind when the user switches orgs — key everything on
+  // the active org id too, or the open SSE stream (authenticated at
+  // connect time with the OLD org's token) keeps feeding the previous
+  // org's notifications into the panel indefinitely.
+  const { organization } = useOrganization()
+  const orgId = organization?.id || null
   const [notifications, setNotifications] = useState([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [lastViewedAt, setLastViewedAt] = useState(null)
@@ -52,9 +60,17 @@ export function useNotifications() {
     } finally {
       setLoading(false)
     }
-  }, [getToken])
+    // orgId: a switch mints tokens for the new org — refetch under it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [getToken, orgId])
 
   useEffect(() => {
+    // Org switched (or first mount): drop the previous org's items
+    // immediately rather than showing them while the new fetch runs.
+    setNotifications([])
+    setUnreadCount(0)
+    setLastViewedAt(null)
+    setLoading(true)
     refresh()
   }, [refresh])
 
@@ -117,6 +133,12 @@ export function useNotifications() {
         reconnectTimer = setTimeout(connect, backoff)
         return
       }
+      // Cleanup may have run while we awaited the token — at that
+      // point `controller` was still null, so the abort() in cleanup
+      // had nothing to cancel.  Without this check we'd open a stream
+      // nothing can ever close (zombie subscriber: doubles events
+      // under StrictMode, leaks slots against the per-org SSE cap).
+      if (cancelled) return
 
       controller = new AbortController()
 
@@ -125,6 +147,10 @@ export function useNotifications() {
           headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
         })
+        if (cancelled) {
+          try { res.body?.cancel() } catch { /* already closed */ }
+          return
+        }
 
         if (!res.ok) {
           reconnectTimer = setTimeout(connect, backoff)
@@ -140,7 +166,7 @@ export function useNotifications() {
 
         while (true) {
           const { done, value } = await reader.read()
-          if (done) break
+          if (done || cancelled) break
 
           buffer += decoder.decode(value, { stream: true })
           const lines = buffer.split("\n")
@@ -186,7 +212,9 @@ export function useNotifications() {
       clearTimeout(reconnectTimer)
       controller?.abort()
     }
-  }, [getToken])
+    // orgId: tear down + reconnect the stream under the new org's token.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [getToken, orgId])
 
   return {
     notifications,

@@ -1,7 +1,10 @@
-import { useToasts } from '../hooks/useToasts.jsx'
+import { useToasts, useToastList } from '../hooks/useToasts.jsx'
 
 function ToastContainer() {
-    const { toasts, removeToast } = useToasts()
+    // The ONLY component that subscribes to the toast list — everything
+    // else takes the stable API context so toasts don't re-render them.
+    const toasts = useToastList()
+    const { removeToast } = useToasts()
     
     const getIcon = (type) => {
         switch (type) {

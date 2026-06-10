@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import Hls from "hls.js"
+// hls.js is dynamically imported inside the clip-playback effect (same
+// pattern as HlsPlayer): a static import here pulled the 508 KB /
+// 157 KB-gzip chunk into the IncidentsPage bundle, fetched and parsed
+// on EVERY /incidents visit before paint — even when no clip evidence
+// is ever opened.
 import { useAuth } from "@clerk/clerk-react"
 import {
   getIncident,
@@ -267,38 +271,50 @@ function EvidenceVideo({ incidentId, evidenceId, caption }) {
     const playlistUrl = incidentEvidencePlaylistUrl(incidentId, evidenceId)
     const ownOrigin = (import.meta.env.VITE_API_URL || "") || window.location.origin
 
-    if (!Hls.isSupported()) {
-      setError("HLS is not supported in this browser")
-      return undefined
+    const setupClip = async () => {
+      // Lazy-load hls.js — same pattern (and same cached chunk) as
+      // HlsPlayer, so opening a clip after visiting the dashboard is
+      // instant, and /incidents itself never pays the 157 KB gzip.
+      const { default: Hls } = await import("hls.js")
+      if (cancelled) return
+
+      if (!Hls.isSupported()) {
+        setError("HLS is not supported in this browser")
+        return
+      }
+
+      const hls = new Hls({
+        // Clip is a single short segment — VOD playback, no live tuning needed.
+        xhrSetup: (xhr, url) => {
+          const token = getCurrentToken()
+          // hls.js may resolve segment URIs inside the playlist to
+          // absolute URLs (matching ownOrigin) or hand us the relative
+          // form verbatim.  Accept both; skip third-party origins.
+          if (token && (url.startsWith(ownOrigin) || url.startsWith("/"))) {
+            xhr.setRequestHeader("Authorization", `Bearer ${token}`)
+            xhr.setRequestHeader("Cache-Control", "no-cache")
+          }
+        },
+        // VOD-friendly buffering for very short clips
+        maxBufferLength: 60,
+        maxMaxBufferLength: 60,
+      })
+      hlsRef.current = hls
+
+      hls.loadSource(playlistUrl)
+      hls.attachMedia(video)
+
+      hls.on(Hls.Events.ERROR, (_evt, data) => {
+        if (cancelled) return
+        if (data.fatal) {
+          setError(`Playback error: ${data.details || data.type}`)
+          try { hls.destroy() } catch { /* noop */ }
+        }
+      })
     }
 
-    const hls = new Hls({
-      // Clip is a single short segment — VOD playback, no live tuning needed.
-      xhrSetup: (xhr, url) => {
-        const token = getCurrentToken()
-        // hls.js may resolve segment URIs inside the playlist to
-        // absolute URLs (matching ownOrigin) or hand us the relative
-        // form verbatim.  Accept both; skip third-party origins.
-        if (token && (url.startsWith(ownOrigin) || url.startsWith("/"))) {
-          xhr.setRequestHeader("Authorization", `Bearer ${token}`)
-          xhr.setRequestHeader("Cache-Control", "no-cache")
-        }
-      },
-      // VOD-friendly buffering for very short clips
-      maxBufferLength: 60,
-      maxMaxBufferLength: 60,
-    })
-    hlsRef.current = hls
-
-    hls.loadSource(playlistUrl)
-    hls.attachMedia(video)
-
-    hls.on(Hls.Events.ERROR, (_evt, data) => {
-      if (cancelled) return
-      if (data.fatal) {
-        setError(`Playback error: ${data.details || data.type}`)
-        try { hls.destroy() } catch { /* noop */ }
-      }
+    setupClip().catch((err) => {
+      if (!cancelled) setError(err?.message || "Failed to load player")
     })
 
     return () => {

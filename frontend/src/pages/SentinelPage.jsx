@@ -199,8 +199,10 @@ function SentinelPage() {
     getCameras(getToken)
       .then(res => {
         if (cancelled) return
-        // /api/cameras returns { cameras: [...] }
-        setCameras(Array.isArray(res?.cameras) ? res.cameras : [])
+        // /api/cameras returns a BARE ARRAY (see backend list_cameras);
+        // accept the wrapped shape too in case the API ever changes.
+        const list = Array.isArray(res) ? res : res?.cameras
+        setCameras(Array.isArray(list) ? list : [])
       })
       .catch(() => {
         // Non-fatal — scope panel renders an empty state

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react"
-import { useAuth } from "@clerk/clerk-react"
+import { useAuth, useOrganization } from "@clerk/clerk-react"
 import { useToasts } from "./useToasts.jsx"
 
 const API_URL = import.meta.env.VITE_API_URL || ""
@@ -18,6 +18,13 @@ const API_URL = import.meta.env.VITE_API_URL || ""
  */
 export function useMotionAlerts(cameras) {
   const { getToken } = useAuth()
+  // Key the subscription to the active org — getToken is referentially
+  // stable in clerk-react 5, so without orgId in the deps an org
+  // switch would leave the OLD org's motion stream connected and
+  // toasting (with raw camera ids, since the cameras map is the new
+  // org's).  Same rationale as useNotifications.
+  const { organization } = useOrganization()
+  const orgId = organization?.id || null
   const { showToast } = useToasts()
   const abortRef = useRef(null)
   // Keep cameras ref current so the SSE callback always sees the latest
@@ -47,6 +54,12 @@ export function useMotionAlerts(cameras) {
         reconnectTimer = setTimeout(connect, backoff)
         return
       }
+      // Cleanup may have fired during the token await (StrictMode
+      // double-mount, org switch, page nav) — abortRef pointed at the
+      // PREVIOUS controller then, so without this check we'd open a
+      // stream that nothing can abort (zombie: duplicate toasts, a
+      // leaked slot against the per-org SSE cap).
+      if (cancelled) return
 
       const controller = new AbortController()
       abortRef.current = controller
@@ -56,6 +69,10 @@ export function useMotionAlerts(cameras) {
           headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
         })
+        if (cancelled) {
+          try { res.body?.cancel() } catch { /* already closed */ }
+          return
+        }
 
         if (!res.ok) {
           reconnectTimer = setTimeout(connect, backoff)
@@ -72,7 +89,7 @@ export function useMotionAlerts(cameras) {
 
         while (true) {
           const { done, value } = await reader.read()
-          if (done) break
+          if (done || cancelled) break
 
           buffer += decoder.decode(value, { stream: true })
           const lines = buffer.split("\n")
@@ -115,5 +132,7 @@ export function useMotionAlerts(cameras) {
       clearTimeout(reconnectTimer)
       abortRef.current?.abort()
     }
-  }, [getToken, showToast])
+    // orgId: tear down + reconnect the stream under the new org's token.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [getToken, showToast, orgId])
 }

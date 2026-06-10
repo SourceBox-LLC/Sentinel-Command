@@ -11,6 +11,30 @@ import NodeStorageBar from "../components/NodeStorageBar.jsx"
 import CameraRecordingControls from "../components/CameraRecordingControls.jsx"
 import HelpTooltip from "../components/HelpTooltip.jsx"
 
+// Module-level constant: ~418 IANA zone names.  Rebuilding this array
+// (and its 418 <option> children) inside render meant every re-render
+// of this 1,400-line page — at least one per 30s nodes poll, plus every
+// toast and plan tick — re-invoked Intl.supportedValuesOf and re-diffed
+// the whole dropdown.  The zone list cannot change without a browser
+// update, so compute it exactly once.
+const TIMEZONE_OPTIONS =
+  typeof Intl !== "undefined" && Intl.supportedValuesOf
+    ? Intl.supportedValuesOf("timeZone")
+    : [
+        "UTC",
+        "America/Los_Angeles",
+        "America/Denver",
+        "America/Chicago",
+        "America/New_York",
+        "America/Sao_Paulo",
+        "Europe/London",
+        "Europe/Paris",
+        "Europe/Berlin",
+        "Asia/Tokyo",
+        "Asia/Singapore",
+        "Australia/Sydney",
+      ]
+
 function formatRelativeTime(dateString) {
   if (!dateString) return ""
   const date = new Date(dateString)
@@ -114,9 +138,20 @@ function SettingsPage() {
       loadNodes()
       loadSettings()
       loadGroups()
-      // Poll nodes every 30s to detect status changes
-      const interval = setInterval(loadNodes, 30000)
-      return () => clearInterval(interval)
+      // Poll nodes every 30s to detect status changes — skipped while
+      // the tab is hidden (invisible data, non-free requests); refresh
+      // immediately on return so the page is never stale on focus.
+      const interval = setInterval(() => {
+        if (!document.hidden) loadNodes()
+      }, 30000)
+      const onVisible = () => {
+        if (!document.hidden) loadNodes()
+      }
+      document.addEventListener("visibilitychange", onVisible)
+      return () => {
+        clearInterval(interval)
+        document.removeEventListener("visibilitychange", onVisible)
+      }
     }
   }, [organization])
 
@@ -325,7 +360,12 @@ function SettingsPage() {
     if (!organization) return
 
     try {
-      setNodesLoading(true)
+      // Spinner only on the FIRST load.  Setting it on every 30s poll
+      // unmounted the whole Camera Nodes section (including every
+      // recording-policy control) to a spinner mid-edit — open
+      // dropdowns closed and partially-entered schedule times were
+      // discarded each cycle.
+      if (!prevNodesRef.current) setNodesLoading(true)
       const token = await getToken()
       // Parallel fetch of nodes and cameras — cameras are needed for
       // the per-camera recording-policy controls inside each node card.
@@ -1112,26 +1152,10 @@ function SettingsPage() {
               cursor: timezoneSaving ? "wait" : "pointer",
             }}
           >
-            {/* List built from Intl.supportedValuesOf when available
-                (Chrome 99+, Firefox 99+, Safari 15.4+).  Falls back
-                to a curated list of common zones for older browsers. */}
-            {(typeof Intl !== "undefined" && Intl.supportedValuesOf
-              ? Intl.supportedValuesOf("timeZone")
-              : [
-                  "UTC",
-                  "America/Los_Angeles",
-                  "America/Denver",
-                  "America/Chicago",
-                  "America/New_York",
-                  "America/Sao_Paulo",
-                  "Europe/London",
-                  "Europe/Paris",
-                  "Europe/Berlin",
-                  "Asia/Tokyo",
-                  "Asia/Singapore",
-                  "Australia/Sydney",
-                ]
-            ).map((tz) => (
+            {/* TIMEZONE_OPTIONS is a module-level constant — see its
+                definition at the top of the file for why it must not
+                be rebuilt per render. */}
+            {TIMEZONE_OPTIONS.map((tz) => (
               <option key={tz} value={tz}>
                 {tz}
               </option>

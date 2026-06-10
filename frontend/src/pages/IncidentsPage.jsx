@@ -120,10 +120,19 @@ export default function IncidentsPage() {
     }
 
     load()
-    const interval = setInterval(load, POLL_INTERVAL_MS)
+    // Hidden tabs skip the poll (two endpoints per tick for data
+    // nobody's looking at); refresh on return to focus.
+    const interval = setInterval(() => {
+      if (!document.hidden) load()
+    }, POLL_INTERVAL_MS)
+    const onVisible = () => {
+      if (!document.hidden) load()
+    }
+    document.addEventListener("visibilitychange", onVisible)
     return () => {
       cancelled = true
       clearInterval(interval)
+      document.removeEventListener("visibilitychange", onVisible)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [organization, filter])

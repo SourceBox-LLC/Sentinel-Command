@@ -1,4 +1,4 @@
-import { useState, useCallback, memo } from "react"
+import { useState, useCallback, useEffect, useRef, memo } from "react"
 import { useAuth } from "@clerk/clerk-react"
 import { requestSnapshot, setRecording } from "../services/api"
 import { useToasts } from "../hooks/useToasts.jsx"
@@ -14,8 +14,26 @@ function CameraCard({
   const { showToast } = useToasts()
   const [snapshotLoading, setSnapshotLoading] = useState(false)
   const [snapshotMsg, setSnapshotMsg] = useState(null)
-  const [recording, setRecordingState] = useState(false)
+  // Initialized from the server's view, not a blind `false`: after a
+  // refresh — or when policy/another admin started recording — the
+  // status badge said "recording" while this button still read
+  // "Record" (and clicking sent recording:true to an already-recording
+  // camera).
+  const [recording, setRecordingState] = useState(camera.status === "recording")
   const [recordLoading, setRecordLoading] = useState(false)
+
+  // Resync from the server when ITS value changes (5s poll), same
+  // last-server-value ref pattern as CameraRecordingControls: only a
+  // genuine status transition overwrites the local optimistic state,
+  // so our own just-clicked toggle isn't clobbered by a stale poll.
+  const serverRecording = camera.status === "recording"
+  const lastServerRecordingRef = useRef(serverRecording)
+  useEffect(() => {
+    if (serverRecording !== lastServerRecordingRef.current) {
+      lastServerRecordingRef.current = serverRecording
+      setRecordingState(serverRecording)
+    }
+  }, [serverRecording])
 
   const takeSnapshot = useCallback(async () => {
     setSnapshotLoading(true)

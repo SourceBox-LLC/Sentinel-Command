@@ -19,6 +19,10 @@ function HlsPlayer({ cameraId, cameraName }) {
     // Holds the pending backoff setTimeout id between a fatal NETWORK_ERROR
     // and its retry, so unmount can cancel an in-flight retry.
     const retryRef = useRef(null)
+    // Teardown fn for the visibility/viewport load gate (listeners +
+    // IntersectionObserver are created inside the async setup, so the
+    // effect cleanup reaches them through this ref).
+    const gateCleanupRef = useRef(null)
     const { getCurrentToken, refreshNow, ready } = useSharedToken()
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
@@ -171,6 +175,11 @@ function HlsPlayer({ cameraId, cameraName }) {
                         // beginning of the buffer.
                         hls.startLoad(-1)
                         video.play().catch(() => { })
+                        // If the tab was hidden (or the tile off-screen)
+                        // before the manifest even parsed, gate
+                        // immediately — don't burn viewer-hours warming
+                        // up a stream nobody can see.
+                        applyLoadGate()
                     })
 
                     // If the player falls too far behind live, snap back.
@@ -245,6 +254,51 @@ function HlsPlayer({ cameraId, cameraName }) {
                         lastTime = video.currentTime
                     }, 1000)
                     stallRef.current = stallCheck
+
+                    // ── Billing-aware load gating ─────────────────────
+                    // Every segment fetch meters the org's PAID monthly
+                    // viewer-hours.  Without gating, a dashboard left
+                    // open in a hidden tab overnight kept all N cameras
+                    // streaming to nobody (a Free org's whole 30 h/mo
+                    // cap gone in one night), and a 25-camera grid kept
+                    // fetching for tiles scrolled far below the fold.
+                    // stopLoad() halts playlist+segment fetches but
+                    // keeps the instance alive; startLoad(-1) resumes at
+                    // the live edge instantly on return.
+                    let pageHidden = document.hidden
+                    let offScreen = false
+                    const applyLoadGate = () => {
+                        if (hlsRef.current !== hls) return  // destroyed/replaced
+                        if (pageHidden || offScreen) {
+                            hls.stopLoad()
+                            video.pause()
+                        } else {
+                            hls.startLoad(-1)
+                            video.play().catch(() => { })
+                        }
+                    }
+                    const onVisibility = () => {
+                        pageHidden = document.hidden
+                        applyLoadGate()
+                    }
+                    document.addEventListener("visibilitychange", onVisibility)
+                    let intersection = null
+                    if (typeof IntersectionObserver !== "undefined") {
+                        intersection = new IntersectionObserver((entries) => {
+                            // ratio 0 = fully out of viewport.  Any sliver
+                            // visible keeps the stream warm so scrolling
+                            // back is instant.
+                            offScreen = entries[0]
+                                ? entries[0].intersectionRatio === 0
+                                : false
+                            applyLoadGate()
+                        }, { threshold: 0 })
+                        intersection.observe(video)
+                    }
+                    gateCleanupRef.current = () => {
+                        document.removeEventListener("visibilitychange", onVisibility)
+                        intersection?.disconnect()
+                    }
 
                     hls.on(Hls.Events.ERROR, (event, data) => {
                         if (!data.fatal) return
@@ -328,6 +382,10 @@ function HlsPlayer({ cameraId, cameraName }) {
             // Block the late branch in setupHls (post-await) from running
             // its setup if the dynamic import hasn't resolved yet.
             cancelled = true
+            if (gateCleanupRef.current) {
+                gateCleanupRef.current()
+                gateCleanupRef.current = null
+            }
             if (stallRef.current) {
                 clearInterval(stallRef.current)
                 stallRef.current = null

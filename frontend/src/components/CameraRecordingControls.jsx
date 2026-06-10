@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useAuth } from "@clerk/clerk-react"
 import { updateCameraRecordingPolicy, assignCameraGroup } from "../services/api"
 import HelpTooltip from "./HelpTooltip.jsx"
@@ -70,6 +70,34 @@ function CameraRecordingControls({
   // as "(no group)" — backend stores group_id as nullable FK.
   const [localGroupId, setLocalGroupId] = useState(camera.group_id ?? null)
   const [savingGroup, setSavingGroup] = useState(false)
+
+  // Resync the local mirrors when the SERVER value genuinely changes
+  // (Settings polls every 30s; an MCP agent can flip recording policy
+  // out from under us).  useState initializers run once, so without
+  // this an external change would never render — and the next local
+  // edit would PATCH the full stale snapshot back, silently reverting
+  // it.  We compare against the last-seen server value in a ref (NOT
+  // "resync whenever not saving"): the optimistic local value must
+  // survive the window where our own save has landed but the parent
+  // hasn't re-propped yet — only an actual prop transition wins.
+  const policyKey = `${policy.continuous_24_7}|${policy.scheduled_recording}|${policy.scheduled_start}|${policy.scheduled_end}`
+  const lastServerPolicyRef = useRef(policyKey)
+  useEffect(() => {
+    if (policyKey !== lastServerPolicyRef.current) {
+      lastServerPolicyRef.current = policyKey
+      setLocal(policy)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [policyKey])
+
+  const serverGroupId = camera.group_id ?? null
+  const lastServerGroupRef = useRef(serverGroupId)
+  useEffect(() => {
+    if (serverGroupId !== lastServerGroupRef.current) {
+      lastServerGroupRef.current = serverGroupId
+      setLocalGroupId(serverGroupId)
+    }
+  }, [serverGroupId])
 
   const persist = async (next) => {
     const previous = local

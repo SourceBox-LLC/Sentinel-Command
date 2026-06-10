@@ -110,27 +110,46 @@ function McpPage() {
   // real credentials instead of the `osc_your_key_here` placeholder.
   const [pastedKey, setPastedKey] = useState("")
 
+  // Derived BOOLEAN for effect deps — usePlanInfo refreshes every 60s
+  // and stores a fresh object each time, so depending on the planInfo
+  // object identity made these effects tear down and re-run (SSE
+  // reconnect + full activity refetch) every minute for the life of
+  // the page.  The boolean only flips when admin access actually
+  // changes.
+  const hasAdminFeature = !!planInfo?.features?.includes("admin")
+
   // Load initial activity data + start polling
   useEffect(() => {
-    if (!organization || !planInfo?.features?.includes("admin")) return
+    if (!organization || !hasAdminFeature) return
 
     loadActivity()
     loadSessions()
     loadStats()
 
-    // Poll sessions + stats every 10s.
+    // Poll sessions + stats every 10s — skipped while hidden.
     const interval = setInterval(() => {
+      if (document.hidden) return
       loadSessions()
       loadStats()
     }, 10000)
+    const onVisible = () => {
+      if (!document.hidden) {
+        loadSessions()
+        loadStats()
+      }
+    }
+    document.addEventListener("visibilitychange", onVisible)
 
-    return () => clearInterval(interval)
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener("visibilitychange", onVisible)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [organization, planInfo])
+  }, [organization, hasAdminFeature])
 
   // SSE stream for real-time events
   useEffect(() => {
-    if (!organization || !planInfo?.features?.includes("admin")) return
+    if (!organization || !hasAdminFeature) return
 
     let cancelled = false
     let reader = null
@@ -138,11 +157,21 @@ function McpPage() {
     const connectSSE = async () => {
       try {
         const token = await getToken()
+        if (cancelled) return
         const response = await fetch(`${API_URL}/api/mcp/activity/stream`, {
           headers: { Authorization: `Bearer ${token}` },
         })
 
-        if (!response.ok || cancelled) return
+        if (cancelled) {
+          try { response.body?.cancel() } catch { /* already closed */ }
+          return
+        }
+        if (!response.ok) {
+          // Server said no (restart, 429, transient 5xx) — retry rather
+          // than silently leaving the feed dead for the page's lifetime.
+          setTimeout(() => { if (!cancelled) connectSSE() }, 5000)
+          return
+        }
 
         setSseConnected(true)
         reader = response.body.getReader()
@@ -172,6 +201,13 @@ function McpPage() {
             }
           }
         }
+        // Graceful server close (deploy, idle timeout): the read loop
+        // exits with done=true and no exception.  Without this branch
+        // the "LIVE" badge stayed lit over a dead feed forever.
+        if (!cancelled) {
+          setSseConnected(false)
+          setTimeout(() => { if (!cancelled) connectSSE() }, 5000)
+        }
       } catch (err) {
         if (!cancelled) {
           console.error("[MCP SSE] Connection error:", err)
@@ -189,7 +225,8 @@ function McpPage() {
       setSseConnected(false)
       if (reader) reader.cancel().catch(() => {})
     }
-  }, [organization, planInfo])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [organization, hasAdminFeature])
 
   // Auto-scroll event feed
   useEffect(() => {
@@ -276,6 +313,11 @@ function McpPage() {
   }
 
   const handleCreate = async () => {
+    // Re-entrancy guard — the Enter-key handler on the name input calls
+    // this directly, and only the BUTTON is disabled while creating.
+    // Two quick Enters fired two POSTs: the second response overwrote
+    // createdKey, leaving an active key whose secret was never shown.
+    if (creating) return
     if (!newKeyName.trim()) return
     if (scopeMode === "custom" && scopeTools.length === 0) {
       showToast("Select at least one tool for custom scope", "error")

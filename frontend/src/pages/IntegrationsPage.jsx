@@ -42,6 +42,11 @@ function IntegrationsPage() {
   }
 
   const handleCreate = async () => {
+    // Re-entrancy guard — Enter on the name input calls this directly
+    // and only the button is disabled while a create is in flight; a
+    // double Enter would mint a second key and overwrite the one-time
+    // secret display of the first.
+    if (creating) return
     if (!newKeyName.trim()) return
     setCreating(true)
     try {
