@@ -634,6 +634,7 @@ def create_notification(
             from app.core.sentinel_dispatch import maybe_dispatch_for_notification
             maybe_dispatch_for_notification(
                 session, org_id=org_id, kind=kind, camera_id=camera_id,
+                meta=meta,
             )
         except Exception:
             logger.exception(

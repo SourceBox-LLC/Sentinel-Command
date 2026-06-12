@@ -494,6 +494,7 @@ def maybe_dispatch_for_notification(
     org_id: str,
     kind: str,
     camera_id: Optional[str] = None,
+    meta: Optional[dict] = None,
 ) -> Optional[SentinelRun]:
     """Called from create_notification() — best-effort dispatch.
 
@@ -503,6 +504,25 @@ def maybe_dispatch_for_notification(
     email channels).
     """
     try:
+        # Feedback-loop guard: incidents filed THROUGH MCP (which is how
+        # the Sentinel agent itself files them) must not re-trigger the
+        # incident_opened dispatcher.  Without this, motion → run →
+        # create_incident → incident_created notification → NEW run →
+        # another incident → … self-amplifies until the org's monthly
+        # run cap is burned (one all-member email per cycle for free).
+        # The "one-shot human action" assumption this trigger was built
+        # on stopped holding the day agents became incident authors.
+        if (
+            kind == "incident_created"
+            and meta is not None
+            and str(meta.get("created_by", "")).startswith(("mcp", "sentinel"))
+        ):
+            logger.debug(
+                "sentinel: dispatch skipped org=%s — agent-authored incident",
+                org_id,
+            )
+            return None
+
         cfg = db.query(SentinelConfig).filter_by(org_id=org_id).first()
         if cfg is None:
             return None  # No config = Sentinel never configured = no dispatch

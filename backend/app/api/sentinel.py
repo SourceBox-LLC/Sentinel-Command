@@ -509,7 +509,12 @@ async def post_run_complete(
     """
     if body.outcome not in _VALID_TERMINAL_OUTCOMES:
         raise HTTPException(400, f"invalid outcome: {body.outcome!r}")
-    if body.outcome == "incident" and body.severity not in ("low", "medium", "high"):
+    # "critical" included: the MCP create_incident enum (and the agent's
+    # own prompt) allow it — rejecting it here 400'd exactly the
+    # highest-urgency completions, downgrading those runs to error.
+    if body.outcome == "incident" and body.severity not in (
+        "low", "medium", "high", "critical",
+    ):
         raise HTTPException(400, "severity required for outcome=incident")
 
     row = db.query(SentinelRun).filter_by(id=run_id).first()
@@ -580,13 +585,21 @@ async def post_run_start(
     if row is None:
         raise HTTPException(404, "run not found")
     if row.outcome != "pending":
-        # Already past pending — accept idempotently.
-        return row.to_dict(include_trace=False)
+        # Already past pending — accept idempotently, but tell the
+        # caller it did NOT win the claim.  Without this flag, two
+        # overlapping wakeup drains both got an indistinguishable 200
+        # and both ran the full (expensive) agent loop → duplicate
+        # incidents + double LLM spend.
+        result = row.to_dict(include_trace=False)
+        result["claimed"] = False
+        return result
     row.outcome = "running"
     row.started_at = datetime.now(tz=UTC).replace(tzinfo=None)
     db.commit()
     db.refresh(row)
-    return row.to_dict(include_trace=False)
+    result = row.to_dict(include_trace=False)
+    result["claimed"] = True
+    return result
 
 
 # /runs/pending lives above (registered BEFORE /runs/{run_id} due to

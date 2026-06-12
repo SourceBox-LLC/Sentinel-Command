@@ -9,6 +9,7 @@ Rate limited per API key based on org plan.
 
 import asyncio
 import base64
+import binascii
 import collections
 import contextvars
 import functools
@@ -52,6 +53,24 @@ _ctx_org_id = contextvars.ContextVar("mcp_org_id", default="")
 _ctx_key_name = contextvars.ContextVar("mcp_key_name", default="")
 
 # ---------------------------------------------------------------------------
+# Abuse bounds on agent-supplied content.  Rate limits allow thousands of
+# calls/day, and agent arguments are LLM-generated (prompt-injectable) —
+# without size/count caps a looping agent can write multi-MB markdown per
+# call into the shared SQLite file until the disk fills for every org.
+# Generous for legitimate use; ToolError (not truncation) so the agent
+# learns the boundary.
+# ---------------------------------------------------------------------------
+_MAX_SUMMARY_CHARS = 2_000
+_MAX_OBSERVATION_CHARS = 8_000
+_MAX_REPORT_CHARS = 64_000
+_MAX_NOTE_CHARS = 500
+_MAX_INCIDENTS_PER_ORG_PER_DAY = 200
+# attach_clip assembles raw .ts bytes in memory and stores them as one
+# BLOB row; 60s × 2MB segments could reach ~120 MB per call on the
+# 1 GiB VM.  Cap the assembled clip; oldest segments are dropped first.
+_MAX_CLIP_BYTES = 32 * 1024 * 1024
+
+# ---------------------------------------------------------------------------
 # Per-key tool scoping — canonical classification of every MCP tool.
 # A key's scope_mode + scope_tools (on McpApiKey) is evaluated against these
 # sets by ScopeMiddleware below to gate discovery and invocation.
@@ -92,6 +111,13 @@ MCP_WRITE_TOOLS: frozenset[str] = frozenset({
 })
 
 MCP_ALL_TOOLS: frozenset[str] = MCP_READ_TOOLS | MCP_WRITE_TOOLS
+
+# Tools the autonomous Sentinel agent may NOT invoke (see the agent
+# branch in ScopeMiddleware._lookup_allowed).  Config writes only —
+# incident authoring stays available.
+_AGENT_DENIED_TOOLS: frozenset[str] = frozenset({
+    "set_camera_recording_policy",
+})
 
 
 def compute_allowed_tools(scope_mode: str | None, scope_tools: list[str] | None) -> frozenset[str]:
@@ -264,6 +290,19 @@ class ScopeMiddleware(Middleware):
         raw_key = auth.split(" ", 1)[1].strip()
         if not raw_key:
             return None
+
+        # Sentinel-agent path: the multi-org autonomous agent's LLM is
+        # steered by attacker-influenceable content (camera names,
+        # on-screen text), so its reachable tool set must exclude
+        # CONFIG WRITES.  "Disable recording, then report all clear" is
+        # the canonical prompt-injection against a camera product —
+        # investigation tools (read + incident authoring) are all the
+        # agent legitimately needs.  Per-org user keys keep their own
+        # scope semantics below.
+        agent_key = settings.SENTINEL_AGENT_MCP_KEY
+        if agent_key and hmac.compare_digest(raw_key, agent_key):
+            return MCP_ALL_TOOLS - _AGENT_DENIED_TOOLS
+
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
 
         db = SessionLocal()
@@ -551,16 +590,23 @@ def tracked(func):
                 result = await func(*args, **kwargs)
                 org_id = _ctx_org_id.get("")
                 key_name = _ctx_key_name.get("")
-                tracker.log_event(McpEvent(
-                    id=event_id,
-                    timestamp=start,
-                    tool_name=tool_name,
-                    org_id=org_id,
-                    key_name=key_name,
-                    status="completed",
-                    duration_ms=round((time.time() - start) * 1000),
-                    args_summary=args_summary or None,
-                ))
+                # Tracking is observability, not the work: a tracker
+                # failure here must NOT convert a COMPLETED call into a
+                # raised error (the incident/evidence is already
+                # committed — the agent would wrongly retry).
+                try:
+                    tracker.log_event(McpEvent(
+                        id=event_id,
+                        timestamp=start,
+                        tool_name=tool_name,
+                        org_id=org_id,
+                        key_name=key_name,
+                        status="completed",
+                        duration_ms=round((time.time() - start) * 1000),
+                        args_summary=args_summary or None,
+                    ))
+                except Exception:
+                    logger.exception("mcp activity tracking failed (tool succeeded)")
                 return result
             except Exception as e:
                 org_id = _ctx_org_id.get("")
@@ -588,16 +634,21 @@ def tracked(func):
                 result = func(*args, **kwargs)
                 org_id = _ctx_org_id.get("")
                 key_name = _ctx_key_name.get("")
-                tracker.log_event(McpEvent(
-                    id=event_id,
-                    timestamp=start,
-                    tool_name=tool_name,
-                    org_id=org_id,
-                    key_name=key_name,
-                    status="completed",
-                    duration_ms=round((time.time() - start) * 1000),
-                    args_summary=args_summary or None,
-                ))
+                # See async variant above: tracker failure must not
+                # convert a completed call into an error.
+                try:
+                    tracker.log_event(McpEvent(
+                        id=event_id,
+                        timestamp=start,
+                        tool_name=tool_name,
+                        org_id=org_id,
+                        key_name=key_name,
+                        status="completed",
+                        duration_ms=round((time.time() - start) * 1000),
+                        args_summary=args_summary or None,
+                    ))
+                except Exception:
+                    logger.exception("mcp activity tracking failed (tool succeeded)")
                 return result
             except Exception as e:
                 org_id = _ctx_org_id.get("")
@@ -756,7 +807,15 @@ async def view_camera(
         raise ToolError(str(e)) from e
 
     image_b64 = _extract_snapshot_image_b64(result, camera_id)
-    return Image(data=base64.b64decode(image_b64), format="jpeg")
+    try:
+        return Image(data=base64.b64decode(image_b64), format="jpeg")
+    except (ValueError, binascii.Error) as e:
+        # Malformed base64 from a buggy/old CloudNode — actionable
+        # message instead of a masked internal error.
+        raise ToolError(
+            f"Camera '{camera_id}' returned corrupt snapshot data ({e}). "
+            "Update the CloudNode and retry."
+        ) from e
 
 
 @mcp.tool(
@@ -1277,7 +1336,13 @@ async def _capture_snapshot_bytes(
         raise ToolError(str(e)) from e
 
     image_b64 = _extract_snapshot_image_b64(result, camera_id)
-    return base64.b64decode(image_b64), node_id
+    try:
+        return base64.b64decode(image_b64), node_id
+    except (ValueError, binascii.Error) as e:
+        raise ToolError(
+            f"Camera '{camera_id}' returned corrupt snapshot data ({e}). "
+            "Update the CloudNode and retry."
+        ) from e
 
 
 @mcp.tool(
@@ -1311,9 +1376,33 @@ def create_incident(
         raise ToolError("title is required")
     if not summary.strip():
         raise ToolError("summary is required")
+    if len(summary) > _MAX_SUMMARY_CHARS:
+        raise ToolError(
+            f"summary too long ({len(summary)} chars; max {_MAX_SUMMARY_CHARS}). "
+            "Put detail in the report via finalize_incident."
+        )
 
     org_id, db = _auth()
     try:
+        # Per-org daily creation cap — a looping or prompt-injected agent
+        # writing incidents at the rate limit (5K-30K calls/day) would
+        # bloat the shared SQLite file and bury the inbox.  Generous
+        # bound: no legitimate workflow files anywhere near this many.
+        day_start = datetime.now(tz=UTC).replace(
+            hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+        )
+        created_today = (
+            db.query(Incident)
+            .filter(Incident.org_id == org_id, Incident.created_at >= day_start)
+            .count()
+        )
+        if created_today >= _MAX_INCIDENTS_PER_ORG_PER_DAY:
+            raise ToolError(
+                f"Daily incident-creation cap reached "
+                f"({_MAX_INCIDENTS_PER_ORG_PER_DAY}/day). Update an existing "
+                "incident instead, or wait until tomorrow."
+            )
+
         if camera_id:
             cam = (
                 db.query(Camera)
@@ -1355,7 +1444,16 @@ def create_incident(
                 audience="all",
                 link=f"/incidents/{incident.id}",
                 camera_id=camera_id,
-                meta={"incident_id": incident.id, "severity": severity},
+                # created_by lets the Sentinel dispatcher refuse to
+                # re-trigger on agent-authored incidents — without it,
+                # motion → run → create_incident → incident_created →
+                # NEW run → … self-amplifies until the org's monthly
+                # run cap is burned to zero (with an email per cycle).
+                meta={
+                    "incident_id": incident.id,
+                    "severity": severity,
+                    "created_by": "mcp",
+                },
                 db=db,
             )
         except Exception:
@@ -1393,6 +1491,10 @@ def add_observation(
 ) -> dict:
     if not text.strip():
         raise ToolError("text is required")
+    if len(text) > _MAX_OBSERVATION_CHARS:
+        raise ToolError(
+            f"text too long ({len(text)} chars; max {_MAX_OBSERVATION_CHARS})."
+        )
 
     org_id, db = _auth()
     try:
@@ -1589,6 +1691,13 @@ def attach_clip(
 
     # Concatenate raw .ts bytes — MPEG-TS is byte-concat-safe (PCR timestamps
     # carry through) so the result plays end-to-end without remuxing.
+    # Enforce the byte cap by dropping OLDEST segments first (keep the
+    # most recent video — that's what the agent asked to capture).
+    truncated = False
+    total = sum(len(c) for c in chunks)
+    while chunks and total > _MAX_CLIP_BYTES:
+        total -= len(chunks.pop(0))
+        truncated = True
     blob = b"".join(chunks)
     segment_count = len(chunks)
     approx_duration = round(segment_count * _APPROX_SEGMENT_SECONDS, 1)
@@ -1618,11 +1727,20 @@ def attach_clip(
         if incident:
             incident.updated_at = datetime.now(tz=UTC).replace(tzinfo=None)
         db.commit()
-        db.refresh(evidence)
+        # NO db.refresh(evidence): refresh expires every attribute and
+        # re-SELECTs the row — including the just-written multi-MB blob,
+        # tripling peak memory for data we already hold.  The committed
+        # PK is populated by the flush; build the dict from knowns.
         result = evidence.to_dict()
         result["segment_count"] = segment_count
         result["approx_duration_seconds"] = approx_duration
         result["bytes"] = len(blob)
+        if truncated:
+            result["truncated"] = True
+            result["note"] = (
+                f"Clip truncated to the newest ~{approx_duration}s to fit the "
+                f"{_MAX_CLIP_BYTES // (1024 * 1024)} MB evidence cap."
+            )
         return result
     finally:
         db.close()
@@ -1700,7 +1818,20 @@ def update_incident(
         if severity is not None:
             incident.severity = severity
         if summary is not None:
+            if not summary.strip():
+                raise ToolError(
+                    "summary cannot be blank — pass None to leave it unchanged"
+                )
+            if len(summary) > _MAX_SUMMARY_CHARS:
+                raise ToolError(
+                    f"summary too long ({len(summary)} chars; "
+                    f"max {_MAX_SUMMARY_CHARS})"
+                )
             incident.summary = summary.strip()
+        if report is not None and len(report) > _MAX_REPORT_CHARS:
+            raise ToolError(
+                f"report too long ({len(report)} chars; max {_MAX_REPORT_CHARS})"
+            )
         if report is not None:
             incident.report = report.strip()
 
@@ -1733,6 +1864,10 @@ def finalize_incident(
 ) -> dict:
     if not report.strip():
         raise ToolError("report is required")
+    if len(report) > _MAX_REPORT_CHARS:
+        raise ToolError(
+            f"report too long ({len(report)} chars; max {_MAX_REPORT_CHARS})"
+        )
 
     org_id, db = _auth()
     try:
@@ -1743,6 +1878,15 @@ def finalize_incident(
         )
         if not incident:
             raise ToolError(f"Incident {incident_id} not found")
+        if incident.report:
+            # The tool contract says "the very FIRST report write"; a
+            # silent overwrite here destroys an existing report (use
+            # update_incident, which requires the full revised body the
+            # agent must already hold in context).
+            raise ToolError(
+                f"Incident {incident_id} already has a report. Use "
+                "update_incident with the full revised text to change it."
+            )
 
         incident.report = report.strip()
         incident.updated_at = datetime.now(tz=UTC).replace(tzinfo=None)
@@ -1952,7 +2096,16 @@ def get_incident_clip(
             raise ToolError(
                 f"Evidence {evidence_id} not found on incident {incident_id}"
             )
-        if evidence.kind != "clip" or evidence.data is None:
+        # Byte size via SQL — this is a METADATA tool; touching
+        # evidence.data (deferred) would pull the whole multi-MB blob
+        # out of SQLite just to measure it.
+        from sqlalchemy import func as _sa_func
+        byte_len = (
+            db.query(_sa_func.length(IncidentEvidence.data))
+            .filter(IncidentEvidence.id == evidence_id)
+            .scalar()
+        )
+        if evidence.kind != "clip" or byte_len is None:
             raise ToolError(
                 f"Evidence {evidence_id} is not a clip with attached video data"
             )
@@ -1975,7 +2128,7 @@ def get_incident_clip(
         d.update({
             "mime": base_mime,
             "approx_duration_seconds": approx_duration,
-            "bytes": len(evidence.data),
+            "bytes": byte_len,
             "playback_hint": (
                 "A human reviewer can play this clip from the dashboard's "
                 "incident detail view; agents cannot watch video directly."

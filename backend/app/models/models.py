@@ -13,7 +13,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import deferred, relationship
 
 from app.core.database import Base
 
@@ -203,14 +203,26 @@ class Setting(Base):
         return {k: found.get(k, default) for k, default in keys_defaults.items()}
 
     @staticmethod
-    def set(db, org_id: str, key: str, value: str):
+    def set(db, org_id: str, key: str, value: str, *, commit: bool = True):
+        """Upsert one setting.
+
+        ``commit=False`` for multi-write flows (the Clerk webhook
+        handler) that need a SINGLE terminal commit: the default
+        auto-commit made the handler's "process-then-mark, retry-safe"
+        idempotency story an illusion — every Setting.set persisted
+        immediately, so a raise midway left plan settings committed
+        while camera enable/disable state and the ProcessedWebhook
+        marker were not.  Callers passing commit=False must flush()
+        before any reader that needs the value in-transaction.
+        """
         setting = db.query(Setting).filter_by(org_id=org_id, key=key).first()
         if setting:
             setting.value = value
         else:
             setting = Setting(org_id=org_id, key=key, value=value)
             db.add(setting)
-        db.commit()
+        if commit:
+            db.commit()
         return setting
 
 
@@ -537,7 +549,15 @@ class IncidentEvidence(Base):
     kind = Column(String(20), nullable=False)  # "snapshot" | "observation" | "action"
     text = Column(Text, nullable=True)
     camera_id = Column(String(100), nullable=True)
-    data = Column(LargeBinary, nullable=True)
+    # deferred(): clips run to ~tens of MB each, and EVERY consumer of
+    # Incident.to_dict() (list_incidents, get_incident, update/finalize,
+    # the dashboard REST list) touches the evidence relationship just to
+    # COUNT it — without deferral that materialized every blob of every
+    # listed incident into RAM (multi-GB on the 1 GiB VM from one plain
+    # read call).  Deferred columns load lazily on attribute access, so
+    # the blob-serving paths (evidence streaming, clip playback) work
+    # unchanged while counts stay light.
+    data = deferred(Column(LargeBinary, nullable=True))
     data_mime = Column(String(50), nullable=True)
     timestamp = Column(DateTime, default=lambda: datetime.now(tz=UTC).replace(tzinfo=None))
 
@@ -545,13 +565,18 @@ class IncidentEvidence(Base):
 
     def to_dict(self) -> dict:
         # Never inline blob bytes — clients fetch them separately.
+        # has_data via data_mime, NOT self.data: `data` is deferred(),
+        # so touching it here would lazy-load the multi-MB blob per row
+        # — recreating exactly the bulk-materialization the deferral
+        # exists to prevent.  attach_snapshot/attach_clip always set
+        # data_mime together with data; observations set neither.
         return {
             "id": self.id,
             "incident_id": self.incident_id,
             "kind": self.kind,
             "text": self.text,
             "camera_id": self.camera_id,
-            "has_data": self.data is not None,
+            "has_data": self.data_mime is not None,
             "data_mime": self.data_mime,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
         }

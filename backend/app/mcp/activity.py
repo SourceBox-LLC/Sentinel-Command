@@ -83,6 +83,9 @@ class McpActivityTracker:
         self._subscribers: dict[str, list[asyncio.Queue]] = {}
         self._lock = threading.Lock()
         self._total_calls: dict[str, int] = {}  # org_id -> total call count
+        # Event loop the SSE subscribers live on — captured at subscribe
+        # time so worker-thread publishers can call_soon_threadsafe.
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def log_event(self, event: McpEvent):
         """Log a tool call event and notify subscribers."""
@@ -108,22 +111,45 @@ class McpActivityTracker:
         self._notify(event)
 
     def _notify(self, event: McpEvent):
-        """Push event to all SSE subscribers for this org."""
-        queues = self._subscribers.get(event.org_id, [])
-        dead = []
-        for q in queues:
+        """Push event to all SSE subscribers for this org.
+
+        Most MCP tools are sync ``def``s run on anyio WORKER threads, so
+        this is usually called OFF the event loop — and ``asyncio.Queue``
+        is not thread-safe (its waiter wakeup uses non-threadsafe
+        ``call_soon``, so a cross-thread ``put_nowait`` can delay or in
+        rare interleavings break delivery).  Publish via
+        ``call_soon_threadsafe`` when a loop is registered; snapshot the
+        subscriber list under the lock so a concurrent subscribe/
+        unsubscribe can't mutate it mid-iteration.
+        """
+        with self._lock:
+            queues = list(self._subscribers.get(event.org_id, []))
+        if not queues:
+            return
+
+        loop = self._loop
+        def _deliver():
+            dead = []
+            for q in queues:
+                try:
+                    q.put_nowait(event)
+                except asyncio.QueueFull:
+                    dead.append(q)
+            if dead:
+                with self._lock:
+                    for q in dead:
+                        try:
+                            self._subscribers[event.org_id].remove(q)
+                        except (ValueError, KeyError):
+                            pass
+
+        if loop is not None and not loop.is_closed():
             try:
-                q.put_nowait(event)
-            except asyncio.QueueFull:
-                dead.append(q)
-        # Clean up any dead queues
-        if dead:
-            with self._lock:
-                for q in dead:
-                    try:
-                        self._subscribers[event.org_id].remove(q)
-                    except (ValueError, KeyError):
-                        pass
+                loop.call_soon_threadsafe(_deliver)
+                return
+            except RuntimeError:
+                pass  # loop shutting down — fall through to best-effort
+        _deliver()
 
     def subscribe(self, org_id: str, cap: int = MAX_SSE_SUBSCRIBERS_PER_ORG) -> Optional[asyncio.Queue]:
         """Create a new SSE subscription for an org.
@@ -143,6 +169,12 @@ class McpActivityTracker:
                 return None
             q: asyncio.Queue = asyncio.Queue(maxsize=100)
             existing.append(q)
+            # Capture the subscriber's loop so worker-thread publishers
+            # (_notify) can hand events over via call_soon_threadsafe.
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                pass
         logger.info("[Activity] New SSE subscriber for org %s (%d/%d)",
                      org_id, len(existing), cap)
         return q
