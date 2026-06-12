@@ -79,8 +79,13 @@ sync_schema(engine, Base.metadata)
 # Indexes declared on models AFTER their table first shipped never get
 # created by create_all (it skips existing tables entirely) — several
 # hot-path composites were missing in prod because of this.  See
-# migrations.sync_indexes.
-sync_indexes(engine, Base.metadata)
+# migrations.sync_indexes.  Deliberately NOT called here at import
+# time: CREATE INDEX on a large table holds the SQLite write lock for
+# however long the build takes, and this module imports BEFORE uvicorn
+# binds — on the single-machine `immediate` deploy, exceeding Fly's
+# 30s health grace would fail the only machine with nothing serving.
+# It runs as a post-startup background step in `lifespan` below;
+# queries are merely slower (not wrong) until it completes.
 
 # NOTE: ``drop_orphan_tables`` and ``sanitize_existing_codecs`` USED to
 # run here on every boot.  Both are one-shot fixes for problems that
@@ -190,7 +195,27 @@ SENTINEL_REAPER_INTERVAL_SECONDS = int(
 @asynccontextmanager
 async def lifespan(app):
     """Application lifespan: startup and shutdown hooks."""
+    from concurrent.futures import ThreadPoolExecutor
+
     from app.core.email_worker import email_worker_loop
+
+    # Dedicated, adequately-sized default executor.  asyncio's default on
+    # this 1-vCPU VM is min(32, cpus+4) = 5 threads — shared between the
+    # PER-REQUEST to_thread'd Clerk auth (every authed request) and
+    # multi-second background jobs (log cleanup's bulk DELETEs, live
+    # Clerk plan lookups, offline sweep).  A JWKS refresh with its
+    # 10-retry ladder coinciding with the daily cleanup could tie up
+    # most of the pool and serialize request auth for every tenant.
+    asyncio.get_running_loop().set_default_executor(
+        ThreadPoolExecutor(max_workers=24, thread_name_prefix="cc-exec")
+    )
+
+    # Index sync — moved out of import time (see the comment at the
+    # sync_schema call): runs here so /api/health answers immediately
+    # while any large CREATE INDEX builds in a worker thread.
+    index_sync_task = asyncio.create_task(
+        asyncio.to_thread(sync_indexes, engine, Base.metadata)
+    )
 
     cleanup_task = asyncio.create_task(_log_cleanup_loop())
     offline_sweep_task = asyncio.create_task(_offline_sweep_loop())
@@ -230,6 +255,7 @@ async def lifespan(app):
     )
     async with mcp_app.lifespan(app):
         yield
+    index_sync_task.cancel()
     cleanup_task.cancel()
     offline_sweep_task.cancel()
     viewer_usage_task.cancel()
@@ -1447,6 +1473,23 @@ if static_dir.exists():
                     {"error": "Too many requests. Slow down and retry shortly."},
                     status_code=429,
                     headers={"Retry-After": "60"},
+                )
+            # Body-size gate BEFORE FastMCP buffers the request: this
+            # path is pre-auth (rate-limited 600/min/IP) and otherwise
+            # uncapped — large JSON-RPC bodies are free memory burn on
+            # the 1 GiB VM and the transport for oversized tool args.
+            # 2 MB dwarfs any legitimate tool call (text args are
+            # server-capped far lower).
+            content_length = request.headers.get("content-length")
+            try:
+                if content_length is not None and int(content_length) > 2 * 1024 * 1024:
+                    return JSONResponse(
+                        {"error": "Request body too large (max 2 MB)."},
+                        status_code=413,
+                    )
+            except ValueError:
+                return JSONResponse(
+                    {"error": "Invalid Content-Length."}, status_code=400,
                 )
             return await call_next(request)
 

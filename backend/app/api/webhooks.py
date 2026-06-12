@@ -143,11 +143,17 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
         if org_id:
             from app.core.plans import invalidate_effective_plan_cache
             plan_slug = get_active_plan_slug(data.get("items", []))
-            invalidate_effective_plan_cache(org_id)
+            # Distinguish "an item is genuinely ACTIVE" from "a canceled
+            # item is still paid-through": both yield a paid slug, but
+            # only the former means a real (re-)subscription.
+            has_active_item = any(
+                i.get("status") == "active" and (i.get("plan") or {}).get("slug")
+                for i in data.get("items", [])
+            )
             limit = PLAN_MEMBER_LIMITS.get(plan_slug, PLAN_MEMBER_LIMITS["free_org"])
             set_org_member_limit(org_id, limit)
             # Persist plan in DB so API-key-authenticated endpoints can look it up
-            Setting.set(db, org_id, "org_plan", plan_slug)
+            Setting.set(db, org_id, "org_plan", plan_slug, commit=False)
             # If the subscription is now on a paid plan, clear any lingering
             # past-due flag. Clerk only emits subscription.active/updated once
             # the payment has actually gone through, so seeing this event with
@@ -157,11 +163,21 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
             # that upgrades *during* the grace window stays capped at free
             # because effective_plan_for_caps still sees past_due=true.
             if plan_slug in PAID_PLAN_SLUGS_WEBHOOK:
-                Setting.set(db, org_id, "payment_past_due", "false")
-                Setting.set(db, org_id, "payment_past_due_at", "")
-                # Re-subscribe / un-cancel: an active paid item supersedes
-                # any pending scheduled cancellation.
-                Setting.set(db, org_id, "plan_cancel_pending", "")
+                Setting.set(db, org_id, "payment_past_due", "false", commit=False)
+                Setting.set(db, org_id, "payment_past_due_at", "", commit=False)
+                if has_active_item:
+                    # Re-subscribe / un-cancel: an ACTIVE paid item
+                    # supersedes any pending scheduled cancellation.  A
+                    # canceled-but-paid-through snapshot must NOT clear
+                    # the flag — Clerk emits subscription.updated right
+                    # alongside subscriptionItem.canceled, and erasing
+                    # the marker here made it unreliable for any future
+                    # "cancels at period end" banner.
+                    Setting.set(db, org_id, "plan_cancel_pending", "", commit=False)
+            # Invalidate AFTER the writes (and just before the flush the
+            # cap re-evaluation reads) so a concurrent reader can't
+            # re-prime the cache with the old plan in the gap.
+            invalidate_effective_plan_cache(org_id)
             # Re-evaluate camera cap — a plan change (up or down) may flip
             # rows in either direction. Flushing the Setting first ensures
             # `resolve_org_plan` inside enforce_camera_cap reads the new value.
@@ -186,13 +202,14 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
         item_slug = (data.get("plan") or {}).get("slug")
         if org_id and item_slug in PLAN_MEMBER_LIMITS:
             from app.core.plans import invalidate_effective_plan_cache
-            invalidate_effective_plan_cache(org_id)
             set_org_member_limit(org_id, PLAN_MEMBER_LIMITS[item_slug])
-            Setting.set(db, org_id, "org_plan", item_slug)
-            Setting.set(db, org_id, "plan_cancel_pending", "")
+            Setting.set(db, org_id, "org_plan", item_slug, commit=False)
+            Setting.set(db, org_id, "plan_cancel_pending", "", commit=False)
             if item_slug in PAID_PLAN_SLUGS_WEBHOOK:
-                Setting.set(db, org_id, "payment_past_due", "false")
-                Setting.set(db, org_id, "payment_past_due_at", "")
+                Setting.set(db, org_id, "payment_past_due", "false", commit=False)
+                Setting.set(db, org_id, "payment_past_due_at", "", commit=False)
+            # After the writes — see the subscription.* branch.
+            invalidate_effective_plan_cache(org_id)
             db.flush()
             result = enforce_camera_cap(db, org_id)
             if result["changed"]:
@@ -216,11 +233,12 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
             # the 7-day grace clock every cycle — an org with a dead card
             # could ride paid caps indefinitely.
             from app.core.plans import invalidate_effective_plan_cache
-            invalidate_effective_plan_cache(org_id)
             already_past_due = (
                 Setting.get(db, org_id, "payment_past_due", "false") == "true"
             )
-            Setting.set(db, org_id, "payment_past_due", "true")
+            Setting.set(db, org_id, "payment_past_due", "true", commit=False)
+            # After the write — see the subscription.* branch.
+            invalidate_effective_plan_cache(org_id)
             if not already_past_due:
                 # Clerk billing payloads use snake_case epoch-MILLISECOND
                 # ints for *_at fields; normalize to ISO so
@@ -237,7 +255,7 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
                     except (TypeError, ValueError):
                         # Already a string timestamp — keep as-is.
                         past_due_at = str(raw_at)
-                Setting.set(db, org_id, "payment_past_due_at", past_due_at)
+                Setting.set(db, org_id, "payment_past_due_at", past_due_at, commit=False)
             logger.warning("Org %s subscription is past due — payment failed", org_id)
 
     # ── Payment attempt result ──────────────────────────────────────
@@ -248,8 +266,12 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
             # Payment succeeded — clear past-due flag and also the
             # timestamp so a future past-due event starts a fresh grace
             # window rather than counting from whenever the old one began.
-            Setting.set(db, org_id, "payment_past_due", "false")
-            Setting.set(db, org_id, "payment_past_due_at", "")
+            Setting.set(db, org_id, "payment_past_due", "false", commit=False)
+            Setting.set(db, org_id, "payment_past_due_at", "", commit=False)
+            # This branch previously never invalidated — a 30s-stale
+            # "free_org" effective plan could outlive the payment fix.
+            from app.core.plans import invalidate_effective_plan_cache
+            invalidate_effective_plan_cache(org_id)
             # Re-run enforcement so any cameras that got suspended when
             # the grace window expired come back online immediately.
             # effective_plan_for_caps now returns the nominal plan again.
@@ -275,7 +297,7 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
             # a paid-through month on day 1, and turning a scheduled
             # pro_plus→pro downgrade into a drop to FREE.  Record the
             # pending cancel for UI/banners and leave entitlements alone.
-            Setting.set(db, org_id, "plan_cancel_pending", "true")
+            Setting.set(db, org_id, "plan_cancel_pending", "true", commit=False)
             logger.info(
                 "Org %s cancellation scheduled — plan retained until period end",
                 org_id,
@@ -309,12 +331,13 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
                     "defaulting to free until the reconciler verifies",
                     org_id,
                 )
-            invalidate_effective_plan_cache(org_id)
             limit = PLAN_MEMBER_LIMITS.get(live_slug, PLAN_MEMBER_LIMITS["free_org"])
             set_org_member_limit(org_id, limit)
-            Setting.set(db, org_id, "org_plan", live_slug)
-            Setting.set(db, org_id, "plan_cancel_pending", "")
-            Setting.set(db, org_id, "payment_past_due", "false")
+            Setting.set(db, org_id, "org_plan", live_slug, commit=False)
+            Setting.set(db, org_id, "plan_cancel_pending", "", commit=False)
+            Setting.set(db, org_id, "payment_past_due", "false", commit=False)
+            # After the writes — see the subscription.* branch.
+            invalidate_effective_plan_cache(org_id)
             # Suspend over-cap cameras for the new (possibly lower) tier.
             # Rows are preserved (not deleted) so a re-subscribe immediately
             # re-enables them without any reconfiguration.
