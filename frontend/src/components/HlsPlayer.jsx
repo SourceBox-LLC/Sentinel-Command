@@ -153,6 +153,14 @@ function HlsPlayer({ cameraId, cameraName }) {
                     // Tear down all timers + the hls instance.  Used by the
                     // give-up branches and the non-recoverable default case.
                     const stopPlayback = () => {
+                        if (gateCleanupRef.current) {
+                            // Drop the visibility listener + observer too —
+                            // they survive give-up otherwise (inert thanks
+                            // to the hlsRef guard, but still leaked until
+                            // unmount/Retry).
+                            gateCleanupRef.current()
+                            gateCleanupRef.current = null
+                        }
                         if (stallRef.current) {
                             clearInterval(stallRef.current)
                             stallRef.current = null
@@ -171,14 +179,13 @@ function HlsPlayer({ cameraId, cameraName }) {
                     hls.on(Hls.Events.MANIFEST_PARSED, () => {
                         setLoading(false)
                         setIsLive(true)
-                        // Start playback from the live edge, not from the
-                        // beginning of the buffer.
-                        hls.startLoad(-1)
-                        video.play().catch(() => { })
-                        // If the tab was hidden (or the tile off-screen)
-                        // before the manifest even parsed, gate
-                        // immediately — don't burn viewer-hours warming
-                        // up a stream nobody can see.
+                        // applyLoadGate is the single start/stop path:
+                        // when visible it starts from the live edge and
+                        // plays; when the tab is hidden (or the tile
+                        // off-screen) before the manifest even parsed,
+                        // it gates immediately — no viewer-hours burned
+                        // warming a stream nobody can see, and no
+                        // redundant double startLoad(-1).
                         applyLoadGate()
                     })
 

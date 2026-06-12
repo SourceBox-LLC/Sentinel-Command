@@ -33,7 +33,9 @@ function AppSidebar({ open, onClose }) {
       label: "Admin",
       ...(hasAdminFeature ? {} : { locked: true, badge: "PRO", badgeClass: "nav-pro-badge" }),
     },
-    { to: "/mcp", label: "MCP" },
+    // Admin-gated like Settings/Admin — the /mcp route is RequireAdmin,
+    // so showing it to members just silently bounced them to /dashboard.
+    isAdmin && { to: "/mcp", label: "MCP" },
     // No PRO lock — Home Assistant integration is available on every tier.
     isAdmin && { to: "/integrations", label: "Integrations" },
     isAdmin && { to: "/incidents", label: "Incidents" },

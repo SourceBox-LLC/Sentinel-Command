@@ -151,7 +151,7 @@ describe('InstallCloudNodeCard', () => {
     })
     expect(downloadLink).toBeInTheDocument()
     expect(downloadLink.getAttribute('href')).toMatch(
-      /\/downloads\/windows\/x64$/,
+      /\/downloads\/windows\/x86_64$/,
     )
   })
 

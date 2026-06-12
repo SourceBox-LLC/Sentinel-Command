@@ -84,20 +84,33 @@ function AddNodeModal({ isOpen, onClose, onCreate }) {
   }
 
   const handleClose = () => {
+    // Don't close while the create is in flight: the node is still
+    // created server-side (silently burning a plan slot), and the late
+    // setCredentials/setStep(2) would leak the earlier node's one-time
+    // key into the next open of this still-mounted modal.
+    if (loading) return
     setStep(1)
     setError(null)
     setCredentials(null)
     onClose()
   }
 
+  // Once the one-time credentials are showing, require the explicit
+  // Done button — an accidental overlay click would discard a key that
+  // can only be recovered by rotating.
+  const handleDismissAttempt = () => {
+    if (step === 2) return
+    handleClose()
+  }
+
   if (!isOpen) return null
 
   return (
-    <div className="modal-overlay" onClick={handleClose}>
+    <div className="modal-overlay" onClick={handleDismissAttempt}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2>{step === 1 ? "Add Camera Node" : "Node Created"}</h2>
-          <button className="modal-close" onClick={handleClose}>&times;</button>
+          <button className="modal-close" onClick={handleDismissAttempt}>&times;</button>
         </div>
 
         {step === 1 && (

@@ -22,6 +22,9 @@ vi.mock('@clerk/clerk-react', () => ({
   useAuth: () => ({
     getToken: () => Promise.resolve('test-jwt'),
   }),
+  // The panel is org-keyed now (cross-tab org switches must refresh
+  // this compliance surface).
+  useOrganization: () => ({ organization: { id: 'org_test' } }),
 }))
 
 const mockGetOrgAuditLogs = vi.fn()

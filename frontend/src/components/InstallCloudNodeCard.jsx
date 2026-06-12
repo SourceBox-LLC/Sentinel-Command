@@ -127,8 +127,11 @@ function WindowsInstructions({ creds }) {
       </p>
 
       <div className="install-command-row">
+        {/* MUST be x86_64 — the backend's arch allow-list rejects
+            "x64" with a JSON 404, which made this button (the
+            highest-drop-off onboarding moment) a dead link. */}
         <a
-          href={`${ORIGIN}/downloads/windows/x64`}
+          href={`${ORIGIN}/downloads/windows/x86_64`}
           className="btn btn-primary install-download-btn"
         >
           ↓ Download CloudNode for Windows

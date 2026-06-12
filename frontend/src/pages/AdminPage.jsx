@@ -1,10 +1,9 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Link } from "react-router-dom"
 import { useAuth, useOrganization } from "@clerk/clerk-react"
-import { getStreamLogs, getStreamStats, getNodes, getMcpLogs, getMcpLogStats, downloadStreamLogsCsv, downloadMcpLogsCsv } from "../services/api"
+import { getStreamLogs, getStreamStats, getCameras, getMcpLogs, getMcpLogStats, downloadStreamLogsCsv, downloadMcpLogsCsv } from "../services/api"
 import { useToasts } from "../hooks/useToasts.jsx"
 import { usePlanInfo } from "../hooks/usePlanInfo.jsx"
-import UpgradeModal from "../components/UpgradeModal.jsx"
 import OrgAuditLogPanel from "../components/OrgAuditLogPanel.jsx"
 import AdminKpiStrip from "../components/AdminKpiStrip.jsx"
 import AdminTabs from "../components/AdminTabs.jsx"
@@ -19,7 +18,7 @@ function AdminPage() {
   const { planInfo, loading: planLoading } = usePlanInfo()
   const [logs, setLogs] = useState([])
   const [stats, setStats] = useState(null)
-  const [nodes, setNodes] = useState([])
+  const [cameras, setCameras] = useState([])
   const [loading, setLoading] = useState(true)
   const [statsLoading, setStatsLoading] = useState(true)
 
@@ -46,6 +45,12 @@ function AdminPage() {
   })
   const [mcpTotal, setMcpTotal] = useState(0)
   const [mcpDays, setMcpDays] = useState(7)
+  // Read by the SSE stream callback — a ref so filter changes don't
+  // force a stream teardown and the callback never sees stale values.
+  const mcpFiltersRef = useRef(mcpFilters)
+  useEffect(() => {
+    mcpFiltersRef.current = mcpFilters
+  }, [mcpFilters])
 
   // Active tab in the log strip — Stream / Audit / MCP swap into the
   // single panel below the KPI strip rather than all three stacking.
@@ -55,30 +60,39 @@ function AdminPage() {
   // small "Live" indicator in the MCP Tool Activity section header.
   const [sseConnected, setSseConnected] = useState(false)
 
+  // Stable boolean for effect deps — depending on the planInfo OBJECT
+  // re-fired every loader and tore down the SSE stream on each 60s
+  // plan refresh (viewer-hours tick changes the payload while anyone
+  // watches video).
+  const hasAdminFeature = !!planInfo?.features?.includes("admin")
+
   // Only load audit data once we know the plan allows it
   useEffect(() => {
-    if (planInfo && planInfo.features?.includes("admin")) {
-      loadNodes()
+    if (hasAdminFeature) {
+      loadCameras()
       loadLogs()
       loadStats()
       loadMcpLogs()
       loadMcpStats()
     }
-  }, [planInfo])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [organization?.id, hasAdminFeature])
 
   useEffect(() => {
-    if (organization && planInfo?.features?.includes("admin")) {
+    if (organization && hasAdminFeature) {
       loadLogs()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters])
 
-  const loadNodes = async () => {
+  const loadCameras = async () => {
     try {
       const token = await getToken()
-      const data = await getNodes(() => Promise.resolve(token))
-      setNodes(data)
+      const data = await getCameras(() => Promise.resolve(token))
+      // /api/cameras returns a bare array of camera dicts.
+      if (Array.isArray(data)) setCameras(data)
     } catch (err) {
-      console.error("Failed to load nodes:", err)
+      console.error("Failed to load cameras:", err)
     }
   }
 
@@ -218,6 +232,7 @@ function AdminPage() {
         while (!cancelled) {
           const { done, value } = await reader.read()
           if (done) break
+          if (document.hidden) continue  // drain but don't render while hidden
 
           buffer += decoder.decode(value, { stream: true })
           const lines = buffer.split("\n")
@@ -238,17 +253,36 @@ function AdminPage() {
                     : data.timestamp,
                 _isNew: true,
               }
-              setMcpLogs((prev) => {
-                if (prev.some((p) => p.id === log.id)) return prev
-                return [log, ...prev]
-              })
-              // Best-effort tab-count bump — next loadMcpLogs will
-              // reconcile against the persisted count.
-              setMcpTotal((t) => t + 1)
+              // Skip live prepends when a filter or pagination offset is
+              // active — the event may not match the filtered view, and
+              // landing rows mid-page corrupts what the admin is reading.
+              const filtered =
+                mcpFiltersRef.current.tool_name ||
+                mcpFiltersRef.current.status ||
+                mcpFiltersRef.current.key_name ||
+                mcpFiltersRef.current.offset > 0
+              if (!filtered) {
+                setMcpLogs((prev) => {
+                  if (prev.some((p) => p.id === log.id)) return prev
+                  // Bounded: a chatty agent (10 calls/s) must not grow
+                  // the array for the lifetime of the tab.
+                  return [log, ...prev].slice(0, mcpFiltersRef.current.limit)
+                })
+                // Best-effort tab-count bump — next loadMcpLogs will
+                // reconcile against the persisted count.
+                setMcpTotal((t) => t + 1)
+              }
             } catch {
               /* ignore parse errors */
             }
           }
+        }
+        // Graceful server close (deploy/proxy) exits the loop with no
+        // exception — without this the LIVE badge stayed lit forever
+        // over a dead feed.
+        if (!cancelled) {
+          setSseConnected(false)
+          reconnectTimer = setTimeout(connect, 5000)
         }
       } catch (err) {
         if (!cancelled) {
@@ -268,7 +302,8 @@ function AdminPage() {
       if (reader) reader.cancel().catch(() => {})
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [organization, planInfo])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [organization?.id, hasAdminFeature])
 
   const handleMcpFilterChange = (key, value) => {
     setMcpFilters(prev => ({ ...prev, [key]: value, offset: 0 }))
@@ -424,9 +459,9 @@ function AdminPage() {
               onChange={(e) => handleFilterChange("camera_id", e.target.value)}
             >
               <option value="">All Cameras</option>
-              {nodes.map(node => (
-                <option key={node.node_id} value={node.node_id}>
-                  {node.name || `Node ${node.node_id}`}
+              {cameras.map(cam => (
+                <option key={cam.camera_id} value={cam.camera_id}>
+                  {cam.name || cam.camera_id}
                 </option>
               ))}
             </select>
@@ -497,15 +532,9 @@ function AdminPage() {
                 >
                   Previous
                 </button>
-                {Array.from({ length: pageCount }, (_, i) => (
-                  <button
-                    key={i}
-                    className={currentPage === i + 1 ? "active" : ""}
-                    onClick={() => handlePageChange(i * filters.limit)}
-                  >
-                    {i + 1}
-                  </button>
-                ))}
+                <span className="pagination-status">
+                  Page {currentPage} of {pageCount}
+                </span>
                 <button
                   onClick={() => handlePageChange(filters.offset + filters.limit)}
                   disabled={filters.offset + filters.limit >= total}

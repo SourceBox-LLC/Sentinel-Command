@@ -583,14 +583,15 @@ async function _downloadFile(
   })
   if (!response.ok) {
     if (response.status === 401) _handleUnauthorized()
-    // Try to surface the API's error envelope so the toast in the
-    // caller can show something useful (rate-limit detail, 403, etc.)
-    let detail = `HTTP ${response.status}`
+    // Surface the API's error envelope via the SAME parser the JSON
+    // client uses — `body?.detail` alone produced "[object Object]"
+    // toasts for structured envelopes (422 arrays, ApiError objects).
+    let body = null
     try {
-      const body = await response.json()
-      detail = body?.detail || body?.message || detail
-    } catch { /* not JSON — keep status code */ }
-    throw new Error(detail)
+      body = await response.json()
+    } catch { /* not JSON — fall through to status code */ }
+    if (body !== null) throw parseErrorBody(body, response.status)
+    throw new Error(`HTTP ${response.status}`)
   }
 
   // Pull filename from Content-Disposition; fall back to caller default.

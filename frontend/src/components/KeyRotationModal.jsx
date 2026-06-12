@@ -26,19 +26,33 @@ function KeyRotationModal({ isOpen, onClose, node, onRotate }) {
   }
 
   const handleClose = () => {
+    // Never close while the rotation is in flight: the request still
+    // completes server-side (old key already invalidated — the node
+    // drops offline while the user believes they cancelled), and the
+    // late setCredentials would leak THIS node's new key into the next
+    // open of the still-mounted modal.
+    if (loading) return
     setCredentials(null)
     setError(null)
     onClose()
   }
 
+  // Overlay/× clicks must not silently discard a one-time key — the
+  // only recovery is rotating again.  Require the explicit Done button
+  // once credentials are showing.
+  const handleDismissAttempt = () => {
+    if (credentials) return
+    handleClose()
+  }
+
   if (!isOpen) return null
 
   return (
-    <div className="modal-overlay" onClick={handleClose}>
+    <div className="modal-overlay" onClick={handleDismissAttempt}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2>{credentials ? "API Key Rotated" : "Rotate API Key"}</h2>
-          <button className="modal-close" onClick={handleClose}>&times;</button>
+          <button className="modal-close" onClick={handleDismissAttempt}>&times;</button>
         </div>
 
         {!credentials ? (

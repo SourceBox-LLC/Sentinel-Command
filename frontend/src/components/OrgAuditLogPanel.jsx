@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { useAuth } from "@clerk/clerk-react"
+import { useAuth, useOrganization } from "@clerk/clerk-react"
 import {
   getOrgAuditLogs,
   downloadOrgAuditLogsCsv,
@@ -93,6 +93,8 @@ function formatEvent(event) {
 
 export default function OrgAuditLogPanel() {
   const { getToken } = useAuth()
+  const { organization } = useOrganization()
+  const orgId = organization?.id || null
   const { showToast } = useToasts()
 
   const [logs, setLogs] = useState([])
@@ -142,8 +144,12 @@ export default function OrgAuditLogPanel() {
     }
     load()
     return () => { cancelled = true }
+    // orgId: a cross-tab org switch syncs into this tab WITHOUT
+    // navigation — without the dep this compliance surface kept
+    // rendering the previous org's audit rows under the new org's
+    // chrome until a filter was touched.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters])
+  }, [filters, orgId])
 
   const handleFilterChange = (key, value) => {
     // Reset offset whenever a filter changes — paging into a row

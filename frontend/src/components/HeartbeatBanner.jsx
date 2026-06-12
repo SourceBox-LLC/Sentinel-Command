@@ -80,6 +80,18 @@ function HeartbeatBanner() {
     let cancelled = false
 
     const tick = async () => {
+      // The 10-minute onboarding window is enforced HERE, not just at
+      // marker-read time: once the marker was in state, nothing ever
+      // re-checked expiry, so an installer that never ran kept this
+      // banner polling getNode every 5s for the life of the tab.
+      if (Date.now() - marker.created_at > RECENT_WINDOW_MS) {
+        clearMarker(orgId)
+        setMarker(null)
+        return
+      }
+      // Skip fetches while hidden — the banner is invisible; the next
+      // visible tick (≤5s away) catches up.
+      if (document.hidden) return
       // Update the stalled flag first so even a failed fetch still flips
       // the banner copy at the right time.
       if (!cancelled) {
