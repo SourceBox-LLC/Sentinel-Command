@@ -124,7 +124,9 @@ async def get_mcp_logs(
     tool_name: Optional[str] = None,
     key_name: Optional[str] = None,
     status: Optional[str] = None,
-    limit: int = Query(default=100, le=500),
+    # ge=1: SQLite treats LIMIT -1 as "no limit" — without the lower
+    # bound, ?limit=-1 materializes the org's whole retention window.
+    limit: int = Query(default=100, ge=1, le=500),
     # OFFSET is O(n) — cap so no one can force SQLite to skip billions.
     offset: int = Query(default=0, ge=0, le=1_000_000),
     # ``format=csv`` switches to a streaming CSV download with the

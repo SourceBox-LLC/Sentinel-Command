@@ -472,7 +472,7 @@ async def post_manual_run(
 # ── POST /api/sentinel/runs/{id}/complete (agent → CC) ──────────────
 class RunCompleteBody(BaseModel):
     outcome: str  # incident | no_action | error
-    severity: Optional[str] = None  # low | medium | high (only when outcome=incident)
+    severity: Optional[str] = None  # low | medium | high | critical (only when outcome=incident)
     incident_id: Optional[int] = None
     summary: str = Field("", max_length=8000)
     tool_call_count: int = 0

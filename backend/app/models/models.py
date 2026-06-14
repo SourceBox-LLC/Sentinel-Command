@@ -1171,7 +1171,7 @@ class SentinelRun(Base):
     # Slice 1 used this column only for terminal outcomes; slice 2
     # widens it to cover the pending-run state machine.
     outcome = Column(String(20), nullable=False)
-    # Severity if outcome=incident: low | medium | high (else NULL)
+    # Severity if outcome=incident: low | medium | high | critical (else NULL)
     severity = Column(String(20), nullable=True)
     # Foreign reference to the filed incident (no FK constraint —
     # see class docstring).

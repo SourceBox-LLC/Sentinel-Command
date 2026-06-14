@@ -8599,6 +8599,15 @@ body {
     color: #f87171;
 }
 
+/* critical became reachable when /complete started accepting it —
+   without this rule the MOST urgent runs rendered with the default
+   (green, low-looking) chip. */
+.sentinel-outcome-chip-incident.sentinel-severity-critical {
+    background: rgba(220, 38, 38, 0.28);
+    color: #fca5a5;
+    box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.55);
+}
+
 .sentinel-outcome-chip-noop {
     background: rgba(255, 255, 255, 0.05);
     color: var(--text-muted);
@@ -8815,6 +8824,17 @@ body {
 .sentinel-timeline-dot-incident.sentinel-severity-high {
     background: #ef4444;
     box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.6), 0 0 10px rgba(239, 68, 68, 0.5);
+}
+
+.sentinel-timeline-dot-incident.sentinel-severity-critical {
+    background: #dc2626;
+    box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.7), 0 0 14px rgba(220, 38, 38, 0.65);
+    animation: sentinel-critical-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes sentinel-critical-pulse {
+    0%, 100% { box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.7), 0 0 14px rgba(220, 38, 38, 0.65); }
+    50% { box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.35), 0 0 20px rgba(220, 38, 38, 0.85); }
 }
 
 .sentinel-timeline-dot-noop {

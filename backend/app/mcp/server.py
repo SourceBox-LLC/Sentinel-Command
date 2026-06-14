@@ -493,7 +493,7 @@ def _resolve_via_agent_key(headers: dict, _agent_key: str) -> tuple[str, Session
     try:
         from app.core.plans import effective_plan_for_caps
         from app.core.sentinel_dispatch import SENTINEL_PLANS
-        from app.models.models import SentinelConfig
+        from app.models.models import SentinelConfig, SentinelRun
 
         # Sentinel is paid-only (Pro or Pro Plus); the dispatch gate,
         # the route gates, and this resolver all check the same set.
@@ -517,11 +517,33 @@ def _resolve_via_agent_key(headers: dict, _agent_key: str) -> tuple[str, Session
         # sentinel_config.enabled before creating a pending run, but
         # an operator could disable Sentinel between dispatch and
         # the agent picking it up.  Don't run tool calls for an org
-        # that's currently disabled.
+        # that's currently disabled — EXCEPT while a manual run is in
+        # flight: dispatch_manual_run deliberately allows one-off
+        # "Run now" checks on a paused agent (and the UI offers the
+        # button), so refusing tools here turned every such run into
+        # a junk error that still consumed a monthly-cap slot and the
+        # LLM spend.  The exemption is exactly as wide as the operator
+        # action: an org-scoped manual-trigger row currently running.
         cfg = db.query(SentinelConfig).filter_by(org_id=override_org).first()
-        if cfg is None or not cfg.enabled:
+        if cfg is None:
             db.close()
             raise ToolError("Sentinel disabled for this org")
+        if not cfg.enabled:
+            # NB: SentinelRun's unified state column is `outcome`
+            # (pending/running/terminal all live there) — there is no
+            # `status` column.
+            manual_in_flight = (
+                db.query(SentinelRun.id)
+                .filter_by(
+                    org_id=override_org,
+                    trigger_type="manual",
+                    outcome="running",
+                )
+                .first()
+            )
+            if manual_in_flight is None:
+                db.close()
+                raise ToolError("Sentinel disabled for this org")
 
         # Per-org bucket so agent traffic for org X doesn't throttle
         # org Y.  Distinct from per-osc-key buckets so direct dashboard

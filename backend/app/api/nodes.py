@@ -297,7 +297,17 @@ async def register_node(
             )
 
         existing_node.hostname = data.hostname or existing_node.hostname
-        existing_node.local_ip = data.local_ip or existing_node.local_ip
+        # local_ip doubles as the "LAN-reachable HLS" signal: the
+        # integration layer builds Home Assistant's LAN-direct stream
+        # URL from it.  A node that binds loopback-only (the Connected-
+        # mode default) reports lan_streaming=False — clear the IP so
+        # we never hand HA a connection-refused URL.  Old CloudNodes
+        # (< 0.1.73) don't send the field (None) → legacy keep-on-
+        # truthy behavior.
+        if data.lan_streaming is False:
+            existing_node.local_ip = None
+        else:
+            existing_node.local_ip = data.local_ip or existing_node.local_ip
         existing_node.http_port = data.http_port or existing_node.http_port
         existing_node.status = "online"
         existing_node.last_seen = datetime.now(tz=UTC).replace(tzinfo=None)
@@ -496,7 +506,15 @@ async def node_heartbeat(
 
     node.status = "online"
     node.last_seen = datetime.now(tz=UTC).replace(tzinfo=None)
-    node.local_ip = data.local_ip or node.local_ip
+    # See the register handler: lan_streaming=False means the node is
+    # loopback-bound and its HLS is NOT reachable on the LAN — clear
+    # local_ip so integration._local_stream_url stops advertising a
+    # dead URL to Home Assistant.  None (old node) keeps legacy
+    # keep-on-truthy behavior.
+    if data.lan_streaming is False:
+        node.local_ip = None
+    else:
+        node.local_ip = data.local_ip or node.local_ip
 
     # Persist filesystem-aware storage stats from CloudNode v0.1.41+.
     # Older nodes omit the block; we leave the existing values untouched
@@ -997,8 +1015,14 @@ async def rotate_api_key(
 ):
     """
     Rotate the API key for a node.
-    The old key is immediately invalidated.
-    CloudNode will be notified on next heartbeat.
+
+    The old key is immediately invalidated.  There is NO in-band
+    notification to the node: its next HTTP heartbeat / register / WS
+    reconnect simply 403s (auth runs before any response body; an
+    already-established WS session keeps flowing until it reconnects),
+    so the operator must re-run CloudNode setup with the new key —
+    which is what the rotation modal walks them through.  Active-disconnect on rotation was considered and
+    declined (not worth the plumbing at current scale).
     """
     node = db.query(CameraNode).filter_by(node_id=node_id, org_id=user.org_id).first()
     if not node:

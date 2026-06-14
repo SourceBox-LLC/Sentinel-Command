@@ -494,8 +494,17 @@ async def _handle_heartbeat(node_id: str, node_db_id: int, org_id: str, payload:
         if prev_node_status != "online":
             transitions.append(("node", node.node_id, node.name or node.node_id, "online", None))
 
+        # Mirrors the HTTP heartbeat's lan_streaming gate (nodes.py):
+        # local_ip doubles as the "LAN-reachable HLS" signal for Home
+        # Assistant, and a loopback-bound node must be able to CLEAR it.
+        # Without this gate here, the WS heartbeat (which runs alongside
+        # HTTP heartbeats every ~30s) kept re-populating the IP the HTTP
+        # path had just cleared — the advertised URL flapped dead/alive.
+        # Missing key (old node) → None → legacy keep-on-truthy.
         local_ip = payload.get("local_ip")
-        if local_ip:
+        if payload.get("lan_streaming") is False:
+            node.local_ip = None
+        elif local_ip:
             node.local_ip = local_ip
 
         cameras = payload.get("cameras", [])

@@ -812,3 +812,65 @@ class TestCapRemaining:
     def test_returns_zero_for_ineligible_plan(self, db):
         _set_org_plan(db, "org_t", "free_org")
         assert cap_remaining(db, "org_t") == 0
+
+
+# ── MCP agent-key resolver: paused-org manual-run exemption ──────
+
+
+class TestAgentResolverPausedManualExemption:
+    """_resolve_via_agent_key refuses tool calls for a Sentinel-disabled
+    org EXCEPT while a manual run is in flight — dispatch_manual_run
+    deliberately allows one-off "Run now" checks on a paused agent, and
+    the UI offers the button, so refusing tools mid-run turned every
+    such run into junk errors that still burned a monthly-cap slot and
+    the LLM spend.
+
+    Regression context: the exemption's first version filtered on a
+    nonexistent ``status`` column (SentinelRun's unified state field is
+    ``outcome``), so the query raised at build time and the resolver's
+    blanket except converted it to "Authentication error" — the
+    exemption was dead code and nothing caught it because this path had
+    zero test coverage.  These tests are that coverage.
+    """
+
+    def _resolve(self, org_id):
+        from app.mcp.server import _resolve_via_agent_key
+        return _resolve_via_agent_key(
+            {"x-agent-org-override": org_id}, "test-agent-key",
+        )
+
+    def test_paused_org_with_running_manual_run_is_allowed(self, db):
+        org = "org_paused_manual"
+        _set_org_plan(db, org, "pro")
+        db.add(SentinelConfig(org_id=org, enabled=False))
+        db.commit()
+        _make_run(db, org_id=org, trigger="manual", outcome="running")
+
+        resolved_org, resolver_db = self._resolve(org)
+        assert resolved_org == org
+        resolver_db.close()
+
+    def test_paused_org_without_manual_run_is_refused(self, db):
+        from fastmcp.exceptions import ToolError
+
+        org = "org_paused_idle"
+        _set_org_plan(db, org, "pro")
+        db.add(SentinelConfig(org_id=org, enabled=False))
+        db.commit()
+        # A running NON-manual run must not open the gate (motion runs
+        # on a disabled org are stale dispatches, exactly what the
+        # defence-in-depth check exists to stop).
+        _make_run(db, org_id=org, trigger="motion", outcome="running")
+
+        with pytest.raises(ToolError, match="disabled"):
+            self._resolve(org)
+
+    def test_enabled_org_resolves_without_any_run(self, db):
+        org = "org_enabled_normal"
+        _set_org_plan(db, org, "pro")
+        db.add(SentinelConfig(org_id=org, enabled=True))
+        db.commit()
+
+        resolved_org, resolver_db = self._resolve(org)
+        assert resolved_org == org
+        resolver_db.close()

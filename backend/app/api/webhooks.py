@@ -2,6 +2,7 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from svix.webhooks import Webhook, WebhookVerificationError
 
@@ -116,11 +117,9 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
     # so post-verify exactly one namespace is populated.  Clerk sends
     # `svix-*` today, but if it ever migrates to `webhook-*` the signature
     # would still verify while a `svix-id`-only read went None — that
-    # silently disables idempotency AND skips the gated commit below,
-    # which is the sole commit that persists enforce_camera_cap's
-    # disabled_by_plan flips (enforce_camera_cap leaves the commit to its
-    # caller).  An org that upgraded/cancelled would get its plan Setting
-    # written but its cameras left in the wrong enabled/disabled state.
+    # would silently disable idempotency (the business-write commit at
+    # the end of this handler is unconditional, so no state would be
+    # lost — re-delivery would just re-run the idempotent handlers).
     svix_msg_id = headers.get("svix-id") or headers.get("webhook-id")
     if svix_msg_id:
         already = (
@@ -554,17 +553,30 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
                 org_id, len(nodes), camera_count, counts,
             )
 
+    # Persist the handler's business writes FIRST, in their own commit.
+    # Every branch above stages via Setting.set(..., commit=False) /
+    # ORM mutations and leaves the commit to us — if THIS commit fails
+    # (lock timeout, disk full), we must raise so Svix sees a 5xx and
+    # retries.  It must NOT share a try/except with the dedup-marker
+    # insert below: an earlier version committed both together inside
+    # the marker's blanket except, which converted any commit failure
+    # into a silent rollback + 200 — the plan change was dropped and
+    # Svix never retried.
+    db.commit()
+
     # Mark this msg id as processed so Svix retries short-circuit.
     # Done at the end so a handler that raises midway doesn't record
     # itself as done — Svix retries, idempotent ops re-run, eventual
-    # consistency.
+    # consistency.  Only the dedup-unique-constraint race is benign;
+    # any other failure propagates (500 → Svix retry → idempotent
+    # re-run, since the marker was never recorded).
     if svix_msg_id:
         try:
             db.add(ProcessedWebhook(
                 svix_msg_id=svix_msg_id, event_type=event_type or "",
             ))
             db.commit()
-        except Exception:
+        except IntegrityError:
             # Race: another worker recorded the same id between our
             # check and our insert.  Unique-constraint failure is
             # benign — both runs produce the same final state and the

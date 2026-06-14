@@ -73,6 +73,11 @@ class NodeRegister(BaseModel):
     hostname: Optional[str] = Field(None, max_length=255)
     local_ip: Optional[str] = Field(None, max_length=45)
     http_port: Optional[int] = Field(8080, ge=1, le=65535)
+    # Whether the node's local HLS server is reachable on the LAN
+    # (bind != loopback).  False → CC clears local_ip so the Home
+    # Assistant integration never gets a connection-refused stream
+    # URL.  None → old CloudNode that predates the field.
+    lan_streaming: Optional[bool] = None
     cameras: Optional[list[CameraReport]] = []
     video_codec: Optional[str] = Field(None, max_length=50)
     audio_codec: Optional[str] = Field(None, max_length=50)
@@ -113,6 +118,10 @@ class NodeStorageStats(BaseModel):
 class NodeHeartbeat(BaseModel):
     node_id: str = Field(..., max_length=50)
     local_ip: Optional[str] = Field(None, max_length=45)
+    # See NodeRegister.lan_streaming — re-sent every heartbeat so a
+    # bind change (re-enrol with/without --lan-streaming) propagates
+    # without a re-register.
+    lan_streaming: Optional[bool] = None
     cameras: Optional[list[CameraStatus]] = []
     # See NodeRegister.node_version — same field, re-sent on every heartbeat
     # so the backend always knows what's actually running (e.g. after the

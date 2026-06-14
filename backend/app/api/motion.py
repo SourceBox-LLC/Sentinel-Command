@@ -103,8 +103,9 @@ integration_motion_broadcaster = MotionBroadcaster()
 @router.get("/events")
 async def list_motion_events(
     camera_id: Optional[str] = None,
-    hours: int = Query(default=24, le=168),
-    limit: int = Query(default=100, le=500),
+    hours: int = Query(default=24, ge=1, le=168),
+    # ge=1: SQLite treats LIMIT -1 as "no limit".
+    limit: int = Query(default=100, ge=1, le=500),
     # OFFSET is O(n) — cap so no one can force SQLite to skip billions.
     offset: int = Query(default=0, ge=0, le=1_000_000),
     user: AuthUser = Depends(require_view),

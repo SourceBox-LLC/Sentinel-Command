@@ -28,7 +28,9 @@ async def get_stream_logs(
     request: Request,
     camera_id: Optional[str] = None,
     user_id: Optional[str] = None,
-    limit: int = Query(default=100, le=500),
+    # ge=1: SQLite treats LIMIT -1 as "no limit" — without the lower
+    # bound, ?limit=-1 materializes the org's whole retention window.
+    limit: int = Query(default=100, ge=1, le=500),
     # Cap so an attacker can't force SQLite to skip billions of rows per
     # request (OFFSET is O(n) even with an index). 1M is well past any
     # realistic history a UI would page through.

@@ -217,6 +217,22 @@ async def lifespan(app):
         asyncio.to_thread(sync_indexes, engine, Base.metadata)
     )
 
+    # Fire-and-forget tasks swallow their own exceptions ("Task exception
+    # was never retrieved") — if sync_indexes dies before its per-index
+    # try/excepts (e.g. inspect(engine) can't open the DB), prod would
+    # silently run on full-table-scan plans forever.  Surface it.
+    def _log_index_sync_result(task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logging.getLogger(__name__).error(
+                "Index sync failed — queries will fall back to table scans: %s",
+                exc,
+            )
+
+    index_sync_task.add_done_callback(_log_index_sync_result)
+
     cleanup_task = asyncio.create_task(_log_cleanup_loop())
     offline_sweep_task = asyncio.create_task(_offline_sweep_loop())
     viewer_usage_task = asyncio.create_task(_viewer_usage_flush_loop())
@@ -1480,9 +1496,18 @@ if static_dir.exists():
             # the 1 GiB VM and the transport for oversized tool args.
             # 2 MB dwarfs any legitimate tool call (text args are
             # server-capped far lower).
+            # A header-only check is bypassable via Transfer-Encoding:
+            # chunked (no Content-Length at all) — require the header
+            # outright.  Every legitimate MCP client (httpx, the
+            # claude.ai connector, MCP SDKs) sends Content-Length for
+            # JSON-RPC bodies; only a crafted request omits it.
             content_length = request.headers.get("content-length")
+            if content_length is None:
+                return JSONResponse(
+                    {"error": "Content-Length required."}, status_code=411,
+                )
             try:
-                if content_length is not None and int(content_length) > 2 * 1024 * 1024:
+                if int(content_length) > 2 * 1024 * 1024:
                     return JSONResponse(
                         {"error": "Request body too large (max 2 MB)."},
                         status_code=413,
