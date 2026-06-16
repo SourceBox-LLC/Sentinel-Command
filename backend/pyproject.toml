@@ -14,7 +14,7 @@ dependencies = [
     # on certain malformed multipart payloads. Supersedes the earlier
     # 0.0.26 pin for CVE-2026-40347. Dependabot / pip-audit will start
     # failing the strict scan if this slides back below 0.0.27.
-    "python-multipart>=0.0.27",
+    "python-multipart>=0.0.31",
     # Pinned >=2.13.0 for PYSEC-2026-175/177/178/179 — four advisories
     # against 2.12.1 (all fixed in 2.13.0) that landed after the last green
     # deploy and turned pip-audit --strict red even though no code changed.
