@@ -20,6 +20,13 @@
   <img src="https://img.shields.io/badge/source-public_for_transparency-6366f1.svg" alt="Source available for transparency">
 </p>
 
+<p align="center">
+  <a href="https://github.com/SourceBox-LLC/Sentinel-Command">
+    <img src="https://img.shields.io/github/stars/SourceBox-LLC/Sentinel-Command?style=social&label=Star" alt="Star this repo">
+  </a>
+  &nbsp; If Sentinel is useful to you, please ⭐ <a href="https://github.com/SourceBox-LLC/Sentinel-Command">star the repo</a> — it helps others find it.
+</p>
+
 ---
 
 ## You don't run this — we host it for you
