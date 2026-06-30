@@ -98,6 +98,10 @@ function PricingPage() {
             <p>Your account enters a 7-day grace period during which the charge is retried automatically. Your cameras keep streaming throughout. After 7 days without a successful payment, cameras beyond the Free-tier limit are suspended and you're rebased to Free-tier viewer-hours. Updating your card resumes everything immediately.</p>
           </div>
           <div className="pricing-faq-item">
+            <h3>Can I get a refund?</h3>
+            <p>You can cancel anytime and keep your paid features through the end of the period you've already paid for. Fees are billed in advance and are otherwise non-refundable — we don't pro-rate unused time on a voluntary cancellation. We always honor refunds required by law, including the EU/UK consumer right of withdrawal, and we'll make it right at our discretion for things like a confirmed extended outage. Full details are in the <a href="/legal/terms">Terms</a> (Section 6). Reach out before starting a chargeback and we'll sort it directly.</p>
+          </div>
+          <div className="pricing-faq-item">
             <h3>Why are camera counts still capped?</h3>
             <p>They're abuse rails, not product tiers. Every connected camera continuously pushes segments to our cache even when idle, which drives our backend load. The caps (5 / 25 / 200) are well above what any realistic customer needs. If you legitimately need more, email us and we'll raise yours.</p>
           </div>
@@ -107,7 +111,7 @@ function PricingPage() {
           </div>
           <div className="pricing-faq-item">
             <h3>What's Sentinel and how does the run cap work?</h3>
-            <p>Sentinel is the optional AI agent that investigates motion events and incidents on your behalf — it views the camera, decides whether what it sees warrants attention, files an incident report with snapshot evidence, and writes a long-form summary. One "run" = one investigation, regardless of how many tool calls it took. Pro includes 100 runs/month, Pro Plus includes 500 runs/month, and the cap resets on the 1st of each calendar month. There's no overage billing — when you hit the cap, dispatch pauses for the rest of the month and your existing recordings, motion alerts, and dashboard keep working as normal.</p>
+            <p>Sentinel is the optional AI agent that investigates motion events and incidents on your behalf — it views the camera, decides whether what it sees warrants attention, files an incident report with snapshot evidence, and writes a long-form summary. One "run" = one investigation, regardless of how many tool calls it took. Pro includes 100 runs/month, Pro Plus includes 500 runs/month, and the cap resets on the 1st of each calendar month. There's no overage billing — when you hit the cap, dispatch pauses for the rest of the month and your existing recordings, motion alerts, and dashboard keep working as normal. Note: Sentinel is the one feature that uses cloud AI — when it investigates, it sends camera snapshots to our LLM provider (Ollama Cloud) to analyze the scene. It's opt-in per organization; if you don't use it, no imagery leaves your devices. See the <a href="/security">Security page</a> for details.</p>
           </div>
           <div className="pricing-faq-item">
             <h3>Do you send email or SMS alerts?</h3>

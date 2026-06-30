@@ -326,6 +326,20 @@ function DashboardPage() {
         )
       })()}
 
+      {isAdmin && planInfo?.plan_cancel_pending && !planInfo?.payment_past_due && (
+        <div className="plan-cancel-banner" role="status" aria-live="polite">
+          <span>
+            <strong>Your subscription is set to cancel.</strong> Your{" "}
+            {planInfo.plan_name} features stay active until the end of the
+            current billing period, then your organization returns to the
+            Free plan. You can resume anytime to keep them.
+          </span>
+          <Link to="/pricing" className="btn btn-primary btn-small">
+            Resume Plan
+          </Link>
+        </div>
+      )}
+
       <div className="stats-grid">
         <div className="stat-card">
           <div className="stat-label">Active Cameras</div>

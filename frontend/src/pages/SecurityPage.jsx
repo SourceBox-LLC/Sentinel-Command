@@ -178,9 +178,22 @@ function SecurityPage() {
               rel="noopener noreferrer"
             >
               <code>src/streaming/motion_detector.rs</code>
-            </a>. There is no cloud ML dependency — no OpenAI, no Anthropic, no
-            Google Vision, no AWS Rekognition. Verifiable with a <code>grep</code> of the
-            source tree.
+            </a>. Motion detection itself has no cloud ML dependency — no
+            OpenAI, no Anthropic, no Google Vision, no AWS Rekognition.
+            Verifiable with a <code>grep</code> of the source tree.
+          </p>
+          <p className="security-callout">
+            <strong>The one exception is the optional Sentinel AI agent.</strong>{" "}
+            Motion detection and recording are fully on-device. But if you
+            choose to run <em>Sentinel</em> — our optional, paid-tier AI
+            investigation agent — it sends camera snapshots and incident
+            text to a cloud large-language-model provider (Ollama Cloud) so
+            the model can describe what it sees and draft a report. That is
+            the single feature that transmits imagery off your devices, it is
+            opt-in per organization, and it's disclosed in the{" "}
+            <a href="/legal/privacy">Privacy Policy</a> and the third-party
+            list below. If you never enable Sentinel, no imagery ever leaves
+            for AI processing.
           </p>
         </section>
 
@@ -267,7 +280,9 @@ function SecurityPage() {
             <li><strong>Clerk</strong> — identity, organizations, session tokens, and subscription billing. Clerk never sees video.</li>
             <li><strong>Stripe</strong> — processes payments on Clerk's behalf. We never see your card details.</li>
             <li><strong>Fly.io</strong> — hosts the Command Center application and its database. Fly does not see video content (it's cached in application RAM, never written to persistent storage).</li>
+            <li><strong>Resend</strong> (optional) — transactional email for alerts you opt into. Receives recipient email + the alert subject/body (camera/node names, incident summaries — never video). Off unless email is enabled.</li>
             <li><strong>Sentry</strong> (optional) — error tracking. Disabled if <code>SENTRY_DSN</code> is unset. When enabled, captures exception stack traces, not video or user content. 10% trace sample rate.</li>
+            <li><strong>Ollama Cloud</strong> (optional — AI agent only) — the large-language-model provider for the optional Sentinel investigation agent. <strong>This is the one service that receives camera imagery</strong>: when you run Sentinel, it sends camera snapshots + incident text so the model can analyze the scene. Engaged only for organizations that use the agent; if you never enable Sentinel, nothing is sent here.</li>
           </ul>
           <p>
             That's the complete list. No analytics providers, no ad networks,
@@ -333,7 +348,7 @@ function SecurityPage() {
               <tbody>
                 <tr>
                   <th scope="row">Video processed in cloud for AI features</th>
-                  <td className="yes">On-device only (FFmpeg scene-change; no cloud ML)</td>
+                  <td className="yes">Motion/recording on-device (FFmpeg scene-change). Cloud AI only if you opt into the Sentinel agent, which then sends snapshots to an LLM — your choice, per-org</td>
                   <td className="no">Cloud for Person/Package/Vehicle alerts, Video Descriptions, Familiar Faces (paid tier)</td>
                   <td className="no">Mixed; older cams process faces in cloud, newer on-device; paid-tier gated</td>
                   <td className="no">Edge + cloud; Descriptive Alerts and AI Search require Cam Unlimited Pro</td>

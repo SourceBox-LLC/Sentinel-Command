@@ -5,6 +5,7 @@ import Layout from "./components/Layout.jsx"
 import PublicLayout from "./components/PublicLayout.jsx"
 import LoadingSpinner from "./components/LoadingSpinner.jsx"
 import ErrorBoundary from "./components/ErrorBoundary.jsx"
+import CookieNotice from "./components/CookieNotice.jsx"
 import { setUnauthorizedHandler } from "./services/api.js"
 
 // Lazy-load pages to reduce initial bundle size
@@ -230,6 +231,7 @@ function App() {
         </Route>
         </Routes>
       </Suspense>
+      <CookieNotice />
     </ErrorBoundary>
   )
 }

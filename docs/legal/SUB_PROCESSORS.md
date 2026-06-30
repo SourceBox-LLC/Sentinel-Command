@@ -115,6 +115,29 @@ terminate the affected Service per Section 4.4 of the
   emails are derived from Clerk org membership at send time — no
   separate mailing-list state is held by SourceBox or Resend.
 
+### Ollama Cloud — *optional; engaged only by the AI Sentinel agent*
+- **Service provided:** Cloud large-language-model inference for the
+  optional **Sentinel** AI investigation agent. When an organization
+  uses Sentinel, the agent captures camera snapshots and reads
+  incident context, then sends them to a vision-capable LLM to
+  describe what is happening and draft an incident report.
+- **Personal Data processed:** **Camera image snapshots (JPEG
+  frames), which may contain images of people, vehicles, license
+  plates, and property**, plus incident text and camera/metadata
+  strings the agent reads or writes. This is the one sub-processor
+  that receives actual imagery — unlike motion detection (which is
+  on-device) and the rest of this list (which never see video).
+- **Location of processing:** United States (Ollama Cloud,
+  ollama.com; model `qwen3.5:cloud`).
+- **Cross-border transfers:** Yes.
+- **Privacy policy:** https://ollama.com/privacy
+- **Notes:** Engaged **only** when an organization runs the Sentinel
+  agent (a paid-tier feature with a per-organization on/off toggle in
+  Settings). Organizations that never enable or trigger Sentinel send
+  no imagery to Ollama. The agent runs as a separate SourceBox-operated
+  service; an AGPL-3.0 fork that does not deploy the agent does not
+  engage Ollama as a sub-processor.
+
 ---
 
 ## If you fork and run your own copy
@@ -143,6 +166,11 @@ diff this file in the repository for the full record.
   `EMAIL_ENABLED=true` and `RESEND_API_KEY`. v1 covers four
   operator-critical alert kinds; motion-event emails deferred to
   v1.1.
+- **2026-06-29** — Added Ollama Cloud as an optional sub-processor
+  for the Sentinel AI investigation agent. This is the first
+  sub-processor that receives camera imagery (JPEG snapshots), and
+  only for organizations that use the agent. Disclosed here, in the
+  Privacy Policy §1/§4, and on `/security`.
 
 ---
 

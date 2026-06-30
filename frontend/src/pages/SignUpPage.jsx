@@ -15,13 +15,18 @@ function SignUpPage() {
       </Link>
       
       <div className="auth-page">
-        <SignUp 
-          routing="path" 
-          path="/sign-up" 
+        <SignUp
+          routing="path"
+          path="/sign-up"
           signInUrl="/sign-in"
           redirectUrl="/dashboard"
           afterSignUpUrl="/dashboard"
         />
+        <p className="auth-legal-consent">
+          By creating an account you agree to our{" "}
+          <Link to="/legal/terms">Terms of Service</Link> and{" "}
+          <Link to="/legal/privacy">Privacy Policy</Link>.
+        </p>
       </div>
     </div>
   )

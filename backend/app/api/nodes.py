@@ -759,6 +759,12 @@ async def get_plan_info(
     current_nodes = db.query(CameraNode).filter_by(org_id=user.org_id).count()
     current_cameras = db.query(Camera).filter_by(org_id=user.org_id).count()
     payment_past_due = Setting.get(db, user.org_id, "payment_past_due", "false") == "true"
+    # Scheduled cancellation: the Clerk webhook writes this on
+    # subscriptionItem.canceled (cancel-at-period-end). Entitlement is
+    # unchanged until the period ends — this flag only drives a UI
+    # banner so a user who cancelled gets in-app confirmation instead
+    # of still seeing full Pro with no acknowledgement.
+    plan_cancel_pending = Setting.get(db, user.org_id, "plan_cancel_pending", "false") == "true"
 
     # Compute grace window when past-due. The ToS promises PAYMENT_GRACE_DAYS
     # from payment_past_due_at; after that, effective_plan_for_caps tightens
@@ -807,6 +813,7 @@ async def get_plan_info(
         "grace_days_remaining": grace_days_remaining,
         "grace_expires_at": grace_expires_at,
         "grace_window_days": PAYMENT_GRACE_DAYS,
+        "plan_cancel_pending": plan_cancel_pending,
     }
 
 

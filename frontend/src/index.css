@@ -1860,6 +1860,33 @@ body {
     color: #fecaca;
 }
 
+/* Scheduled-cancellation notice — informational (amber), less urgent
+   than past-due (red). Entitlement is unchanged until period end. */
+.plan-cancel-banner {
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 8px;
+    padding: 0.75rem 1.25rem;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    font-size: 0.875rem;
+    color: #fcd34d;
+}
+
+.plan-cancel-banner a {
+    color: #f59e0b;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.plan-cancel-banner a:hover {
+    text-decoration: underline;
+}
+
 /* Security Page */
 .security-page {
     min-height: 100vh;
@@ -1953,6 +1980,16 @@ body {
     padding: 0.1rem 0.35rem;
     border-radius: 4px;
     font-size: 0.9em;
+}
+
+/* Honest-disclosure callout — used to flag the one place core-product
+   privacy claims have an exception (the optional cloud AI agent). */
+.security-callout {
+    border-left: 3px solid var(--accent-amber, #f59e0b);
+    background: rgba(245, 158, 11, 0.08);
+    padding: 0.85rem 1rem;
+    border-radius: 6px;
+    margin-bottom: 1rem;
 }
 
 .security-bullets {
@@ -4778,6 +4815,76 @@ body {
     padding: 2rem;
     position: relative;
     z-index: 1;
+}
+
+.auth-legal-consent {
+    margin-top: 1rem;
+    max-width: 24rem;
+    text-align: center;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: var(--text-muted, #94a3b8);
+}
+
+.auth-legal-consent a {
+    color: var(--text-secondary, #cbd5e1);
+    text-decoration: underline;
+}
+
+/* Cookie notice — informational, strictly-necessary-only (see
+   CookieNotice.jsx). Fixed bottom strip, dismissible. */
+.cookie-notice {
+    position: fixed;
+    bottom: 1rem;
+    left: 1rem;
+    right: 1rem;
+    max-width: 40rem;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.85rem 1.1rem;
+    background: var(--bg-elevated, #1e293b);
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+    border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+    z-index: 1000;
+}
+
+.cookie-notice-text {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: var(--text-secondary, #cbd5e1);
+}
+
+.cookie-notice-text a {
+    color: var(--accent-blue, #60a5fa);
+    text-decoration: underline;
+}
+
+.cookie-notice-btn {
+    flex-shrink: 0;
+    padding: 0.45rem 1rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent-blue, #2563eb);
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.cookie-notice-btn:hover {
+    filter: brightness(1.1);
+}
+
+@media (max-width: 540px) {
+    .cookie-notice {
+        flex-direction: column;
+        align-items: stretch;
+        text-align: center;
+    }
 }
 
 .auth-page .loading-spinner {

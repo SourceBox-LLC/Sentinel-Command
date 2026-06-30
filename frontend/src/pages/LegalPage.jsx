@@ -160,6 +160,35 @@ function TermsContent() {
         cycle — we never delete your local data as part of billing
         enforcement.
       </p>
+      <p>
+        <strong>Cancellation and refunds.</strong> You may cancel at any
+        time from your billing settings; cancellation stops future renewals
+        and your paid features remain active through the end of the period
+        you have already paid for. Subscription fees are billed in advance
+        and, except as set out below or as required by applicable law, are
+        <strong> non-refundable</strong>, and we do not provide partial-period
+        refunds or credits for unused time after a voluntary cancellation or
+        downgrade. We will, however, issue a refund where one is required by
+        law or by our agreements with you, including: (a) the statutory right
+        of withdrawal available to consumers in the EU, UK, and other
+        jurisdictions that provide one (typically a 14-day period after
+        purchase, subject to the rules on digital services that have already
+        been used); (b) the pro-rated refund of prepaid fees for the unused
+        period that we commit to in our{" "}
+        <a
+          href="https://github.com/SourceBox-LLC/Sentinel-Command/blob/master/docs/legal/DPA.md"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Data Processing Addendum
+        </a>{" "}
+        if you terminate because you reasonably object to a new
+        sub-processor; and (c) any refund we choose to grant at our
+        discretion, for example for a confirmed extended Service outage. To
+        request a refund or dispute a charge, contact us through the channel
+        in Section 18 before initiating a chargeback so we can resolve it
+        directly.
+      </p>
 
       <h2>7. Acceptable Use</h2>
       <p>You agree not to:</p>
@@ -405,16 +434,34 @@ function PrivacyContent() {
         and the Service never ingests or retains copies of these files.
       </p>
       <p>
-        Motion detection runs entirely on the CloudNode device using local
-        video analysis. No raw video frames, object-detection thumbnails,
-        or machine-learning embeddings are transmitted to the Service or
-        to any third-party machine-learning provider. Only motion event
-        metadata (camera identifier, timestamp, scene-change score) is
-        transmitted to the Service.
+        <strong>Motion detection</strong> runs entirely on the CloudNode
+        device using local video analysis. For motion detection, no raw
+        video frames, object-detection thumbnails, or machine-learning
+        embeddings are transmitted to the Service or to any third-party
+        machine-learning provider &mdash; only motion event metadata
+        (camera identifier, timestamp, scene-change score) is transmitted
+        to the Service.
       </p>
       <p>
-        We do not access, analyze, view, or share your video content except
-        as strictly necessary to provide the Service (e.g., serving HLS
+        <strong>Optional AI investigation agent (Sentinel).</strong>{" "}
+        If your organization uses the optional Sentinel agent &mdash; a
+        paid-tier feature with a per-organization on/off control in
+        Settings &mdash; then, and only then, the agent captures camera
+        <strong> snapshots (JPEG frames, which may include images of
+        people, vehicles, and property)</strong> and sends them, together
+        with incident text, to our large-language-model provider{" "}
+        <strong>Ollama Cloud (ollama.com, United States)</strong> so the
+        model can describe what it sees and draft an incident report.
+        This is the one feature that transmits actual imagery off your
+        devices, and it is engaged only when you run the agent.
+        Organizations that never enable or trigger Sentinel send no
+        imagery to any AI provider. See Section 4 for Ollama&rsquo;s role
+        as a sub-processor.
+      </p>
+      <p>
+        Apart from the optional Sentinel agent described above, we do not
+        access, analyze, view, or share your video content except as
+        strictly necessary to provide the Service (e.g., serving HLS
         streams to authenticated users in your organization).
       </p>
 
@@ -489,6 +536,7 @@ function PrivacyContent() {
         <li><strong>Hosting:</strong> Fly.io (application hosting for the Command Center). Live video segments held in application memory are never persisted to Fly.io's disk-backed volumes</li>
         <li><strong>Transactional email:</strong> Resend (US-based transactional email provider). Receives the recipient email address, subject line, and rendered body of each operational notification we send (camera offline, motion alerts, MCP key audit, etc.). Resend does not receive video, snapshots, recordings, or any data beyond what is necessary to deliver the email. Each email contains a one-click unsubscribe link.</li>
         <li><strong>Error monitoring (optional):</strong> Sentry, only when the operator has configured the <code>SENTRY_DSN</code> environment variable. When enabled, Sentry receives application exception traces and a 10% sample of performance traces. Sentry does not receive video content, recording metadata, or end-user identifiers beyond what is present in exception stack traces. When <code>SENTRY_DSN</code> is unset, no data is sent to Sentry</li>
+        <li><strong>AI investigation (optional):</strong> Ollama Cloud (ollama.com, United States) &mdash; the large-language-model provider for the optional Sentinel agent. Engaged <strong>only</strong> when your organization runs Sentinel (a paid-tier feature with a per-organization on/off control). When engaged, Ollama receives camera image snapshots (JPEG frames, which may include images of people, vehicles, and property) and incident text so the model can analyze the scene and draft a report. This is the only sub-processor that receives imagery. Organizations that do not use Sentinel send no data to Ollama. See their privacy policy at <code>ollama.com/privacy</code></li>
         <li><strong>Legal requirements:</strong> When required by law, regulation, subpoena, or other legal process. See Section 5 for our posture on legal process</li>
         <li><strong>Safety:</strong> To protect the rights, property, or safety of our users or the public, where disclosure is narrowly necessary</li>
       </ul>
@@ -546,8 +594,18 @@ function PrivacyContent() {
         and config row removed in a single transaction). <strong>Reset
         Everything is available on every plan, including Free</strong> &mdash;
         the right to erasure is a legal obligation we cannot gate behind a
-        paid subscription. For anything the in-app actions don&rsquo;t
-        cover, open an issue on our{" "}
+        paid subscription.
+      </p>
+      <p>
+        Because your data lives inside an organization, these in-app export
+        and erasure actions are organization-level operations performed by
+        an <strong>organization administrator</strong> in Settings. If you
+        are a member of an organization but not an administrator, you can
+        still exercise your individual rights: ask your organization
+        administrator to run the export or erasure on your behalf, or
+        contact us directly using the channel below and we will handle your
+        request (including verifying your identity where required). For
+        anything the in-app actions don&rsquo;t cover, open an issue on our{" "}
         <a
           href={CONTACT_GITHUB_ISSUES_URL}
           target="_blank"
@@ -555,8 +613,8 @@ function PrivacyContent() {
         >
           GitHub repository
         </a>{" "}
-        and we&rsquo;ll arrange a private follow-up. We respond within
-        30 days.
+        (don&rsquo;t include personal data in a public issue) and we&rsquo;ll
+        arrange a private follow-up. We respond within 30 days.
       </p>
 
       <h2>7. International Data Transfers</h2>
