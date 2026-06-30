@@ -1047,7 +1047,7 @@ requires-dist = [
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.14.0" },
     { name = "slowapi", specifier = ">=0.1.10" },
     { name = "sqlalchemy", specifier = ">=2.0.48" },
-    { name = "svix", specifier = ">=1.89.0" },
+    { name = "svix", specifier = ">=1.96.1" },
     { name = "tzdata", specifier = ">=2024.1" },
     { name = "uvicorn", specifier = ">=0.42.0" },
     { name = "websockets", specifier = ">=12.0" },
@@ -1821,7 +1821,7 @@ wheels = [
 
 [[package]]
 name = "svix"
-version = "1.89.0"
+version = "1.96.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
@@ -1830,12 +1830,10 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-dateutil" },
     { name = "standardwebhooks" },
-    { name = "types-deprecated" },
-    { name = "types-python-dateutil" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/45/6d/82e27aaeb089a6bbb422741fde3d4cc680d8772f60ce66bface16b4e6ab5/svix-1.89.0.tar.gz", hash = "sha256:ad6b2e21d53649c5b609c6b26d2e907ea23eb6d9993dba9db639f4c524c293ef", size = 59408, upload-time = "2026-03-19T19:04:15.708Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c4/10/80c4ebddc1ef8bed46741995b39fad4bc622e21130232dad5c88ba245c89/svix-1.96.1.tar.gz", hash = "sha256:008e0addb9dc525d5406bf60ccc463e2cda2a54598e8d703d476c5db296cb289", size = 54627, upload-time = "2026-06-25T09:34:53.067Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/91/104aaa5c11974fd3a92a2ebd53fbf8e8b5634fd74081883328dadc96d81a/svix-1.89.0-py3-none-any.whl", hash = "sha256:fe23505ff27ad9fd1f2da6f4410adbc95e1e9ab65a5195fc3e368d71edb198cb", size = 132592, upload-time = "2026-03-19T19:04:13.939Z" },
+    { url = "https://files.pythonhosted.org/packages/72/f3/e2623b45b6b70682410fccc33c3f338b6a6b2a7539d9bcc59fb4a1e221c2/svix-1.96.1-py3-none-any.whl", hash = "sha256:6ba43c4f320afde56df42ae085c3a71d6db236daa3d555a65875c385a4036ede", size = 153655, upload-time = "2026-06-25T09:34:51.467Z" },
 ]
 
 [[package]]
