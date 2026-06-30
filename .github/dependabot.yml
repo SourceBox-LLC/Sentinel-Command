@@ -1,0 +1,38 @@
+version: 2
+updates:
+  # Backend — Python (uv)
+  - package-ecosystem: "uv"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    auto-merge: true
+    commit-message:
+      prefix: "build(deps)"
+    labels:
+      - "dependencies"
+      - "backend"
+
+  # Frontend — npm
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    auto-merge: true
+    commit-message:
+      prefix: "build(deps-dev)"
+    labels:
+      - "dependencies"
+      - "frontend"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    auto-merge: true
+    labels:
+      - "dependencies"
+      - "ci"
