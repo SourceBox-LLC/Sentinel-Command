@@ -59,9 +59,22 @@ def test_legacy_security_txt_alias_returns_same_body(unauthenticated_client):
     legacy = unauthenticated_client.get("/security.txt")
 
     assert legacy.status_code == 200
+
     # Bodies match (the same generator backs both routes — pinning here
-    # catches a refactor that accidentally diverges them).
-    assert legacy.text == well_known.text
+    # catches a refactor that accidentally diverges them).  The single
+    # exception is the ``Expires:`` line, which is regenerated per
+    # request from ``now + 1yr`` at second precision (by design — see
+    # _build_security_txt); two sequential requests that straddle a
+    # one-second tick legitimately differ only on that line, so compare
+    # with it normalized out rather than flaking on the clock.
+    def _without_expires(text: str) -> list[str]:
+        return [ln for ln in text.splitlines() if not ln.startswith("Expires:")]
+
+    assert _without_expires(legacy.text) == _without_expires(well_known.text)
+    # And both DO carry exactly one Expires line (the generator ran on
+    # both paths, just at slightly different instants).
+    assert sum(ln.startswith("Expires:") for ln in legacy.text.splitlines()) == 1
+    assert sum(ln.startswith("Expires:") for ln in well_known.text.splitlines()) == 1
 
 
 # ── Required + recommended fields ──────────────────────────────────
