@@ -32,7 +32,7 @@ jobs:
     steps:
       - name: Fetch Dependabot metadata
         id: meta
-        uses: dependabot/fetch-metadata@v2
+        uses: dependabot/fetch-metadata@v3
 
       # Patch + minor: approve and enable auto-merge. GitHub then merges
       # automatically once required status checks (see setting #2) pass.
