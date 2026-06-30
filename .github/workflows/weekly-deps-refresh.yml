@@ -39,7 +39,7 @@ jobs:
     name: Refresh + verify locks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # ── Backend — uv lock --upgrade, then deploy.yml's backend gates ──
       - name: Install uv
