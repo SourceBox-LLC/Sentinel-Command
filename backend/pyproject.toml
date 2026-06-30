@@ -10,11 +10,12 @@ dependencies = [
     "sqlalchemy>=2.0.48",
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
-    # Pinned >=0.0.27 for CVE-2026-42561 — DoS / parsing-time blowup
-    # on certain malformed multipart payloads. Supersedes the earlier
-    # 0.0.26 pin for CVE-2026-40347. Dependabot / pip-audit will start
-    # failing the strict scan if this slides back below 0.0.27.
-    "python-multipart>=0.0.27",
+    # Pinned >=0.0.31 for CVE-2026-53538/53539/53540 — three DoS
+    # advisories against 0.0.27 (Content-Length confusion, multipart
+    # boundary collision, multipart injection). Supersedes the earlier
+    # 0.0.27 pin for CVE-2026-42561. Dependabot / pip-audit will start
+    # failing the strict scan if this slides back below 0.0.31.
+    "python-multipart>=0.0.31",
     # Pinned >=2.13.0 for PYSEC-2026-175/177/178/179 — four advisories
     # against 2.12.1 (all fixed in 2.13.0) that landed after the last green
     # deploy and turned pip-audit --strict red even though no code changed.
@@ -139,11 +140,11 @@ ignore = ["B008", "UP045"]
 # though no code changed.  Remove once a direct dep's own pin clears
 # idna 3.15.
 #
-# starlette: PYSEC-2026-161 (fixed in 1.0.1).  Transitive via fastapi.
-# Same story — advisory landed during a quiet week and turned the
-# deploy red.  1.0.0 → 1.0.1 is a patch; fastapi's starlette range
-# accepts it (uv resolves cleanly).  Remove once fastapi's own pin
-# moves past 1.0.1.
+# starlette: PYSEC-2026-161 (fixed in 1.0.1) + PYSEC-2026-248/249
+# (fixed in 1.3.0/1.3.1). Transitive via fastapi. Same story — advisories
+# landed during quiet weeks and turned the deploy red. 1.2.0 → 1.3.1 is
+# accepted by fastapi's starlette range (uv resolves cleanly). Remove once
+# fastapi's own pin moves past 1.3.1.
 #
 # pip: PYSEC-2026-196 (fixed in 26.1.2).  Present only because pip-audit
 # (our dev-time scanner) pulls pip in to resolve deps, then --strict audits
@@ -154,6 +155,19 @@ constraint-dependencies = [
     "authlib>=1.7.1",
     "urllib3>=2.7.0",
     "idna>=3.15",
-    "starlette>=1.0.1",
+    "starlette>=1.3.1",
     "pip>=26.1.2",
+    # cryptography: GHSA-537c-gmf6-5ccf (fixed in 48.0.1). Transitive via
+    # clerk-backend-api / authlib. Remove once a direct dep's own pin
+    # clears cryptography 48.0.1.
+    "cryptography>=48.0.1",
+    # joserfc: CVE-2026-48990 (fixed in 1.6.7). Transitive via
+    # clerk-backend-api. Remove once clerk's own pin clears 1.6.7.
+    "joserfc>=1.6.7",
+    # msgpack: GHSA-6v7p-g79w-8964 (fixed in 1.2.1). Transitive via
+    # fastmcp / mcp SDK. Remove once fastmcp's own pin clears 1.2.1.
+    "msgpack>=1.2.1",
+    # pydantic-settings: GHSA-4xgf-cpjx-pc3j (fixed in 2.14.2). Transitive
+    # via fastmcp. Remove once fastmcp's own pin clears 2.14.2.
+    "pydantic-settings>=2.14.2",
 ]
