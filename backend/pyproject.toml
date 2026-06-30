@@ -41,7 +41,7 @@ dependencies = [
     # we flip to Pro the same week motion-event emails ship.  Worker
     # pattern + EmailOutbox table in models.py decouple sends from
     # request handlers — see app/core/email_worker.py.
-    "resend>=2.0.0",
+    "resend>=2.32.2",
     # Jinja2 for email templates (subject + body.txt + body.html per
     # event kind, sharing _layout.html.j2).  FastAPI vendors a copy
     # for Jinja2Templates but we depend on it directly so the email
