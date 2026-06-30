@@ -94,7 +94,7 @@ jobs:
       # The PR is authored by github-actions[bot] (user.type == 'Bot'),
       # which close-external-prs.yml explicitly exempts, so it survives.
       - name: Open dependency-refresh PR
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           add-paths: |
             backend/uv.lock
