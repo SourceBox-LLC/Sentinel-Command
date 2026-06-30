@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.138.2",
     "uvicorn>=0.42.0",
-    "sqlalchemy>=2.0.48",
+    "sqlalchemy>=2.0.51",
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
     # Pinned >=0.0.31 for CVE-2026-53538/53539/53540 — three DoS
