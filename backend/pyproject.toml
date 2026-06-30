@@ -59,7 +59,7 @@ dev = [
     # (github.com/pypa/advisory-database).  Runs in CI before tests
     # so a known-bad transitive dep blocks the deploy.  Local dev:
     # ``cd backend && uv run pip-audit`` to scan on demand.
-    "pip-audit>=2.7.3",
+    "pip-audit>=2.10.1",
 ]
 
 [tool.pytest.ini_options]
