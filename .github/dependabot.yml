@@ -1,3 +1,10 @@
+# Dependabot configuration.
+#
+# NOTE: `dependabot.yml` has NO `auto-merge` field — it is not a valid
+# config key and was silently ignored (so auto-merge never actually
+# ran). Auto-merge is handled by .github/workflows/dependabot-auto-merge.yml,
+# which merges PATCH and MINOR bumps automatically once the "Test &
+# Deploy" PR checks pass, and leaves MAJOR bumps for manual review.
 version: 2
 updates:
   # Backend — Python (uv)
@@ -6,7 +13,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    auto-merge: true
+    open-pull-requests-limit: 5
     commit-message:
       prefix: "build(deps)"
     labels:
@@ -19,7 +26,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    auto-merge: true
+    open-pull-requests-limit: 5
     commit-message:
       prefix: "build(deps-dev)"
     labels:
@@ -32,7 +39,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    auto-merge: true
+    open-pull-requests-limit: 5
     labels:
       - "dependencies"
       - "ci"

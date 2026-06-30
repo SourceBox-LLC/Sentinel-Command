@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - master
+  # Also validate PRs (incl. Dependabot bumps) BEFORE merge. The deploy
+  # job below is gated to push-only, so a PR runs tests/audits/build but
+  # never deploys. This is what makes auto-merging dependency PRs safe —
+  # see .github/workflows/dependabot-auto-merge.yml.
+  pull_request:
+    branches:
+      - master
 
 jobs:
   test:
@@ -108,6 +115,9 @@ jobs:
     name: Deploy to Fly.io
     runs-on: ubuntu-latest
     needs: [test, frontend]
+    # Push-to-master only. PRs run test+frontend for validation but must
+    # never deploy (no secrets exposure, no half-reviewed code shipped).
+    if: github.event_name == 'push'
     concurrency:
       group: deploy
       cancel-in-progress: true

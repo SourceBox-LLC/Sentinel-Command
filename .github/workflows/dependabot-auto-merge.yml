@@ -1,0 +1,58 @@
+name: Dependabot auto-merge
+
+# Auto-merge Dependabot PRs for PATCH and MINOR updates once the
+# "Test & Deploy" PR checks pass. MAJOR version bumps are left for a
+# human to review and merge (they're where breaking changes live).
+#
+# REQUIRES three repo settings (GitHub Actions cannot set these — do it
+# once in the repo Settings, or auto-merge won't actually gate on CI):
+#   1. Settings → General → Pull Requests → enable "Allow auto-merge".
+#   2. Branch protection on `master` requiring these status checks:
+#      "Backend tests" and "Frontend audit + build". This is what makes
+#      `--auto` WAIT for the dependency PR's tests instead of merging
+#      immediately. Without it, a patch/minor PR could merge before CI
+#      finishes.
+#   3. Settings → Actions → General → enable "Allow GitHub Actions to
+#      create and approve pull requests" (needed for the approve step).
+#
+# This is GitHub's documented pattern: dependabot/fetch-metadata to read
+# the semver update type, then `gh pr merge --auto`.
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    # Only act on Dependabot's own PRs.
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+
+      # Patch + minor: approve and enable auto-merge. GitHub then merges
+      # automatically once required status checks (see setting #2) pass.
+      - name: Approve + enable auto-merge (patch & minor)
+        if: >-
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          steps.meta.outputs.update-type == 'version-update:semver-minor'
+        run: |
+          gh pr review --approve "$PR_URL"
+          gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Major: do NOT auto-merge. Leave a note so it's clear why it's
+      # waiting and that a human needs to take it.
+      - name: Flag major updates for manual review
+        if: steps.meta.outputs.update-type == 'version-update:semver-major'
+        run: |
+          gh pr comment "$PR_URL" --body "🛑 **Major version bump** (\`${{ steps.meta.outputs.dependency-names }}\`: ${{ steps.meta.outputs.previous-version }} → ${{ steps.meta.outputs.new-version }}). Auto-merge is intentionally disabled for major updates — please review the changelog and merge manually."
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
