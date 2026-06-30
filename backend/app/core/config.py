@@ -96,8 +96,13 @@ class Config:
     # during a sustained GitHub outage.  The value here is the floor,
     # not the ceiling: the cache will surface a newer version as soon
     # as one ships, with no Command Center deploy required.
+    #
+    # Keep this default in step with the latest CloudNode release (or
+    # set the LATEST_NODE_VERSION Fly secret per release so it never
+    # drifts).  It went stale at 0.1.26 while releases reached 0.1.73,
+    # which on a cold boot mis-reported every node >=0.1.26 as current.
     MIN_SUPPORTED_NODE_VERSION: str = os.getenv("MIN_SUPPORTED_NODE_VERSION", "0.1.0")
-    LATEST_NODE_VERSION: str = os.getenv("LATEST_NODE_VERSION", "0.1.26")
+    LATEST_NODE_VERSION: str = os.getenv("LATEST_NODE_VERSION", "0.1.73")
 
     # ── Email notifications (Resend) ─────────────────────────────────
     # Resend transactional email integration for operator-critical
@@ -193,6 +198,27 @@ class Config:
     # CC callbacks for run lifecycle) so a leak of one doesn't
     # automatically grant the capability of the other.
     SENTINEL_AGENT_MCP_KEY: str = os.getenv("SENTINEL_AGENT_MCP_KEY", "")
+
+    # ── Global Sentinel dispatch controls ────────────────────────────
+    # The Sentinel agent's marginal cost is real LLM dollars (vision
+    # tokens per run).  Per-org monthly caps bound a SINGLE org but not
+    # the AGGREGATE bill across all orgs.  These two knobs give the
+    # operator a fleet-wide backstop the per-org caps can't:
+    #
+    #  - SENTINEL_DISPATCH_ENABLED: a global kill-switch.  Set "false"
+    #    to immediately stop ALL new agent dispatch (existing pending
+    #    runs still drain) — the one-flip "pause the agent" control for
+    #    a cost spike or an incident, without deleting secrets.
+    #  - SENTINEL_GLOBAL_MONTHLY_RUN_CAP: a fleet-wide monthly run
+    #    ceiling across every org.  0 = unlimited (default; opt-in).
+    #    Set it to a number derived from your Ollama budget to cap the
+    #    worst-case aggregate spend.
+    SENTINEL_DISPATCH_ENABLED: bool = (
+        os.getenv("SENTINEL_DISPATCH_ENABLED", "true").lower() == "true"
+    )
+    SENTINEL_GLOBAL_MONTHLY_RUN_CAP: int = int(
+        os.getenv("SENTINEL_GLOBAL_MONTHLY_RUN_CAP", "0")
+    )
 
 
 settings = Config()

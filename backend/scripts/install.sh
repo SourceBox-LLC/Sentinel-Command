@@ -250,6 +250,42 @@ if [ -n "$DOWNLOAD_URL" ]; then
     TMPFILE=$(mktemp)
 
     if curl -fsSL "$DOWNLOAD_URL" -o "$TMPFILE"; then
+        # Best-effort integrity check against the release's SHA256SUMS.
+        # The installers are unsigned, so a checksum is the minimum
+        # supply-chain guard for a curl|bash install onto the box that
+        # watches your home. Skips gracefully (does NOT abort) if the
+        # release predates SHA256SUMS or no sha256 tool is present, but
+        # a present-and-MISMATCHING checksum hard-fails the install.
+        ASSET_NAME="${DOWNLOAD_URL##*/}"
+        SUMS_URL="${DOWNLOAD_URL%/*}/SHA256SUMS"
+        if SUMS=$(curl -fsSL "$SUMS_URL" 2>/dev/null) && [ -n "$SUMS" ]; then
+            EXPECTED=$(echo "$SUMS" | awk -v a="$ASSET_NAME" '$2 == a {print $1}' | head -1)
+            if [ -n "$EXPECTED" ]; then
+                if check_cmd sha256sum; then
+                    ACTUAL=$(sha256sum "$TMPFILE" | awk '{print $1}')
+                elif check_cmd shasum; then
+                    ACTUAL=$(shasum -a 256 "$TMPFILE" | awk '{print $1}')
+                else
+                    ACTUAL=""
+                fi
+                if [ -z "$ACTUAL" ]; then
+                    echo -e "${YELLOW}No sha256 tool found — skipping checksum verification.${NC}"
+                elif [ "$ACTUAL" = "$EXPECTED" ]; then
+                    echo -e "${GREEN}Checksum verified.${NC}"
+                else
+                    echo -e "${RED}Checksum MISMATCH for ${ASSET_NAME} — refusing to install.${NC}"
+                    echo -e "${RED}  expected: ${EXPECTED}${NC}"
+                    echo -e "${RED}  actual:   ${ACTUAL}${NC}"
+                    rm -f "$TMPFILE"
+                    exit 1
+                fi
+            else
+                echo -e "${YELLOW}No checksum entry for ${ASSET_NAME} — skipping verification.${NC}"
+            fi
+        else
+            echo -e "${DIM}No SHA256SUMS for this release — skipping checksum verification.${NC}"
+        fi
+
         # Detect archive type and extract
         case "$DOWNLOAD_URL" in
             *.tar.gz|*.tgz)

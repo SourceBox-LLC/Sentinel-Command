@@ -451,6 +451,13 @@ async def post_manual_run(
                 status_code=402,
                 detail={"error": "plan_required", "plan": "pro"},
             ) from exc
+        if str(exc) == "dispatch_globally_disabled":
+            # Operator paused the agent fleet-wide (kill-switch or the
+            # global monthly ceiling). Distinct from a per-org cap.
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "sentinel_dispatch_disabled"},
+            ) from exc
         raise
 
     write_audit(
@@ -498,7 +505,7 @@ async def post_run_complete(
         completion if the original ack was lost.
       - error → incident / no_action: ALLOWED.  The wall-clock
         timeout cleanup wrapper in process_with_timeout proactively
-        marks an in-flight run as `error` when the 540 s budget is
+        marks an in-flight run as `error` when the 270 s budget is
         hit; if the agent later finishes successfully (e.g. a future
         retry path, or the upcoming CC-side stranded-run reaper),
         we want the real outcome to land instead of being trapped

@@ -39,6 +39,7 @@ from app.core.sentinel_dispatch import (
     cap_for_plan,
     cap_remaining,
     dispatch_manual_run,
+    global_dispatch_allowed,
     reap_stranded_runs,
     runs_used_this_month,
 )
@@ -874,3 +875,40 @@ class TestAgentResolverPausedManualExemption:
         resolved_org, resolver_db = self._resolve(org)
         assert resolved_org == org
         resolver_db.close()
+
+
+# ── Fleet-wide dispatch gate (global kill-switch + monthly ceiling) ──
+
+
+class TestGlobalDispatchGate:
+    """global_dispatch_allowed bounds AGGREGATE Sentinel/Ollama spend
+    that the per-org caps cannot — a kill-switch and a fleet-wide
+    monthly run ceiling."""
+
+    def test_allowed_by_default(self, db):
+        # Default config: enabled, no global cap (0 = unlimited).
+        ok, _ = global_dispatch_allowed(db)
+        assert ok is True
+
+    def test_kill_switch_blocks_all_dispatch(self, db, monkeypatch):
+        monkeypatch.setattr(settings, "SENTINEL_DISPATCH_ENABLED", False)
+        ok, reason = global_dispatch_allowed(db)
+        assert ok is False
+        assert "kill-switch" in reason
+
+    def test_global_monthly_cap_blocks_when_reached(self, db, monkeypatch):
+        monkeypatch.setattr(settings, "SENTINEL_GLOBAL_MONTHLY_RUN_CAP", 2)
+        # Below cap → allowed.
+        _make_run(db, org_id="org_a", run_id="g1")
+        assert global_dispatch_allowed(db)[0] is True
+        # At/over cap (counts across ALL orgs) → blocked.
+        _make_run(db, org_id="org_b", run_id="g2")
+        ok, reason = global_dispatch_allowed(db)
+        assert ok is False
+        assert "global monthly run cap" in reason
+
+    def test_manual_run_respects_kill_switch(self, db, monkeypatch):
+        _set_org_plan(db, "org_kill", "pro")
+        monkeypatch.setattr(settings, "SENTINEL_DISPATCH_ENABLED", False)
+        with pytest.raises(ValueError, match="dispatch_globally_disabled"):
+            dispatch_manual_run(db, org_id="org_kill", prompt="check cam")

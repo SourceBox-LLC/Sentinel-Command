@@ -83,8 +83,9 @@ def cap_for_plan(plan: str | None) -> int:
     return MONTHLY_RUN_CAP_BY_PLAN.get(plan or "", 0)
 
 # Stranded-run reaper threshold.  The agent's wall-clock budget is
-# 540 s (9 min) and the strand-cleanup wrapper marks the in-flight
-# run as `error` on TimeoutError.  But if the agent process crashes
+# 270 s (under Fly's 300 s kill_timeout so the cleanup runs before
+# SIGKILL) and the strand-cleanup wrapper marks the in-flight run as
+# `error` on TimeoutError.  But if the agent process crashes
 # (OOM, panic, container kill) before the wrapper fires, the run
 # sits in `running` forever — list_pending only returns `pending`
 # rows and start() doesn't re-claim `running` ones.  The reaper
@@ -133,6 +134,32 @@ def runs_used_this_month(db: Session, org_id: str) -> int:
         )
         .count()
     )
+
+
+def runs_used_this_month_global(db: Session) -> int:
+    """Fleet-wide count of sentinel runs this calendar month, across
+    ALL orgs.  Backs the global monthly ceiling."""
+    return (
+        db.query(SentinelRun)
+        .filter(SentinelRun.triggered_at >= _start_of_month_utc())
+        .count()
+    )
+
+
+def global_dispatch_allowed(db: Session) -> tuple[bool, str]:
+    """Fleet-wide gate checked BEFORE any per-org gate, so the operator
+    can bound aggregate LLM spend that per-org caps can't.
+
+    Returns (allowed, reason).  Two controls (see config.py):
+      - SENTINEL_DISPATCH_ENABLED=false → hard global pause.
+      - SENTINEL_GLOBAL_MONTHLY_RUN_CAP > 0 → fleet monthly ceiling.
+    """
+    if not settings.SENTINEL_DISPATCH_ENABLED:
+        return False, "global kill-switch (SENTINEL_DISPATCH_ENABLED=false)"
+    cap = settings.SENTINEL_GLOBAL_MONTHLY_RUN_CAP
+    if cap > 0 and runs_used_this_month_global(db) >= cap:
+        return False, f"global monthly run cap reached ({cap})"
+    return True, "ok"
 
 
 def cap_remaining(db: Session, org_id: str) -> int:
@@ -504,6 +531,13 @@ def maybe_dispatch_for_notification(
     email channels).
     """
     try:
+        # Fleet-wide gate first — kill-switch / global monthly ceiling,
+        # so a cost spike can be stopped without touching per-org config.
+        allowed, reason = global_dispatch_allowed(db)
+        if not allowed:
+            logger.info("sentinel: dispatch globally blocked org=%s — %s", org_id, reason)
+            return None
+
         # Feedback-loop guard: incidents filed THROUGH MCP (which is how
         # the Sentinel agent itself files them) must not re-trigger the
         # incident_opened dispatcher.  Without this, motion → run →
@@ -592,6 +626,12 @@ def dispatch_manual_run(
     shape.  Raises ValueError("plan_not_eligible") if the org isn't
     on a Sentinel-eligible plan.
     """
+    # Fleet-wide gate applies to manual runs too — a "Run now" still
+    # spends LLM dollars, so the global kill-switch / ceiling must hold.
+    allowed, reason = global_dispatch_allowed(db)
+    if not allowed:
+        raise ValueError("dispatch_globally_disabled")
+
     # Ensure config exists so the manual-run path works for orgs that
     # have never opened the Sentinel page (an unusual case but
     # possible).
