@@ -171,10 +171,16 @@ function NotificationItem({ notification, onClick }) {
 
 function iconForKind(kind) {
   switch (kind) {
+    case "incident_created":
+      return "⚠"
     case "motion":
+    case "motion_digest":
       return "◉"
     case "camera_offline":
     case "node_offline":
+      return "⚠"
+    case "cloudnode_disk_low":
+    case "plan_limit_reached":
       return "⚠"
     case "camera_online":
     case "node_online":
@@ -182,6 +188,8 @@ function iconForKind(kind) {
     case "error":
       return "✕"
     default:
+      // welcome, member_added/removed/role_changed, mcp/integration
+      // key events, and anything new → neutral bullet.
       return "•"
   }
 }

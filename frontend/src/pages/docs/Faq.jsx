@@ -93,8 +93,8 @@ function Faq() {
         <p>
           <strong>SMS and mobile push: not built in.</strong> Point an MCP agent
           (Claude, Cursor, your own) at the motion-events stream and route through
-          Twilio, PagerDuty, or whatever you already use. Every plan has full MCP
-          access. See the <a href="#notifications">Notifications</a> section below
+          Twilio, PagerDuty, or whatever you already use. MCP access requires a
+          Pro or Pro Plus plan. See the <a href="#notifications">Notifications</a> section below
           for the full list of triggers.
         </p>
       </details>
@@ -199,7 +199,7 @@ function Faq() {
       <details className="docs-accordion">
         <summary>
           <span className="docs-accordion-chevron" aria-hidden="true">▶</span>
-          <span className="docs-accordion-title">Which MCP clients does Sentinel AI work with?</span>
+          <span className="docs-accordion-title">Which MCP clients does Sentinel work with?</span>
         </summary>
         <p>
           Any MCP client that supports the streamable-HTTP transport. Tested with Claude

@@ -1605,7 +1605,11 @@ body {
     position: fixed;
     bottom: 24px;
     right: 24px;
-    z-index: 1000;
+    /* Above modal backdrops (1100). A dispatch error toast fires while
+       the Run-Now modal is still open — at 1000 it rendered dimmed +
+       blurred behind the 1100 backdrop, so the only feedback was
+       invisible. */
+    z-index: 1200;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -8383,6 +8387,27 @@ body {
     text-decoration: none;
 }
 
+.sentinel-empty-state h2 {
+    margin: 0 0 0.6rem;
+    color: var(--text-primary);
+    font-size: 1.15rem;
+}
+
+.sentinel-empty-state p {
+    max-width: 480px;
+    margin: 0 auto;
+    line-height: 1.6;
+    font-size: 0.9rem;
+}
+
+.sentinel-empty-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 1.5rem;
+}
+
 .sentinel-empty-state a:hover {
     text-decoration: underline;
 }
@@ -8564,7 +8589,7 @@ body {
     transition: all 0.15s;
 }
 
-.sentinel-run-now-btn:hover {
+.sentinel-run-now-btn:hover:not(:disabled) {
     background: rgba(168, 85, 247, 0.25);
     border-color: rgba(168, 85, 247, 0.6);
 }
@@ -9899,12 +9924,16 @@ body {
 .sentinel-tool-trace-arg-val {
     color: var(--text-secondary);
     font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    /* Long values (stream URLs, JSON args) must wrap instead of pushing
+       the fixed-width drawer horizontally. */
+    overflow-wrap: anywhere;
 }
 
 .sentinel-tool-trace-result {
     font-size: 0.78rem;
     color: var(--text-secondary);
     margin-top: 0.2rem;
+    overflow-wrap: anywhere;
 }
 
 /* ── manual run modal ───────────────────────────────────────────── */

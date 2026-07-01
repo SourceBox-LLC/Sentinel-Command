@@ -101,7 +101,7 @@ function Notifications() {
       <h3>Email delivery details</h3>
       <p>
         Emails go through Resend (US-based transactional provider — see{" "}
-        <a href="/legal/sub-processors">sub-processors</a> for the disclosure).
+        <a href="/legal/privacy">sub-processors</a> for the disclosure).
         The Command Center holds a small EmailOutbox per pending send; a background
         worker drains it every 5 seconds. Median time-to-inbox after the triggering
         event is under 10 seconds for the operator-critical kinds.
@@ -125,8 +125,8 @@ function Notifications() {
             reputation against high-volume outdoor cameras; opt in via the{" "}
             <a href="/settings#settings-notifications">Email Alerts</a> section.
             For real-time external alerting (Twilio, PagerDuty, etc.), wire your
-            preferred MCP agent to the motion event stream — every plan has full MCP
-            access.
+            preferred MCP agent to the motion event stream — MCP access requires a
+            Pro or Pro Plus plan.
           </span>
         </p>
       </div>
@@ -136,8 +136,8 @@ function Notifications() {
           <span className="docs-callout-icon">ℹ️</span>
           <span>
             <strong>SMS and mobile push: not built in.</strong> Wire an MCP agent to
-            Twilio, PagerDuty, or your existing webhook if you need them — every
-            plan has full MCP access.
+            Twilio, PagerDuty, or your existing webhook if you need them — MCP access
+            requires a Pro or Pro Plus plan.
           </span>
         </p>
       </div>

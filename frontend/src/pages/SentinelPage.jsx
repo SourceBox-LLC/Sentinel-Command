@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react"
+import { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import { Link } from "react-router-dom"
 import { useAuth } from "@clerk/clerk-react"
 import {
@@ -144,7 +144,7 @@ function outcomeChip(run) {
 // ── main ──────────────────────────────────────────────────────────────
 
 function SentinelPage() {
-  const { getToken } = useAuth()
+  const { getToken, isSignedIn } = useAuth()
   const { showToast } = useToasts()
 
   // ── tab nav ─────────────────────────────────────────────
@@ -176,9 +176,25 @@ function SentinelPage() {
   const [selectedRunId, setSelectedRunId] = useState(null)
   const [selectedRun, setSelectedRun] = useState(null)
   const [loadingRun, setLoadingRun] = useState(false)
+  // Refs so the runs-poll interval can read the currently-open drawer
+  // run without re-creating the interval on every selection.
+  const selectedRunIdRef = useRef(null)
+  const selectedRunRef = useRef(null)
+  useEffect(() => { selectedRunIdRef.current = selectedRunId }, [selectedRunId])
+  useEffect(() => { selectedRunRef.current = selectedRun }, [selectedRun])
 
   // ── load config + cameras + runs on mount ───────────────
+  // This route lives in SmartLayout so signed-out visitors following a
+  // public /docs link keep the marketing chrome — but firing authed API
+  // calls here 401s, which the global handler turns into signOut() +
+  // redirect. Guard: skip all fetches when signed out and render the
+  // signed-out panel below instead.
   useEffect(() => {
+    if (!isSignedIn) {
+      setLoadingConfig(false)
+      setLoadingRuns(false)
+      return
+    }
     let cancelled = false
 
     getSentinelConfig(getToken)
@@ -226,7 +242,48 @@ function SentinelPage() {
       cancelled = true
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [isSignedIn])
+
+  // ── poll run history so queued/running runs reconcile ───
+  // Without this, a manually-dispatched run stays "pending" in the
+  // timeline forever until a full reload (the optimistic-update path
+  // even references a poll that never existed). 10s, mirrors
+  // IncidentsPage; pauses on a hidden tab and refreshes on re-focus.
+  useEffect(() => {
+    if (!isSignedIn || planGated) return
+    let cancelled = false
+
+    const refresh = () => {
+      if (document.hidden) return
+      getSentinelRuns(getToken, { limit: 50 })
+        .then(res => {
+          if (cancelled) return
+          setRuns(Array.isArray(res?.runs) ? res.runs : [])
+          if (res?.stats) setRunStats(res.stats)
+        })
+        .catch(() => { /* transient — keep last-known runs */ })
+
+      // If the drawer is open on a run that's still in flight, re-pull
+      // its full detail so it flips to the terminal outcome + trace.
+      const openId = selectedRunIdRef.current
+      const openRun = selectedRunRef.current
+      if (openId && openRun && isPendingOrRunning(openRun)) {
+        getSentinelRun(getToken, openId)
+          .then(res => { if (!cancelled) setSelectedRun(res) })
+          .catch(() => {})
+      }
+    }
+
+    const id = setInterval(refresh, 10000)
+    const onVisible = () => { if (!document.hidden) refresh() }
+    document.addEventListener("visibilitychange", onVisible)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+      document.removeEventListener("visibilitychange", onVisible)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSignedIn, planGated])
 
   // ── load run detail when a row is clicked ───────────────
   useEffect(() => {
@@ -346,7 +403,18 @@ function SentinelPage() {
       })
       .catch(err => {
         if (err?.code === "monthly_cap_reached") {
-          showToast("Monthly cap reached — try again next month", "error")
+          const cap = err?.detail?.cap
+          showToast(
+            cap
+              ? `Monthly cap reached (${cap} runs) — resets on the 1st.`
+              : "Monthly run cap reached — resets on the 1st.",
+            "error",
+          )
+        } else if (err?.code === "sentinel_dispatch_disabled" || err?.status === 503) {
+          showToast(
+            "Sentinel is temporarily paused by the operator — try again shortly.",
+            "error",
+          )
         } else {
           showToast(err.message || "Couldn't dispatch run", "error")
         }
@@ -355,6 +423,28 @@ function SentinelPage() {
   }
 
   // ── render ──────────────────────────────────────────────
+  // Signed-out visitors reach this via public /docs links (the route
+  // lives in SmartLayout). Show a marketing-style panel instead of
+  // firing authed calls that would bounce them to sign-in.
+  if (!isSignedIn) {
+    return (
+      <div className="sentinel-page-v3">
+        <div className="sentinel-empty-state">
+          <h2>Sentinel — your cameras' AI night guard</h2>
+          <p>
+            Sentinel investigates motion and incidents on your behalf,
+            captures evidence, and files reports — so you don't have to
+            watch the feed. Sign in to configure it for your organization.
+          </p>
+          <div className="sentinel-empty-actions">
+            <Link to="/sign-in" className="btn btn-primary">Sign in</Link>
+            <Link to="/docs" className="btn btn-secondary">Read the docs</Link>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (loadingConfig) {
     return (
       <div className="sentinel-page-v3">
@@ -479,12 +569,19 @@ function CompactHeader({ enabled, onToggle, triggerCount, scopeCount, totalCamer
   let lastRunLine
   if (!lastRun) {
     lastRunLine = "No runs yet — Sentinel hasn't responded to any triggers."
-  } else if (lastRun.outcome === "incident") {
-    lastRunLine = `${formatRunTimestamp(lastRun.triggered_at)} — ${lastRun.trigger_type.replace(/_/g, " ")} on ${lastRun.camera_id || "all cameras"} → opened incident #${lastRun.incident_id} (${lastRun.severity})`
-  } else if (lastRun.outcome === "error") {
-    lastRunLine = `${formatRunTimestamp(lastRun.triggered_at)} — ${lastRun.trigger_type.replace(/_/g, " ")} on ${lastRun.camera_id || "all cameras"} → run errored`
   } else {
-    lastRunLine = `${formatRunTimestamp(lastRun.triggered_at)} — ${lastRun.trigger_type.replace(/_/g, " ")} on ${lastRun.camera_id || "all cameras"} → no action`
+    const when = `${formatRunTimestamp(lastRun.triggered_at)} — ${lastRun.trigger_type.replace(/_/g, " ")} on ${lastRun.camera_id || "all cameras"}`
+    if (lastRun.outcome === "incident") {
+      lastRunLine = `${when} → opened incident #${lastRun.incident_id} (${lastRun.severity})`
+    } else if (lastRun.outcome === "error") {
+      lastRunLine = `${when} → run errored`
+    } else if (lastRun.outcome === "running") {
+      lastRunLine = `${when} → agent investigating…`
+    } else if (lastRun.outcome === "pending") {
+      lastRunLine = `${when} → queued, waiting for the agent`
+    } else {
+      lastRunLine = `${when} → no action`
+    }
   }
 
   return (
@@ -674,27 +771,38 @@ function OverviewTab({ enabled, scopeCount, runs, runStats, loadingRuns, onSelec
           <div className="sentinel-allowance-widget">
             <div className="sentinel-allowance-widget-header">
               <span className="sentinel-allowance-widget-title">Monthly allowance</span>
-              {statsLoaded && (
+              {statsLoaded && monthCap > 0 && (
                 <span className="sentinel-allowance-widget-pill">{planTierLabel}</span>
               )}
             </div>
-            <div className="sentinel-allowance-widget-meter">
-              <div
-                className="sentinel-allowance-widget-meter-fill"
-                style={{ width: `${usagePct}%` }}
-              />
-            </div>
-            {statsLoaded ? (
-              <>
-                <div className="sentinel-allowance-widget-text">
-                  <strong>{monthRuns}</strong> of {monthCap} runs · {Math.max(0, monthCap - monthRuns)} remaining
-                </div>
-                <p className="sentinel-allowance-widget-help">
-                  Included with your plan — no per-run charge. {monthCap} runs / month, enforced at dispatch.
-                </p>
-              </>
+            {statsLoaded && monthCap === 0 ? (
+              // Plan doesn't include Sentinel — don't render a "0 of 0
+              // runs · PRO" meter that reads as a broken paid widget.
+              <p className="sentinel-allowance-widget-help">
+                Sentinel runs aren&rsquo;t included in your current plan.{" "}
+                <Link to="/pricing" className="sentinel-drawer-link">Upgrade to enable →</Link>
+              </p>
             ) : (
-              <div className="sentinel-allowance-widget-text">Loading…</div>
+              <>
+                <div className="sentinel-allowance-widget-meter">
+                  <div
+                    className="sentinel-allowance-widget-meter-fill"
+                    style={{ width: `${usagePct}%` }}
+                  />
+                </div>
+                {statsLoaded ? (
+                  <>
+                    <div className="sentinel-allowance-widget-text">
+                      <strong>{monthRuns}</strong> of {monthCap} runs · {Math.max(0, monthCap - monthRuns)} remaining
+                    </div>
+                    <p className="sentinel-allowance-widget-help">
+                      Included with your plan — no per-run charge. {monthCap} runs / month, enforced at dispatch.
+                    </p>
+                  </>
+                ) : (
+                  <div className="sentinel-allowance-widget-text">Loading…</div>
+                )}
+              </>
             )}
           </div>
         </aside>
@@ -1105,6 +1213,11 @@ function HistoryTab({ runs, loadingRuns, filter, setFilter, search, setSearch, o
 // ── run detail drawer ────────────────────────────────────────────────
 
 function RunDetailDrawer({ run, loading, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose() }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onClose])
   return (
     <div className="sentinel-drawer-backdrop" onClick={onClose}>
       <aside className="sentinel-drawer" onClick={e => e.stopPropagation()}>
@@ -1209,7 +1322,7 @@ function RunDetailDrawer({ run, loading, onClose }) {
                               ? Object.entries(t.args).map(([k, v]) => (
                                   <span key={k} className="sentinel-tool-trace-arg">
                                     <span className="sentinel-tool-trace-arg-key">{k}:</span>{" "}
-                                    <span className="sentinel-tool-trace-arg-val">{String(v)}</span>
+                                    <span className="sentinel-tool-trace-arg-val">{typeof v === "object" && v !== null ? JSON.stringify(v) : String(v)}</span>
                                   </span>
                                 ))
                               : <span className="sentinel-tool-trace-args-empty">no arguments</span>}
@@ -1234,6 +1347,11 @@ function RunDetailDrawer({ run, loading, onClose }) {
 // ── manual run modal ─────────────────────────────────────────────────
 
 function ManualRunModal({ prompt, setPrompt, running, onRun, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape" && !running) onClose() }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [running, onClose])
   return (
     <div className="sentinel-modal-backdrop" onClick={onClose}>
       <div className="sentinel-modal" onClick={e => e.stopPropagation()}>

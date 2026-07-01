@@ -84,6 +84,14 @@ function HomeAssistant() {
           motion, and sensors work from anywhere.
         </li>
         <li>
+          <strong>Enable LAN streaming on the node:</strong> Connected-mode CloudNodes bind
+          to <code>localhost</code> by default, so their local video server isn&rsquo;t
+          reachable from Home Assistant out of the box — the camera entities load but live
+          video shows nothing. Re-run <code>sourcebox-sentry-cloudnode setup</code> with the{" "}
+          <code>--lan-streaming</code> flag (or enable it in the setup wizard) on each node
+          you want HA to stream from. Snapshots and all sensors work either way.
+        </li>
+        <li>
           <strong>Revoking access:</strong> revoke a key on the Integrations page and the
           connected Home Assistant instance stops receiving data immediately. Generate a new
           key to reconnect.

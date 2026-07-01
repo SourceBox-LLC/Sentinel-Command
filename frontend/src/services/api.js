@@ -75,9 +75,24 @@ function _handleUnauthorized() {
 function parseErrorBody(body, status) {
   const detail = body?.detail
 
-  // Shape 1: ApiError-style structured envelope under .detail
-  if (detail && typeof detail === "object" && !Array.isArray(detail) && detail.message) {
-    const err = new Error(detail.message)
+  // Shape 1: ApiError-style structured envelope under .detail.
+  // Some backend sites send a machine code WITHOUT a human message —
+  // e.g. {"detail": {"error": "sentinel_dispatch_disabled"}} and the
+  // monthly-cap 429 {"detail": {"error": "monthly_cap_reached", ...}}.
+  // Those must still surface .code (call sites branch on it) with a
+  // humanized fallback message instead of falling through to the
+  // generic "Request failed with status NNN".
+  if (
+    detail &&
+    typeof detail === "object" &&
+    !Array.isArray(detail) &&
+    (detail.message || detail.error)
+  ) {
+    const fallback =
+      typeof detail.error === "string" && detail.error
+        ? detail.error.replace(/_/g, " ")
+        : `Request failed with status ${status}`
+    const err = new Error(detail.message || fallback)
     err.code = detail.error ?? null
     err.detail = detail
     err.status = status

@@ -79,8 +79,9 @@ function Sentinel() {
             <h4>Connect to MCP scoped to this run's org</h4>
             <p>
               Builds an MCP client with the multi-tenant agent key and an{" "}
-              <code>X-Agent-Org-Override</code> header pointing at the run's org. All 23 MCP tools are
-              available, scoped to that org's cameras, nodes, and incidents.
+              <code>X-Agent-Org-Override</code> header pointing at the run's org. 22 of the 23 MCP
+              tools are available (the config-write tool <code>set_camera_recording_policy</code> is
+              denied to the autonomous agent), scoped to that org's cameras, nodes, and incidents.
             </p>
           </div>
         </div>
@@ -221,7 +222,7 @@ function Sentinel() {
         <p>
           <span className="docs-callout-icon">⚠️</span>
           <span>
-            Sentinel AI is the one part of Sentinel AI that sends camera
+            Sentinel AI is the one part of Sentinel that sends camera
             snapshots <em>out of your network</em> — to whichever LLM endpoint
             is configured (Ollama Cloud by default). Without that the model
             can't see what triggered the run. <strong>If you don't want any

@@ -38,6 +38,12 @@ export default function NewIncidentModal({ onClose, onCreated }) {
   // can still file an incident with no camera attached, the field is
   // optional.
   useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape" && !submitting) onClose() }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [submitting, onClose])
+
+  useEffect(() => {
     let cancelled = false
     getCameras(getToken)
       .then((data) => {
