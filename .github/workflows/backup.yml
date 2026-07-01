@@ -1,0 +1,80 @@
+name: Scheduled DB Backup
+
+# Daily consistent SQLite backup of the production database.
+#
+# What it does:
+#   1. Runs backend/scripts/backup_db.sh ON the Fly machine (WAL
+#      checkpoint -> sqlite3 .backup -> integrity_check -> gzip ->
+#      prune). Local copies land in /data/backups on the volume.
+#   2. If the BACKUP_ENCRYPTION_KEY repo secret is set: pulls the
+#      newest backup off the machine, encrypts it with AES-256
+#      (openssl, PBKDF2), and stores it as a GitHub Actions artifact
+#      (30-day retention) — an OFF-PLATFORM copy that survives a Fly
+#      volume/account loss. The artifact is ciphertext only; the repo
+#      is public, so an unencrypted DB must NEVER be uploaded — that is
+#      why this step is gated on the key existing.
+#   3. Prints the Fly volume snapshot list for visibility.
+#
+# Restore: see docs/runbooks/DISASTER_RECOVERY.md (includes the
+# decrypt one-liner for the artifact copies).
+#
+# Upgrade path: for point-in-time replication move to Litestream +
+# object storage; this workflow is the minimum rehearsable safety net.
+
+on:
+  schedule:
+    - cron: "17 9 * * *" # daily 09:17 UTC (off the top-of-hour GH congestion)
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      BACKUP_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Run consistent backup on the machine
+        run: |
+          flyctl ssh console -a opensentry-command -C "bash /app/scripts/backup_db.sh"
+
+      - name: List volume snapshots (visibility)
+        run: |
+          flyctl volumes list -a opensentry-command || true
+
+      - name: Pull newest backup off the machine
+        if: env.BACKUP_KEY != ''
+        run: |
+          LATEST=$(flyctl ssh console -a opensentry-command -C "sh -c 'ls -1t /data/backups/*.db.gz | head -1'" | tr -d '\r' | tail -1)
+          echo "newest backup: $LATEST"
+          test -n "$LATEST"
+          flyctl ssh sftp get "$LATEST" ./backup.db.gz -a opensentry-command
+          ls -lh backup.db.gz
+
+      - name: Encrypt for off-platform storage
+        if: env.BACKUP_KEY != ''
+        run: |
+          # AES-256-CBC + PBKDF2. Decrypt with:
+          #   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+          #     -in backup.db.gz.enc -out backup.db.gz -pass pass:<key>
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+            -in backup.db.gz -out backup.db.gz.enc -pass env:BACKUP_KEY
+          rm backup.db.gz
+          ls -lh backup.db.gz.enc
+
+      - name: Store encrypted backup as artifact (30-day retention)
+        if: env.BACKUP_KEY != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_id }}
+          path: backup.db.gz.enc
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Off-platform copy skipped (no BACKUP_ENCRYPTION_KEY)
+        if: env.BACKUP_KEY == ''
+        run: |
+          echo "::warning::BACKUP_ENCRYPTION_KEY repo secret is not set — backup exists" \
+            "on the Fly volume only (protects against app-level data loss, NOT volume" \
+            "loss). Set the secret to enable encrypted off-platform artifact copies."

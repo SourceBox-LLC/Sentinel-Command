@@ -24,9 +24,16 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies.
+#   curl    — health checks / debugging.
+#   sqlite3 — REQUIRED by scripts/backup_db.sh + restore_db.sh (online
+#             .backup + integrity_check) and by the ON_CALL runbook's
+#             manual recovery commands (PRAGMA wal_checkpoint etc.).
+#             Without it, the scheduled backup workflow and every
+#             documented recovery path fail on the live machine.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency files and install Python packages

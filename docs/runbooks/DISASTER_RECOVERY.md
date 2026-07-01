@@ -46,15 +46,34 @@ gzips it, optionally uploads off-platform, and prunes old local copies.
 > protect against the far more common case: a bad migration or an
 > accidental delete, not a volume loss.
 
-### Schedule it
+### Schedule it — WIRED: `.github/workflows/backup.yml`
 
-Two good options:
+A scheduled GitHub Action runs daily (09:17 UTC, plus manual
+`workflow_dispatch`):
 
-1. **Fly cron / scheduled machine** running `bash backend/scripts/backup_db.sh`
-   daily, with `BACKUP_S3_BUCKET` + AWS creds set as Fly secrets.
-2. **A scheduled GitHub Action** that `flyctl ssh console -C` into the
-   machine to run the script, then confirms the S3 object exists. (Keep
-   `FLY_API_TOKEN` + AWS creds as repo secrets.)
+1. Executes `bash /app/scripts/backup_db.sh` on the Fly machine (note:
+   the Dockerfile copies `backend/` to `/app/`, so scripts live at
+   `/app/scripts/`, **not** `/app/backend/scripts/`). Local copies land
+   in `/data/backups` with 14-day pruning.
+2. **Off-platform copy** — if the `BACKUP_ENCRYPTION_KEY` repo secret is
+   set, the workflow pulls the newest backup, encrypts it with
+   AES-256-CBC/PBKDF2, and stores it as a GitHub Actions artifact
+   (30-day retention). The repo is public, so ONLY ciphertext is ever
+   uploaded; without the key the workflow warns and stays local-only.
+   Decrypt with:
+
+   ```bash
+   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+     -in backup.db.gz.enc -out backup.db.gz -pass pass:<key>
+   ```
+
+   Generate + set the key once: `openssl rand -hex 32` → repo secret
+   `BACKUP_ENCRYPTION_KEY` → **store the same key in your password
+   manager** (an encrypted backup with a lost key is no backup).
+3. Prints the Fly volume snapshot list for visibility.
+
+`BACKUP_S3_BUCKET` on the Fly app remains the alternative/additional
+off-platform target supported by the script itself.
 
 Either way: **also verify Fly's own volume snapshots exist** —
 `fly volumes snapshots list <volume-id>` — as a second line of defense,
@@ -84,7 +103,7 @@ fly ssh console -a opensentry-command
 #   aws s3 cp s3://bucket/cc/opensentry-<stamp>.db.gz /data/backups/
 
 # 3. Restore (verifies integrity, keeps a rollback copy).
-bash /app/backend/scripts/restore_db.sh /data/backups/opensentry-<stamp>.db.gz
+bash /app/scripts/restore_db.sh /data/backups/opensentry-<stamp>.db.gz
 
 # 4. Start the app and verify BEFORE deleting the .pre-restore copy.
 exit
