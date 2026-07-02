@@ -5,7 +5,7 @@
 > what happened — without paging someone who can't help.
 
 This runbook covers Command Center (the cloud service). For
-CloudNode-side issues (a single customer's hardware misbehaving) see
+CameraNode-side issues (a single customer's hardware misbehaving) see
 the operator FAQ in `/docs#troubleshooting` — most of those are
 self-serve.
 
@@ -84,13 +84,13 @@ camera in their org as offline; node heartbeats not coming through.
 2. Hit `/api/health/detailed` — is the SSE subscriber count zero?
    Is anything else degraded? If the DB is fine and other customers
    are streaming, this is likely customer-side.
-3. Ask the customer: did they restart their CloudNode? Is the host
+3. Ask the customer: did they restart their CameraNode? Is the host
    machine on a network with outbound HTTPS to
    `opensentry-command.fly.dev`?
 
 **Likely causes.**
 - Customer's home internet dropped and the node hasn't reconnected.
-- Customer's CloudNode crashed and didn't auto-restart. Their host
+- Customer's CameraNode crashed and didn't auto-restart. Their host
   machine's process supervisor (systemd, etc.) needs to bring it
   back up.
 - The node's API key was rotated but the local config wasn't
@@ -134,10 +134,10 @@ error overlay.
 - Stream segments aged out of the in-memory cache. The segment
   cache is RAM-only, evicted after 60s of inactivity per camera.
   Customer has to refresh their browser to re-trigger the
-  CloudNode → playlist push.
+  CameraNode → playlist push.
 - Customer hit their viewer-hour cap for the month. The playback
   endpoint returns a clear error in the body — check the response.
-- Customer's CloudNode stopped pushing segments. Their UI says
+- Customer's CameraNode stopped pushing segments. Their UI says
   "online" because the heartbeat is still landing, but the segment
   pipeline stalled. Common causes: ffmpeg process crashed,
   USB camera disconnected, host machine I/O saturated.
@@ -147,14 +147,14 @@ error overlay.
   calendar month rolls. We do not extend caps without an Order
   Form / Pro Plus paid agreement.
 - Cache-related: ask the customer to refresh. If the issue persists
-  longer than 60s, the CloudNode is probably the problem.
-- CloudNode-side: customer-side troubleshooting — see
+  longer than 60s, the CameraNode is probably the problem.
+- CameraNode-side: customer-side troubleshooting — see
   `/docs#troubleshooting`.
 
 **When to escalate.**
 - Cache size in `/api/health/detailed` is *zero* but multiple
   customers are reporting playback failures at the same time. The
-  CloudNode → backend `POST /push-segment` path may be broken.
+  CameraNode → backend `POST /push-segment` path may be broken.
   Check Fly logs for `403`, `429`, or `500` on that endpoint.
 
 ---

@@ -39,7 +39,7 @@ function SecurityPage() {
             />
           </picture>
           <div className="security-banner-caption">
-            Your camera. Your CloudNode. Your loop. The cable is the longest journey your video takes.
+            Your camera. Your CameraNode. Your loop. The cable is the longest journey your video takes.
           </div>
         </div>
       </div>
@@ -53,7 +53,7 @@ function SecurityPage() {
             <li>
               <strong>Motion detection runs on your device.</strong> No video
               frames leave your network for cloud ML — detection uses FFmpeg's
-              scene-change analysis locally on the CloudNode.
+              scene-change analysis locally on the CameraNode.
             </li>
             <li>
               <strong>Live video is cached in RAM, not stored.</strong> The
@@ -62,7 +62,7 @@ function SecurityPage() {
               is written to cloud disk or object storage.
             </li>
             <li>
-              <strong>Recordings stay local to the CloudNode.</strong> If you
+              <strong>Recordings stay local to the CameraNode.</strong> If you
               enable recording, segments are stored in the node's local SQLite
               database. We never ingest your footage to the cloud.
             </li>
@@ -80,7 +80,7 @@ function SecurityPage() {
             </li>
             <li>
               <strong>Source code is open.</strong> Command Center is AGPL-3.0;
-              CloudNode is GPL-3.0. Every claim on this page points to the
+              CameraNode is GPL-3.0. Every claim on this page points to the
               file that implements it.
             </li>
           </ul>
@@ -90,7 +90,7 @@ function SecurityPage() {
         <section className="security-section">
           <h2>What actually travels to the cloud</h2>
           <p>
-            When you watch a live camera, the CloudNode pushes 1-second HLS
+            When you watch a live camera, the CameraNode pushes 1-second HLS
             segments to the Command Center over authenticated HTTPS. The
             Command Center holds the most recent window in RAM and serves it
             same-origin to your browser. That's the whole live path.
@@ -113,12 +113,12 @@ function SecurityPage() {
                 </tr>
                 <tr>
                   <td>Recordings (if enabled)</td>
-                  <td>CloudNode local SQLite, AES-256-GCM encrypted</td>
+                  <td>CameraNode local SQLite, AES-256-GCM encrypted</td>
                   <td>Until you delete them or disk quota evicts the oldest.</td>
                 </tr>
                 <tr>
                   <td>Snapshots (if enabled)</td>
-                  <td>CloudNode local SQLite, AES-256-GCM encrypted</td>
+                  <td>CameraNode local SQLite, AES-256-GCM encrypted</td>
                   <td>Same as recordings — local only, retention is yours.</td>
                 </tr>
                 <tr>
@@ -143,7 +143,7 @@ function SecurityPage() {
                 </tr>
                 <tr>
                   <td>Cloud API key (held by your node)</td>
-                  <td>CloudNode local SQLite, encrypted at rest</td>
+                  <td>CameraNode local SQLite, encrypted at rest</td>
                   <td>Until you rotate or decommission.</td>
                 </tr>
               </tbody>
@@ -165,7 +165,7 @@ function SecurityPage() {
             Consumer cameras like Ring and Nest ship frames to cloud services
             for person, vehicle, and animal detection. We don't — motion
             detection is implemented with FFmpeg's <code>select='gte(scene,T)'</code>
-            scene-change filter running as a local subprocess on the CloudNode.
+            scene-change filter running as a local subprocess on the CameraNode.
             When a segment's scene score crosses your threshold, the node
             posts <em>only</em> the event metadata (camera ID, score, timestamp,
             segment sequence) to Command Center. The pixels stay on your device.
@@ -203,7 +203,7 @@ function SecurityPage() {
 
           <h3>In transit</h3>
           <p>
-            TLS everywhere. CloudNode pushes and heartbeats use HTTPS; the
+            TLS everywhere. CameraNode pushes and heartbeats use HTTPS; the
             browser fetches HLS over HTTPS same-origin; the MCP endpoint is
             HTTPS. Setup validation explicitly rejects invalid certificates —
             we don't have a "skip TLS" code path.
@@ -211,7 +211,7 @@ function SecurityPage() {
 
           <h3>API keys (at rest, on the node)</h3>
           <p>
-            The cloud API key your CloudNode holds is encrypted with AES-256-GCM.
+            The cloud API key your CameraNode holds is encrypted with AES-256-GCM.
             The 256-bit key is derived by hashing the host's OS-managed machine
             identifier (<code>/etc/machine-id</code> on Linux, <code>MachineGuid</code> on
             Windows, <code>IOPlatformUUID</code> on macOS) with a domain-separation tag.
@@ -227,7 +227,7 @@ function SecurityPage() {
           <h3>Recordings and snapshots (at rest, on the node)</h3>
           <p>
             Every recording segment and snapshot is encrypted with AES-256-GCM
-            before it's written to the CloudNode's local SQLite database. The
+            before it's written to the CameraNode's local SQLite database. The
             encryption key is the same machine-id-derived key used for your
             API key, which means:
           </p>
@@ -237,7 +237,7 @@ function SecurityPage() {
             <li>AES-GCM's authentication tag means tampering is detected — you can't silently flip bytes in a stored recording.</li>
           </ul>
           <p>
-            For defense in depth we still recommend running your CloudNode on
+            For defense in depth we still recommend running your CameraNode on
             a disk protected with OS-level encryption (LUKS, BitLocker,
             FileVault) — that guards the machine-id file itself from offline
             attacks. But the application-level encryption means a casual
@@ -306,7 +306,7 @@ function SecurityPage() {
             data subject to such a request is what lives on Command Center: log
             metadata (access logs, audit logs) and account information.{" "}
             <strong>We do not have your video.</strong> Live segments are
-            ephemeral in RAM; recordings live on your CloudNode hardware. If
+            ephemeral in RAM; recordings live on your CameraNode hardware. If
             a request targets footage, the requester needs to approach you
             directly — we can't hand over something we don't store.
           </p>
@@ -355,7 +355,7 @@ function SecurityPage() {
                 </tr>
                 <tr>
                   <th scope="row">Recording works without a subscription</th>
-                  <td className="yes">Yes — all recording is local to your CloudNode, no cloud plan required</td>
+                  <td className="yes">Yes — all recording is local to your CameraNode, no cloud plan required</td>
                   <td className="no">No native local recording; cancel your plan and all cloud recordings are deleted</td>
                   <td className="partial">Cloud-first; only select Nest Cam models support microSD</td>
                   <td className="yes">microSD up to 512 GB supported natively, no subscription needed</td>
@@ -383,7 +383,7 @@ function SecurityPage() {
                 </tr>
                 <tr>
                   <th scope="row">Source code you can audit</th>
-                  <td className="yes">Yes — Command Center (AGPL-3.0) and CloudNode (GPL-3.0) are public on GitHub</td>
+                  <td className="yes">Yes — Command Center (AGPL-3.0) and CameraNode (GPL-3.0) are public on GitHub</td>
                   <td className="no">Proprietary firmware and app; OSS attribution only</td>
                   <td className="no">Proprietary firmware; some Nest dependencies public, not the device firmware or app</td>
                   <td className="no">Proprietary firmware and app; community firmware exists unofficially for some older models</td>
@@ -446,9 +446,9 @@ function SecurityPage() {
               data table in your organization &mdash; cameras, settings,
               audit log, motion events, notifications, MCP keys, email
               log, incidents, and the monthly usage counter &mdash; plus a
-              machine-readable manifest.  Recordings live on your CloudNode
+              machine-readable manifest.  Recordings live on your CameraNode
               devices, not Command Center, so they're not in the ZIP &mdash;
-              use the CloudNode TUI to export local recordings.  Rate-
+              use the CameraNode TUI to export local recordings.  Rate-
               limited to 3 exports/hour.
             </li>
             <li>
@@ -458,7 +458,7 @@ function SecurityPage() {
               every node, camera, group, MCP key, audit log, stream
               access log, motion event, notification, incident, email
               log/outbox row, monthly-usage counter, and settings row
-              is removed in a single transaction.  CloudNode devices
+              is removed in a single transaction.  CameraNode devices
               are notified to wipe local data too.  No archival copy,
               no soft-delete grace window.
             </li>
@@ -493,8 +493,8 @@ function SecurityPage() {
             <li>
               <strong>No SMS or mobile push alerts.</strong> Email alerts
               for operator-critical events <em>are</em> built in (camera
-              offline + recovered, CloudNode offline + recovered,
-              AI-created incident, MCP API key audit, CloudNode disk
+              offline + recovered, CameraNode offline + recovered,
+              AI-created incident, MCP API key audit, CameraNode disk
               almost full, member audit, motion detection with
               cooldown + digest — opt-in per setting in your
               notification page).  Motion defaults OFF and uses a
@@ -532,7 +532,7 @@ function SecurityPage() {
         <section className="security-section">
           <h2>What happens if SourceBox goes down</h2>
           <p>
-            The CloudNode is designed to keep recording locally even when the
+            The CameraNode is designed to keep recording locally even when the
             Command Center is unreachable. Live streaming stops because the
             browser can't reach the cache, but segment capture, motion
             detection, and local recording all keep running. When connectivity
@@ -612,7 +612,7 @@ function SecurityPage() {
           <p>In scope:</p>
           <ul className="security-bullets">
             <li>The deployed Command Center (this site) and its API.</li>
-            <li>The CloudNode binary + repository (
+            <li>The CameraNode binary + repository (
               <a
                 href="https://github.com/SourceBox-LLC/Sentinel-CameraNode"
                 target="_blank"
@@ -628,7 +628,7 @@ function SecurityPage() {
           <p>Out of scope (please don't report these as vulnerabilities — go to the upstream provider):</p>
           <ul className="security-bullets">
             <li>Issues in third-party services we use (Clerk, Stripe, Fly.io, Resend, Sentry).  Report those to the vendor directly; we'll coordinate if needed.</li>
-            <li>Social engineering, physical attacks, or attacks requiring local access to a CloudNode you don't own.</li>
+            <li>Social engineering, physical attacks, or attacks requiring local access to a CameraNode you don't own.</li>
             <li>Volumetric DoS or bandwidth-exhaustion attacks on the deployed service.  Application-layer rate-limit bypasses ARE in scope; pure flood attacks are not.</li>
             <li>Missing security headers we've consciously chosen not to set, missing rate limits on read-only authenticated GETs (covered in our design — see commit history of <code>backend/app/core/limiter.py</code>).</li>
             <li>Self-XSS that requires the victim to paste attacker-controlled content into their own console.</li>

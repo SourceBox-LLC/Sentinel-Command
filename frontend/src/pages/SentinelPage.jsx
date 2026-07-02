@@ -1012,7 +1012,7 @@ function ConfigureTab({ config, interactive, cameras, patchConfig, toggleTrigger
           <div className="sentinel-empty-state">
             <p className="sentinel-empty-state-strong">No cameras yet.</p>
             <p className="sentinel-empty-state-sub">
-              Connect a CloudNode and your cameras will appear here.{" "}
+              Connect a CameraNode and your cameras will appear here.{" "}
               <Link to="/settings">Settings → Add Node</Link> to get started.
             </p>
           </div>

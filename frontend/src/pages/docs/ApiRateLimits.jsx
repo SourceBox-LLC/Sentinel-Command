@@ -10,7 +10,7 @@ function ApiRateLimits() {
       <p>
         Every mutating route is rate limited to protect the service from
         runaway scripts and abuse. Limits are bucketed per tenant: a
-        CloudNode API key gets its own bucket, an authenticated user's
+        CameraNode API key gets its own bucket, an authenticated user's
         Clerk JWT shares a bucket with the rest of their org, and
         unauthenticated callers bucket by IP. This means one noisy integrator
         can't starve other orgs.

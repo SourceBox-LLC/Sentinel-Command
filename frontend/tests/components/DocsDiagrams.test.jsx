@@ -27,7 +27,7 @@ import {
 } from '../../src/components/DocsDiagrams.jsx'
 
 const diagrams = [
-  ['SystemArchitectureDiagram',   SystemArchitectureDiagram,   /USB camera, CloudNode/i],
+  ['SystemArchitectureDiagram',   SystemArchitectureDiagram,   /USB camera, CameraNode/i],
   ['HlsPipelineDiagram',          HlsPipelineDiagram,          /HLS pipeline/i],
   ['MotionStateMachineDiagram',   MotionStateMachineDiagram,   /Motion detection state machine/i],
   ['ConfigPrecedenceDiagram',     ConfigPrecedenceDiagram,     /Configuration precedence/i],

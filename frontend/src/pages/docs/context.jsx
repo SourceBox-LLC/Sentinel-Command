@@ -8,9 +8,9 @@
 // fit.
 //
 // `OsTabs` reads from this context internally so callers don't have to thread
-// anything through. The Getting-Started and CloudNode-Setup sections both
+// anything through. The Getting-Started and CameraNode-Setup sections both
 // render an OsTabs instance — they share a single `os` value, so flipping
-// the tab in one updates the other (and the inline ``sourcebox-sentry-cloudnode``
+// the tab in one updates the other (and the inline ``sourcebox-sentry-cameranode``
 // invocation a few lines below it).
 //
 // Keeping this in /pages/docs/context.jsx (not /hooks/) signals that it's
@@ -58,7 +58,7 @@ export function DocsProvider({ children }) {
     macos: `curl -fsSL ${base}/install.sh | bash`,
   }
   const msiDownloadUrl =
-    "https://github.com/SourceBox-LLC/Sentinel-CameraNode/releases/latest/download/sourcebox-sentry-cloudnode-windows-x86_64.msi"
+    "https://github.com/SourceBox-LLC/Sentinel-CameraNode/releases/latest/download/sourcebox-sentry-cameranode-windows-x86_64.msi"
 
   const value = {
     os,
@@ -84,7 +84,7 @@ export function useDocs() {
 
 // Reusable install-command tabs widget.
 // Renders three OS tabs and the appropriate install action for the
-// selected platform. Two callsites today (Getting Started + CloudNode
+// selected platform. Two callsites today (Getting Started + CameraNode
 // Setup) so the switch propagates between them via the shared `os` state.
 //
 // Linux / macOS render a copy-able shell one-liner. Windows renders an
@@ -147,7 +147,7 @@ export function OsTabs({ id }) {
             </a>
             <p style={{ marginTop: "0.75rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>
               Run the MSI (UAC prompt; SmartScreen → <strong>More info → Run anyway</strong>),
-              then open the <strong>Sentinel CloudNode</strong> shortcut from the
+              then open the <strong>Sentinel CameraNode</strong> shortcut from the
               Start menu. First launch runs the setup wizard; every launch after streams
               cameras directly.
             </p>

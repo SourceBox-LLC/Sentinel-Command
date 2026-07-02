@@ -453,14 +453,14 @@ def enforce_camera_cap(db, org_id: str) -> dict:
 
 
 def wire_plan_slug(plan: str) -> str:
-    """Canonical plan string for the CloudNode wire protocol.
+    """Canonical plan string for the CameraNode wire protocol.
 
     Strips the internal ``_org`` suffix so the node renders a clean pill
     badge (``[ FREE ]`` rather than ``[ FREE_ORG ]``). Unknown slugs pass
     through untouched so a future tier like ``enterprise`` shows up in
     the node UI before we ship a node update.
 
-    The CloudNode treats this field as advisory — enforcement still lives
+    The CameraNode treats this field as advisory — enforcement still lives
     here in the backend — so a stale / unexpected value doesn't affect
     access, only the label in the status bar.
     """

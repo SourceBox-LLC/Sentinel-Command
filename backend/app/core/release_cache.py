@@ -1,7 +1,7 @@
 """
-Latest CloudNode release cache.
+Latest CameraNode release cache.
 
-The Command Center asks GitHub for "what's the newest CloudNode release"
+The Command Center asks GitHub for "what's the newest CameraNode release"
 in two places:
 
   1. ``app.api.install._pick_asset`` — needs the full release JSON so it
@@ -11,7 +11,7 @@ in two places:
 
 Historically (1) ran its own 10-minute cache while (2) read a hardcoded
 env-var (``LATEST_NODE_VERSION``) that had to be bumped on every
-CloudNode release.  That was a release-checklist trip wire — easy to
+CameraNode release.  That was a release-checklist trip wire — easy to
 forget, and when forgotten every node in the fleet silently stopped
 seeing the ``update_available`` hint until someone noticed.
 
@@ -40,10 +40,10 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# GitHub repo that hosts CloudNode release artifacts.  Must match
+# GitHub repo that hosts CameraNode release artifacts.  Must match
 # ``REPO`` in ``scripts/install.sh`` and the constant in ``install.py``
 # so all paths agree on where binaries come from.
-CLOUDNODE_GH_REPO = "SourceBox-LLC/Sentinel-CameraNode"
+CAMERANODE_GH_REPO = "SourceBox-LLC/Sentinel-CameraNode"
 
 # 10 minutes — short enough for a fresh release to reach nodes within
 # one heartbeat-window of the next refresh tick, long enough to keep
@@ -89,7 +89,7 @@ async def get_latest_release(*, force_refresh: bool = False) -> dict | None:
     ):
         return _cached_release
 
-    url = f"https://api.github.com/repos/{CLOUDNODE_GH_REPO}/releases/latest"
+    url = f"https://api.github.com/repos/{CAMERANODE_GH_REPO}/releases/latest"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(
@@ -113,7 +113,7 @@ async def get_latest_release(*, force_refresh: bool = False) -> dict | None:
 
 
 def latest_node_version() -> str:
-    """Return the latest CloudNode version known to this process.
+    """Return the latest CameraNode version known to this process.
 
     Sync — never does I/O.  Resolution order:
 

@@ -28,17 +28,17 @@
         {
           "bullet_color": "#3b82f6",
           "bold_label": "Transport",
-          "lines": ["TLS 1.2+ on every hop", "outbound-only CloudNode → cloud"]
+          "lines": ["TLS 1.2+ on every hop", "outbound-only CameraNode → cloud"]
         },
         {
           "bullet_color": "#a855f7",
           "bold_label": "Authentication",
-          "lines": ["Clerk JWT — dashboard users", "nak_*  — CloudNode keys", "osc_*  — MCP agent keys"]
+          "lines": ["Clerk JWT — dashboard users", "nak_*  — CameraNode keys", "osc_*  — MCP agent keys"]
         },
         {
           "bullet_color": "#f59e0b",
           "bold_label": "Data at rest",
-          "lines": ["SHA-256 hashed API keys (backend)", "AES-256-GCM creds (CloudNode DB)", "live video in RAM only"]
+          "lines": ["SHA-256 hashed API keys (backend)", "AES-256-GCM creds (CameraNode DB)", "live video in RAM only"]
         },
         {
           "bullet_color": "#22c55e",
@@ -52,9 +52,9 @@
       "layout_lock": true,
       "exact_text": [
         "TRANSPORT", "AUTH", "DATA", "TENANT", "isolation",
-        "Transport", "TLS 1.2+ on every hop", "outbound-only CloudNode → cloud",
-        "Authentication", "Clerk JWT — dashboard users", "nak_*  — CloudNode keys", "osc_*  — MCP agent keys",
-        "Data at rest", "SHA-256 hashed API keys (backend)", "AES-256-GCM creds (CloudNode DB)", "live video in RAM only",
+        "Transport", "TLS 1.2+ on every hop", "outbound-only CameraNode → cloud",
+        "Authentication", "Clerk JWT — dashboard users", "nak_*  — CameraNode keys", "osc_*  — MCP agent keys",
+        "Data at rest", "SHA-256 hashed API keys (backend)", "AES-256-GCM creds (CameraNode DB)", "live video in RAM only",
         "Tenant isolation", "every row scoped to org_id", "no cross-org reads, ever", "MCP scope filters per key"
       ],
       "do_not_change_text": true,

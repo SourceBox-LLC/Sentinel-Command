@@ -1,5 +1,5 @@
 """
-Motion Events API — query motion detection events reported by CloudNodes,
+Motion Events API — query motion detection events reported by CameraNodes,
 plus SSE streaming for real-time motion alerts in the dashboard.
 """
 

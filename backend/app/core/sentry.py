@@ -110,7 +110,7 @@ def _scrub_event(event: dict, hint: dict) -> Optional[dict]:
     """Last-line scrubber for sensitive data Sentry might pick up anyway.
 
     ``send_default_pii=False`` already strips most of this, but ``request``
-    can still carry a query string that includes an API key (the CloudNode
+    can still carry a query string that includes an API key (the CameraNode
     WebSocket handshake takes ``api_key=`` in the URL, for example).  Drop
     the query string entirely and scrub a few header/body keys by name.
     Dropping the whole event is reserved for cases where scrubbing can't

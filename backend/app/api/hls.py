@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # means the browser always gets a relative ``segment/<file>`` URI
 # regardless of how FFmpeg decided to format the line.  The negative
 # lookahead skips ``#EXTINF`` and similar tag lines.  Trailing
-# whitespace (``\r`` on CRLF playlists from Windows CloudNodes) is
+# whitespace (``\r`` on CRLF playlists from Windows CameraNodes) is
 # tolerated so the URI is emitted cleanly.
 _RE_SEGMENT_URI = re.compile(
     r"^(?!#)(?:.*[/\\])?(segment_\d+\.ts)[ \t\r]*$",
@@ -45,7 +45,7 @@ async def _read_capped_body(request: Request, max_bytes: int) -> bytes:
 
     Two layers of protection:
       1. **Pre-read** check on the ``Content-Length`` header.  An
-         honest client (CloudNode pushes via reqwest, which always
+         honest client (CameraNode pushes via reqwest, which always
          sets Content-Length on non-chunked bodies) gets rejected
          with HTTP 413 BEFORE any bytes land in memory.  This is
          the lever that makes a 10 GB attempted upload cost zero
@@ -85,14 +85,14 @@ async def _read_capped_body(request: Request, max_bytes: int) -> bytes:
     return body
 
 # ── Rewritten playlist cache ──────────────────────────────────────────
-# Populated by POST /playlist (CloudNode push). Browser GET requests
+# Populated by POST /playlist (CameraNode push). Browser GET requests
 # serve the cached string instantly — no I/O per poll.
 #
 # {camera_id: (rewritten_playlist_text, timestamp)}
 _playlist_cache: dict[str, tuple[str, float]] = {}
 # 30 seconds.  With 1s segments and hls_list_size=15 the real segment window
 # is ~15s, so we want the cache TTL comfortably larger than the gap between
-# CloudNode playlist pushes — otherwise one or two dropped pushes expires
+# CameraNode playlist pushes — otherwise one or two dropped pushes expires
 # the cache and the browser gets 404 "Stream not started yet" even though
 # fresh segments are still being uploaded.  Segment cache eviction runs on
 # its own 60s inactivity cutoff — driven by the _segment_cache_evict_loop
@@ -102,7 +102,7 @@ _PLAYLIST_CACHE_MAX_AGE = 30.0
 _CACHE_MAX_CAMERAS = 500
 
 # ── In-memory segment cache ──────────────────────────────────────────
-# CloudNode pushes segments via POST /push-segment. Browser fetches
+# CameraNode pushes segments via POST /push-segment. Browser fetches
 # them via GET /segment/{filename}.
 #
 # {camera_id: {filename: (bytes_data, monotonic_timestamp)}}
@@ -157,7 +157,7 @@ _playlist_update_count: dict[str, int] = {}
 # ── One-shot diagnostic logging ───────────────────────────────────────
 # On a fresh backend, every new camera id logs its first playlist push
 # and first stream.m3u8 fetch exactly once.  This gives an operator
-# ground truth about what the pipeline is doing ("did CloudNode reach
+# ground truth about what the pipeline is doing ("did CameraNode reach
 # /playlist at all?  what's the first segment URI look like?") without
 # drowning Fly logs in per-segment spam.  Cleared when the camera is
 # evicted from the cache so a reconnect relogs.
@@ -623,7 +623,7 @@ async def get_hls_playlist(
         "Pragma": "no-cache",
     }
 
-    # Serve from cache (populated by POST /playlist from CloudNode).
+    # Serve from cache (populated by POST /playlist from CameraNode).
     cached = _playlist_cache.get(camera_id)
     if cached and (time.monotonic() - cached[1]) < _PLAYLIST_CACHE_MAX_AGE:
         if camera_id not in _first_stream_get_logged:
@@ -641,8 +641,8 @@ async def get_hls_playlist(
             headers=headers,
         )
 
-    # No cached playlist — CloudNode hasn't pushed one yet (or it went
-    # stale).  Log once per camera so operators can tell the "CloudNode
+    # No cached playlist — CameraNode hasn't pushed one yet (or it went
+    # stale).  Log once per camera so operators can tell the "CameraNode
     # isn't pushing playlists" case apart from "stream.m3u8 never called".
     # With hls.js retrying every 400ms, unmuted INFO would be a flood —
     # the one-shot flag keeps it to one line per camera per restart.
@@ -651,7 +651,7 @@ async def get_hls_playlist(
         cached_bytes = len(_segment_cache.get(camera_id, {}))
         logger.warning(
             "hls: first stream.m3u8 MISS for cam=%s (playlist_cached=%s, segment_cache_entries=%d) — "
-            "CloudNode hasn't POST /playlist for this camera yet",
+            "CameraNode hasn't POST /playlist for this camera yet",
             camera_id,
             cached is not None,
             cached_bytes,
@@ -741,7 +741,7 @@ async def push_segment(
     db: Session = Depends(get_db),
 ):
     """
-    Receive an HLS segment pushed by CloudNode.
+    Receive an HLS segment pushed by CameraNode.
     Stores in memory for the browser to fetch via GET /segment/{filename}.
     """
     node_api_key = request.headers.get("X-Node-API-Key")
@@ -766,7 +766,7 @@ async def push_segment(
     # Plan-cap enforcement. When the org is over its camera cap (downgrade
     # or cancellation), `enforce_camera_cap` has marked the over-cap
     # cameras as `disabled_by_plan`. Reject their uploads with HTTP 402
-    # (Payment Required) and a `plan_limit_hit` body so the CloudNode can
+    # (Payment Required) and a `plan_limit_hit` body so the CameraNode can
     # surface the reason in its TUI instead of silently filling the log
     # with non-retryable push failures.
     if camera.disabled_by_plan:
@@ -837,7 +837,7 @@ async def update_hls_playlist(
 ):
     """
     Update the HLS playlist for a camera.
-    Called by CloudNode when new segments are generated.
+    Called by CameraNode when new segments are generated.
     Expects playlist content in request body (text/plain).
 
     Rewrites segment filenames to relative proxy URLs and caches the
@@ -918,7 +918,7 @@ async def push_motion_event(
     db: Session = Depends(get_db),
 ):
     """
-    Receive a motion detection event pushed by CloudNode via HTTP.
+    Receive a motion detection event pushed by CameraNode via HTTP.
     This is a reliable fallback that works even when WebSocket is not connected.
     """
     node_api_key = request.headers.get("X-Node-API-Key")
@@ -943,7 +943,7 @@ async def push_motion_event(
     # Per-org kill switch.  When an admin disables ingestion (e.g. a
     # misbehaving sensor is flooding events and you need a server-side
     # stop without reaching the node), short-circuit before recording
-    # anything.  Returns 200 + ingested:false so the CloudNode treats
+    # anything.  Returns 200 + ingested:false so the CameraNode treats
     # this as a successful "by design" rejection and doesn't burn its
     # retry budget — same behaviour as the plan-cap suspension path.
     # Default "true" so orgs that never touch the toggle keep the

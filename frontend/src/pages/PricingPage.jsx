@@ -14,7 +14,7 @@ function PricingPage() {
         </h1>
         <p className="pricing-subtitle">
           Your monthly viewer-hours are the real tier differentiator — not
-          how many cameras you plug in. Recording to your CloudNode is
+          how many cameras you plug in. Recording to your CameraNode is
           always local and never counts against your cap.
         </p>
       </div>
@@ -44,7 +44,7 @@ function PricingPage() {
           <div className="pricing-feature-item">
             <div className="pricing-feature-icon">💾</div>
             <h3>Recordings don't count</h3>
-            <p>Local recording to your CloudNode's encrypted SQLite is unlimited and free. Only cloud-served live playback is metered.</p>
+            <p>Local recording to your CameraNode's encrypted SQLite is unlimited and free. Only cloud-served live playback is metered.</p>
           </div>
           <div className="pricing-feature-item">
             <div className="pricing-feature-icon">📊</div>
@@ -54,7 +54,7 @@ function PricingPage() {
           <div className="pricing-feature-item">
             <div className="pricing-feature-icon">🔐</div>
             <h3>Encrypted end to end to disk</h3>
-            <p>TLS in flight, AES-256-GCM on the CloudNode at rest. A stolen drive is unreadable elsewhere.</p>
+            <p>TLS in flight, AES-256-GCM on the CameraNode at rest. A stolen drive is unreadable elsewhere.</p>
           </div>
           <div className="pricing-feature-item">
             <div className="pricing-feature-icon">🚫</div>
@@ -64,7 +64,7 @@ function PricingPage() {
           <div className="pricing-feature-item">
             <div className="pricing-feature-icon">🖥️</div>
             <h3>Runs on your hardware</h3>
-            <p>CloudNode (GPL-3) installs on any Linux, macOS, or Windows machine. Use a Pi, a NUC, or an old laptop.</p>
+            <p>CameraNode (GPL-3) installs on any Linux, macOS, or Windows machine. Use a Pi, a NUC, or an old laptop.</p>
           </div>
           <div className="pricing-feature-item">
             <div className="pricing-feature-icon">🛡️</div>
@@ -79,11 +79,11 @@ function PricingPage() {
         <div className="pricing-faq-grid">
           <div className="pricing-faq-item">
             <h3>What counts as a "viewer-hour"?</h3>
-            <p>One viewer-hour = one hour of live video played to an authenticated browser session. Background tabs that keep pulling segments count; idle cameras with no one watching don't. Recordings stored on your CloudNode are unlimited and free — they never count against your cap.</p>
+            <p>One viewer-hour = one hour of live video played to an authenticated browser session. Background tabs that keep pulling segments count; idle cameras with no one watching don't. Recordings stored on your CameraNode are unlimited and free — they never count against your cap.</p>
           </div>
           <div className="pricing-faq-item">
             <h3>What happens when I hit my viewer-hour cap?</h3>
-            <p>Live playback pauses with an upgrade prompt until the next calendar month begins. Your cameras keep recording locally, your motion events still fire, and your CloudNode keeps running. You just can't stream video live to the dashboard until your cap resets or you upgrade.</p>
+            <p>Live playback pauses with an upgrade prompt until the next calendar month begins. Your cameras keep recording locally, your motion events still fire, and your CameraNode keeps running. You just can't stream video live to the dashboard until your cap resets or you upgrade.</p>
           </div>
           <div className="pricing-faq-item">
             <h3>Can I upgrade or downgrade anytime?</h3>
@@ -106,8 +106,8 @@ function PricingPage() {
             <p>They're abuse rails, not product tiers. Every connected camera continuously pushes segments to our cache even when idle, which drives our backend load. The caps (5 / 25 / 200) are well above what any realistic customer needs. If you legitimately need more, email us and we'll raise yours.</p>
           </div>
           <div className="pricing-faq-item">
-            <h3>Is the CloudNode software free?</h3>
-            <p>Yes, always. CloudNode is open source (GPL-3) and runs on your own hardware — the only thing you pay for is the Command Center cloud service we operate. The Command Center source is also public (AGPL-3) so you can read and audit exactly what runs on the cloud side; you don't need to run it yourself.</p>
+            <h3>Is the CameraNode software free?</h3>
+            <p>Yes, always. CameraNode is open source (GPL-3) and runs on your own hardware — the only thing you pay for is the Command Center cloud service we operate. The Command Center source is also public (AGPL-3) so you can read and audit exactly what runs on the cloud side; you don't need to run it yourself.</p>
           </div>
           <div className="pricing-faq-item">
             <h3>What's Sentinel and how does the run cap work?</h3>
@@ -115,7 +115,7 @@ function PricingPage() {
           </div>
           <div className="pricing-faq-item">
             <h3>Do you send email or SMS alerts?</h3>
-            <p>Yes for email — every plan gets opt-in email alerts for the operator-critical events: camera offline + recovered, CloudNode offline + recovered, AI-agent-created incidents, MCP API key audit, CloudNode disk almost full, member audit (added / role-changed / removed), and motion detection with cooldown + digest. Toggle each kind on or off per-org in your notification settings. Motion defaults OFF (per-org volume varies wildly); when enabled, the first motion event per camera fires immediately and any additional events in the next 15 minutes are summarised in a single digest. SMS and mobile push remain MCP-only — wire your agent to Twilio, PagerDuty, or whatever you already use.</p>
+            <p>Yes for email — every plan gets opt-in email alerts for the operator-critical events: camera offline + recovered, CameraNode offline + recovered, AI-agent-created incidents, MCP API key audit, CameraNode disk almost full, member audit (added / role-changed / removed), and motion detection with cooldown + digest. Toggle each kind on or off per-org in your notification settings. Motion defaults OFF (per-org volume varies wildly); when enabled, the first motion event per camera fires immediately and any additional events in the next 15 minutes are summarised in a single digest. SMS and mobile push remain MCP-only — wire your agent to Twilio, PagerDuty, or whatever you already use.</p>
           </div>
         </div>
       </div>

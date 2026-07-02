@@ -138,7 +138,7 @@ def test_update_notification_settings_requires_admin(viewer_client):
 # Recording configuration moved from org-level `/api/settings/recording`
 # (which never actually drove anything) to per-camera columns on the
 # Camera row + a PATCH endpoint.  Heartbeat handler reads them per
-# tick and tells CloudNode which cameras should be archiving via
+# tick and tells CameraNode which cameras should be archiving via
 # `recording_state` in the response.
 
 

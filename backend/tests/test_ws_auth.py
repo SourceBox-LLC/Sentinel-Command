@@ -9,12 +9,12 @@ Pins the behaviour the v0.1.65 security fix introduced:
     headers don't.
 
   - Back-compat path: credentials in URL query string
-    (`?api_key=…&node_id=…`).  Still accepted so pre-v0.1.65 CloudNode
+    (`?api_key=…&node_id=…`).  Still accepted so pre-v0.1.65 CameraNode
     binaries keep working without a forced upgrade.  Logged as a
     deprecation warning each time so we can sunset the path once
     the install base has rolled forward.
 
-If either path stops working, a CloudNode silently loses its WS
+If either path stops working, a CameraNode silently loses its WS
 channel and the operator sees "node offline" without an obvious
 cause — these tests catch that regression.
 """
@@ -95,7 +95,7 @@ def test_ws_auth_rejects_bad_key_in_headers(unauthenticated_client, node_credent
     """Wrong api_key in header → 4001 close.
 
     The 4001 code is the app-specific "invalid credentials" signal we
-    use across the WS endpoint — keep it stable so CloudNode's
+    use across the WS endpoint — keep it stable so CameraNode's
     reconnect logic can branch on it (vs the 1013 throttle code).
     """
     from starlette.websockets import WebSocketDisconnect
@@ -118,7 +118,7 @@ def test_ws_auth_rejects_bad_key_in_headers(unauthenticated_client, node_credent
 def test_ws_auth_succeeds_via_query_string(unauthenticated_client, node_credentials, caplog):
     """Back-compat: credentials in the URL still authenticate.
 
-    Pre-v0.1.65 CloudNode clients send `?api_key=…&node_id=…`.  The
+    Pre-v0.1.65 CameraNode clients send `?api_key=…&node_id=…`.  The
     backend must keep accepting this OR every existing install breaks
     silently when this fix deploys.  Once we're confident the install
     base is past v0.1.65 we can flip this to expect a refusal; until
@@ -164,7 +164,7 @@ def test_ws_auth_rejects_when_both_paths_missing(unauthenticated_client):
 def test_ws_auth_header_overrides_query_string(unauthenticated_client, node_credentials):
     """When BOTH headers and query string are present, headers win.
 
-    This is the upgrade-window safety property: imagine a CloudNode
+    This is the upgrade-window safety property: imagine a CameraNode
     that still has the old URL builder running alongside the new
     header builder for some transitional reason.  The handler should
     treat the header as authoritative so we don't accidentally

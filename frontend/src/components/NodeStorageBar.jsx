@@ -1,6 +1,6 @@
 /**
  * Per-node storage usage bar shown on the Settings → Camera Nodes
- * card.  Reads CloudNode v0.1.41+ heartbeat-reported storage stats
+ * card.  Reads CameraNode v0.1.41+ heartbeat-reported storage stats
  * and renders ONE thing: how full the node's allocated cap is.
  *
  * Bar fills against `max_size_gb` (default 64 GB).  100% means the
@@ -10,13 +10,13 @@
  *
  * Host filesystem details (disk_free / disk_total) are deliberately
  * NOT shown here — operators care about node-allocated space, not
- * the underlying disk.  CloudNode still pauses recordings if the
+ * the underlying disk.  CameraNode still pauses recordings if the
  * host disk drops below 1 GiB free (safety floor in
  * storage::stats) but that's a self-protective server-side
  * behaviour, not something the dashboard needs to surface.
  *
  * Renders nothing if the node hasn't reported stats yet (older
- * CloudNode, brand-new install) — better than an empty 0% bar that
+ * CameraNode, brand-new install) — better than an empty 0% bar that
  * lies about the data we don't have.
  */
 

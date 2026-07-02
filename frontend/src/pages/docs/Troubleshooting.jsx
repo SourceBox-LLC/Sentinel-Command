@@ -29,7 +29,7 @@ sudo usermod -a -G video $USER
           <button className="docs-copy-btn" onClick={() => copyToClipboard(`sudo usermod -a -G video $USER`)}>Copy</button>
         </div>
         <p><strong>Windows:</strong> close any other app using the camera (Zoom, Teams, browser tab with <code>getUserMedia</code>). DirectShow only allows one exclusive consumer per camera.</p>
-        <p><strong>macOS:</strong> grant camera access in <strong>System Settings &gt; Privacy & Security &gt; Camera</strong> — you'll need to approve the terminal app running CloudNode.</p>
+        <p><strong>macOS:</strong> grant camera access in <strong>System Settings &gt; Privacy & Security &gt; Camera</strong> — you'll need to approve the terminal app running CameraNode.</p>
       </details>
 
       <details className="docs-accordion">
@@ -37,7 +37,7 @@ sudo usermod -a -G video $USER
           <span className="docs-accordion-chevron" aria-hidden="true">▶</span>
           <span className="docs-accordion-title">FFmpeg not found</span>
         </summary>
-        <p>CloudNode looks for FFmpeg on PATH. Install it via your OS package manager:</p>
+        <p>CameraNode looks for FFmpeg on PATH. Install it via your OS package manager:</p>
         <div className="docs-code-block">
           <code>{`winget install Gyan.FFmpeg     # Windows
 brew install ffmpeg            # macOS
@@ -47,7 +47,7 @@ sudo pacman -S ffmpeg          # Arch`}</code>
           <button className="docs-copy-btn" onClick={() => copyToClipboard('winget install Gyan.FFmpeg')}>Copy</button>
         </div>
         <p>
-          Re-run <code>sourcebox-sentry-cloudnode setup</code> — the wizard offers to run the right
+          Re-run <code>sourcebox-sentry-cameranode setup</code> — the wizard offers to run the right
           command for your platform if FFmpeg still isn't on PATH. After a Windows winget install,
           open a new terminal so the updated PATH is picked up.
         </p>
@@ -74,11 +74,11 @@ sudo pacman -S ffmpeg          # Arch`}</code>
         </summary>
         <p>Command Center marks a node offline if no heartbeat arrives for 90 seconds. Things to check:</p>
         <ul>
-          <li>Is the node process actually running? <code>ps aux | grep cloudnode</code> or check the terminal dashboard</li>
+          <li>Is the node process actually running? <code>ps aux | grep cameranode</code> or check the terminal dashboard</li>
           <li>Does outbound HTTPS to Command Center work? <code>curl -I https://opensentry-command.fly.dev/api/health</code> should return 200</li>
           <li>Is the API URL correct in the node config? Open settings via the dashboard <code>/settings</code> command</li>
           <li>Clock skew: if the machine's clock is wildly off, JWT auth may fail. Enable NTP.</li>
-          <li>Firewall / egress filter dropping long-lived TLS connections? Confirm by tailing CloudNode logs for repeated connect-then-drop cycles, then ask your network admin to allow outbound 443 to Command Center.</li>
+          <li>Firewall / egress filter dropping long-lived TLS connections? Confirm by tailing CameraNode logs for repeated connect-then-drop cycles, then ask your network admin to allow outbound 443 to Command Center.</li>
         </ul>
       </details>
 
@@ -132,7 +132,7 @@ sudo pacman -S ffmpeg          # Arch`}</code>
           <span className="docs-accordion-chevron" aria-hidden="true">▶</span>
           <span className="docs-accordion-title">Hardware encoder won't initialize</span>
         </summary>
-        <p>If CloudNode logs something like <code>h264_nvenc failed, falling back to libx264</code>:</p>
+        <p>If CameraNode logs something like <code>h264_nvenc failed, falling back to libx264</code>:</p>
         <ul>
           <li><strong>NVIDIA:</strong> install the NVIDIA driver + <code>nvidia-cuda-toolkit</code>; confirm <code>nvidia-smi</code> works</li>
           <li><strong>Intel QSV:</strong> install <code>intel-media-va-driver</code> (or <code>intel-media-va-driver-non-free</code> for newer CPUs)</li>
@@ -158,7 +158,7 @@ sudo pacman -S ffmpeg          # Arch`}</code>
           <span className="docs-accordion-chevron" aria-hidden="true">▶</span>
           <span className="docs-accordion-title">Recordings take too much disk</span>
         </summary>
-        <p>Lower <code>storage.max_size_gb</code>. CloudNode will delete the oldest first until it fits. Or switch to scheduled recording instead of continuous.</p>
+        <p>Lower <code>storage.max_size_gb</code>. CameraNode will delete the oldest first until it fits. Or switch to scheduled recording instead of continuous.</p>
       </details>
 
       <details className="docs-accordion">

@@ -20,9 +20,9 @@ function TestHlsPage() {
   }
   
   const testLocalStream = () => {
-    const cameraId = prompt("Enter camera ID from CloudNode:")
+    const cameraId = prompt("Enter camera ID from CameraNode:")
     if (cameraId) {
-      addLog(`Loading local CloudNode stream: ${cameraId}`)
+      addLog(`Loading local CameraNode stream: ${cameraId}`)
       setTestCameraId(cameraId)
       setTestStreamUrl(`http://localhost:8080/hls/${cameraId}/stream.m3u8`)
       addLog(`✅ Local stream configured: http://localhost:8080/hls/${cameraId}/stream.m3u8`)
@@ -90,7 +90,7 @@ function TestHlsPage() {
             fontWeight: 'bold'
           }}
         >
-          Test Local CloudNode
+          Test Local CameraNode
         </button>
         
         <button 
@@ -143,7 +143,7 @@ function TestHlsPage() {
           <h3>Instructions</h3>
           <div style={{ background: '#0f0f0f', padding: '10px', borderRadius: '4px', fontSize: '14px' }}>
             <p><strong>Public (Mux):</strong> Known-working test stream (no auth)</p>
-            <p><strong>Local:</strong> CloudNode on localhost:8080 (no auth)</p>
+            <p><strong>Local:</strong> CameraNode on localhost:8080 (no auth)</p>
             <p><strong>Production:</strong> Real camera from backend (with auth)</p>
           </div>
         </div>
@@ -221,7 +221,7 @@ function TestHlsPage() {
         <h4 style={{ margin: '0 0 10px 0' }}>💡 Troubleshooting Tips</h4>
         <ul style={{ margin: 0, paddingLeft: '20px' }}>
           <li><strong>Public stream fails:</strong> Network/firewall issue or HLS.js not loaded</li>
-          <li><strong>Local fails:</strong> CloudNode not running, wrong camera ID, or CORS</li>
+          <li><strong>Local fails:</strong> CameraNode not running, wrong camera ID, or CORS</li>
           <li><strong>Production auth error:</strong> Login first, check Clerk token</li>
           <li><strong>Media error:</strong> Codec mismatch or corrupt segment (check console)</li>
           <li><strong>Check console:</strong> Open browser DevTools (F12) for detailed HLS.js logs</li>

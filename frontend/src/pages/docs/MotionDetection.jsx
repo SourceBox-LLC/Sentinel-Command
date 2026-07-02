@@ -8,7 +8,7 @@ function MotionDetection() {
     <section className="docs-section" id="motion-detection">
       <h2>Motion Detection<a href="#motion-detection" className="docs-anchor">#</a></h2>
       <p>
-        Motion detection is built into CloudNode — no extra service, no external API
+        Motion detection is built into CameraNode — no extra service, no external API
         calls. Every camera runs a second FFmpeg process in parallel that scores how
         much each frame differs from the previous one; above-threshold frames fire a
         <code>motion_detected</code> event delivered to Command Center via HTTP.
@@ -31,7 +31,7 @@ function MotionDetection() {
       <ol>
         <li>A lightweight FFmpeg probe runs alongside the HLS encoder for each camera</li>
         <li>It uses the <code>select='gt(scene,THRESHOLD)'</code> filter to emit a scene-change score per frame, between 0.0 (identical) and 1.0 (totally different)</li>
-        <li>When a frame's score crosses your threshold, CloudNode raises a motion event</li>
+        <li>When a frame's score crosses your threshold, CameraNode raises a motion event</li>
         <li>The event is sent to Command Center via <code>POST /api/cameras/{"{id}"}/motion</code>. (Pre-v0.1.61 the codebase carried a parallel WebSocket-forwarding branch as a "future" delivery path, but it was never wired to a producer and was removed in v0.1.61 — the HTTP path was always the only one that actually delivered events.)</li>
         <li>A per-camera cooldown timer prevents flapping (identical wind-blown tree, flickering light) from spamming events</li>
       </ol>

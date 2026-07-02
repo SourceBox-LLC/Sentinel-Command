@@ -260,17 +260,17 @@ const Icon = {
 // ══════════════════════════════════════════════════════════════════
 //   1) SYSTEM ARCHITECTURE
 // ══════════════════════════════════════════════════════════════════
-// Three-layer architecture: local camera+CloudNode box → HTTPS outbound →
+// Three-layer architecture: local camera+CameraNode box → HTTPS outbound →
 // Command Center cloud → browser viewer. Emphasises: no inbound ports,
 // in-memory cache, same-origin streaming.
 export function SystemArchitectureDiagram() {
   const id = 'arch'
   return (
     <DiagramFrame
-      ariaLabel="System architecture: USB camera, CloudNode, Command Center cloud, browser viewer."
+      ariaLabel="System architecture: USB camera, CameraNode, Command Center cloud, browser viewer."
       viewBox="0 0 960 420"
       aspectRatio="960/420"
-      caption="The live-video path runs entirely inside the authenticated backend — CloudNode pushes outbound, the browser fetches same-origin. No third-party object storage in the hot path."
+      caption="The live-video path runs entirely inside the authenticated backend — CameraNode pushes outbound, the browser fetches same-origin. No third-party object storage in the hot path."
     >
       <Defs id={id} />
 
@@ -298,12 +298,12 @@ export function SystemArchitectureDiagram() {
         </text>
       </g>
 
-      {/* Local layer — USB camera + CloudNode */}
+      {/* Local layer — USB camera + CameraNode */}
       <NodeBox idPrefix={id} x={50} y={110} w={220} h={70}
                title="USB Camera" subtitle="UVC / DirectShow / V4L2"
                accent="blue" icon={Icon.camera} />
       <NodeBox idPrefix={id} x={50} y={240} w={220} h={90}
-               title="CloudNode" subtitle="Rust · FFmpeg · SQLite"
+               title="CameraNode" subtitle="Rust · FFmpeg · SQLite"
                accent="blue" icon={Icon.node} />
       <FlowArrow idPrefix={id} x1={160} y1={180} x2={160} y2={240} marker="arrow" />
 
@@ -371,7 +371,7 @@ export function HlsPipelineDiagram() {
 
       {/* Swim-lane labels */}
       <text x={20} y={60} fill={C.blue} fontSize="11" fontWeight="600"
-            letterSpacing="1.3" fontFamily="Inter, system-ui, sans-serif">CLOUDNODE</text>
+            letterSpacing="1.3" fontFamily="Inter, system-ui, sans-serif">CAMERANODE</text>
       <text x={20} y={260} fill={C.green} fontSize="11" fontWeight="600"
             letterSpacing="1.3" fontFamily="Inter, system-ui, sans-serif">CLOUD</text>
       <text x={20} y={380} fill={C.purple} fontSize="11" fontWeight="600"
@@ -385,7 +385,7 @@ export function HlsPipelineDiagram() {
       <rect x={20}  y={390} width={940} height={50}  rx="12"
             fill="rgba(168,85,247,0.03)" stroke="rgba(168,85,247,0.15)" strokeWidth="1" strokeDasharray="3 3" />
 
-      {/* CloudNode lane — main encode path */}
+      {/* CameraNode lane — main encode path */}
       <NodeBox idPrefix={id} x={50}  y={100} w={140} h={60} title="Camera" subtitle="raw frames" accent="blue" icon={Icon.camera} />
       <NodeBox idPrefix={id} x={220} y={100} w={140} h={60} title="FFmpeg" subtitle="libx264 / NVENC" accent="blue" />
       <NodeBox idPrefix={id} x={390} y={100} w={150} h={60} title="HLS segments" subtitle=".ts · 1s each" accent="blue" />
@@ -400,7 +400,7 @@ export function HlsPipelineDiagram() {
       <NodeBox idPrefix={id} x={570} y={180} w={170} h={40} title="WebSocket event" accent="amber" />
       <FlowArrow idPrefix={id} x1={540} y1={200} x2={570} y2={200} color={C.amber} marker="arrow-amber" />
 
-      {/* Arrows across CloudNode main row */}
+      {/* Arrows across CameraNode main row */}
       <FlowArrow idPrefix={id} x1={190} y1={130} x2={220} y2={130} marker="arrow" />
       <FlowArrow idPrefix={id} x1={360} y1={130} x2={390} y2={130} marker="arrow" />
       <FlowArrow idPrefix={id} x1={540} y1={130} x2={570} y2={130} marker="arrow" />
@@ -409,7 +409,7 @@ export function HlsPipelineDiagram() {
       <NodeBox idPrefix={id} x={320} y={290} w={170} h={40} title="Segment RAM cache" accent="green" />
       <NodeBox idPrefix={id} x={520} y={290} w={170} h={40} title="Same-origin proxy" accent="green" />
 
-      {/* Up from CloudNode → Cloud */}
+      {/* Up from CameraNode → Cloud */}
       <FlowArrow idPrefix={id} x1={655} y1={160} x2={420} y2={290}
                  label="HTTPS" marker="arrow-green" color={C.green} />
       <FlowArrow idPrefix={id} x1={655} y1={220} x2={605} y2={290}
@@ -655,7 +655,7 @@ export function IncidentLifecycleDiagram() {
 //   6) MCP AGENT WORKFLOW
 // ══════════════════════════════════════════════════════════════════
 // Swim-lane sequence: Agent lane calls tools, Command Center lane dispatches,
-// CloudNode lane produces the physical data (JPEG, clip bytes).
+// CameraNode lane produces the physical data (JPEG, clip bytes).
 export function McpWorkflowDiagram() {
   const id = 'mcp'
   // y-coords per lane
@@ -672,10 +672,10 @@ export function McpWorkflowDiagram() {
   )
   return (
     <DiagramFrame
-      ariaLabel="MCP agent workflow: agent calls tools through Command Center, which fans out to CloudNode for camera data."
+      ariaLabel="MCP agent workflow: agent calls tools through Command Center, which fans out to CameraNode for camera data."
       viewBox="0 0 980 470"
       aspectRatio="980/470"
-      caption="A typical agent loop. Each numbered step is a tool call. The agent drives the conversation; Command Center authenticates and dispatches; CloudNode produces image / clip bytes when the tool needs them."
+      caption="A typical agent loop. Each numbered step is a tool call. The agent drives the conversation; Command Center authenticates and dispatches; CameraNode produces image / clip bytes when the tool needs them."
     >
       <Defs id={id} />
 
@@ -685,7 +685,7 @@ export function McpWorkflowDiagram() {
       <text x={40} y={L_CC - 30}    fill={C.green}  fontSize="11" fontWeight="600" letterSpacing="1.3"
             fontFamily="Inter, system-ui, sans-serif">COMMAND CENTER</text>
       <text x={40} y={L_NODE - 30}  fill={C.blue}   fontSize="11" fontWeight="600" letterSpacing="1.3"
-            fontFamily="Inter, system-ui, sans-serif">CLOUDNODE</text>
+            fontFamily="Inter, system-ui, sans-serif">CAMERANODE</text>
 
       {/* Lane rails */}
       <line x1={40}  y1={L_AGENT} x2={940} y2={L_AGENT} stroke="rgba(168,85,247,0.2)" strokeWidth="1" strokeDasharray="2 3" />
@@ -723,7 +723,7 @@ export function McpWorkflowDiagram() {
       {[130, 260, 390, 520, 650, 780, 880].map((x, i) => step(x, L_AGENT, String(i + 1), C.purple))}
       {/* Command Center lane: dispatch point for every call */}
       {[130, 260, 390, 520, 650, 780, 880].map((x, i) => step(x, L_CC, String(i + 1), C.green))}
-      {/* CloudNode lane: only for calls that need a physical camera */}
+      {/* CameraNode lane: only for calls that need a physical camera */}
       {[260, 390, 650, 780].map((x) => step(x, L_NODE, '✓', C.blue))}
 
       {/* Side panel: tool-class legend */}
@@ -809,14 +809,14 @@ export function SecurityModelDiagram() {
           <circle cx="22" cy="40" r="7" fill={C.blue} />
           <text x="40" y="36" fill={C.text} fontSize="13" fontWeight="600">Transport</text>
           <text x="40" y="54" fill={C.textMuted} fontSize="11">TLS 1.2+ on every hop</text>
-          <text x="40" y="68" fill={C.textMuted} fontSize="11">outbound-only CloudNode → cloud</text>
+          <text x="40" y="68" fill={C.textMuted} fontSize="11">outbound-only CameraNode → cloud</text>
           <line x1="22" y1="82" x2="320" y2="82" stroke={C.border} strokeWidth="1" />
 
           {/* Auth row */}
           <circle cx="22" cy="108" r="7" fill={C.purple} />
           <text x="40" y="104" fill={C.text} fontSize="13" fontWeight="600">Authentication</text>
           <text x="40" y="122" fill={C.textMuted} fontSize="11">Clerk JWT — dashboard users</text>
-          <text x="40" y="136" fill={C.textMuted} fontSize="11">nak_*  — CloudNode keys</text>
+          <text x="40" y="136" fill={C.textMuted} fontSize="11">nak_*  — CameraNode keys</text>
           <text x="40" y="150" fill={C.textMuted} fontSize="11">osc_*  — MCP agent keys</text>
           <line x1="22" y1="164" x2="320" y2="164" stroke={C.border} strokeWidth="1" />
 
@@ -824,7 +824,7 @@ export function SecurityModelDiagram() {
           <circle cx="22" cy="190" r="7" fill={C.amber} />
           <text x="40" y="186" fill={C.text} fontSize="13" fontWeight="600">Data at rest</text>
           <text x="40" y="204" fill={C.textMuted} fontSize="11">SHA-256 hashed API keys (backend)</text>
-          <text x="40" y="218" fill={C.textMuted} fontSize="11">AES-256-GCM creds (CloudNode DB)</text>
+          <text x="40" y="218" fill={C.textMuted} fontSize="11">AES-256-GCM creds (CameraNode DB)</text>
           <text x="40" y="232" fill={C.textMuted} fontSize="11">live video in RAM only</text>
           <line x1="22" y1="246" x2="320" y2="246" stroke={C.border} strokeWidth="1" />
 

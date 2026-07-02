@@ -37,7 +37,7 @@ We don't yet operate a `security@` mailbox — the `sourceboxsentry.com` domain 
 **In scope:**
 
 - The deployed Command Center API and web application (https://sourceboxsentry.com)
-- The CloudNode binary + repository ([`SourceBox-LLC/Sentinel-CameraNode`](https://github.com/SourceBox-LLC/Sentinel-CameraNode))
+- The CameraNode binary + repository ([`SourceBox-LLC/Sentinel-CameraNode`](https://github.com/SourceBox-LLC/Sentinel-CameraNode))
 - Auth / authorization, including IDOR, privilege escalation, and tenant-isolation breaks
 - RCE, SSRF, XSS, CSRF, SQL injection, deserialization
 - Cryptographic weaknesses in the at-rest encryption story
@@ -46,7 +46,7 @@ We don't yet operate a `security@` mailbox — the `sourceboxsentry.com` domain 
 **Out of scope:**
 
 - Issues in third-party services (Clerk, Stripe, Fly.io, Resend, Sentry) — report upstream
-- Social engineering, physical attacks, attacks needing local access to a CloudNode you don't own
+- Social engineering, physical attacks, attacks needing local access to a CameraNode you don't own
 - Volumetric DoS / bandwidth flood attacks (application-layer rate-limit bypasses ARE in scope)
 - Missing security headers / rate limits we've consciously chosen not to set
 - Self-XSS requiring the victim to paste attacker-controlled content

@@ -9,7 +9,7 @@
     },
     "subject": {
       "type": "product_still_life",
-      "name": "USB security camera connected via USB cable to a compact local CloudNode device, both on a wooden surface — a 'private security loop' captured in two physical objects",
+      "name": "USB security camera connected via USB cable to a compact local CameraNode device, both on a wooden surface — a 'private security loop' captured in two physical objects",
       "physical_properties": {
         "scene_type": "macro / product still-life on a warm wooden desk surface, intimate scale, intentional composition like a quiet 'evidence shot' rather than a marketing render"
       }
@@ -26,12 +26,12 @@
           "type": "usb_cable",
           "count": 1,
           "position": "spanning_middle",
-          "notes": "Black USB cable with a gentle curve connecting the webcam to the CloudNode device on the right. The cable is the visual 'tether' between the two hardware objects — emphasises 'local loop.'"
+          "notes": "Black USB cable with a gentle curve connecting the webcam to the CameraNode device on the right. The cable is the visual 'tether' between the two hardware objects — emphasises 'local loop.'"
         }
       ],
       "midground": [
         {
-          "type": "compact_cloudnode_device",
+          "type": "compact_cameranode_device",
           "count": 1,
           "position": "right_third",
           "notes": "Small black single-board / mini-PC, generic shape, deck-of-cards size. Front face shows two small green LED indicators (one for power, one for 'armed'). Two USB ports visible on its side (one occupied by the cable from the camera). NO logos, NO branding text."
@@ -67,7 +67,7 @@
       "framing": "medium_close",
       "focal_length_mm": 50,
       "depth_of_field": "shallow",
-      "notes": "Camera roughly at table height, looking across the surface at a slight 3/4 angle so both hardware objects are in clear view and the USB cable creates a visual line between them. Subject (camera + cable + cloudnode) all in focus; background falls off into bokeh. A single spec highlight on each device's front edge gives them physical weight."
+      "notes": "Camera roughly at table height, looking across the surface at a slight 3/4 angle so both hardware objects are in clear view and the USB cable creates a visual line between them. Subject (camera + cable + cameranode) all in focus; background falls off into bokeh. A single spec highlight on each device's front edge gives them physical weight."
     },
     "lighting": {
       "key_light_direction": "back_right",

@@ -26,7 +26,7 @@ a ``manifest.json`` with metadata.  JSON over CSV because:
 
 What's excluded from the export:
 
-  - Recordings.  These live on the customer's CloudNode, not on
+  - Recordings.  These live on the customer's CameraNode, not on
     Command Center — same reason they're absent from
     ``organization.deleted`` cleanup.
   - IncidentEvidence binary blobs (snapshots / clip captures).
@@ -160,8 +160,8 @@ def _build_zip_stream(
             "tables": [],
             "excluded": {
                 "recordings": (
-                    "Local to your CloudNode device. Not stored on "
-                    "Command Center. Use the CloudNode TUI to export."
+                    "Local to your CameraNode device. Not stored on "
+                    "Command Center. Use the CameraNode TUI to export."
                 ),
                 "incident_evidence_blobs": (
                     "Metadata exported here as 'incident_evidence.json'. "

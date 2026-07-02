@@ -30,55 +30,55 @@ router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 
 _PLAN_LIMIT_NOTIF_THROTTLE_SECONDS = 3600  # 1 hour between plan-limit notifications
 
-# Threshold at which a CloudNode's host disk is considered alert-worthy.
+# Threshold at which a CameraNode's host disk is considered alert-worthy.
 # Filling = local recordings start failing to write.  90% (rather than the
 # 95% used for our Command Center disk) gives the operator more lead time
 # because acting on customer hardware (cleaning up old recordings, plugging
 # in another drive) takes longer than ``fly volumes extend``.
-_CLOUDNODE_DISK_LOW_THRESHOLD_PERCENT = 90
+_CAMERANODE_DISK_LOW_THRESHOLD_PERCENT = 90
 # How long to wait before re-emitting on a still-stuck-low disk.  6h
 # matches the Command Center disk pattern — long enough that an admin
 # isn't paged twice for the same incident, short enough that a real
 # recurrence isn't silently lost.
-_CLOUDNODE_DISK_LOW_REEMIT_INTERVAL_SECONDS = 6 * 60 * 60
+_CAMERANODE_DISK_LOW_REEMIT_INTERVAL_SECONDS = 6 * 60 * 60
 
 
-def _check_and_emit_cloudnode_disk_low(
+def _check_and_emit_cameranode_disk_low(
     db: Session,
     *,
     node: CameraNode,
     free_bytes: int | None,
     total_bytes: int | None,
 ) -> None:
-    """Emit a ``cloudnode_disk_low`` notification when this node's host
+    """Emit a ``cameranode_disk_low`` notification when this node's host
     disk is at/over the threshold.  Debounced per-node via a persistent
     Setting row (survives process restarts; an in-memory dict would
     re-spam after every deploy).
 
     Called from the heartbeat handler after the storage stats are
     persisted.  No-ops cleanly when the node didn't report disk stats
-    (older CloudNode versions) or when the math doesn't make sense
+    (older CameraNode versions) or when the math doesn't make sense
     (zero/negative total).  Wrapped in a try/except by the caller —
     a notification fault must not break the heartbeat path.
     """
     if not free_bytes or not total_bytes or total_bytes <= 0:
         return
     pct_used = ((total_bytes - free_bytes) / total_bytes) * 100
-    if pct_used < _CLOUDNODE_DISK_LOW_THRESHOLD_PERCENT:
+    if pct_used < _CAMERANODE_DISK_LOW_THRESHOLD_PERCENT:
         # Crossed back below threshold — clear the debounce so the
         # next time it goes critical, the alert fires immediately
         # rather than waiting out a stale 6h cooldown.
-        Setting.set(db, node.org_id, f"cloudnode_disk_low_emit_at:{node.node_id}", "")
+        Setting.set(db, node.org_id, f"cameranode_disk_low_emit_at:{node.node_id}", "")
         return
 
     last_emit_iso = Setting.get(
-        db, node.org_id, f"cloudnode_disk_low_emit_at:{node.node_id}", "",
+        db, node.org_id, f"cameranode_disk_low_emit_at:{node.node_id}", "",
     )
     if last_emit_iso:
         try:
             last_emit = datetime.fromisoformat(last_emit_iso)
             now = datetime.now(tz=UTC).replace(tzinfo=None)
-            if (now - last_emit).total_seconds() < _CLOUDNODE_DISK_LOW_REEMIT_INTERVAL_SECONDS:
+            if (now - last_emit).total_seconds() < _CAMERANODE_DISK_LOW_REEMIT_INTERVAL_SECONDS:
                 return
         except ValueError:
             # Malformed setting value (manually edited / corrupt) —
@@ -95,10 +95,10 @@ def _check_and_emit_cloudnode_disk_low(
 
     create_notification(
         org_id=node.org_id,
-        kind="cloudnode_disk_low",
-        title=f"CloudNode disk low: {display}",
+        kind="cameranode_disk_low",
+        title=f"CameraNode disk low: {display}",
         body=(
-            f"The host disk on CloudNode \"{display}\" is "
+            f"The host disk on CameraNode \"{display}\" is "
             f"{pct_rounded}% full ({free_gb} GB free of {total_gb} GB). "
             f"Local recordings will fail to write when the disk fills. "
             f"Free up space (delete old recordings, expand storage, or "
@@ -118,7 +118,7 @@ def _check_and_emit_cloudnode_disk_low(
 
     Setting.set(
         db, node.org_id,
-        f"cloudnode_disk_low_emit_at:{node.node_id}",
+        f"cameranode_disk_low_emit_at:{node.node_id}",
         datetime.now(tz=UTC).replace(tzinfo=None).isoformat(),
     )
 
@@ -180,7 +180,7 @@ def _emit_plan_limit_notification(
 def _record_node_register_error(db: Session, node: CameraNode, reason: str) -> None:
     """Persist a registration/auth failure on the node row so the UI can
     show *why* a node is stuck in ``pending`` instead of making the user
-    SSH in to read CloudNode logs.  Best-effort: any DB error is swallowed
+    SSH in to read CameraNode logs.  Best-effort: any DB error is swallowed
     because the caller is already about to raise a 4xx to the node."""
     try:
         node.last_register_error = reason[:500]
@@ -199,7 +199,7 @@ async def validate_node(
 ):
     """
     Validate a node_id + API key pair.
-    Called by the CloudNode setup wizard before saving configuration.
+    Called by the CameraNode setup wizard before saving configuration.
     Returns the node name on success so the wizard can confirm the right node.
     """
     api_key = request.headers.get("X-Node-API-Key")
@@ -248,7 +248,7 @@ async def register_node(
 
     api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
 
-    # Defensive sanitization — older CloudNode builds (v0.1.5 and earlier)
+    # Defensive sanitization — older CameraNode builds (v0.1.5 and earlier)
     # shipped garbage `avc1.*e00a` H.264 strings for the Pi's
     # h264_v4l2m2m encoder.  Upgrade before persisting so the next playlist
     # fetch doesn't brick the browser MSE attach.  See core/codec.py.
@@ -266,7 +266,7 @@ async def register_node(
             )
             raise HTTPException(status_code=403, detail="Invalid API key for this node")
 
-        # Refuse registrations from CloudNodes too old to speak the current
+        # Refuse registrations from CameraNodes too old to speak the current
         # wire protocol — they'd just keep failing in subtle ways downstream
         # and the operator would have no idea what's wrong.  HTTP 426 with
         # the canonical "you need at least X" payload makes the next step
@@ -278,15 +278,15 @@ async def register_node(
         if not version_check["supported"]:
             _record_node_register_error(
                 db, existing_node,
-                f"CloudNode version {version_check['parsed']} is below the minimum "
-                f"supported {version_check['min_supported']}. Update CloudNode to "
+                f"CameraNode version {version_check['parsed']} is below the minimum "
+                f"supported {version_check['min_supported']}. Update CameraNode to "
                 f"{version_check['latest']} and re-register.",
             )
             raise HTTPException(
                 status_code=426,
                 detail={
                     "message": (
-                        f"CloudNode {version_check['parsed']} is no longer supported. "
+                        f"CameraNode {version_check['parsed']} is no longer supported. "
                         f"Minimum: {version_check['min_supported']}, "
                         f"latest: {version_check['latest']}."
                     ),
@@ -301,7 +301,7 @@ async def register_node(
         # integration layer builds Home Assistant's LAN-direct stream
         # URL from it.  A node that binds loopback-only (the Connected-
         # mode default) reports lan_streaming=False — clear the IP so
-        # we never hand HA a connection-refused URL.  Old CloudNodes
+        # we never hand HA a connection-refused URL.  Old CameraNodes
         # (< 0.1.73) don't send the field (None) → legacy keep-on-
         # truthy behavior.
         if data.lan_streaming is False:
@@ -410,7 +410,7 @@ async def register_node(
         logger.info("Node %s re-registered successfully with %d cameras", data.node_id, len(camera_mapping))
 
         # If the plan cap rejected any cameras, emit an admin notification
-        # and tell the CloudNode so it can surface the hit to the installer.
+        # and tell the CameraNode so it can surface the hit to the installer.
         # Debounce at 1 hour so a node that keeps re-heartbeating with an
         # over-cap camera list doesn't flood the inbox.
         if skipped_cameras:
@@ -425,7 +425,7 @@ async def register_node(
             "status": "updated",
             "message": "Node re-registered successfully",
             "cameras": camera_mapping,
-            # Advisory plan string for the CloudNode status-bar badge. Stays
+            # Advisory plan string for the CameraNode status-bar badge. Stays
             # in sync with the org's Clerk subscription because `limits` was
             # resolved via resolve_org_plan() a few lines up. Enforcement
             # stays server-side; see wire_plan_slug() doc comment.
@@ -442,10 +442,10 @@ async def register_node(
                     f"Upgrade to add: {', '.join(skipped_cameras)}."
                 ),
             }
-        # Tell the node when a newer release is available.  CloudNode logs this
+        # Tell the node when a newer release is available.  CameraNode logs this
         # as a one-line warning and the dashboard turns it into an
         # "update available" badge on the node row.  We don't push the update
-        # ourselves — operators install CloudNode on their own hardware.
+        # ourselves — operators install CameraNode on their own hardware.
         if version_check["update_available"]:
             response["update_available"] = version_check["update_available"]
         return response
@@ -480,7 +480,7 @@ async def node_heartbeat(
     if node.api_key_hash != api_key_hash:
         raise HTTPException(status_code=403, detail="Invalid API key")
 
-    # Same version gate as register — a CloudNode that gets upgraded to a
+    # Same version gate as register — a CameraNode that gets upgraded to a
     # supported version recovers automatically on its next heartbeat; one
     # that gets *downgraded* below MIN_SUPPORTED stops being able to
     # heartbeat and shows up as offline within 90s.  Persist the reported
@@ -494,7 +494,7 @@ async def node_heartbeat(
             status_code=426,
             detail={
                 "message": (
-                    f"CloudNode {version_check['parsed']} is no longer supported. "
+                    f"CameraNode {version_check['parsed']} is no longer supported. "
                     f"Minimum: {version_check['min_supported']}, "
                     f"latest: {version_check['latest']}."
                 ),
@@ -516,7 +516,7 @@ async def node_heartbeat(
     else:
         node.local_ip = data.local_ip or node.local_ip
 
-    # Persist filesystem-aware storage stats from CloudNode v0.1.41+.
+    # Persist filesystem-aware storage stats from CameraNode v0.1.41+.
     # Older nodes omit the block; we leave the existing values untouched
     # in that case so the dashboard's last-known reading isn't clobbered
     # back to NULL on a brief downgrade or hand-built test client.
@@ -533,7 +533,7 @@ async def node_heartbeat(
         # heartbeat — node ↔ Command Center connectivity is more
         # important than the alert fanout.
         try:
-            _check_and_emit_cloudnode_disk_low(
+            _check_and_emit_cameranode_disk_low(
                 db,
                 node=node,
                 free_bytes=s.disk_free_bytes,
@@ -541,7 +541,7 @@ async def node_heartbeat(
             )
         except Exception:
             logger.exception(
-                "[Heartbeat] cloudnode_disk_low check failed for node=%s",
+                "[Heartbeat] cameranode_disk_low check failed for node=%s",
                 node.node_id,
             )
 
@@ -588,7 +588,7 @@ async def node_heartbeat(
                 exc_info=True,
             )
 
-    # Plan for the CloudNode status-bar badge. Read directly from the
+    # Plan for the CameraNode status-bar badge. Read directly from the
     # Setting cache (populated by the Clerk webhook + register's full
     # resolve_org_plan call) rather than calling resolve_org_plan here —
     # heartbeats fire every ~30s per node, and resolve_org_plan talks to
@@ -601,7 +601,7 @@ async def node_heartbeat(
     node_cameras = db.query(Camera).filter_by(node_id=node.id).all()
 
     # List of camera_ids on THIS node that are currently suspended by the
-    # plan cap. Used by the CloudNode to (a) show a "suspended" status on
+    # plan cap. Used by the CameraNode to (a) show a "suspended" status on
     # those camera rows in the TUI and (b) stop pushing segments for them
     # so the log isn't flooded with 402s.  Scoped to this node's cameras
     # only — a sibling node in the same org handles its own disabled list.
@@ -610,7 +610,7 @@ async def node_heartbeat(
     # Per-camera recording state (v0.1.43+).  Authoritative answer to
     # "should this camera be recording right now?", computed from the
     # operator-set policy on each Camera row + the current wall-clock
-    # time (for the scheduled-window case).  CloudNode reconciles its
+    # time (for the scheduled-window case).  CameraNode reconciles its
     # in-memory recording_state set to match this map every heartbeat,
     # so a manual record-button press, a Continuous-24/7 toggle, or
     # the start of a scheduled window all propagate to the node within
@@ -673,7 +673,7 @@ def _camera_should_record_now(camera: Camera, tz) -> bool:
       - otherwise                              → don't record
 
     Suspended-by-plan cameras still return whatever their policy says
-    here; the CloudNode is independently informed via
+    here; the CameraNode is independently informed via
     ``disabled_cameras`` and skips push-segment for them anyway.
     Coupling those two would risk silently turning recording back on
     when an org upgrades, which is a separate decision the operator
@@ -894,7 +894,7 @@ async def decommission_self(
 ):
     """Node-initiated decommission.
 
-    Called when the operator runs ``/wipe confirm`` on the CloudNode TUI.
+    Called when the operator runs ``/wipe confirm`` on the CameraNode TUI.
     The node asks us to delete its server-side record *before* it
     erases local state, so "factory reset" is one user action instead
     of "wipe locally, then remember to also delete it in the dashboard".
@@ -1027,7 +1027,7 @@ async def rotate_api_key(
     notification to the node: its next HTTP heartbeat / register / WS
     reconnect simply 403s (auth runs before any response body; an
     already-established WS session keeps flowing until it reconnects),
-    so the operator must re-run CloudNode setup with the new key —
+    so the operator must re-run CameraNode setup with the new key —
     which is what the rotation modal walks them through.  Active-disconnect on rotation was considered and
     declined (not worth the plumbing at current scale).
     """
@@ -1055,5 +1055,5 @@ async def rotate_api_key(
         "node_id": node_id,
         "api_key": new_api_key,
         "key_rotated_at": node.key_rotated_at.isoformat(),
-        "warning": "Store this API key securely. It cannot be retrieved again. Update your CloudNode config immediately.",
+        "warning": "Store this API key securely. It cannot be retrieved again. Update your CameraNode config immediately.",
     }

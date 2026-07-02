@@ -454,7 +454,7 @@ function SettingsPage() {
     try {
       const result = await rotateNodeKey(() => Promise.resolve(token), nodeId)
       await loadNodes()
-      showToast("API key rotated — update your CloudNode config", "warning")
+      showToast("API key rotated — update your CameraNode config", "warning")
       return result
     } catch (err) {
       showToast(err.message || "Failed to rotate API key", "error")
@@ -575,7 +575,7 @@ function SettingsPage() {
                       {node.node_version && (
                         <span
                           className="node-version"
-                          title={`CloudNode v${node.node_version}`}
+                          title={`CameraNode v${node.node_version}`}
                         >
                           v{node.node_version}
                         </span>
@@ -1023,7 +1023,7 @@ function SettingsPage() {
               },
               {
                 key: "email_node_offline",
-                label: "CloudNode offline / recovered",
+                label: "CameraNode offline / recovered",
                 desc:
                   "When a node loses uplink (every camera on it goes " +
                   "dark) — AND when it heartbeats again.",
@@ -1047,10 +1047,10 @@ function SettingsPage() {
                 audience: "Admins only",
               },
               {
-                key: "email_cloudnode_disk_low",
-                label: "CloudNode disk almost full",
+                key: "email_cameranode_disk_low",
+                label: "CameraNode disk almost full",
                 desc:
-                  "When YOUR CloudNode hardware passes 90% disk " +
+                  "When YOUR CameraNode hardware passes 90% disk " +
                   "use — recordings will fail when it caps out.  " +
                   "Different from our Command Center disk; this " +
                   "one is on the device you can act on.",
@@ -1263,7 +1263,7 @@ function SettingsPage() {
           ZIP with one JSON file per data table in your organization
           &mdash; cameras, settings, audit log, motion events,
           notifications, MCP keys, email log, incidents, and the
-          monthly usage counter.  Recordings live on your CloudNode
+          monthly usage counter.  Recordings live on your CameraNode
           devices, not Command Center, and are <strong>not</strong>
           included.  Admin only.  Rate-limited to 3 exports/hour.
         </p>

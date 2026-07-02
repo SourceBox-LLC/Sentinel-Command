@@ -29,7 +29,7 @@ import { ToastProvider } from "../../src/hooks/useToasts.jsx"
 const EXPECTED_SECTION_IDS = [
   "getting-started",
   "architecture",
-  "cloudnode-setup",
+  "cameranode-setup",
   "configuration",
   "deployment",
   "motion-detection",

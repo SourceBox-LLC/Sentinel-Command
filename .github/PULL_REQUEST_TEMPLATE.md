@@ -25,7 +25,7 @@ Fixes #
 
 - [ ] Frontend (React/Vite)
 - [ ] Backend (FastAPI API)
-- [ ] CloudNode (Rust)
+- [ ] CameraNode (Rust)
 - [ ] Authentication (Clerk)
 - [ ] HLS streaming / segment cache
 - [ ] Docker/Deployment

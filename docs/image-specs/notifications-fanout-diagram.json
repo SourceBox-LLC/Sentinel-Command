@@ -27,7 +27,7 @@
             "incident opened",
             "MCP key created / revoked",
             "member added / role changed",
-            "CloudNode disk almost full"
+            "CameraNode disk almost full"
           ],
           "styling": "small panel attached below the EVENT node, JetBrains Mono items, muted grey, no bullets — just a stacked list"
         },
@@ -112,7 +112,7 @@
         "incident opened",
         "MCP key created / revoked",
         "member added / role changed",
-        "CloudNode disk almost full",
+        "CameraNode disk almost full",
         "AUDIENCE FILTER", "admin-only vs all members",
         "EMAIL GATE", "per-org opt-in · bounce suppression · motion cooldown 15 min",
         "IN-APP INBOX", "bell icon · SSE · real-time",

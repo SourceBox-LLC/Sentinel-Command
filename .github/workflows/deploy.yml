@@ -92,7 +92,7 @@ jobs:
 
       # Vitest component tests — run BEFORE the build so a regression
       # caught by tests doesn't get the chance to ship via a successful
-      # build.  We have ~50 tests today (HelpTooltip, InstallCloudNodeCard,
+      # build.  We have ~50 tests today (HelpTooltip, InstallCameraNodeCard,
       # UpgradeModal, EmptyState, the API service helpers, the docs
       # page, and a sanity smoke test); the suite runs in <10s on CI
       # so the speed cost is negligible.

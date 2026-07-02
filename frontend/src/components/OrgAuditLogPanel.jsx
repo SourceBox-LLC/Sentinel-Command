@@ -55,7 +55,7 @@ const EVENT_GROUPS = [
     ],
   },
   {
-    label: "CloudNode lifecycle",
+    label: "CameraNode lifecycle",
     events: [
       ["node_created", "Node created"],
       ["node_decommissioned", "Node decommissioned"],

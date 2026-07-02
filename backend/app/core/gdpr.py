@@ -142,7 +142,7 @@ def delete_org_data(db: Session, org_id: str) -> dict[str, int]:
     Returns ``{table_name: rows_deleted}`` for the audit-row payload.
     Caller is responsible for:
 
-      - Sending CloudNode ``wipe_data`` commands BEFORE this runs
+      - Sending CameraNode ``wipe_data`` commands BEFORE this runs
         (this function only touches the Command Center DB; the
         per-node local data is the node's responsibility).
       - Cleaning up in-memory caches (HLS segment cache, broadcaster

@@ -911,7 +911,7 @@ def test_get_email_preferences_returns_defaults(admin_client):
     assert prefs["email_node_offline"] is True
     assert prefs["email_incident_created"] is True
     assert prefs["email_mcp_key_audit"] is True
-    assert prefs["email_cloudnode_disk_low"] is True
+    assert prefs["email_cameranode_disk_low"] is True
     assert prefs["email_member_audit"] is True
     # Motion is the ONLY email kind that defaults OFF — see the
     # comment block above _EMAIL_KIND_TO_SETTING for rationale
@@ -997,19 +997,19 @@ def test_member_kinds_share_audit_setting(db, monkeypatch):
         ) is False, f"{kind} should be disabled when email_member_audit is off"
 
 
-def test_cloudnode_disk_low_routes_to_dedicated_setting(db, monkeypatch):
-    """cloudnode_disk_low is a single-event setting (no pair).
+def test_cameranode_disk_low_routes_to_dedicated_setting(db, monkeypatch):
+    """cameranode_disk_low is a single-event setting (no pair).
     Verify it gates correctly and isn't accidentally bound to
     another kind's setting."""
     _enable_email(monkeypatch)
 
     assert notifications_mod.email_enabled_for_kind(
-        db, "org_test123", "cloudnode_disk_low",
+        db, "org_test123", "cameranode_disk_low",
     ) is True
 
-    Setting.set(db, "org_test123", "email_cloudnode_disk_low", "false")
+    Setting.set(db, "org_test123", "email_cameranode_disk_low", "false")
     assert notifications_mod.email_enabled_for_kind(
-        db, "org_test123", "cloudnode_disk_low",
+        db, "org_test123", "cameranode_disk_low",
     ) is False
 
     # Other settings are unaffected.

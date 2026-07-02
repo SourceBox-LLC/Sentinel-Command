@@ -3,10 +3,10 @@ Tests for the live-video proxy path — the backend-cached HLS pipeline.
 
 Covers:
 
-- Segment roundtrip: a segment pushed by the owning CloudNode over
+- Segment roundtrip: a segment pushed by the owning CameraNode over
   ``POST /push-segment`` is byte-exact on a subsequent
   ``GET /segment/<filename>`` — the cache never corrupts the payload.
-- Playlist rewriting: raw playlist text pushed by the CloudNode is
+- Playlist rewriting: raw playlist text pushed by the CameraNode is
   served back with segment filenames proxied through this backend
   (``segment/segment_00001.ts``) — no absolute URLs leak through.
 - Codec stripping: ``#EXT-X-CODECS`` lines are removed from media
@@ -203,7 +203,7 @@ def test_push_playlist_rejects_oversize(unauthenticated_client, db, monkeypatch)
 # When an org downgrades (or cancels) and ends up over its camera cap,
 # `enforce_camera_cap` flips `Camera.disabled_by_plan = True` on the
 # over-cap rows. Push-segment must then reject their uploads with
-# HTTP 402 + a structured `plan_limit_hit` body so the CloudNode can
+# HTTP 402 + a structured `plan_limit_hit` body so the CameraNode can
 # surface the reason in its TUI instead of silently retrying.
 
 
@@ -422,7 +422,7 @@ def test_playlist_segments_use_relative_proxy_paths(
     unauthenticated_client,
     db,
 ):
-    """After a CloudNode pushes a raw playlist, the cached rewrite served
+    """After a CameraNode pushes a raw playlist, the cached rewrite served
     to the browser must route every segment through this backend via a
     relative path — never an absolute URL.  A stray absolute URL would
     bypass our auth layer and point the browser at someone else's host."""
@@ -517,7 +517,7 @@ def test_playlist_rewrite_handles_crlf_line_endings(
     unauthenticated_client,
     db,
 ):
-    """A CloudNode running on Windows can write the playlist with CRLF
+    """A CameraNode running on Windows can write the playlist with CRLF
     line endings.  The regex must treat ``\\r`` as trailing whitespace
     so the emitted URI is still the clean ``segment/<name>`` — a stray
     ``\\r`` in the middle of the URI would break the browser's fetch."""
@@ -724,7 +724,7 @@ def test_rewrite_playlist_strips_forward_slash_path_prefix():
 
 
 def test_rewrite_playlist_strips_backslash_path_prefix():
-    """Windows CloudNodes can write backslash-separated paths into the
+    """Windows CameraNodes can write backslash-separated paths into the
     playlist (e.g. ``data\\hls\\cam_id\\segment_00042.ts``).  The
     rewriter must strip backslash prefixes too — otherwise the browser
     fetch URL contains an embedded backslash and 404s."""

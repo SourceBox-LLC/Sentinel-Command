@@ -8,7 +8,7 @@ import { useToasts } from "../hooks/useToasts.jsx"
 // need shared state (the OS-tabs choice, the Copy-button toast) pull it from
 // useDocs() rather than props. See pages/docs/context.jsx for the provider.
 import GettingStarted from "./docs/GettingStarted"
-import CloudNodeSetup from "./docs/CloudNodeSetup"
+import CameraNodeSetup from "./docs/CameraNodeSetup"
 import Configuration from "./docs/Configuration"
 import Deployment from "./docs/Deployment"
 import MotionDetection from "./docs/MotionDetection"
@@ -35,7 +35,7 @@ import Resources from "./docs/Resources"
 const DOC_SECTIONS = [
   "getting-started",
   "architecture",
-  "cloudnode-setup",
+  "cameranode-setup",
   "configuration",
   "deployment",
   "motion-detection",
@@ -171,8 +171,8 @@ function DocsSidebar({ activeId }) {
           <a href="#architecture" className={linkClass("architecture")}>Architecture</a>
         </div>
         <div className="docs-sidebar-group">
-          <div className="docs-sidebar-group-label">CloudNode</div>
-          <a href="#cloudnode-setup" className={linkClass("cloudnode-setup")}>Setup</a>
+          <div className="docs-sidebar-group-label">CameraNode</div>
+          <a href="#cameranode-setup" className={linkClass("cameranode-setup")}>Setup</a>
           <a href="#configuration" className={linkClass("configuration")}>Configuration</a>
           <a href="#deployment" className={linkClass("deployment")}>Deployment</a>
           <a href="#motion-detection" className={linkClass("motion-detection")}>Motion Detection</a>
@@ -327,11 +327,11 @@ function DocsPage() {
 
             <div className="docs-header">
               <h1>Documentation</h1>
-              <p>How to use Sentinel — installing CloudNode on your camera machine, working with the cloud dashboard, and connecting AI tools over MCP.</p>
+              <p>How to use Sentinel — installing CameraNode on your camera machine, working with the cloud dashboard, and connecting AI tools over MCP.</p>
             </div>
 
             <GettingStarted />
-            <CloudNodeSetup />
+            <CameraNodeSetup />
             <Configuration />
             <Deployment />
             <MotionDetection />

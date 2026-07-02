@@ -179,7 +179,7 @@ function iconForKind(kind) {
     case "camera_offline":
     case "node_offline":
       return "⚠"
-    case "cloudnode_disk_low":
+    case "cameranode_disk_low":
     case "plan_limit_reached":
       return "⚠"
     case "camera_online":

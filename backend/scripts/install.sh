@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Sentinel CloudNode Installer (Sentinel by SourceBox)
+# Sentinel CameraNode Installer (Sentinel by SourceBox)
 #
 # Default behavior: download binary, register the node, and tell the
 # operator how to start the foreground TUI.  The foreground TUI is the
@@ -112,7 +112,7 @@ fi
 
 # ── Banner ──────────────────────────────────────────────────────────
 echo ""
-echo -e "${GREEN}${BOLD}  Sentinel CloudNode Installer${NC}"
+echo -e "${GREEN}${BOLD}  Sentinel CameraNode Installer${NC}"
 echo -e "${DIM}  ================================${NC}"
 echo ""
 
@@ -129,7 +129,7 @@ case "$OS" in
         echo "For Windows, download the MSI installer from the latest release:"
         echo "  https://github.com/SourceBox-LLC/Sentinel-CameraNode/releases/latest"
         echo ""
-        echo "(Run the MSI, then 'sourcebox-sentry-cloudnode setup' from an admin PowerShell.)"
+        echo "(Run the MSI, then 'sourcebox-sentry-cameranode setup' from an admin PowerShell.)"
         exit 1
         ;;
 esac
@@ -302,12 +302,12 @@ if [ -n "$DOWNLOAD_URL" ]; then
                 ;;
             *)
                 # Assume raw binary
-                cp "$TMPFILE" "$INSTALL_DIR/sourcebox-sentry-cloudnode"
+                cp "$TMPFILE" "$INSTALL_DIR/sourcebox-sentry-cameranode"
                 ;;
         esac
 
         rm -f "$TMPFILE"
-        chmod +x "$INSTALL_DIR/sourcebox-sentry-cloudnode" 2>/dev/null || true
+        chmod +x "$INSTALL_DIR/sourcebox-sentry-cameranode" 2>/dev/null || true
 
         echo -e "${GREEN}Downloaded successfully.${NC}"
     else
@@ -344,7 +344,7 @@ if [ -z "$DOWNLOAD_URL" ]; then
         # ~90 KB and pulled in transitively by the `zip` crate's
         # `bzip2-sys`; skipping it is the most common source-build
         # failure on a fresh Pi image, 15 minutes deep into cargo.
-        # (We don't need libssl-dev — CloudNode uses rustls, not OpenSSL.)
+        # (We don't need libssl-dev — CameraNode uses rustls, not OpenSSL.)
         NEED_APT="$NEED_APT libbz2-dev"
         # De-dup (build-essential may appear twice).
         NEED_APT=$(echo "$NEED_APT" | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')
@@ -373,7 +373,7 @@ if [ -z "$DOWNLOAD_URL" ]; then
     if ! check_cmd cargo; then
         echo ""
         echo -e "  ${BOLD}Rust toolchain not found.${NC}"
-        echo -e "  ${DIM}CloudNode needs rustc + cargo to build from source.${NC}"
+        echo -e "  ${DIM}CameraNode needs rustc + cargo to build from source.${NC}"
         if prompt_yes "Install Rust via rustup (the official installer)?"; then
             echo -e "  ${DIM}Running rustup-init -y (stable toolchain, default profile)...${NC}"
             # --default-toolchain stable: pin to stable to avoid nightly
@@ -412,8 +412,8 @@ if [ -z "$DOWNLOAD_URL" ]; then
     echo -e "${DIM}Building (~10-15 min on Raspberry Pi 4)...${NC}"
     (cd "$CLONE_DIR" && cargo build --release --quiet)
 
-    cp "$CLONE_DIR/target/release/sourcebox-sentry-cloudnode" "$INSTALL_DIR/sourcebox-sentry-cloudnode"
-    chmod +x "$INSTALL_DIR/sourcebox-sentry-cloudnode"
+    cp "$CLONE_DIR/target/release/sourcebox-sentry-cameranode" "$INSTALL_DIR/sourcebox-sentry-cameranode"
+    chmod +x "$INSTALL_DIR/sourcebox-sentry-cameranode"
 
     echo -e "${GREEN}Build complete.${NC}"
 fi
@@ -435,7 +435,7 @@ if check_cmd ffmpeg; then
 else
     echo -e "  ffmpeg:    ${YELLOW}not found${NC}"
     echo ""
-    echo -e "${YELLOW}CloudNode requires ffmpeg for video processing.${NC}"
+    echo -e "${YELLOW}CameraNode requires ffmpeg for video processing.${NC}"
 
     if [ "$PLATFORM" = "linux" ]; then
         # apt is the common case (Debian/Ubuntu/Raspberry Pi OS).  Ship
@@ -562,7 +562,7 @@ if [ "$IS_REGISTERED" = false ] && [ "$HAVE_QUICK_ARGS" = true ]; then
     # canonical location the systemd unit uses as WorkingDirectory.
     echo ""
     echo -e "${BOLD}  Registering node with Command Center...${NC}"
-    if (cd "$HOME" && "$INSTALL_DIR/sourcebox-sentry-cloudnode" setup \
+    if (cd "$HOME" && "$INSTALL_DIR/sourcebox-sentry-cameranode" setup \
             --url "$ARG_URL" --node-id "$ARG_NODE_ID" --key "$ARG_KEY"); then
         SETUP_RAN=true
         if [ -f "$HOME/data/node.db" ]; then
@@ -572,7 +572,7 @@ if [ "$IS_REGISTERED" = false ] && [ "$HAVE_QUICK_ARGS" = true ]; then
         echo -e "  ${GREEN}Registered.${NC}"
     else
         echo -e "${RED}Quick setup failed — check the URL and key, then try again.${NC}"
-        echo -e "  ${CYAN}cd ~ && ${INSTALL_DIR}/sourcebox-sentry-cloudnode setup --url ${ARG_URL} --node-id ${ARG_NODE_ID} --key <key>${NC}"
+        echo -e "  ${CYAN}cd ~ && ${INSTALL_DIR}/sourcebox-sentry-cameranode setup --url ${ARG_URL} --node-id ${ARG_NODE_ID} --key <key>${NC}"
         # Exit non-zero so the calling shell (or the dashboard's one-
         # liner copy box) can detect the failure.
         exit 1
@@ -585,7 +585,7 @@ elif [ "$IS_REGISTERED" = false ] && [ -r /dev/tty ] && [ -t 1 ]; then
     echo -e "  ${DIM}API key from ${CYAN}https://opensentry-command.fly.dev${NC}${DIM} → Nodes → Add node.${NC}"
     echo ""
     if prompt_yes "Run setup wizard now?"; then
-        if (cd "$HOME" && "$INSTALL_DIR/sourcebox-sentry-cloudnode" setup </dev/tty); then
+        if (cd "$HOME" && "$INSTALL_DIR/sourcebox-sentry-cameranode" setup </dev/tty); then
             SETUP_RAN=true
             if [ -f "$HOME/data/node.db" ]; then
                 IS_REGISTERED=true
@@ -593,10 +593,10 @@ elif [ "$IS_REGISTERED" = false ] && [ -r /dev/tty ] && [ -t 1 ]; then
             fi
         else
             echo -e "  ${YELLOW}Setup wizard exited with an error.  You can re-run it later:${NC}"
-            echo -e "  ${CYAN}cd ~ && ${INSTALL_DIR}/sourcebox-sentry-cloudnode setup${NC}"
+            echo -e "  ${CYAN}cd ~ && ${INSTALL_DIR}/sourcebox-sentry-cameranode setup${NC}"
         fi
     else
-        echo -e "  ${DIM}Skipped.  Run later:  ${CYAN}cd ~ && ${INSTALL_DIR}/sourcebox-sentry-cloudnode setup${NC}"
+        echo -e "  ${DIM}Skipped.  Run later:  ${CYAN}cd ~ && ${INSTALL_DIR}/sourcebox-sentry-cameranode setup${NC}"
     fi
 fi
 
@@ -607,7 +607,7 @@ fi
 # place (we have everything we need) and to no otherwise (service
 # would immediately fail on "no credentials").
 install_systemd_service() {
-    local svc_name="sourcebox-sentry-cloudnode"
+    local svc_name="sourcebox-sentry-cameranode"
     local svc_file="/etc/systemd/system/${svc_name}.service"
     local run_user="${SUDO_USER:-$USER}"
     # WorkingDirectory must contain (or create) ./data where node.db
@@ -624,7 +624,7 @@ install_systemd_service() {
 
     cat >"$tmp_unit" <<UNIT
 [Unit]
-Description=Sentinel CloudNode
+Description=Sentinel CameraNode
 Documentation=https://opensentry-command.fly.dev
 After=network-online.target
 Wants=network-online.target
@@ -633,7 +633,7 @@ Wants=network-online.target
 Type=simple
 User=${run_user}
 # 'video' is the standard group that owns /dev/video* on Debian/Ubuntu
-# /Raspberry Pi OS — the CloudNode needs it to open USB cameras.
+# /Raspberry Pi OS — the CameraNode needs it to open USB cameras.
 SupplementaryGroups=video
 # Inherit a sane PATH so ffmpeg (installed via apt above) is found even
 # when systemd's default PATH is missing /usr/local/bin.
@@ -644,7 +644,7 @@ Environment=NO_COLOR=1
 Environment=TERM=dumb
 Environment=RUST_LOG=info
 WorkingDirectory=${work_dir}
-ExecStart=${INSTALL_DIR}/sourcebox-sentry-cloudnode run
+ExecStart=${INSTALL_DIR}/sourcebox-sentry-cameranode run
 StandardOutput=journal
 StandardError=journal
 Restart=on-failure
@@ -699,7 +699,7 @@ UNIT
 SERVICE_RUNNING=false
 if [ "$PLATFORM" = "linux" ] && check_cmd systemctl && [ -d /etc/systemd/system ]; then
     UNIT_EXISTS=false
-    [ -f /etc/systemd/system/sourcebox-sentry-cloudnode.service ] && UNIT_EXISTS=true
+    [ -f /etc/systemd/system/sourcebox-sentry-cameranode.service ] && UNIT_EXISTS=true
 
     # Two paths fire the systemd install:
     #
@@ -739,24 +739,24 @@ esac
 
 # ── Done ──────────────────────────────────────────────────────────
 echo ""
-echo -e "${GREEN}${BOLD}  CloudNode installed successfully.${NC}"
+echo -e "${GREEN}${BOLD}  CameraNode installed successfully.${NC}"
 echo ""
 
 if [ "$SERVICE_RUNNING" = true ]; then
     # Operator opted in to the systemd service (or had it from a prior
     # install).  Service is up — they're done.
-    echo -e "  ${GREEN}${BOLD}CloudNode is streaming via systemd.${NC}"
+    echo -e "  ${GREEN}${BOLD}CameraNode is streaming via systemd.${NC}"
     echo -e "  ${DIM}View your cameras at ${CYAN}https://opensentry-command.fly.dev${NC}"
     echo ""
-    echo -e "  ${DIM}Live logs:  ${CYAN}journalctl -u sourcebox-sentry-cloudnode -f${NC}"
-    echo -e "  ${DIM}Stop:       ${CYAN}sudo systemctl stop sourcebox-sentry-cloudnode${NC}"
+    echo -e "  ${DIM}Live logs:  ${CYAN}journalctl -u sourcebox-sentry-cameranode -f${NC}"
+    echo -e "  ${DIM}Stop:       ${CYAN}sudo systemctl stop sourcebox-sentry-cameranode${NC}"
 elif [ "$IS_REGISTERED" = true ]; then
     # Registered but no service running — the foreground-TUI path is
     # primary.  Operator runs the binary directly and sees the live
     # dashboard with cameras, segments, and slash commands.  Same
     # model as the Windows MSI's Start menu shortcut.
-    echo -e "  ${BOLD}Start CloudNode (foreground dashboard):${NC}"
-    echo -e "  ${CYAN}${INSTALL_DIR}/sourcebox-sentry-cloudnode${NC}"
+    echo -e "  ${BOLD}Start CameraNode (foreground dashboard):${NC}"
+    echo -e "  ${CYAN}${INSTALL_DIR}/sourcebox-sentry-cameranode${NC}"
     echo ""
     echo -e "  ${DIM}You'll see the live TUI: cameras, segments, FFmpeg state, slash${NC}"
     echo -e "  ${DIM}commands.  Close the window or Ctrl+C to stop.${NC}"
@@ -777,8 +777,8 @@ else
     # Not registered yet — setup was declined or failed.
     echo -e "  ${BOLD}Next steps:${NC}"
     echo ""
-    echo -e "  1. Register:         ${CYAN}cd ~ && ${INSTALL_DIR}/sourcebox-sentry-cloudnode setup${NC}"
-    echo -e "  2. Start streaming:  ${CYAN}${INSTALL_DIR}/sourcebox-sentry-cloudnode${NC}"
+    echo -e "  1. Register:         ${CYAN}cd ~ && ${INSTALL_DIR}/sourcebox-sentry-cameranode setup${NC}"
+    echo -e "  2. Start streaming:  ${CYAN}${INSTALL_DIR}/sourcebox-sentry-cameranode${NC}"
     echo ""
     echo -e "  ${DIM}Get your node ID + API key at ${CYAN}https://opensentry-command.fly.dev${NC}"
 fi

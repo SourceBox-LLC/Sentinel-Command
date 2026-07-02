@@ -51,7 +51,7 @@ function Notifications() {
         <li><strong>Incident opened</strong> — A human, an MCP-connected AI tool, or the <a href="#sentinel">Sentinel AI</a> filed a new incident report.</li>
         <li><strong>MCP API key created</strong> — An admin generated a new MCP API key (full programmatic access to cameras + nodes + incidents). Security-audit signal.</li>
         <li><strong>MCP API key revoked</strong> — An admin revoked an existing MCP key. Paired with the create event so the audit trail is symmetric.</li>
-        <li><strong>CloudNode disk almost full</strong> — Your CloudNode hardware crossed 90% disk usage. Recordings will fail when the disk caps out. Customer-actionable (clean up files, expand storage).</li>
+        <li><strong>CameraNode disk almost full</strong> — Your CameraNode hardware crossed 90% disk usage. Recordings will fail when the disk caps out. Customer-actionable (clean up files, expand storage).</li>
         <li><strong>Member added / role changed / removed</strong> — Org membership lifecycle. Catches "did someone just give themselves admin access to my cameras?" within seconds via the Clerk webhook.</li>
         <li><strong>Member promotion requested</strong> — A non-admin member clicked "Request admin access" from the dashboard. Fires to org admins so the request doesn't sit unread. Shares the Member-audit email toggle with the lifecycle events above.</li>
         <li><strong>Motion digest</strong> — When a camera with motion-email enabled accumulates additional events during the cooldown window (15 min default), a single summary fires at window close. Paired with the immediate "first motion" email so volume is bounded to 2 emails per cycle per camera.</li>
@@ -70,12 +70,12 @@ function Notifications() {
           ships seven toggles. Six default ON for new orgs:{" "}
           <em>Camera offline / recovered</em> (gates both
           <code>camera_offline</code> and <code>camera_online</code>),{" "}
-          <em>CloudNode offline / recovered</em> (gates both
+          <em>CameraNode offline / recovered</em> (gates both
           <code>node_offline</code> and <code>node_online</code>),{" "}
           <em>AI agent created an incident</em> (<code>incident_created</code>),{" "}
           <em>MCP API key audit</em> (gates both <code>mcp_key_created</code>{" "}
           and <code>mcp_key_revoked</code>),{" "}
-          <em>CloudNode disk almost full</em> (<code>cloudnode_disk_low</code>),
+          <em>CameraNode disk almost full</em> (<code>cameranode_disk_low</code>),
           and <em>Member audit</em> (gates <code>member_added</code>,{" "}
           <code>member_role_changed</code>, <code>member_removed</code>, and{" "}
           <code>member_promotion_requested</code>).

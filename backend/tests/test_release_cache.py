@@ -77,7 +77,7 @@ def test_check_node_version_uses_cached_release_when_present(monkeypatch):
     in ``check_node_version`` output.
 
     This is the property that makes the whole refactor worthwhile —
-    a CloudNode release on GitHub immediately surfaces as
+    a CameraNode release on GitHub immediately surfaces as
     ``update_available`` to every connected node, without anyone
     bumping ``LATEST_NODE_VERSION``.
     """

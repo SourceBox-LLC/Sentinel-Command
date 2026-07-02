@@ -161,7 +161,7 @@ Law, including in any deployment where Customer points cameras at
 locations where individuals have a reasonable expectation of privacy.
 
 5.3 Customer is the controller of the **video content** captured by
-its CloudNode hardware. SourceBox does not store, copy, or have
+its CameraNode hardware. SourceBox does not store, copy, or have
 remote access to that video; live segments transit Command Center in
 RAM only and are not retained. See Annex 1 for the precise data-flow
 boundary.
@@ -286,10 +286,10 @@ only** — never video content. Specifically:
 - **Video content.** Live segments transit Command Center in RAM and
   are evicted on a 15-second window; nothing is written to disk on
   SourceBox infrastructure. Recordings live exclusively on the
-  Customer's CloudNode hardware in an encrypted SQLite database
+  Customer's CameraNode hardware in an encrypted SQLite database
   (AES-256-GCM, machine-derived key) — SourceBox has no copy and no
   remote read access.
-- **Snapshot images** (same path as recordings — CloudNode-only).
+- **Snapshot images** (same path as recordings — CameraNode-only).
 - **Card numbers, CVVs, or other payment instrument data.** These are
   collected directly by Stripe and never traverse SourceBox systems.
 
@@ -317,9 +317,9 @@ Organization.
 
 ## Encryption
 
-- **In transit.** TLS 1.2+ for all traffic between CloudNode, Command
+- **In transit.** TLS 1.2+ for all traffic between CameraNode, Command
   Center, and the Customer's browser / MCP client.
-- **At rest (CloudNode).** AES-256-GCM with a key derived from a
+- **At rest (CameraNode).** AES-256-GCM with a key derived from a
   machine-id file on the host. Each blob uses a fresh random nonce
   and an authentication tag bound to the blob's identifying metadata.
 - **At rest (Command Center).** Postgres volumes are encrypted at
@@ -337,8 +337,8 @@ Organization.
 ## Resilience and availability
 
 - Live video segments are cached in application RAM only; a process
-  restart flushes the cache and recovers from the next CloudNode push.
-- The CloudNode continues recording locally during Command Center
+  restart flushes the cache and recovers from the next CameraNode push.
+- The CameraNode continues recording locally during Command Center
   outages; live streaming pauses until connectivity returns.
 - Database backups are managed by the hosting provider with daily
   snapshots retained per their standard schedule.
@@ -348,9 +348,9 @@ Organization.
 - Application errors are captured by Sentry (when `SENTRY_DSN` is
   configured) at a 10% trace sample rate. No video, body content, or
   user identifiers beyond what's required for triage are captured.
-- Operator-critical alerts (camera offline + recovered, CloudNode
+- Operator-critical alerts (camera offline + recovered, CameraNode
   offline + recovered, AI-agent-created incident, MCP API key audit
-  events, CloudNode host disk approaching full, organization
+  events, CameraNode host disk approaching full, organization
   membership lifecycle, and motion detection with cooldown + digest)
   are delivered via email through Resend when
   `EMAIL_ENABLED=true` and per-org per-setting
