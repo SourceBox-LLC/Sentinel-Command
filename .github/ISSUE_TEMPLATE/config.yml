@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: Documentation
-    url: https://opensentry-command.fly.dev/docs
+    url: https://sentinel-command.com/docs
     about: Check the documentation for setup guides and troubleshooting
   - name: Discussions
     url: https://github.com/SourceBox-LLC/Sentinel-Command/discussions
