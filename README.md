@@ -6,9 +6,9 @@
     The cloud hub for <strong>Sentinel by SourceBox</strong>. Your footage stays yours.
     <br />
     <br />
-    <a href="https://opensentry-command.fly.dev"><strong>► Try the live app</strong></a>
+    <a href="https://sentinel-command.com"><strong>► Try the live app</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://opensentry-command.fly.dev/docs">Documentation</a>
+    <a href="https://sentinel-command.com/docs">Documentation</a>
     &nbsp;·&nbsp;
     <a href="https://github.com/SourceBox-LLC/Sentinel-CameraNode">CameraNode</a>
   </p>
@@ -31,7 +31,7 @@
 
 ## You don't run this — we host it for you
 
-Sentinel Command Center is a **product we operate as a service**, not something you download and deploy. To use it, just **[sign up on the live app](https://opensentry-command.fly.dev)** — no servers to provision, no Docker, no database to babysit. Pair a [CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode) with a camera and it appears in your dashboard automatically.
+Sentinel Command Center is a **product we operate as a service**, not something you download and deploy. To use it, just **[sign up on the live app](https://sentinel-command.com)** — no servers to provision, no Docker, no database to babysit. Pair a [CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode) with a camera and it appears in your dashboard automatically.
 
 > **Looking for the part you actually install?** That's **[CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode)** — a small daemon that turns any USB or IP camera into a private, cloud-connected feed. It runs on your hardware and has its own setup guide.
 
@@ -78,7 +78,7 @@ CameraNode captures and encodes video on your network, then pushes it **outbound
 
 | Project | What it is | |
 |---------|------------|---|
-| **Command Center** *(this repo)* | The hosted dashboard, API, and live-video hub | [Live app ›](https://opensentry-command.fly.dev) |
+| **Command Center** *(this repo)* | The hosted dashboard, API, and live-video hub | [Live app ›](https://sentinel-command.com) |
 | **CameraNode** | The camera daemon you install on your own hardware | [Repo ›](https://github.com/SourceBox-LLC/Sentinel-CameraNode) |
 | **Home Assistant integration** | Your Sentinel cameras inside Home Assistant | [Repo ›](https://github.com/SourceBox-LLC/Sentinel-HomeAssistant) |
 | **Sentinel AI agent** | Serverless agent that investigates motion & incidents | [Repo ›](https://github.com/SourceBox-LLC/SourceBox-Sentinel) |
@@ -89,7 +89,7 @@ CameraNode captures and encodes video on your network, then pushes it **outbound
 
 | If you want to… | Go to |
 |-----------------|-------|
-| **Use Sentinel** — set up cameras, recording, notifications, integrations | The in-app [Documentation](https://opensentry-command.fly.dev/docs) |
+| **Use Sentinel** — set up cameras, recording, notifications, integrations | The in-app [Documentation](https://sentinel-command.com/docs) |
 | **Understand the code** — architecture, API, data models, configuration | [AGENTS.md](AGENTS.md) |
 | **Operate it** — decision records, runbooks, legal templates | [docs/](docs/) |
 | **Audit or run the source locally** for review | [AGENTS.md › Build & Run](AGENTS.md) |
@@ -107,7 +107,7 @@ This project is **not currently accepting external code contributions**, but bug
 <p align="center">
   Made by <a href="https://github.com/SourceBox-LLC">SourceBox LLC</a>
   &nbsp;·&nbsp;
-  <a href="https://opensentry-command.fly.dev">Live app</a>
+  <a href="https://sentinel-command.com">Live app</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/SourceBox-LLC/Sentinel-CameraNode">CameraNode</a>
 </p>

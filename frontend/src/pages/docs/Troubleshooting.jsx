@@ -75,7 +75,7 @@ sudo pacman -S ffmpeg          # Arch`}</code>
         <p>Command Center marks a node offline if no heartbeat arrives for 90 seconds. Things to check:</p>
         <ul>
           <li>Is the node process actually running? <code>ps aux | grep cameranode</code> or check the terminal dashboard</li>
-          <li>Does outbound HTTPS to Command Center work? <code>curl -I https://opensentry-command.fly.dev/api/health</code> should return 200</li>
+          <li>Does outbound HTTPS to Command Center work? <code>curl -I https://sentinel-command.com/api/health</code> should return 200</li>
           <li>Is the API URL correct in the node config? Open settings via the dashboard <code>/settings</code> command</li>
           <li>Clock skew: if the machine's clock is wildly off, JWT auth may fail. Enable NTP.</li>
           <li>Firewall / egress filter dropping long-lived TLS connections? Confirm by tailing CameraNode logs for repeated connect-then-drop cycles, then ask your network admin to allow outbound 443 to Command Center.</li>

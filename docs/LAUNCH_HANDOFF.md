@@ -47,7 +47,7 @@ charges don't post, the dev-mode badge shows in the UI, and the
      -a opensentry-command
    ```
 4. Verify the Clerk webhook endpoint
-   `https://opensentry-command.fly.dev/api/webhooks/clerk` is
+   `https://sentinel-command.com/api/webhooks/clerk` is
    registered in the production Clerk app and signing secret is set
    (`CLERK_WEBHOOK_SECRET`). Test by upgrading a test org and
    confirming the `Setting(org_plan="pro")` row shows up.
@@ -86,7 +86,7 @@ the answer for those.
    Recommended subdomain: `notifications.sourceboxsentry.com` (keeps
    marketing-email reputation isolated from transactional).
 3. Configure a webhook in Resend → endpoint
-   `https://opensentry-command.fly.dev/api/webhooks/resend`. Copy the
+   `https://sentinel-command.com/api/webhooks/resend`. Copy the
    signing secret (starts with `whsec_`).
 4. Set the four Fly secrets:
    ```
@@ -149,7 +149,7 @@ There's no public status page yet.
 
 ## 4. Domain / DNS
 
-**State now.** Live on `opensentry-command.fly.dev`. CORS is
+**State now.** Live on `sentinel-command.com`. CORS is
 hard-coded for that origin (`backend/app/main.py::cors_origins`).
 
 **To switch.**

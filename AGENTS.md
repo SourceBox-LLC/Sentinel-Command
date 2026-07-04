@@ -2,7 +2,7 @@
 
 Sentinel Command Center — cloud dashboard for managing and viewing security cameras under the **Sentinel by SourceBox** product brand. FastAPI backend + React 19 frontend with Clerk authentication. Live video is streamed through an in-memory segment cache — **no Tigris, no S3, no presigned URLs in the live path**.
 
-> **Brand-history note for grep-discoverability:** the product has carried three names — `OpenSentry` (early), `SourceBox Sentry` (mid), and `Sentinel by SourceBox` (current, from May 2026 onward). The `Sentinel AI` name is reserved specifically for the AI-agent feature. Both GitHub repos were renamed in May 2026: Command Center `OpenSentry-Command` → `Sentinel-Command`, and CameraNode `opensentry-cloud-node` → `Sentinel-CameraNode` (note the deliberate "CameraNode" — the repo name now describes the artifact more literally, while the binary, install paths, and product UI keep saying "CameraNode"). GitHub auto-redirects the old URLs, so any hardcoded reference in a release artifact / cached doc / external bookmark continues to resolve. Identifiers preserved verbatim across the entire rebrand (do **not** rename these without a migration plan): the binary name `sourcebox-sentry-cameranode`, the env-var prefix `SOURCEBOX_SENTRY_*`, the Windows install path `C:\ProgramData\SourceBoxSentry\`, the AES key-derivation domain string `opensentry-cameranode-machine-id-v2` (see CameraNode `database.rs::KEY_DOMAIN_V2`), and the production hostname `opensentry-command.fly.dev` (tied to the Fly app, decoupled from the repo rename).
+> **Brand-history note for grep-discoverability:** the product has carried three names — `OpenSentry` (early), `SourceBox Sentry` (mid), and `Sentinel by SourceBox` (current, from May 2026 onward). The `Sentinel AI` name is reserved specifically for the AI-agent feature. Both GitHub repos were renamed in May 2026: Command Center `OpenSentry-Command` → `Sentinel-Command`, and CameraNode `opensentry-cloud-node` → `Sentinel-CameraNode` (note the deliberate "CameraNode" — the repo name now describes the artifact more literally, while the binary, install paths, and product UI keep saying "CameraNode"). GitHub auto-redirects the old URLs, so any hardcoded reference in a release artifact / cached doc / external bookmark continues to resolve. Identifiers preserved verbatim across the entire rebrand (do **not** rename these without a migration plan): the binary name `sourcebox-sentry-cameranode`, the env-var prefix `SOURCEBOX_SENTRY_*`, the Windows install path `C:\ProgramData\SourceBoxSentry\`, the AES key-derivation domain string `opensentry-cameranode-machine-id-v2` (see CameraNode `database.rs::KEY_DOMAIN_V2`), and the production hostname `sentinel-command.com` (tied to the Fly app, decoupled from the repo rename).
 
 ## Build & Run
 
@@ -521,7 +521,7 @@ Configured in `main.py`:
 cors_origins = [
     "http://localhost:5173",
     "http://localhost:8000",
-    "https://opensentry-command.fly.dev",
+    "https://sentinel-command.com",
 ]
 ```
 Plus `FRONTEND_URL` if set (validated: must have scheme, no trailing slash, no embedded whitespace). All methods and headers allowed; credentials allowed.

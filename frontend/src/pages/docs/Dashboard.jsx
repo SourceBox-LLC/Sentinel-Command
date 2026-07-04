@@ -9,7 +9,7 @@ function Dashboard() {
           <source srcSet="/images/dashboard-ia.webp" type="image/webp" />
           <img
             src="/images/dashboard-ia.jpg"
-            alt="Dashboard information architecture tree. Root: Dashboard (opensentry-command.fly.dev). Four children: Live view (Camera tiles, Fullscreen, Snapshot capture, Manual record); Settings — admin-only (Node Management, Recording Policy, Organization, Subscription, Danger Zone); Admin — admin-only (Stream Access Logs, Usage Statistics, MCP Tool Activity, System Health); Incidents (Open incidents, Evidence viewer, Markdown reports, Triage actions)."
+            alt="Dashboard information architecture tree. Root: Dashboard (sentinel-command.com). Four children: Live view (Camera tiles, Fullscreen, Snapshot capture, Manual record); Settings — admin-only (Node Management, Recording Policy, Organization, Subscription, Danger Zone); Admin — admin-only (Stream Access Logs, Usage Statistics, MCP Tool Activity, System Health); Incidents (Open incidents, Evidence viewer, Markdown reports, Triage actions)."
             className="docs-diagram-image"
             width="1920"
             height="1080"
