@@ -2,44 +2,21 @@ import { lazy, Suspense, useEffect } from "react"
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom"
 import { useAuth, useClerk, useOrganization, CreateOrganization } from "@clerk/clerk-react"
 import Layout from "./components/Layout.jsx"
-import PublicLayout from "./components/PublicLayout.jsx"
 import LoadingSpinner from "./components/LoadingSpinner.jsx"
 import ErrorBoundary from "./components/ErrorBoundary.jsx"
 import CookieNotice from "./components/CookieNotice.jsx"
 import { setUnauthorizedHandler } from "./services/api.js"
 
 // Lazy-load pages to reduce initial bundle size
-const LandingPage = lazy(() => import("./pages/LandingPage.jsx"))
-const DocsPage = lazy(() => import("./pages/DocsPage.jsx"))
 const SignInPage = lazy(() => import("./pages/SignInPage.jsx"))
 const SignUpPage = lazy(() => import("./pages/SignUpPage.jsx"))
 const DashboardPage = lazy(() => import("./pages/DashboardPage.jsx"))
 const SettingsPage = lazy(() => import("./pages/SettingsPage.jsx"))
 const AdminPage = lazy(() => import("./pages/AdminPage.jsx"))
 const TestHlsPage = lazy(() => import("./pages/TestHlsPage.jsx"))
-const PricingPage = lazy(() => import("./pages/PricingPage.jsx"))
 const McpPage = lazy(() => import("./pages/McpPage.jsx"))
 const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage.jsx"))
 const IncidentsPage = lazy(() => import("./pages/IncidentsPage.jsx"))
-const SentinelPage = lazy(() => import("./pages/SentinelPage.jsx"))
-const LegalPage = lazy(() => import("./pages/LegalPage.jsx"))
-const SecurityPage = lazy(() => import("./pages/SecurityPage.jsx"))
-
-// SignedIn users get the in-app shell (sidebar + header) on /docs, /pricing,
-// and /sentinel; signed-out visitors keep the marketing chrome. Without this,
-// clicking those links from the sidebar would unmount Layout and the sidebar
-// would disappear mid-session.
-function SmartLayout() {
-  const { isSignedIn, isLoaded } = useAuth()
-  if (!isLoaded) {
-    return (
-      <div className="loading-container">
-        <LoadingSpinner />
-      </div>
-    )
-  }
-  return isSignedIn ? <Layout /> : <PublicLayout />
-}
 
 function RequireOrg({ children }) {
   const { organization, isLoaded } = useOrganization()
@@ -109,6 +86,11 @@ function RequireAdmin({ children }) {
   return children
 }
 
+// The marketing landing page, documentation, pricing, legal, and security
+// pages now live on the standalone website at sentinel-command.com.
+// Redirect any visit to the bare root there.
+const STANDALONE_SITE = "https://sentinel-command.com"
+
 function App() {
   const { signOut } = useClerk()
   const navigate = useNavigate()
@@ -130,21 +112,8 @@ function App() {
     <ErrorBoundary>
       <Suspense fallback={<div className="loading-container"><LoadingSpinner /></div>}>
         <Routes>
-        {/* Public-only routes (marketing landing + legal) */}
-        <Route element={<PublicLayout />}>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/legal/:page" element={<LegalPage />} />
-          <Route path="/security" element={<SecurityPage />} />
-        </Route>
-
-        {/* Routes that adapt to auth state — public chrome for signed-out
-            visitors, in-app sidebar for signed-in users so nav doesn't
-            disappear when they click these links. */}
-        <Route element={<SmartLayout />}>
-          <Route path="/docs" element={<DocsPage />} />
-          <Route path="/pricing" element={<PricingPage />} />
-          <Route path="/sentinel" element={<SentinelPage />} />
-        </Route>
+        {/* Root redirects to the standalone marketing/docs site */}
+        <Route path="/" element={<Navigate to={STANDALONE_SITE} replace />} />
 
         {/* Auth routes (public but use Clerk components) */}
         <Route path="/sign-in/*" element={<SignInPage />} />
