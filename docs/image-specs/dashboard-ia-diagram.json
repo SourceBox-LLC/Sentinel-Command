@@ -14,7 +14,7 @@
     },
     "root": {
       "label": "Dashboard",
-      "subtitle": "opensentry-command.fly.dev",
+      "subtitle": "sentinel-command.com",
       "accent": "green",
       "icon": "cloud",
       "x_pct": 0.50,
@@ -85,7 +85,7 @@
     "constraints": {
       "layout_lock": true,
       "exact_text": [
-        "Dashboard", "opensentry-command.fly.dev",
+        "Dashboard", "sentinel-command.com",
         "Live view", "Camera tiles", "Fullscreen + multi-view", "Snapshot capture", "Manual record",
         "Settings", "Node Management", "Recording Policy", "Organization", "Subscription", "Danger Zone",
         "Admin", "Stream Access Logs", "Usage Statistics", "MCP Tool Activity", "System Health",
