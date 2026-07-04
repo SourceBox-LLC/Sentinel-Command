@@ -19,7 +19,7 @@ function HomeAssistant() {
       </div>
       <p>
         Connect Sentinel to <strong>Home Assistant</strong> with a single key. Every camera
-        across every CloudNode in your organization shows up at once — and the entity list
+        across every CameraNode in your organization shows up at once — and the entity list
         re-syncs automatically as you add or move nodes. You configure it <em>once</em>
         against the Command Center, not per node.
       </p>
@@ -30,7 +30,7 @@ function HomeAssistant() {
         <li><strong>Recording switch</strong> — turn continuous recording on/off per camera.</li>
         <li><strong>Motion sensor</strong> — a <code>binary_sensor</code> per camera, fired in real time, ready for automations.</li>
         <li><strong>Connectivity sensor</strong> — whether each camera is online.</li>
-        <li><strong>Node diagnostics</strong> — storage used and CloudNode version, per node.</li>
+        <li><strong>Node diagnostics</strong> — storage used and CameraNode version, per node.</li>
       </ul>
 
       <h3>Setup</h3>
@@ -84,10 +84,10 @@ function HomeAssistant() {
           motion, and sensors work from anywhere.
         </li>
         <li>
-          <strong>Enable LAN streaming on the node:</strong> Connected-mode CloudNodes bind
+          <strong>Enable LAN streaming on the node:</strong> Connected-mode CameraNodes bind
           to <code>localhost</code> by default, so their local video server isn&rsquo;t
           reachable from Home Assistant out of the box — the camera entities load but live
-          video shows nothing. Re-run <code>sourcebox-sentry-cloudnode setup</code> with the{" "}
+          video shows nothing. Re-run <code>sourcebox-sentry-cameranode setup</code> with the{" "}
           <code>--lan-streaming</code> flag (or enable it in the setup wizard) on each node
           you want HA to stream from. Snapshots and all sensors work either way.
         </li>

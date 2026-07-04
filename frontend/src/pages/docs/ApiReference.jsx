@@ -9,7 +9,7 @@ function ApiReference() {
       <h2>API Reference<a href="#api-reference" className="docs-anchor">#</a></h2>
       <p>
         Command Center exposes a REST API at <code>{base}</code>. Three
-        auth schemes cover three audiences — CloudNode uses API key headers, the web
+        auth schemes cover three audiences — CameraNode uses API key headers, the web
         dashboard uses Clerk JWTs, and the MCP endpoint uses a dedicated bearer token.
       </p>
 
@@ -20,7 +20,7 @@ function ApiReference() {
             <tr><th>Scheme</th><th>Header</th><th>Used by</th></tr>
           </thead>
           <tbody>
-            <tr><td>Node API key</td><td><code>X-Node-API-Key: nak_...</code></td><td>Every CloudNode → Command Center call (register, heartbeat, push-segment, playlist, motion, codec, decommission)</td></tr>
+            <tr><td>Node API key</td><td><code>X-Node-API-Key: nak_...</code></td><td>Every CameraNode → Command Center call (register, heartbeat, push-segment, playlist, motion, codec, decommission)</td></tr>
             <tr><td>Clerk JWT</td><td><code>Authorization: Bearer &lt;jwt&gt;</code></td><td>Web dashboard, authenticated viewers</td></tr>
             <tr><td>MCP key</td><td><code>Authorization: Bearer osc_...</code></td><td>AI clients talking to <code>/mcp</code></td></tr>
           </tbody>
@@ -65,7 +65,7 @@ function ApiReference() {
           <span className="docs-accordion-title">Node Endpoints</span>
           <span className="docs-accordion-count">7 endpoints</span>
         </summary>
-        <p className="docs-accordion-intro">Used by CloudNode. Authenticate with the <code>X-Node-API-Key: {"your_api_key"}</code> header.</p>
+        <p className="docs-accordion-intro">Used by CameraNode. Authenticate with the <code>X-Node-API-Key: {"your_api_key"}</code> header.</p>
 
         <div className="docs-endpoint"><span className="docs-endpoint-method post">POST</span><span className="docs-endpoint-path">/api/nodes/register</span></div>
         <p>Register a node and its cameras. Returns camera ID mappings.</p>

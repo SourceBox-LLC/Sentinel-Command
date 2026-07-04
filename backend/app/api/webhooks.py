@@ -496,7 +496,7 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
                     body=(
                         "Your Sentinel workspace is ready.  "
                         "Three steps to your first live feed: install "
-                        "CloudNode on the host where your cameras live, "
+                        "CameraNode on the host where your cameras live, "
                         "wait ~30 seconds for it to register, then add "
                         "your first camera from Settings → Cameras.  "
                         "Full docs at /docs."

@@ -30,7 +30,7 @@ function Mcp() {
       <p>
         A typical agent session flows through three lanes. The agent drives the
         conversation and calls MCP tools; Command Center authenticates each call
-        and routes it; CloudNode produces physical data (JPEGs, clip bytes)
+        and routes it; CameraNode produces physical data (JPEGs, clip bytes)
         whenever a tool needs a live view of a camera.
       </p>
       <figure className="docs-diagram">
@@ -38,7 +38,7 @@ function Mcp() {
           <source srcSet="/images/mcp-workflow.webp" type="image/webp" />
           <img
             src="/images/mcp-workflow.jpg"
-            alt="MCP agent workflow swimlane. AI AGENT lane drives 7 numbered tool calls: list_cameras, view_camera, watch_camera, create_incident, attach_snapshot, attach_clip, finalize_incident. COMMAND CENTER lane authenticates and dispatches each call. CLOUDNODE lane produces physical data (JPEG snapshot, JPEG burst, JPEG → DB, clip from cache) only when the tool needs it. Legend: green READ, amber VISUAL, purple WRITE."
+            alt="MCP agent workflow swimlane. AI AGENT lane drives 7 numbered tool calls: list_cameras, view_camera, watch_camera, create_incident, attach_snapshot, attach_clip, finalize_incident. COMMAND CENTER lane authenticates and dispatches each call. CAMERANODE lane produces physical data (JPEG snapshot, JPEG burst, JPEG → DB, clip from cache) only when the tool needs it. Legend: green READ, amber VISUAL, purple WRITE."
             className="docs-diagram-image"
             width="1920"
             height="1080"
@@ -46,7 +46,7 @@ function Mcp() {
           />
         </picture>
         <figcaption className="docs-diagram-caption">
-          A typical agent loop. Each numbered step is a tool call. The agent drives the conversation; Command Center authenticates and dispatches; CloudNode produces image / clip bytes when the tool needs them.
+          A typical agent loop. Each numbered step is a tool call. The agent drives the conversation; Command Center authenticates and dispatches; CameraNode produces image / clip bytes when the tool needs them.
         </figcaption>
       </figure>
 
@@ -160,13 +160,13 @@ function Mcp() {
           <span className="docs-endpoint-method get">READ</span>
           <span className="docs-endpoint-path">list_nodes</span>
         </div>
-        <p>Every CloudNode (the physical box running cameras on the local network) with status, hostname, and camera count. Use when troubleshooting at the box level — e.g. whether a whole node is offline vs whether one of its cameras is. For per-camera state, use <code>list_cameras</code>.</p>
+        <p>Every CameraNode (the physical box running cameras on the local network) with status, hostname, and camera count. Use when troubleshooting at the box level — e.g. whether a whole node is offline vs whether one of its cameras is. For per-camera state, use <code>list_cameras</code>.</p>
 
         <div className="docs-endpoint">
           <span className="docs-endpoint-method get">READ</span>
           <span className="docs-endpoint-path">get_node</span>
         </div>
-        <p>Full detail for one CloudNode by <code>node_id</code> (hostname, IP, port, status, camera count). Use after <code>list_nodes</code> when you need detail on one specific box — e.g. to confirm which physical device the user should power-cycle.</p>
+        <p>Full detail for one CameraNode by <code>node_id</code> (hostname, IP, port, status, camera count). Use after <code>list_nodes</code> when you need detail on one specific box — e.g. to confirm which physical device the user should power-cycle.</p>
 
         <div className="docs-endpoint">
           <span className="docs-endpoint-method get">READ</span>

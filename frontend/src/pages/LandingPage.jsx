@@ -48,7 +48,7 @@ function LandingPage() {
     macos: `curl -fsSL ${base}/install.sh | bash`,
   }
   const MSI_DOWNLOAD_URL =
-    'https://github.com/SourceBox-LLC/Sentinel-CameraNode/releases/latest/download/sourcebox-sentry-cloudnode-windows-x86_64.msi'
+    'https://github.com/SourceBox-LLC/Sentinel-CameraNode/releases/latest/download/sourcebox-sentry-cameranode-windows-x86_64.msi'
 
   return (
     <>
@@ -130,7 +130,7 @@ function LandingPage() {
               <div className="landing-feature-icon"><ShieldLockIcon /></div>
               <h3>Encrypted End to End to Disk</h3>
               <p>
-                HTTPS from camera to browser. Recordings on the CloudNode are sealed at
+                HTTPS from camera to browser. Recordings on the CameraNode are sealed at
                 rest with AES-256-GCM using a machine-id-derived key — a stolen drive
                 is unreadable elsewhere.
               </p>
@@ -155,7 +155,7 @@ function LandingPage() {
               <div className="landing-feature-icon"><VideoIcon /></div>
               <h3>Real-Time Streaming</h3>
               <p>
-                HLS streaming with sub-10-second latency. CloudNode uploads segments
+                HLS streaming with sub-10-second latency. CameraNode uploads segments
                 in real-time for near-live viewing experience.
               </p>
             </div>
@@ -163,7 +163,7 @@ function LandingPage() {
               <div className="landing-feature-icon"><KeyIcon /></div>
               <h3>Simple Setup</h3>
               <p>
-                Install CloudNode on any device with a USB camera. Enter API key.
+                Install CameraNode on any device with a USB camera. Enter API key.
                 That's it. No network configuration required.
               </p>
             </div>
@@ -200,20 +200,20 @@ function LandingPage() {
             <div className="landing-privacy-copy">
               <span className="landing-privacy-eyebrow">Privacy by design</span>
               <h2 className="landing-privacy-title">
-                Your recordings never leave your CloudNode.
+                Your recordings never leave your CameraNode.
               </h2>
               <p className="landing-privacy-lede">
                 Cloud security cameras stream every frame to a vendor's servers
-                for storage and analysis. Your CloudNode is different — it sits
+                for storage and analysis. Your CameraNode is different — it sits
                 on your network, records to its own encrypted disk, and runs
                 motion analysis locally. The cloud only ever holds a rolling
                 60-second live buffer in memory.
               </p>
               <ul className="landing-privacy-points">
-                <li><strong>Motion detection runs locally.</strong> FFmpeg threshold detection on your CloudNode. Pixel math, not ML.</li>
+                <li><strong>Motion detection runs locally.</strong> FFmpeg threshold detection on your CameraNode. Pixel math, not ML.</li>
                 <li><strong>Recordings are encrypted at rest.</strong> AES-256-GCM with a key derived from your device's OS machine ID.</li>
                 <li><strong>No analytics, no ad networks, no data brokers.</strong> Verifiable in our source with a single grep.</li>
-                <li><strong>We don't hold your video.</strong> Recordings live on your CloudNode, not our cloud. If law enforcement asks for footage, they have to ask you.</li>
+                <li><strong>We don't hold your video.</strong> Recordings live on your CameraNode, not our cloud. If law enforcement asks for footage, they have to ask you.</li>
               </ul>
               <div className="landing-privacy-ctas">
                 <Link to="/security" className="landing-privacy-cta primary">
@@ -238,7 +238,7 @@ function LandingPage() {
                 />
               </picture>
               <div className="landing-privacy-image-caption" aria-hidden="true">
-                Your CloudNode. Your hardware. Your data.
+                Your CameraNode. Your hardware. Your data.
               </div>
             </div>
           </div>
@@ -251,7 +251,7 @@ function LandingPage() {
           <div className="landing-section-header">
             <h2 className="landing-section-title">Two-Component Architecture</h2>
             <p className="landing-section-subtitle">
-              CloudNode at your premises. Command Center in the cloud. Secure by design.
+              CameraNode at your premises. Command Center in the cloud. Secure by design.
             </p>
           </div>
           <div className="landing-arch-grid">
@@ -260,7 +260,7 @@ function LandingPage() {
                 <div className="landing-arch-icon">📹</div>
                 <div className="landing-arch-badge">Customer Premises</div>
               </div>
-              <h3>CloudNode</h3>
+              <h3>CameraNode</h3>
               <p className="landing-arch-desc">
                 Runs on any device with a USB camera. Captures video, generates HLS segments,
                 and pushes them straight to the Command Center over authenticated HTTPS.
@@ -391,7 +391,7 @@ function LandingPage() {
             <div className="landing-step">
               <div className="landing-step-number">2</div>
               <div className="landing-step-content">
-                <h4>Install CloudNode on your device</h4>
+                <h4>Install CameraNode on your device</h4>
                 <div className="install-tabs install-tabs-landing">
                   <div className="install-tab-buttons">
                     <button
@@ -422,7 +422,7 @@ function LandingPage() {
                         </button>
                       </div>
                       <p className="landing-step-note">
-                        One command. Downloads CloudNode, checks dependencies, and guides you through setup.
+                        One command. Downloads CameraNode, checks dependencies, and guides you through setup.
                       </p>
                     </>
                   ) : (
@@ -438,10 +438,10 @@ function LandingPage() {
                       </a>
                       <p className="landing-step-note" style={{ marginTop: '1rem' }}>
                         Run the MSI (one UAC prompt), then open PowerShell as Administrator and run{' '}
-                        <code>sourcebox-sentry-cloudnode setup</code>. Registers as a Windows Service that
+                        <code>sourcebox-sentry-cameranode setup</code>. Registers as a Windows Service that
                         auto-starts on boot. MSI is currently unsigned — SmartScreen will warn:
                         click <strong>More info → Run anyway</strong>. See{' '}
-                        <Link to="/docs#cloudnode-setup">install notes</Link> for full details.
+                        <Link to="/docs#cameranode-setup">install notes</Link> for full details.
                       </p>
                     </>
                   )}
@@ -453,7 +453,7 @@ function LandingPage() {
               <div className="landing-step-content">
                 <h4>Connect your USB camera</h4>
                 <p className="landing-step-note">
-                  CloudNode will automatically detect connected USB cameras. No manual configuration needed.
+                  CameraNode will automatically detect connected USB cameras. No manual configuration needed.
                 </p>
               </div>
             </div>
@@ -462,7 +462,7 @@ function LandingPage() {
               <div className="landing-step-content">
                 <h4>Enter your API key</h4>
                 <p className="landing-step-note">
-                  Generate an API key in your Command Center settings and enter it during CloudNode setup. 
+                  Generate an API key in your Command Center settings and enter it during CameraNode setup. 
                   Your camera will appear in the dashboard instantly.
                 </p>
               </div>
@@ -513,7 +513,7 @@ function LandingPage() {
                 <li>
                   <span className="landing-security-check">✓</span>
                   <div>
-                    <strong>No Inbound Ports</strong> — CloudNode pushes to cloud, no router config needed
+                    <strong>No Inbound Ports</strong> — CameraNode pushes to cloud, no router config needed
                   </div>
                 </li>
               </ul>
@@ -521,7 +521,7 @@ function LandingPage() {
             <div className="landing-security-visual">
               <div className="landing-encryption-diagram">
                 <div className="landing-diagram-node node">
-                  <span>CloudNode</span>
+                  <span>CameraNode</span>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>USB Camera + FFmpeg</div>
                 </div>
                 <div className="landing-diagram-arrow">
@@ -624,7 +624,7 @@ function LandingPage() {
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
                 </svg>
-                Get CloudNode
+                Get CameraNode
               </a>
             </div>
           </div>

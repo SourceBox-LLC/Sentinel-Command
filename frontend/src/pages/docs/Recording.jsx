@@ -7,7 +7,7 @@ function Recording() {
       <h2>Recording &amp; Retention<a href="#recording" className="docs-anchor">#</a></h2>
       <p>
         Recording in Sentinel is <strong>node-local by design</strong>. Each
-        camera has its own recording policy; CloudNode reconciles its in-memory
+        camera has its own recording policy; CameraNode reconciles its in-memory
         recording state from the backend on every heartbeat (~30 s), and
         encrypted recording segments land in the SQLite database next to the
         binary. No video is uploaded for long-term storage — the cloud holds
@@ -57,14 +57,14 @@ function Recording() {
         override during setup or by re-running it.
       </p>
       <p>
-        CloudNode enforces the cap every 5 minutes: when total stored bytes
+        CameraNode enforces the cap every 5 minutes: when total stored bytes
         exceed it, oldest recording segments are deleted first (FIFO). The
         Settings dashboard surfaces a per-node usage bar with green / amber /
         red bands at 75% / 90% so operators can see how full each node is at
         a glance.
       </p>
       <p>
-        Independently of the cap, CloudNode pauses recording writes when host
+        Independently of the cap, CameraNode pauses recording writes when host
         free disk drops below a 1 GiB safety floor — a "don't blow up the
         host" guardrail that fires regardless of how the cap was set. Live
         streaming continues unchanged; only the durable archive is paused.

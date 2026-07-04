@@ -10,7 +10,7 @@ function Architecture() {
           <source srcSet="/images/system-architecture.webp" type="image/webp" />
           <img
             src="/images/system-architecture.jpg"
-            alt="Three-zone system architecture: LOCAL (USB Camera and CloudNode), CLOUD (Command Center, Segment RAM Cache, Incident DB), CLIENT (Browser, AI Agent over MCP). HTTPS push from CloudNode to Command Center. Same-origin streaming to Browser. Outbound only — no inbound ports."
+            alt="Three-zone system architecture: LOCAL (USB Camera and CameraNode), CLOUD (Command Center, Segment RAM Cache, Incident DB), CLIENT (Browser, AI Agent over MCP). HTTPS push from CameraNode to Command Center. Same-origin streaming to Browser. Outbound only — no inbound ports."
             className="docs-diagram-image"
             width="1920"
             height="1080"
@@ -18,13 +18,13 @@ function Architecture() {
           />
         </picture>
         <figcaption className="docs-diagram-caption">
-          The live-video path runs entirely inside the authenticated backend — CloudNode pushes outbound, the browser fetches same-origin. No third-party object storage in the hot path.
+          The live-video path runs entirely inside the authenticated backend — CameraNode pushes outbound, the browser fetches same-origin. No third-party object storage in the hot path.
         </figcaption>
       </figure>
 
       <h3>How It Works</h3>
       <ol>
-        <li><strong>CloudNode</strong> captures video from USB cameras using FFmpeg</li>
+        <li><strong>CameraNode</strong> captures video from USB cameras using FFmpeg</li>
         <li>Video is encoded as HLS segments (1-second chunks by default) and pushed directly to the Command Center over authenticated HTTPS</li>
         <li>The <strong>Command Center</strong> caches the most recent segments in RAM and serves them to authorized viewers same-origin</li>
         <li>Viewers watch via HLS through the Command Center backend — no third-party storage in the live video path, no direct connection to your network</li>
@@ -42,7 +42,7 @@ function Architecture() {
           <source srcSet="/images/hls-pipeline.webp" type="image/webp" />
           <img
             src="/images/hls-pipeline.jpg"
-            alt="HLS segment pipeline. CloudNode lane: Camera → FFmpeg → HLS segments → Segment uploader. Parallel motion branch: Motion probe → scene-change score → HTTPS POST /motion. Cloud lane: Segment RAM cache → Same-origin proxy with a ~60 segments rolling-window pill. Client lane: hls.js player fetched via GET .ts."
+            alt="HLS segment pipeline. CameraNode lane: Camera → FFmpeg → HLS segments → Segment uploader. Parallel motion branch: Motion probe → scene-change score → HTTPS POST /motion. Cloud lane: Segment RAM cache → Same-origin proxy with a ~60 segments rolling-window pill. Client lane: hls.js player fetched via GET .ts."
             className="docs-diagram-image"
             width="1920"
             height="1080"
@@ -84,7 +84,7 @@ function Architecture() {
           <source srcSet="/images/security-model.webp" type="image/webp" />
           <img
             src="/images/security-model.jpg"
-            alt="Security model — four concentric rings: TRANSPORT (TLS 1.2+, outbound-only CloudNode → cloud), AUTH (Clerk JWT for users, nak_* for CloudNode keys, osc_* for MCP agent keys), DATA (SHA-256 hashed API keys, AES-256-GCM creds on CloudNode, live video in RAM only), TENANT isolation (every row scoped to org_id, no cross-org reads, MCP scope filters per key)."
+            alt="Security model — four concentric rings: TRANSPORT (TLS 1.2+, outbound-only CameraNode → cloud), AUTH (Clerk JWT for users, nak_* for CameraNode keys, osc_* for MCP agent keys), DATA (SHA-256 hashed API keys, AES-256-GCM creds on CameraNode, live video in RAM only), TENANT isolation (every row scoped to org_id, no cross-org reads, MCP scope filters per key)."
             className="docs-diagram-image"
             width="1920"
             height="1080"
@@ -96,11 +96,11 @@ function Architecture() {
         </figcaption>
       </figure>
       <ul>
-        <li><strong>Outbound Only</strong> — CloudNode pushes to cloud. No inbound ports, no router config.</li>
+        <li><strong>Outbound Only</strong> — CameraNode pushes to cloud. No inbound ports, no router config.</li>
         <li><strong>Same-origin Streaming</strong> — Live segments are served through the authenticated backend, not a third-party object store.</li>
         <li><strong>API Key Auth</strong> — Node keys stored as SHA-256 hashes. Never stored in plaintext.</li>
         <li><strong>Clerk Organizations</strong> — Multi-tenant auth with admin and member roles.</li>
-        <li><strong>HTTPS Everywhere</strong> — All traffic between CloudNode, Command Center, and viewers is encrypted.</li>
+        <li><strong>HTTPS Everywhere</strong> — All traffic between CameraNode, Command Center, and viewers is encrypted.</li>
         <li><strong>MCP Keys</strong> — Separate API keys for MCP access, also SHA-256 hashed and org-scoped.</li>
       </ul>
     </section>

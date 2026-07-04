@@ -2,7 +2,7 @@
 
 Sentinel Command Center — cloud dashboard for managing and viewing security cameras under the **Sentinel by SourceBox** product brand. FastAPI backend + React 19 frontend with Clerk authentication. Live video is streamed through an in-memory segment cache — **no Tigris, no S3, no presigned URLs in the live path**.
 
-> **Brand-history note for grep-discoverability:** the product has carried three names — `OpenSentry` (early), `SourceBox Sentry` (mid), and `Sentinel by SourceBox` (current, from May 2026 onward). The `Sentinel AI` name is reserved specifically for the AI-agent feature. Both GitHub repos were renamed in May 2026: Command Center `OpenSentry-Command` → `Sentinel-Command`, and CloudNode `opensentry-cloud-node` → `Sentinel-CameraNode` (note the deliberate "CameraNode" — the repo name now describes the artifact more literally, while the binary, install paths, and product UI keep saying "CloudNode"). GitHub auto-redirects the old URLs, so any hardcoded reference in a release artifact / cached doc / external bookmark continues to resolve. Identifiers preserved verbatim across the entire rebrand (do **not** rename these without a migration plan): the binary name `sourcebox-sentry-cloudnode`, the env-var prefix `SOURCEBOX_SENTRY_*`, the Windows install path `C:\ProgramData\SourceBoxSentry\`, the AES key-derivation domain string `opensentry-cloudnode-machine-id-v2` (see CloudNode `database.rs::KEY_DOMAIN_V2`), and the production hostname `opensentry-command.fly.dev` (tied to the Fly app, decoupled from the repo rename).
+> **Brand-history note for grep-discoverability:** the product has carried three names — `OpenSentry` (early), `SourceBox Sentry` (mid), and `Sentinel by SourceBox` (current, from May 2026 onward). The `Sentinel AI` name is reserved specifically for the AI-agent feature. Both GitHub repos were renamed in May 2026: Command Center `OpenSentry-Command` → `Sentinel-Command`, and CameraNode `opensentry-cloud-node` → `Sentinel-CameraNode` (note the deliberate "CameraNode" — the repo name now describes the artifact more literally, while the binary, install paths, and product UI keep saying "CameraNode"). GitHub auto-redirects the old URLs, so any hardcoded reference in a release artifact / cached doc / external bookmark continues to resolve. Identifiers preserved verbatim across the entire rebrand (do **not** rename these without a migration plan): the binary name `sourcebox-sentry-cameranode`, the env-var prefix `SOURCEBOX_SENTRY_*`, the Windows install path `C:\ProgramData\SourceBoxSentry\`, the AES key-derivation domain string `opensentry-cameranode-machine-id-v2` (see CameraNode `database.rs::KEY_DOMAIN_V2`), and the production hostname `opensentry-command.fly.dev` (tied to the Fly app, decoupled from the repo rename).
 
 ## Build & Run
 
@@ -37,7 +37,7 @@ Backend config is loaded from environment variables (see `backend/.env.example`)
 - `DATABASE_URL` — defaults to `sqlite:///./opensentry.db`. Production uses `sqlite:////data/opensentry.db` on a Fly volume — single-machine deploy, NullPool, WAL, busy_timeout=5000 (see `app/core/database.py`).
 - `FRONTEND_URL` — extra CORS origin (must have scheme, no trailing slash)
 - `REDIS_URL` — slowapi rate-limiter shared storage. Without it, per-process in-memory counters (single-VM safe; multi-VM round-robins around the limit). Currently in production via Upstash on Fly.
-- `SEGMENT_CACHE_MAX_PER_CAMERA` — segments cached in memory per camera (default **60**, ~60s — CloudNode emits 1-second segments)
+- `SEGMENT_CACHE_MAX_PER_CAMERA` — segments cached in memory per camera (default **60**, ~60s — CameraNode emits 1-second segments)
 - `SEGMENT_CACHE_MAX_TOTAL_BYTES` — global byte ceiling across all camera caches (default 2 GiB). When exceeded, `hls.py` evicts oldest segments across ALL cameras until back under cap.
 - `SEGMENT_PUSH_MAX_BYTES` — max bytes per pushed segment (default 2 MB)
 - `PLAYLIST_PUSH_MAX_BYTES` — max bytes per pushed playlist (default 64 KB)
@@ -73,13 +73,13 @@ backend/
 │   ├── templates/emails/         # 46 Jinja2 email templates — _layout.html.j2 +
 │   │                             # 15 kinds (camera offline/online, node offline/
 │   │                             # online, incident_created, mcp_key_created/revoked,
-│   │                             # cloudnode_disk_low, member_added/role_changed/
+│   │                             # cameranode_disk_low, member_added/role_changed/
 │   │                             # removed/promotion_requested, motion, motion_digest,
 │   │                             # welcome) × 3 files (subject.txt + body.txt + body.html)
 │   ├── api/
 │   │   ├── cameras.py            # Cameras, groups, settings, audit logs, danger zone
-│   │   ├── nodes.py              # CloudNode register/heartbeat/CRUD, plan info,
-│   │   │                         # cloudnode_disk_low alert helper (per-node debounce
+│   │   ├── nodes.py              # CameraNode register/heartbeat/CRUD, plan info,
+│   │   │                         # cameranode_disk_low alert helper (per-node debounce
 │   │   │                         # via Setting key colon-suffix pattern)
 │   │   ├── hls.py                # HLS playlist + segment memory cache + push-segment
 │   │   │                         # + HTTP motion fallback + global byte-cap eviction
@@ -94,8 +94,8 @@ backend/
 │   │   ├── notifications.py      # Notification inbox, unread count, SSE, broadcaster,
 │   │   │                         # email kind map, email cooldown gate (motion v1.1),
 │   │   │                         # email prefs endpoints, signed unsubscribe
-│   │   ├── install.py            # CloudNode + MCP setup script endpoints
-│   │   ├── ws.py                 # CloudNode WebSocket channel
+│   │   ├── install.py            # CameraNode + MCP setup script endpoints
+│   │   ├── ws.py                 # CameraNode WebSocket channel
 │   │   └── webhooks.py           # Clerk subscription + organizationMembership +
 │   │                             # Resend bounce/complaint webhook handlers
 │   ├── mcp/
@@ -119,15 +119,15 @@ backend/
 │   │   ├── plans.py              # PLAN_LIMITS, effective_plan_for_caps, grace period
 │   │   ├── recipients.py         # Clerk org member lookup + 5-min TTL cache + audience
 │   │   │                         # filter (admin / all) + suppression-list exclusion
-│   │   ├── release_cache.py      # GitHub /releases/latest cache for CloudNode
+│   │   ├── release_cache.py      # GitHub /releases/latest cache for CameraNode
 │   │   │                         # update_available signal
 │   │   └── sentry.py             # Sentry SDK init (no-op when SENTRY_DSN unset)
 │   ├── models/models.py          # 18 ORM models (see Data Models below)
 │   └── schemas/schemas.py        # Pydantic request/response schemas incl. McpKeyCreate
 ├── scripts/
-│   ├── install.sh                # CloudNode installer for Linux/macOS (served by install.py).
-│   │                               # Windows installs via the MSI from the latest CloudNode
-│   │                               # GitHub release, not a script — see CloudNodeSetup docs.
+│   ├── install.sh                # CameraNode installer for Linux/macOS (served by install.py).
+│   │                               # Windows installs via the MSI from the latest CameraNode
+│   │                               # GitHub release, not a script — see CameraNodeSetup docs.
 │   └── mcp-setup.sh / .ps1       # MCP client config helpers (Claude Code / Desktop / Cursor / Windsurf)
 ├── tests/                        # pytest — security, MCP scoping, motion, notifications, offline sweep,
 │                                 # billing/grace, ApiError envelope, drop_orphan_tables migration
@@ -209,17 +209,17 @@ frontend/
 ```
 Browser ──Clerk JWT──→ FastAPI ──SQL──→ SQLite / PostgreSQL
                           ↕
-CloudNode ──X-Node-API-Key──→ FastAPI ──RAM──→ in-memory segment cache
+CameraNode ──X-Node-API-Key──→ FastAPI ──RAM──→ in-memory segment cache
           ──WebSocket──────→                     + per-org motion/notification broadcasters
 MCP Client ──Bearer osc_…──→ FastMCP → ScopeMiddleware → tools
 ```
 
 ### Video streaming pipeline
 
-1. CloudNode generates HLS segments via FFmpeg (1-second `.ts` files by default; see `streaming.hls.segment_duration` in CloudNode's `config.yaml`)
-2. CloudNode calls `POST /api/cameras/{id}/push-segment?filename=segment_NNNNN.ts` with the raw `.ts` body and `X-Node-API-Key` header
+1. CameraNode generates HLS segments via FFmpeg (1-second `.ts` files by default; see `streaming.hls.segment_duration` in CameraNode's `config.yaml`)
+2. CameraNode calls `POST /api/cameras/{id}/push-segment?filename=segment_NNNNN.ts` with the raw `.ts` body and `X-Node-API-Key` header
 3. Backend stores the bytes in `_segment_cache[camera_id][filename]`, evicting the oldest once `SEGMENT_CACHE_MAX_PER_CAMERA` is exceeded
-4. CloudNode calls `POST /api/cameras/{id}/playlist` with the rolling `stream.m3u8` text
+4. CameraNode calls `POST /api/cameras/{id}/playlist` with the rolling `stream.m3u8` text
 5. Backend rewrites playlist segment filenames to relative `segment/<file>` proxy URLs and caches the result in `_playlist_cache`
 6. Browser calls `GET /api/cameras/{id}/stream.m3u8` with JWT → served instantly from `_playlist_cache`
 7. Browser fetches each segment via `GET /api/cameras/{id}/segment/{filename}` → served from `_segment_cache` in memory
@@ -255,9 +255,9 @@ MCP Client ──Bearer osc_…──→ FastMCP → ScopeMiddleware → tools
 - `require_view()` → any authenticated org member (no extra permission check)
 - `require_admin()` → Clerk role `org:admin` / `admin`, or `org:cameras:manage_cameras` permission
 
-### API key (CloudNode)
+### API key (CameraNode)
 
-CloudNode endpoints validate `X-Node-API-Key`:
+CameraNode endpoints validate `X-Node-API-Key`:
 1. SHA-256 hash the provided key
 2. Match against `api_key_hash` on `CameraNode`
 3. Derive `org_id` from the matched node row
@@ -290,18 +290,18 @@ All 20 models in `backend/app/models/models.py`. Every model has `org_id` for te
 
 | Model | Key Fields | Purpose |
 |-------|------------|---------|
-| `Camera` | `camera_id`, `node_id` (FK), `name`, `status`, `video_codec`, `audio_codec`, `group_id`, `last_seen` | Camera registered by a CloudNode; `effective_status` flips to offline after a 90s heartbeat gap |
-| `CameraNode` | `node_id`, `api_key_hash`, `hostname`, `status`, `video_codec`, `audio_codec`, `last_seen`, `key_rotated_at`, `storage_*` | Physical CloudNode device + storage stats from heartbeat (drives `cloudnode_disk_low` alert) |
+| `Camera` | `camera_id`, `node_id` (FK), `name`, `status`, `video_codec`, `audio_codec`, `group_id`, `last_seen` | Camera registered by a CameraNode; `effective_status` flips to offline after a 90s heartbeat gap |
+| `CameraNode` | `node_id`, `api_key_hash`, `hostname`, `status`, `video_codec`, `audio_codec`, `last_seen`, `key_rotated_at`, `storage_*` | Physical CameraNode device + storage stats from heartbeat (drives `cameranode_disk_low` alert) |
 | `CameraGroup` | `name`, `color`, `icon` | User-defined camera grouping |
-| `Setting` | `key`, `value` | Per-org key/value store. Used for plan slug, recording config, email toggles, motion email cooldown anchors (`motion_email_cooldown_start:{camera_id}`), CloudNode disk debounce (`cloudnode_disk_low_emit_at:{node_id}`), payment past-due flags. |
+| `Setting` | `key`, `value` | Per-org key/value store. Used for plan slug, recording config, email toggles, motion email cooldown anchors (`motion_email_cooldown_start:{camera_id}`), CameraNode disk debounce (`cameranode_disk_low_emit_at:{node_id}`), payment past-due flags. |
 | `AuditLog` | `event`, `user_id`, `ip_address`, `details`, `(org_id, timestamp)` index | Security audit trail |
 | `StreamAccessLog` | `user_id`, `camera_id`, `ip_address`, `user_agent`, `accessed_at`, `(org_id, accessed_at)` index | Stream playback audit |
 | `McpApiKey` | `name`, `key_hash`, `kind` (`mcp`/`integration`), `scope_mode`, `scope_tools` (JSON text), `last_used_at`, `revoked` | Both MCP keys (`osc_`, AI agents) AND Home Assistant integration keys (`osi_`) — one table, split by `kind`; **scope_mode** (MCP only): `all` / `readonly` / `custom` |
 | `McpActivityLog` | `tool_name`, `key_name`, `status`, `duration_ms`, `args_summary`, `error`, `timestamp`, `(org_id, timestamp)` index | Per-call MCP audit log |
 | `Incident` | `title`, `summary`, `report` (markdown), `severity`, `status`, `camera_id`, `created_by`, `resolved_at`, `resolved_by` | AI-generated incident (`open` / `acknowledged` / `resolved` / `dismissed`) |
 | `IncidentEvidence` | `incident_id` (FK cascade), `kind` (`snapshot` / `clip` / `observation`), `text`, `camera_id`, `data` (LargeBinary), `data_mime` | Snapshot JPEG, clip (MPEG-TS bytes), or text observation — evidence travels inline with the incident |
-| `MotionEvent` | `camera_id`, `node_id`, `score` (0–100), `segment_seq`, `timestamp`, `(org_id, timestamp)` index | Motion detected by CloudNode scene-change analysis |
-| `Notification` | `kind`, `audience` (`all` / `admin`), `title`, `body`, `severity`, `link`, `camera_id`, `node_id`, `meta_json` | Unified inbox entry (15 kinds: motion, motion_digest, camera_offline / camera_online, node_offline / node_online, incident_created, mcp_key_created / mcp_key_revoked, cloudnode_disk_low, member_added / member_role_changed / member_removed / member_promotion_requested, welcome) |
+| `MotionEvent` | `camera_id`, `node_id`, `score` (0–100), `segment_seq`, `timestamp`, `(org_id, timestamp)` index | Motion detected by CameraNode scene-change analysis |
+| `Notification` | `kind`, `audience` (`all` / `admin`), `title`, `body`, `severity`, `link`, `camera_id`, `node_id`, `meta_json` | Unified inbox entry (15 kinds: motion, motion_digest, camera_offline / camera_online, node_offline / node_online, incident_created, mcp_key_created / mcp_key_revoked, cameranode_disk_low, member_added / member_role_changed / member_removed / member_promotion_requested, welcome) |
 | `UserNotificationState` | `clerk_user_id` + `org_id` (unique), `last_viewed_at` | Per-user read cursor for the inbox |
 | `OrgMonthlyUsage` | `org_id` + `year_month` (unique), `viewer_seconds` | One row per org per calendar month; aggregates live-playback viewer-seconds for viewer-hour cap enforcement |
 | `EmailOutbox` | `recipient_email`, `subject`, `body_text`, `body_html`, `kind`, `notification_id` (soft FK), `status` (`pending`/`sending`/`sent`/`failed`/`suppressed`), `attempts`, `resend_message_id`, `(status, created_at)` index | Pending email send queue. Drained by `email_worker_loop` every 5s. Survives process restart. |
@@ -344,7 +344,7 @@ Validation constants (also in `models.py`):
 - `POST /cameras/{camera_id}/snapshot` — ask node to capture & store a snapshot locally (view, 30/min)
 - `POST /cameras/{camera_id}/recording` — manual start/stop recording on the camera; thin wrapper that flips `continuous_24_7` (admin, 30/min)
 - `PATCH /cameras/{camera_id}/recording-settings` — partial-update per-camera recording policy (`continuous_24_7`, `scheduled_recording`, `scheduled_start`, `scheduled_end`).  Per-camera since v0.1.43 — replaced the retired org-level `/settings/recording` endpoint pair (admin, 30/min)
-- `POST /cameras/{camera_id}/codec` — CloudNode reports codec after first segment (node API key, 30/min)
+- `POST /cameras/{camera_id}/codec` — CameraNode reports codec after first segment (node API key, 30/min)
 - `GET /camera-groups` — list groups (view)
 - `POST /camera-groups` — create group (admin, 20/min)
 - `DELETE /camera-groups/{group_id}` — delete group; member cameras unassigned (admin, 60/min)
@@ -360,14 +360,14 @@ Validation constants (also in `models.py`):
 - `POST /settings/danger/full-reset` — GDPR Article 17 right-to-erasure: wipe all nodes/cameras/recordings/snapshots/incidents/logs/settings for the org (admin, **every plan**, 3/hour).  Routes through the shared `app.core.gdpr.delete_org_data` helper so this end-state matches what `organization.deleted` Clerk webhook produces.
 
 **nodes.py** (prefix `/api/nodes`):
-- `POST /validate` — validate node_id + API key pair, used by CloudNode setup wizard (10/min)
-- `POST /register` — CloudNode registration (API key, 10/min)
-- `POST /heartbeat` — CloudNode heartbeat (API key, 60/min)
+- `POST /validate` — validate node_id + API key pair, used by CameraNode setup wizard (10/min)
+- `POST /register` — CameraNode registration (API key, 10/min)
+- `POST /heartbeat` — CameraNode heartbeat (API key, 60/min)
 - `GET /` — list nodes (admin)
 - `GET /plan` — current plan, node usage, and limits (view)
 - `POST /` — create node (admin, requires active billing + plan capacity, 20/hour)
 - `GET /ws-status` — which nodes are WebSocket-connected (admin)
-- `POST /self/decommission` — node-initiated factory reset (API key, 10/hour); called from CloudNode's `/wipe confirm` before the local wipe runs so a freshly-wiped box doesn't linger as a stale offline node
+- `POST /self/decommission` — node-initiated factory reset (API key, 10/hour); called from CameraNode's `/wipe confirm` before the local wipe runs so a freshly-wiped box doesn't linger as a stale offline node
 - `GET /{node_id}` — get node (admin)
 - `DELETE /{node_id}` — delete node (admin; cascades cameras + flushes segment caches, 20/hour)
 - `POST /{node_id}/rotate-key` — rotate API key (admin, 5/min)
@@ -375,7 +375,7 @@ Validation constants (also in `models.py`):
 **hls.py** (prefix `/api/cameras/{camera_id}`):
 - `GET /stream.m3u8` — HLS playlist served from cache (JWT)
 - `GET /segment/{filename}` — serve cached `.ts` segment from memory (JWT)
-- `POST /push-segment?filename=…` — CloudNode pushes `.ts` segment into cache (API key, 1200/min)
+- `POST /push-segment?filename=…` — CameraNode pushes `.ts` segment into cache (API key, 1200/min)
 - `POST /playlist` — update playlist (API key, 600/min)
 - `POST /motion` — motion event delivery (API key, 120/min). HTTP-only post v0.1.61; the pre-v0.1.61 WebSocket-forwarding branch had no producer and was removed.
 
@@ -433,11 +433,11 @@ Validation constants (also in `models.py`):
 - `GET /email/unsubscribe` — one-click unsubscribe link target.  Validates a signed JWT in the query string, flips the matching email toggle off, returns a confirmation HTML page (no auth required — auth comes from the signed token).
 
 **install.py** (no prefix, no auth):
-- `GET /install.sh` — CloudNode installer for Linux/macOS. Windows users install via the MSI from the latest CloudNode GitHub release; the legacy `/install.ps1` route was removed when the MSI shipped.
-- `GET /mcp-setup.sh` / `GET /mcp-setup.ps1` — MCP client config helpers (separate from CloudNode install — these configure Claude / Cursor / etc. to talk to this Command Center)
+- `GET /install.sh` — CameraNode installer for Linux/macOS. Windows users install via the MSI from the latest CameraNode GitHub release; the legacy `/install.ps1` route was removed when the MSI shipped.
+- `GET /mcp-setup.sh` / `GET /mcp-setup.ps1` — MCP client config helpers (separate from CameraNode install — these configure Claude / Cursor / etc. to talk to this Command Center)
 
 **ws.py** (no prefix):
-- `WS /ws/node` — WebSocket channel for CloudNode realtime.  Preferred auth (v0.1.65+): `X-Node-API-Key` + `X-Node-Id` headers on the upgrade request.  Back-compat fallback (pre-v0.1.65 clients): `?api_key=…&node_id=…` query string — still accepted, but the handler logs a deprecation warning on every successful auth so we can sunset the path once the install base has rolled forward.  Headers > query because URLs land in too many log sinks (uvicorn access, Fly platform logs, log-shipper exports).
+- `WS /ws/node` — WebSocket channel for CameraNode realtime.  Preferred auth (v0.1.65+): `X-Node-API-Key` + `X-Node-Id` headers on the upgrade request.  Back-compat fallback (pre-v0.1.65 clients): `?api_key=…&node_id=…` query string — still accepted, but the handler logs a deprecation warning on every successful auth so we can sunset the path once the install base has rolled forward.  Headers > query because URLs land in too many log sinks (uvicorn access, Fly platform logs, log-shipper exports).
   - Node → Backend: `heartbeat`, `command_result`
   - Backend → Node: `ack`, `command` (`take_snapshot`, `list_snapshots`, `list_recordings`, `wipe_data`), `error`
   - Motion events do **not** flow over WS — they reach Command Center via `POST /api/cameras/{id}/motion`.  The pre-v0.1.61 wire format reserved an `event` / `motion_detected` frame for this path but it was never produced; the unused branch was removed in v0.1.61.
@@ -491,7 +491,7 @@ Scope modes:
 | `view_camera` | Live JPEG from a camera (agent can see it) |
 | `watch_camera` | Multi-frame burst (2–10 frames, 1–30s apart) |
 | `list_camera_groups` | Camera groups for the org |
-| `list_nodes` | CloudNodes + their status |
+| `list_nodes` | CameraNodes + their status |
 | `get_node` | One node by id |
 | `get_camera_recording_policy` | One camera's recording policy (continuous / scheduled / off) |
 | `get_stream_logs` | Stream access audit entries |
@@ -577,7 +577,7 @@ Two endpoints, both Svix-signed (signature verification mandatory in production)
 
 Two entry points for plan resolution:
 
-- `resolve_org_plan(db, org_id)` — nominal plan (what Clerk says the org pays for). Fast-path reads `Setting(org_plan)`; falls back to a throttled `clerk.organizations.get_billing_subscription` call for free/missing orgs. Used for the status-bar badge CloudNode shows the operator.
+- `resolve_org_plan(db, org_id)` — nominal plan (what Clerk says the org pays for). Fast-path reads `Setting(org_plan)`; falls back to a throttled `clerk.organizations.get_billing_subscription` call for free/missing orgs. Used for the status-bar badge CameraNode shows the operator.
 - `effective_plan_for_caps(db, org_id)` — plan to use for *cap enforcement*. Returns `resolve_org_plan` unless the org has been `payment_past_due` for more than `PAYMENT_GRACE_DAYS` (7), in which case it returns `"free_org"`. Used inside `enforce_camera_cap`; keeps the two concerns separate so brief card failures don't punish paying users but long-unpaid accounts don't keep getting Pro service.
 
 ### Camera cap
@@ -609,9 +609,9 @@ Every SSE broadcaster (`MotionBroadcaster`, `NotificationBroadcaster`, `McpActiv
 2. Register (`POST /api/nodes/register`): safety net for any missed webhook. Idempotent so cost is just one indexed query in the steady state.
 3. Heartbeat (`POST /api/nodes/heartbeat`): gated on `payment_past_due=="true"`. Drives the time-based grace-expiration transition since no webhook fires for that clock tick.
 
-**Push-segment gate** (`POST /api/cameras/{id}/push-segment`): when `camera.disabled_by_plan` is set, returns **HTTP 402** with a structured `plan_limit_hit` body (plan display name, cap, camera name, upgrade copy). CloudNode treats 402 as non-retryable and surfaces the suspension in its TUI.
+**Push-segment gate** (`POST /api/cameras/{id}/push-segment`): when `camera.disabled_by_plan` is set, returns **HTTP 402** with a structured `plan_limit_hit` body (plan display name, cap, camera name, upgrade copy). CameraNode treats 402 as non-retryable and surfaces the suspension in its TUI.
 
-**Heartbeat response** also carries `disabled_cameras: list[str]` scoped to the calling node, so CloudNode can skip the upload task entirely for suspended cameras (no 402 flood) and mark those rows `suspended (plan)` in its live dashboard.
+**Heartbeat response** also carries `disabled_cameras: list[str]` scoped to the calling node, so CameraNode can skip the upload task entirely for suspended cameras (no 402 flood) and mark those rows `suspended (plan)` in its live dashboard.
 
 ## Background Loops
 
@@ -622,7 +622,7 @@ Every SSE broadcaster (`MotionBroadcaster`, `NotificationBroadcaster`, `McpActiv
 | `_log_cleanup_loop` | Every `LOG_CLEANUP_INTERVAL_HOURS` (24h) | Thin scheduler around `run_log_cleanup(db) -> dict` (extracted for direct test coverage). Iterates distinct `org_id` values across all log tables (StreamAccessLog, McpActivityLog, AuditLog, MotionEvent, Notification, EmailLog), resolves each org's plan, and deletes records older than that org's `log_retention_days` (30 / 90 / 365). Also sweeps terminal-state EmailOutbox rows older than 7 days (cross-org; pending/sending NEVER deleted regardless of age). |
 | `_offline_sweep_loop` | Every `OFFLINE_SWEEP_INTERVAL_SECONDS` (30s) | Flips nodes/cameras whose `last_seen` is older than 90s from `status='online'` to `'offline'` and emits `Notification` rows + broadcasts SSE events |
 | `_viewer_usage_flush_loop` | Every 60s | Flushes pending in-memory viewer-second counters to the `org_monthly_usage` table with one UPSERT per active org. Keeps the hot HLS-serve path O(1) in memory. |
-| `_release_cache_refresh_loop` | Every `RELEASE_CACHE_REFRESH_INTERVAL_SECONDS` (600s) | Polls GitHub `/releases/latest` for the CloudNode repo so the heartbeat handler's `update_available` field stays fresh without blocking on GitHub per request. Cold-boot fallback is `LATEST_NODE_VERSION` env var. |
+| `_release_cache_refresh_loop` | Every `RELEASE_CACHE_REFRESH_INTERVAL_SECONDS` (600s) | Polls GitHub `/releases/latest` for the CameraNode repo so the heartbeat handler's `update_available` field stays fresh without blocking on GitHub per request. Cold-boot fallback is `LATEST_NODE_VERSION` env var. |
 | `_disk_check_loop` | Every `DISK_CHECK_INTERVAL_SECONDS` (300s = 5min) | Polls `/data` disk usage. When ≥95%, fires a single `logger.error()` with structured `extra` fields (Sentry-captured). 6h re-emit debounce per process. **Operator-side only** — does NOT route through customer notifications (multi-tenant violation removed 2026-05-04). |
 | `_motion_digest_loop` | Every `MOTION_DIGEST_INTERVAL_SECONDS` (60s) | Drains expired per-camera motion email cooldown anchors (Setting rows keyed `motion_email_cooldown_start:{camera_id}`). For each expired window: counts MotionEvent rows in the window, emits a `motion_digest` notification (which itself enqueues a digest email) if extras > 0, deletes the anchor regardless. Volume cap: 2 emails per cycle per camera. |
 | `_sentinel_reaper_loop` | Every `SENTINEL_REAPER_INTERVAL_SECONDS` (300s = 5min) | Sweeps `SentinelRun` rows stuck in `running` for more than `STRANDED_RUN_AGE_MINUTES` (20 min) and marks them `outcome='error'` with a "stranded — agent never finished" note. Catches the rare case where the agent's own wall-clock cleanup wrapper doesn't fire (process crash, network partition); without this the run drawer would show a permanent in-progress spinner. |
@@ -636,19 +636,19 @@ Every SSE broadcaster (`MotionBroadcaster`, `NotificationBroadcaster`, `McpActiv
 
 **Database sessions:** `get_db()` dependency yields a SQLAlchemy session per request.
 
-**In-memory segment cache:** live `.ts` segments live in `_segment_cache` (a `dict[camera_id, dict[filename, (bytes, ts)]]`) inside `hls.py`. Backend never touches S3 for live video. Recordings and snapshots live on the CloudNode. Incident snapshots + clips are stored inline on `IncidentEvidence.data` (LargeBinary).
+**In-memory segment cache:** live `.ts` segments live in `_segment_cache` (a `dict[camera_id, dict[filename, (bytes, ts)]]`) inside `hls.py`. Backend never touches S3 for live video. Recordings and snapshots live on the CameraNode. Incident snapshots + clips are stored inline on `IncidentEvidence.data` (LargeBinary).
 
-**Codec detection:** CloudNode reports codec via `POST /api/cameras/{id}/codec` after the first segment. Stored on the Camera row and injected into HLS playlists as `#EXT-X-CODECS`.
+**Codec detection:** CameraNode reports codec via `POST /api/cameras/{id}/codec` after the first segment. Stored on the Camera row and injected into HLS playlists as `#EXT-X-CODECS`.
 
 **Notification broadcaster:** `notification_broadcaster` (in `notifications.py`) is a per-process pub/sub — SSE subscribers register per org + admin flag; `emit_camera_transition`, `emit_node_transition`, and motion event handlers write a `Notification` row then broadcast.
 
-**Motion broadcaster:** the motion SSE stream pushes events that arrive on `POST /api/cameras/{id}/motion`.  Motion delivery is HTTP-only since CloudNode v0.1.61; the pre-v0.1.61 WebSocket variant had no producer on the node side and was removed.
+**Motion broadcaster:** the motion SSE stream pushes events that arrive on `POST /api/cameras/{id}/motion`.  Motion delivery is HTTP-only since CameraNode v0.1.61; the pre-v0.1.61 WebSocket variant had no producer on the node side and was removed.
 
 **Shared Clerk token:** frontend's `useSharedToken` serialises the Clerk JWT for HLS.js's `xhrSetup` so segment fetches ride on the same auth as API calls.
 
 **First-heartbeat UX:** when the admin creates a node, the dashboard stashes the new `node_id` in `localStorage` and `HeartbeatBanner` starts polling `GET /api/nodes/{node_id}` every few seconds. As soon as `last_seen` is non-null the banner auto-dismisses. Users don't have to refresh — it's a reassurance loop for the 30–60s window where the node is downloading ffmpeg / registering cameras.
 
-**Role-split welcome hero:** `WelcomeHero.jsx` exports two components — `AdminWelcomeHero` shows the "Install a CloudNode → Camera goes live" checklist with CTAs into Settings + the install guide; `MemberWelcomeHero` shows a capability-focused welcome (live monitoring, motion alerts, team workspace) because members can't act on a setup checklist. `DashboardPage` picks the right one based on `is_admin`.
+**Role-split welcome hero:** `WelcomeHero.jsx` exports two components — `AdminWelcomeHero` shows the "Install a CameraNode → Camera goes live" checklist with CTAs into Settings + the install guide; `MemberWelcomeHero` shows a capability-focused welcome (live monitoring, motion alerts, team workspace) because members can't act on a setup checklist. `DashboardPage` picks the right one based on `is_admin`.
 
 ## Setup Scripts
 
@@ -687,5 +687,5 @@ Every SSE broadcaster (`MotionBroadcaster`, `NotificationBroadcaster`, `McpActiv
 - Database tables auto-created on startup via `Base.metadata.create_all()`
 - Backend serves the React build as static files in production (SPA middleware in `main.py`)
 - Frontend uses HLS.js for video playback with a Clerk JWT injected via `xhrSetup`
-- `VITE_LOCAL_HLS=true` bypasses the backend and streams directly from CloudNode on localhost:8080 (for local dev only)
+- `VITE_LOCAL_HLS=true` bypasses the backend and streams directly from CameraNode on localhost:8080 (for local dev only)
 - Tests live in `backend/tests/` and run with `uv run pytest`; scope middleware has dedicated coverage (`test_mcp_keys.py`)

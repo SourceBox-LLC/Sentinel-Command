@@ -96,7 +96,7 @@ function TermsContent() {
       <p>
         You must create an account and organization to use the Service.
         You are responsible for maintaining the confidentiality of your
-        account credentials and all API keys (including CloudNode keys and
+        account credentials and all API keys (including CameraNode keys and
         MCP keys). You must notify us immediately of any unauthorized use
         of your account. You are responsible for all activity that occurs
         under your account.
@@ -116,7 +116,7 @@ function TermsContent() {
         meters the number of hours of live HLS video we serve to
         authenticated viewers in your organization (30 hours on Free, 300
         on Pro, 1,500 on Pro Plus). Recordings stored locally on your
-        CloudNode device and motion-event metadata do not count against
+        CameraNode device and motion-event metadata do not count against
         this cap. When the cap is reached, live-video playback pauses
         with an upgrade prompt until the 1st of the next calendar month;
         cameras continue recording locally, motion detection continues
@@ -136,7 +136,7 @@ function TermsContent() {
         than your new plan allows, we retain the oldest cameras (by creation
         date) up to your new cap and mark the rest as <em>suspended</em>.
         Suspended cameras stop streaming to the Command Center — the
-        CloudNode surfaces a <q>Suspended — Plan Limit</q> badge and an
+        CameraNode surfaces a <q>Suspended — Plan Limit</q> badge and an
         upgrade prompt on each affected camera tile. The camera records
         themselves are preserved, so upgrading back to a higher tier
         immediately restores streaming with no reconfiguration.
@@ -156,7 +156,7 @@ function TermsContent() {
         <strong>Re-subscription.</strong> Resuming a cancelled subscription
         (or upgrading back from Free) re-enables all previously-suspended
         cameras and nodes automatically. Local recordings, snapshots, and
-        camera metadata persist on your CloudNode device throughout this
+        camera metadata persist on your CameraNode device throughout this
         cycle — we never delete your local data as part of billing
         enforcement.
       </p>
@@ -205,7 +205,7 @@ function TermsContent() {
 
       <h2>8. API Keys and Access Credentials</h2>
       <p>
-        API keys (including CloudNode keys and MCP API keys) are sensitive
+        API keys (including CameraNode keys and MCP API keys) are sensitive
         credentials. You are solely responsible for securing your keys and
         for any actions taken using them. We store keys using SHA-256 hashing
         and never retain plaintext copies. If you believe a key has been
@@ -219,7 +219,7 @@ function TermsContent() {
         video content except as necessary to provide the Service or as required
         by law. Live video segments are buffered briefly in your organization's
         isolated in-memory cache for playback; recordings and snapshots are
-        stored locally on your CloudNode.
+        stored locally on your CameraNode.
       </p>
       <p>
         You are solely responsible for the legality of content captured,
@@ -419,7 +419,7 @@ function PrivacyContent() {
 
       <h3>Camera and Video Data</h3>
       <p>
-        Live video segments captured by your CloudNode cameras are pushed
+        Live video segments captured by your CameraNode cameras are pushed
         directly to the Command Center backend, where they are held in an
         in-memory cache (approximately the most recent 60 seconds per
         camera) only long enough to be served to authorized viewers in
@@ -428,13 +428,13 @@ function PrivacyContent() {
       </p>
       <p>
         Recordings and snapshots (if you enable them) are stored on your
-        local CloudNode device in an encrypted SQLite database. Recording
+        local CameraNode device in an encrypted SQLite database. Recording
         and snapshot blobs are sealed with AES-256-GCM at rest using a key
         derived from the host device's operating-system machine identifier,
         and the Service never ingests or retains copies of these files.
       </p>
       <p>
-        <strong>Motion detection</strong> runs entirely on the CloudNode
+        <strong>Motion detection</strong> runs entirely on the CameraNode
         device using local video analysis. For motion detection, no raw
         video frames, object-detection thumbnails, or machine-learning
         embeddings are transmitted to the Service or to any third-party
@@ -482,7 +482,7 @@ function PrivacyContent() {
 
       <h3>Codec and Device Information</h3>
       <p>
-        Your CloudNode reports video/audio codec information (e.g.,
+        Your CameraNode reports video/audio codec information (e.g.,
         H.264 profile, AAC format) to ensure proper HLS stream playback.
         No other device telemetry is collected.
       </p>
@@ -507,13 +507,13 @@ function PrivacyContent() {
       <h2>3. Data Storage and Security</h2>
       <p>We implement the following security measures:</p>
       <ul>
-        <li>Service-side API keys (CloudNode keys and MCP integration keys) are stored as SHA-256 hashes; plaintext keys are never retained after issuance</li>
+        <li>Service-side API keys (CameraNode keys and MCP integration keys) are stored as SHA-256 hashes; plaintext keys are never retained after issuance</li>
         <li>Live video segments are kept in an isolated in-memory cache per organization and never written to a third-party object store</li>
-        <li>On the CloudNode device, the cloud-facing API key, recording segment blobs, and snapshot image blobs are encrypted at rest with AES-256-GCM using a key derived from the host's operating-system machine identifier</li>
-        <li>All connections between your browser, CloudNode devices, and the Service use HTTPS with HSTS enforcement; there is no disable-TLS code path</li>
+        <li>On the CameraNode device, the cloud-facing API key, recording segment blobs, and snapshot image blobs are encrypted at rest with AES-256-GCM using a key derived from the host's operating-system machine identifier</li>
+        <li>All connections between your browser, CameraNode devices, and the Service use HTTPS with HSTS enforcement; there is no disable-TLS code path</li>
         <li>Authentication is handled by Clerk with industry-standard JWT verification</li>
         <li>Organization data is isolated at the database level using org_id scoping on every query</li>
-        <li>Rate limits apply per tenant (CloudNode key, organization, or client IP) to mitigate abuse</li>
+        <li>Rate limits apply per tenant (CameraNode key, organization, or client IP) to mitigate abuse</li>
         <li>Security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Strict-Transport-Security) are applied to all responses</li>
       </ul>
       <p>
@@ -557,7 +557,7 @@ function PrivacyContent() {
         ephemeral in-memory live cache described in Section 1; we do not
         retain copies of your recordings or snapshots. Requests for such
         recordings or snapshots must be directed to the controller of the
-        CloudNode device on which that footage is stored. Where not
+        CameraNode device on which that footage is stored. Where not
         prohibited by law, we will notify the affected organization
         administrator of legal requests so the organization may contest
         them directly.
@@ -566,7 +566,7 @@ function PrivacyContent() {
       <h2>5. Data Retention</h2>
       <ul>
         <li>Live video segments are held in application memory only as long as needed for playback (approximately the most recent 60 one-second segments per camera) and are evicted automatically; segments are not persisted to disk on our servers</li>
-        <li>Recordings and snapshots are stored in encrypted form locally on your CloudNode device, not on our servers, and are subject to the retention and disk-quota settings you configure on that device</li>
+        <li>Recordings and snapshots are stored in encrypted form locally on your CameraNode device, not on our servers, and are subject to the retention and disk-quota settings you configure on that device</li>
         <li>Stream access logs, MCP activity logs, motion event metadata, notification records, and audit logs are retained according to the organization's plan: 30 days on the Free tier, 90 days on Pro, and 365 days on Pro Plus. Expired records are permanently deleted by a scheduled daily cleanup task</li>
         <li>Per-organization monthly viewer-second aggregates are retained indefinitely in a single aggregate row per calendar month so historical usage can be displayed in the dashboard; this row contains no personally identifiable information</li>
         <li>Account data is retained as long as your account is active</li>

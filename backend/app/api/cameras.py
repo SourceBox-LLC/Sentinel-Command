@@ -139,7 +139,7 @@ async def toggle_recording(
 
     Implementation note: as of v0.1.43 this is a thin wrapper that
     flips ``continuous_24_7`` on the Camera row.  The heartbeat
-    handler reconciles CloudNode's in-memory recording state from
+    handler reconciles CameraNode's in-memory recording state from
     that field every ~30s, so a manual press here lands within one
     heartbeat (no separate WebSocket command needed, no in-memory
     state that gets lost when the node restarts).
@@ -186,7 +186,7 @@ async def update_camera_recording_policy(
     The chosen state is persisted on the Camera row; the heartbeat
     handler computes the camera's *current* desired recording state
     on each tick (continuous OR (scheduled AND in-window)) and the
-    CloudNode reconciler applies it.
+    CameraNode reconciler applies it.
     """
     camera = db.query(Camera).filter_by(camera_id=camera_id, org_id=user.org_id).first()
     if not camera:
@@ -655,7 +655,7 @@ async def report_camera_codec(
 ):
     """
     Report video/audio codec for a camera.
-    Called by CloudNode after detecting codec from first segment.
+    Called by CameraNode after detecting codec from first segment.
     """
     import hashlib
 
@@ -706,7 +706,7 @@ async def report_camera_codec(
     ):
         raise HTTPException(status_code=400, detail="Invalid audio_codec format")
 
-    # Defensive sanitization — older CloudNode builds shipped garbage
+    # Defensive sanitization — older CameraNode builds shipped garbage
     # H.264 codec strings (level 1.0) for the Pi's h264_v4l2m2m encoder.
     # Catch them server-side so a stale binary in the field doesn't
     # silently brick streaming again.
@@ -841,7 +841,7 @@ async def full_reset(
     Full organization reset — the GDPR Article 17 right-to-erasure path.
 
     Behaviour:
-      1. Send each CloudNode a ``wipe_data`` command so the per-node
+      1. Send each CameraNode a ``wipe_data`` command so the per-node
          local recordings + encrypted blobs are erased on the device.
       2. Clean up Command Center in-memory caches (HLS segments,
          broadcaster subscribers — those survive a DB delete).
@@ -875,7 +875,7 @@ async def full_reset(
 
     nodes_wiped = 0
 
-    # 1. Tell each CloudNode to wipe its local data BEFORE we delete
+    # 1. Tell each CameraNode to wipe its local data BEFORE we delete
     # the row.  After deletion we wouldn't have the node_id to send
     # to.  Failures here are logged but don't block the local delete
     # — a node that's already offline can't ack the command anyway,

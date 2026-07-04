@@ -11,7 +11,7 @@ import HelpTooltip from "./HelpTooltip.jsx"
  * Settings → Recording section, which never actually drove
  * recording (its toggles persisted to a Setting row but no consumer
  * read them).  Per-camera here is the granularity that matches how
- * recording state is keyed at runtime in CloudNode and lets
+ * recording state is keyed at runtime in CameraNode and lets
  * operators record some cameras 24/7 while leaving others off for
  * privacy / storage reasons.
  *

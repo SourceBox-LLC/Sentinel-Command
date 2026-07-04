@@ -40,7 +40,7 @@ Sentinel has two main components:
 | Component | Language | Repository |
 |-----------|----------|------------|
 | **Command Center** | Python (FastAPI) + React | [Sentinel-Command](https://github.com/SourceBox-LLC/Sentinel-Command) |
-| **CloudNode** | Rust | [Sentinel-CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode) |
+| **CameraNode** | Rust | [Sentinel-CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode) |
 
 ### Command Center
 
@@ -58,15 +58,15 @@ npm install
 npm run dev                   # http://localhost:5173
 ```
 
-### CloudNode
+### CameraNode
 
 ```bash
 cd Sentinel-CameraNode
 cargo build --release
-./target/release/sourcebox-sentry-cloudnode setup
+./target/release/sourcebox-sentry-cameranode setup
 ```
 
-See the [CloudNode README](https://github.com/SourceBox-LLC/Sentinel-CameraNode) for full setup instructions.
+See the [CameraNode README](https://github.com/SourceBox-LLC/Sentinel-CameraNode) for full setup instructions.
 
 ## License
 

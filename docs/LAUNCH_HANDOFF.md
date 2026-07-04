@@ -61,8 +61,8 @@ The dev-mode badge in the corner should disappear.
 
 **State now.** Email v1 + v1.1 are fully built and deployed. **12
 notification kinds gated by 7 per-org per-kind toggles.** Six default
-ON for new orgs (camera offline/recovered, CloudNode offline/recovered,
-AI-agent incidents, MCP key audit, CloudNode disk, member audit);
+ON for new orgs (camera offline/recovered, CameraNode offline/recovered,
+AI-agent incidents, MCP key audit, CameraNode disk, member audit);
 **motion defaults OFF** with a per-camera 15-min cooldown + digest
 mechanism for volume control. Transport is Resend; integration lives
 in `app/core/email.py`, `app/core/email_worker.py`, `app/core/recipients.py`,
@@ -97,7 +97,7 @@ the answer for those.
      EMAIL_ENABLED=true \
      -a opensentry-command
    ```
-5. Smoke test: kill a CloudNode for >90s, watch the test admin's inbox
+5. Smoke test: kill a CameraNode for >90s, watch the test admin's inbox
    for the offline email, click the unsubscribe link, verify the
    toggle flipped off in `/settings`. See plan file
    `~/.claude/plans/gentle-coalescing-teacup.md` for the full motion
@@ -160,7 +160,7 @@ hard-coded for that origin (`backend/app/main.py::cors_origins`).
 4. Update `FRONTEND_URL` env var on Fly.
 5. Update Clerk's allowed origins to include the new domain.
 6. Update `install.sh` (Linux/macOS) so it points at the new base URL
-   — this URL gets baked into customer CloudNodes at install time, so
+   — this URL gets baked into customer CameraNodes at install time, so
    transitioning takes weeks. The Windows MSI doesn't need a parallel
    update because it's a static download from GitHub Releases (the
    MSI's URL doesn't change with the Command Center domain).
@@ -265,14 +265,14 @@ Postgres for clusterability).
 
 ## 8. Pi performance benchmark
 
-**State now.** The CloudNode README and the `/docs` site describe
+**State now.** The CameraNode README and the `/docs` site describe
 the node as running on "any Linux, macOS, or Windows machine,
 including a Raspberry Pi". I haven't validated that actually works
 under a realistic camera load.
 
 **What you need to do.**
 1. Get a Pi 4 (or Pi 5, increasingly common). Install Sentinel
-   CloudNode via the install script.
+   CameraNode via the install script.
 2. Connect 1, 2, 4 USB cameras at 1080p / 30fps and watch:
    - CPU steady-state under load.
    - Memory steady-state.
@@ -390,7 +390,7 @@ When all twelve check, ship the launch announcement.
 - **2026-05-04:** Multi-tenant violation removed (`disk_critical`
   no longer routes to customers — operator-only Sentry path).
   Four new email kinds added (camera/node recovery, MCP key audit,
-  CloudNode disk warning, member audit via Clerk webhook). Motion
+  CameraNode disk warning, member audit via Clerk webhook). Motion
   email v1.1 with per-camera cooldown + digest. CI workflow
   rewritten three times (Fly remote builder → depot.dev → local
   Buildkit on the runner) after WireGuard auth regression on Fly's
@@ -405,7 +405,7 @@ When all twelve check, ship the launch announcement.
   evidence proxy, and a custom in-memory connect-throttle for
   the WebSocket (slowapi only does HTTP).  Full first-touch UX
   pass — welcome email on `organization.created`, Help link in
-  authenticated nav, in-app CloudNode install widget that
+  authenticated nav, in-app CameraNode install widget that
   auto-creates a node + bakes credentials into the displayed
   one-liner, contextual `?` tooltips on the three highest-
   confusion settings, member promotion-request button.  Audit-

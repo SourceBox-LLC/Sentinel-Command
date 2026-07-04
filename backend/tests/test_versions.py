@@ -1,4 +1,4 @@
-"""Unit tests for the CloudNode version-compatibility helper.
+"""Unit tests for the CameraNode version-compatibility helper.
 
 The HTTP-level behavior is covered in test_nodes.py; this file exercises
 the parser and policy logic in isolation so a regression in
@@ -42,7 +42,7 @@ def test_format_version_round_trips():
 
 
 def test_check_node_version_unknown_is_supported(monkeypatch):
-    """A None / empty version is tolerated (legacy CloudNode) and flagged
+    """A None / empty version is tolerated (legacy CameraNode) and flagged
     for update so the dashboard can nudge the operator."""
     monkeypatch.setattr(versions_mod.settings, "MIN_SUPPORTED_NODE_VERSION", "0.1.0")
     monkeypatch.setattr(versions_mod.settings, "LATEST_NODE_VERSION", "0.2.0")

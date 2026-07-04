@@ -1,11 +1,11 @@
 """
 Tests for the server-side codec sanitizer.
 
-Specifically covers the h264_v4l2m2m malformed-SPS bug — when a CloudNode
+Specifically covers the h264_v4l2m2m malformed-SPS bug — when a CameraNode
 reports `avc1.42e00a` (H.264 level 1.0, max 176×144) for a real webcam,
 the browser MSE decoder rejects the first 720p/1080p NALU and the stream
 shows spinner-forever.  The sanitizer catches these server-side regardless
-of which CloudNode version is in the field.
+of which CameraNode version is in the field.
 """
 
 from app.core.codec import sanitize_video_codec

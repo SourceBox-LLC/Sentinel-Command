@@ -18,7 +18,7 @@ function GettingStarted() {
           Lives in the cloud. Hosts your account, cameras, settings, recording
           schedule, audit logs, incident reports, and the MCP endpoint for AI
           assistants. You don't install anything for Command Center — just sign in.</li>
-        <li><strong>CloudNode</strong> — A small Rust application you install on a machine
+        <li><strong>CameraNode</strong> — A small Rust application you install on a machine
           next to your cameras. It detects USB webcams, encodes their video with
           FFmpeg, and pushes 1-second HLS segments over outbound HTTPS to Command
           Center. It also runs a local terminal dashboard so you can watch what
@@ -35,7 +35,7 @@ function GettingStarted() {
         </div>
         <div className="docs-concept">
           <h4>Node</h4>
-          <p>A single CloudNode install. A node has a unique <code>node_id</code>, an
+          <p>A single CameraNode install. A node has a unique <code>node_id</code>, an
           encrypted API key, and one or more cameras. One node per machine is
           the normal deployment.</p>
         </div>
@@ -47,7 +47,7 @@ function GettingStarted() {
         </div>
         <div className="docs-concept">
           <h4>Segment</h4>
-          <p>A <code>.ts</code> HLS video chunk — 1 second by default. CloudNode emits
+          <p>A <code>.ts</code> HLS video chunk — 1 second by default. CameraNode emits
           a new one every second and pushes it to Command Center, which caches
           roughly 60 at a time per camera in RAM for low-latency playback.</p>
         </div>
@@ -60,7 +60,7 @@ function GettingStarted() {
         <div className="docs-concept">
           <h4>MCP key</h4>
           <p>An API key that authorizes an outside AI client (Claude Code, Cursor,
-          custom agents) to call the org's MCP tools. Separate from CloudNode
+          custom agents) to call the org's MCP tools. Separate from CameraNode
           API keys. Revocable and auditable.</p>
         </div>
       </div>
@@ -69,9 +69,9 @@ function GettingStarted() {
       <ul>
         <li>A USB webcam (built-in laptop cameras work too)</li>
         <li>A Sentinel account (free tier covers up to 5 cameras across 2 nodes, with 30 viewer-hours/month of live playback)</li>
-        <li>A Linux, Windows, or macOS machine for CloudNode</li>
+        <li>A Linux, Windows, or macOS machine for CameraNode</li>
         <li>FFmpeg installed (or Docker) — the setup wizard offers to install it via your OS package manager (<code>winget</code> on Windows, <code>brew</code> on macOS, <code>apt</code>/<code>dnf</code>/<code>pacman</code> on Linux)</li>
-        <li>Outbound HTTPS access from the CloudNode machine to the internet</li>
+        <li>Outbound HTTPS access from the CameraNode machine to the internet</li>
       </ul>
 
       <h3>Quick Setup</h3>
@@ -93,16 +93,16 @@ function GettingStarted() {
         <div className="docs-step">
           <div className="docs-step-number">3</div>
           <div className="docs-step-content">
-            <h4>Install CloudNode</h4>
+            <h4>Install CameraNode</h4>
             <OsTabs id="qs" />
-            <p>The installer downloads CloudNode and walks you through setup. If FFmpeg isn't already on the system, the wizard offers to install it via your OS package manager.</p>
+            <p>The installer downloads CameraNode and walks you through setup. If FFmpeg isn't already on the system, the wizard offers to install it via your OS package manager.</p>
           </div>
         </div>
         <div className="docs-step">
           <div className="docs-step-number">4</div>
           <div className="docs-step-content">
             <h4>View your camera</h4>
-            <p>Once CloudNode is running, your camera appears on the dashboard automatically. Click it to watch the live HLS stream.</p>
+            <p>Once CameraNode is running, your camera appears on the dashboard automatically. Click it to watch the live HLS stream.</p>
           </div>
         </div>
       </div>
@@ -110,7 +110,7 @@ function GettingStarted() {
       <div className="docs-callout docs-callout-info">
         <p>
           <span className="docs-callout-icon">ℹ️</span>
-          <span>CloudNode only makes <strong>outbound</strong> HTTPS connections. No inbound ports, no port forwarding, no VPN required.</span>
+          <span>CameraNode only makes <strong>outbound</strong> HTTPS connections. No inbound ports, no port forwarding, no VPN required.</span>
         </p>
       </div>
     </section>

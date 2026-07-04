@@ -53,7 +53,7 @@ body:
       options:
         - Frontend (React Dashboard)
         - Backend (FastAPI API)
-        - CloudNode (Rust)
+        - CameraNode (Rust)
         - Authentication (Clerk)
         - HLS Streaming / Segment Cache
         - Docker/Deployment

@@ -813,7 +813,7 @@ async def view_camera(
     finally:
         db.close()
 
-    # Send take_snapshot command to CloudNode via WebSocket
+    # Send take_snapshot command to CameraNode via WebSocket
     from app.api.ws import manager
 
     if not manager.is_connected(node_id):
@@ -832,11 +832,11 @@ async def view_camera(
     try:
         return Image(data=base64.b64decode(image_b64), format="jpeg")
     except (ValueError, binascii.Error) as e:
-        # Malformed base64 from a buggy/old CloudNode — actionable
+        # Malformed base64 from a buggy/old CameraNode — actionable
         # message instead of a masked internal error.
         raise ToolError(
             f"Camera '{camera_id}' returned corrupt snapshot data ({e}). "
-            "Update the CloudNode and retry."
+            "Update the CameraNode and retry."
         ) from e
 
 
@@ -936,7 +936,7 @@ def list_camera_groups() -> list[dict]:
 @mcp.tool(
     name="list_nodes",
     description=(
-        "List every CloudNode (the physical box running cameras on the local "
+        "List every CameraNode (the physical box running cameras on the local "
         "network) for the org with status, hostname, and camera count. Use "
         "when troubleshooting at the box level — e.g. whether a whole node "
         "is offline vs whether one of its cameras is. For per-camera state, "
@@ -957,7 +957,7 @@ def list_nodes() -> list[dict]:
 @mcp.tool(
     name="get_node",
     description=(
-        "Get full detail for one CloudNode by node_id (hostname, IP, port, "
+        "Get full detail for one CameraNode by node_id (hostname, IP, port, "
         "status, camera count). Use after list_nodes when you need detail on "
         "one specific box — e.g. to confirm which physical device the user "
         "should power-cycle."
@@ -996,7 +996,7 @@ def get_node(
         "replaces the previous org-level get_recording_settings. Use when "
         "the user asks 'is the garage cam recording right now?' or before "
         "filing an incident if it's relevant whether the moment was being "
-        "recorded to disk on the CloudNode."
+        "recorded to disk on the CameraNode."
     ),
     annotations={"readOnlyHint": True},
 )
@@ -1270,54 +1270,54 @@ def _agent_label() -> str:
 
 
 def _extract_snapshot_image_b64(result: dict, camera_id: str) -> str:
-    """Pull `image_b64` out of a CloudNode `take_snapshot` response, or raise
+    """Pull `image_b64` out of a CameraNode `take_snapshot` response, or raise
     ToolError with a message the *user* can act on.
 
-    CloudNode (>= the release that added the snapshot API) wraps its WS
+    CameraNode (>= the release that added the snapshot API) wraps its WS
     `command_result` payload as:
         success -> {"status": "success", "data": {"image_b64": "...", ...}}
         failure -> {"status": "error",   "error": "<human-readable reason>"}
 
-    Older CloudNodes (pre-snapshot) send neither field and we fall back to
-    the "update CloudNode" hint.
+    Older CameraNodes (pre-snapshot) send neither field and we fall back to
+    the "update CameraNode" hint.
 
     Prior behaviour was to check only for `image_b64` and, if absent, blame
-    the CloudNode version — even when the real cause was an FFmpeg crash,
+    the CameraNode version — even when the real cause was an FFmpeg crash,
     a dead HLS pipeline, or disk-full. That's the bug this helper fixes:
     any `status == "error"` is surfaced verbatim, and the couple of
     common cases get a friendlier hint."""
     if result.get("status") == "error":
         err = (result.get("error") or "").strip()
         err_lower = err.lower()
-        # Pipeline-is-dead patterns the CloudNode actually sends today
-        # (see cmd_take_snapshot in CloudNode's websocket.rs).
+        # Pipeline-is-dead patterns the CameraNode actually sends today
+        # (see cmd_take_snapshot in CameraNode's websocket.rs).
         if "no segments" in err_lower or "error opening input" in err_lower:
             raise ToolError(
-                f"Camera '{camera_id}' has no active video stream. The CloudNode "
+                f"Camera '{camera_id}' has no active video stream. The CameraNode "
                 f"is online but isn't producing HLS segments right now — common "
                 f"causes are a dead FFmpeg worker, a full disk on the node, or "
-                f"the camera being unplugged. Check the CloudNode dashboard for "
+                f"the camera being unplugged. Check the CameraNode dashboard for "
                 f"the underlying error, then restart the node if needed."
             )
         if "ffmpeg" in err_lower:
             raise ToolError(
                 f"Camera '{camera_id}' snapshot failed inside FFmpeg on the "
-                f"CloudNode: {err or 'no detail provided'}. The video pipeline "
+                f"CameraNode: {err or 'no detail provided'}. The video pipeline "
                 f"may need to be restarted on the node."
             )
         # Fallback: just pass the node's message through.
         raise ToolError(
-            f"Snapshot failed on the CloudNode: {err or 'unspecified failure'}"
+            f"Snapshot failed on the CameraNode: {err or 'unspecified failure'}"
         )
 
     image_b64 = (
         result.get("data", {}).get("image_b64") or result.get("image_b64")
     )
     if not image_b64:
-        # Truly unknown response shape — most likely an old CloudNode
+        # Truly unknown response shape — most likely an old CameraNode
         # that pre-dates both the `{status, data}` envelope and image_b64.
         raise ToolError(
-            "Camera node did not return image data — update CloudNode to latest version"
+            "Camera node did not return image data — update CameraNode to latest version"
         )
     return image_b64
 
@@ -1363,7 +1363,7 @@ async def _capture_snapshot_bytes(
     except (ValueError, binascii.Error) as e:
         raise ToolError(
             f"Camera '{camera_id}' returned corrupt snapshot data ({e}). "
-            "Update the CloudNode and retry."
+            "Update the CameraNode and retry."
         ) from e
 
 
@@ -1624,11 +1624,11 @@ async def attach_snapshot(
         db.close()
 
 
-# Approximate seconds per HLS segment — CloudNode currently emits 2s .ts files.
+# Approximate seconds per HLS segment — CameraNode currently emits 2s .ts files.
 # This is only used to map a requested duration_seconds to a segment count and
 # to populate EXTINF in the synthetic playlist; the actual playback duration
 # comes from the TS PCR timestamps and will be exactly correct.
-# CloudNode emits 1-second segments (config default `segment_duration: 1`
+# CameraNode emits 1-second segments (config default `segment_duration: 1`
 # → ffmpeg `-hls_time 1`).  This constant only shapes clip-duration
 # estimates for MCP tools — but keep it matched to the node's reality:
 # at the stale 2.0 value every clip request fetched HALF the segments

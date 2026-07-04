@@ -1,14 +1,14 @@
 """
-Install script routes for CloudNode and MCP client setup.
+Install script routes for CameraNode and MCP client setup.
 
-CloudNode install:
+CameraNode install:
   Linux/macOS:  curl -fsSL https://opensentry-command.fly.dev/install.sh | bash
   Windows:      MSI installer from the latest GitHub release. There is no
                 PowerShell one-liner — the MSI is the supported Windows
-                install path. See the CloudNode README for the download
+                install path. See the CameraNode README for the download
                 URL pattern.
 
-MCP client auto-setup (separate from CloudNode install — these are for
+MCP client auto-setup (separate from CameraNode install — these are for
 configuring Claude / Cursor / etc. to talk to this Command Center):
   Linux/macOS:  curl -fsSL <origin>/mcp-setup.sh | bash -s -- <key> <url>
   Windows:      & ([scriptblock]::Create((irm <origin>/mcp-setup.ps1))) <key> <url>
@@ -69,7 +69,7 @@ def _pick_asset(release: dict, os_name: str, arch: str) -> str | None:
         thinking it's an installer end up with no install at all.
         Until 2026-04-28 the ranker preferred ``.zip`` (treated ``.msi``
         as a "raw binary") which broke ``GET /downloads/windows/x86_64``
-        for everyone using the dashboard's "Download CloudNode" link.
+        for everyone using the dashboard's "Download CameraNode" link.
       - Linux/macOS: ``.tar.gz`` > raw binary. There is no installer
         format for these; the tarball is the canonical artifact.
     """
@@ -121,16 +121,16 @@ async def install_sh(request: Request):
     )
 
 
-# NOTE: The PowerShell CloudNode install one-liner (`/install.ps1`)
+# NOTE: The PowerShell CameraNode install one-liner (`/install.ps1`)
 # was removed. Windows users install via the MSI from the latest
 # GitHub release — that path supports Windows Service registration,
 # Add/Remove Programs integration, and the upgrade/uninstall chain
-# the PS one-liner couldn't do cleanly. See CloudNode README for the
+# the PS one-liner couldn't do cleanly. See CameraNode README for the
 # canonical download URL.
 #
 # The /mcp-setup.ps1 route below is unrelated — it configures MCP
 # clients (Claude / Cursor / etc.) to talk to this Command Center,
-# not to install CloudNode.
+# not to install CameraNode.
 
 
 # ── MCP Client Setup Scripts ─────────────────────────
@@ -184,7 +184,7 @@ async def mcp_setup_ps1(request: Request):
 @router.get("/downloads/{os_name}/{arch}")
 @limiter.limit("60/minute")
 async def download_binary(request: Request, os_name: str, arch: str):
-    """Redirect to the latest CloudNode binary for ``{os_name}/{arch}``.
+    """Redirect to the latest CameraNode binary for ``{os_name}/{arch}``.
 
     Returns ``302`` pointing at the matching asset on the latest GitHub
     release.  This gives docs/users a canonical vendor URL instead of

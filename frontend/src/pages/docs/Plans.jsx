@@ -31,7 +31,7 @@ function Plans() {
             <tr><td>Live dashboard connections (SSE)</td><td>10</td><td>30</td><td>100</td></tr>
             <tr><td>Log retention</td><td>30 days</td><td>90 days</td><td>365 days</td></tr>
             <tr><td>Live streaming + recording</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
-            <tr><td>Local recording to CloudNode (unmetered)</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+            <tr><td>Local recording to CameraNode (unmetered)</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
             <tr><td>Snapshots</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
             <tr><td>Camera groups</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
             <tr><td>Admin dashboard + stream analytics</td><td>—</td><td>Yes</td><td>Yes</td></tr>
@@ -54,7 +54,7 @@ function Plans() {
       </p>
       <ul>
         <li><strong>Counts:</strong> live playback from <code>GET /stream.m3u8</code>, including background dashboard tabs that keep polling segments.</li>
-        <li><strong>Does not count:</strong> recordings stored locally on your CloudNode (they never touch the cloud), motion event metadata, incident snapshots shown in the dashboard, MCP tool calls.</li>
+        <li><strong>Does not count:</strong> recordings stored locally on your CameraNode (they never touch the cloud), motion event metadata, incident snapshots shown in the dashboard, MCP tool calls.</li>
         <li><strong>When you hit the cap:</strong> segment requests return HTTP <code>429</code> with an upgrade prompt. Your cameras keep recording locally, your motion events still fire, your MCP integrations still work — only live playback to the dashboard pauses until the 1st of next month.</li>
       </ul>
 

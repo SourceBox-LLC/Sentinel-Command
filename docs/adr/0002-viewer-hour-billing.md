@@ -24,7 +24,7 @@ Two problems with that model:
 We considered three responses:
 - **Raise prices.** Penalises the 90% of customers who don't drive a lot of viewing.
 - **Bill for overage.** Surprise charges erode the "private, predictable" pitch on `/security` and the pricing page. Most consumer-camera competitors do this and customers hate it.
-- **Cap the metered feature.** Hard cap on viewing hours per month. When you hit it, live playback pauses; recording, motion events, and the CloudNode itself keep running. Predictable bill, no surprises, the heavy users self-select into the higher tier.
+- **Cap the metered feature.** Hard cap on viewing hours per month. When you hit it, live playback pauses; recording, motion events, and the CameraNode itself keep running. Predictable bill, no surprises, the heavy users self-select into the higher tier.
 
 We picked option three.
 
@@ -49,10 +49,10 @@ Source of truth: `backend/app/core/plans.py::PLAN_LIMITS`.
 
 ### What's not metered
 
-- **Recordings on the CloudNode** — unlimited and free. Local SQLite, the CloudNode's disk is the cap, and the customer owns the hardware.
+- **Recordings on the CameraNode** — unlimited and free. Local SQLite, the CameraNode's disk is the cap, and the customer owns the hardware.
 - **Motion events** — the cap doesn't fire on the motion event channel even if the dashboard is closed.
 - **Heartbeats / segment uploads** — push-segment is gated by `disabled_by_plan` (camera-cap, not viewer-cap).
-- **Snapshots** — captured + stored locally on the CloudNode, never billed.
+- **Snapshots** — captured + stored locally on the CameraNode, never billed.
 
 ## Consequences
 
@@ -80,7 +80,7 @@ Re-evaluate if any of the following become true:
 - A customer segment emerges that genuinely wants overage billing (security firms running 24/7 multi-site). Build it as opt-in, don't make it the default.
 - Egress pricing on Fly (or wherever we host) changes meaningfully. The 30/300/1500 ladder was sized against current egress cost; if that doubles we have to either raise prices or tighten caps.
 - The in-memory counter becomes a multi-replica problem before we expect it to. Move the flush to a Redis-backed counter; the existing snapshot+UPSERT pattern translates cleanly.
-- Someone wires the CloudNode to push viewer-hours back from the node side as well (defense in depth against a backend bug under-counting). Today the count is backend-only — the CloudNode doesn't know how much its segments are watched.
+- Someone wires the CameraNode to push viewer-hours back from the node side as well (defense in depth against a backend bug under-counting). Today the count is backend-only — the CameraNode doesn't know how much its segments are watched.
 
 ## References
 

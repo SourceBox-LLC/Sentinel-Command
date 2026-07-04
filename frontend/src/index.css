@@ -741,7 +741,7 @@ body {
 
 /* Error detail shown under "Pipeline Failed" / "Pipeline Error" — gives
    the operator the supervisor's last_error so they don't have to go
-   hunting through the CloudNode TUI to figure out what's wrong. */
+   hunting through the CameraNode TUI to figure out what's wrong. */
 .feed-loading .feed-detail {
     font-size: 0.7rem;
     color: var(--text-muted);
@@ -958,11 +958,11 @@ body {
     color: var(--text-muted);
 }
 
-/* ── In-app CloudNode install widget ─────────────────────────────────
+/* ── In-app CameraNode install widget ─────────────────────────────────
    Lives inside step 2 of the admin welcome hero.  Replaces the old
    "leave the app to read GitHub README" flow with a copy-pastable
    one-liner per OS and a live waiting indicator. */
-.install-cloudnode-card {
+.install-cameranode-card {
     margin-top: 16px;
     padding: 18px;
     background: var(--bg-input, rgba(255, 255, 255, 0.03));
@@ -1102,7 +1102,7 @@ body {
 
 /* Windows MSI download button — sized like the primary CTA but
    doesn't shrink the way other buttons in flex containers do, so
-   the long "↓ Download CloudNode for Windows" label stays readable. */
+   the long "↓ Download CameraNode for Windows" label stays readable. */
 .install-download-btn {
     flex: 0 0 auto;
 }
@@ -1920,7 +1920,7 @@ body {
 }
 
 /* Security page hero banner — wide cinematic still life of a USB
-   webcam tethered to a CloudNode device on a wooden surface, both
+   webcam tethered to a CameraNode device on a wooden surface, both
    with green status LEDs. Sits between the hero h1/subtitle and the
    "At a glance" bullets — visual anchor for the page's argument.
    Generated via Nano Banana Pro from

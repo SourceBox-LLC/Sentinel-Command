@@ -2,7 +2,7 @@
   "diagram_spec": {
     "meta": {
       "spec_version": "1.0.0",
-      "title": "CloudNode Setup Wizard — 5-step flow",
+      "title": "CameraNode Setup Wizard — 5-step flow",
       "description": "Left-to-right pipeline showing the 5 wizard steps a user walks through after running install.sh / the MSI. Two annotation branches: FFmpeg fallback path above step 1 (winget / brew / apt), encoder auto-detect options below step 3 (NVENC / QSV / AMF / libx264)."
     },
     "canvas": {

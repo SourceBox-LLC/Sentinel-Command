@@ -1,7 +1,7 @@
 """
-CloudNode version compatibility checks.
+CameraNode version compatibility checks.
 
-CloudNode reports its build version (from `Cargo.toml`'s `version` field) on
+CameraNode reports its build version (from `Cargo.toml`'s `version` field) on
 register and heartbeat.  We use that to:
 
   1. Reject very old nodes that cannot speak the current wire protocol
@@ -9,16 +9,16 @@ register and heartbeat.  We use that to:
   2. Hint to slightly-out-of-date nodes that a newer release is available,
      so the dashboard can surface a "node update available" badge.
 
-We deliberately do NOT auto-update CloudNode — operators install it on their
+We deliberately do NOT auto-update CameraNode — operators install it on their
 own hardware and we don't want to push code to a camera in someone's home
 without their consent.  This module just produces the metadata; the dashboard
 turns it into a user-visible nudge.
 
 Versions are simple `MAJOR.MINOR.PATCH` semver-style strings.  We don't need
 the full semver grammar (no pre-release suffixes, no build metadata) because
-CloudNode releases follow plain `X.Y.Z`.  Malformed strings (non-empty but
+CameraNode releases follow plain `X.Y.Z`.  Malformed strings (non-empty but
 not parseable) sort as 0.0.0 and will usually be gated.  A *missing* field
-(`None` / not sent) is special-cased as supported so legacy CloudNodes that
+(`None` / not sent) is special-cased as supported so legacy CameraNodes that
 pre-date version reporting can still register — they're flagged with
 `update_available = LATEST` so the dashboard can nudge the operator.  See
 ``check_node_version`` for the exact rules.
@@ -78,7 +78,7 @@ def check_node_version(reported: str | None) -> dict:
         flag the camera/node row.
 
     A missing / unparseable version is always considered ``supported`` so
-    very old CloudNodes that pre-date version reporting (and so don't send
+    very old CameraNodes that pre-date version reporting (and so don't send
     the field at all) can still register and heartbeat — they'll just show
     up with ``update_available = LATEST`` and the dashboard will flag them.
     Once we ship a wire change that actually breaks pre-version-reporting

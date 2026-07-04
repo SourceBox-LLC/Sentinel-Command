@@ -34,7 +34,7 @@ class Config:
     )
 
     # Segments kept in memory per camera for the live proxy cache.
-    # CloudNode ships with 1-second segments by default, so 60 = ~60s of buffer —
+    # CameraNode ships with 1-second segments by default, so 60 = ~60s of buffer —
     # enough for HLS to recover from network stalls without falling off the cache edge.
     SEGMENT_CACHE_MAX_PER_CAMERA: int = int(
         os.getenv("SEGMENT_CACHE_MAX_PER_CAMERA", "60")
@@ -77,13 +77,13 @@ class Config:
     # How often (in playlist updates) to run cache eviction.
     CLEANUP_INTERVAL: int = int(os.getenv("CLEANUP_INTERVAL", "20"))
 
-    # CloudNode version compatibility.
+    # CameraNode version compatibility.
     #
-    # MIN_SUPPORTED_NODE_VERSION — register/heartbeat from a CloudNode older
+    # MIN_SUPPORTED_NODE_VERSION — register/heartbeat from a CameraNode older
     # than this is rejected with HTTP 426 Upgrade Required.  Bump only when
     # we ship a wire-protocol break that genuinely cannot interop with the
     # old client.  A missing version field (Node version unknown / 0.0.0) is
-    # always tolerated for now so very old CloudNodes that pre-date version
+    # always tolerated for now so very old CameraNodes that pre-date version
     # reporting can still register and be told to upgrade.
     #
     # LATEST_NODE_VERSION — disaster fallback for the latest-version
@@ -97,7 +97,7 @@ class Config:
     # not the ceiling: the cache will surface a newer version as soon
     # as one ships, with no Command Center deploy required.
     #
-    # Keep this default in step with the latest CloudNode release (or
+    # Keep this default in step with the latest CameraNode release (or
     # set the LATEST_NODE_VERSION Fly secret per release so it never
     # drifts).  It went stale at 0.1.26 while releases reached 0.1.73,
     # which on a cold boot mis-reported every node >=0.1.26 as current.

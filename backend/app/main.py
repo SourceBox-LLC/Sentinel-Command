@@ -876,7 +876,7 @@ async def _release_cache_refresh_loop():
          ``tag_name`` to decide whether ``update_available`` should fire.
 
     Refreshing here means heartbeats never block on GitHub, and the
-    moment a new CloudNode release ships every connected node sees
+    moment a new CameraNode release ships every connected node sees
     ``update_available`` within one tick — no Command Center deploy
     or env var bump required.
 
@@ -894,7 +894,7 @@ async def _release_cache_refresh_loop():
             version = await refresh_latest_release()
             if version:
                 logger.debug(
-                    "[ReleaseCache] Refreshed latest CloudNode version: %s", version
+                    "[ReleaseCache] Refreshed latest CameraNode version: %s", version
                 )
         except Exception:
             logger.exception("[ReleaseCache] Refresh tick failed")
@@ -999,7 +999,7 @@ async def _segment_cache_evict_loop():
     """Background task — evict stale per-camera HLS segment buckets and
     reconcile the global byte counter on a fixed 60s cadence.
 
-    Eviction is ALSO triggered opportunistically from the CloudNode
+    Eviction is ALSO triggered opportunistically from the CameraNode
     playlist-push path, but that only fires while some camera is actively
     pushing.  When every node goes quiet (a network outage, a mass restart,
     or simply a small org whose cameras stopped), nothing would reap the

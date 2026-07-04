@@ -237,7 +237,7 @@ def test_welcome_template_contains_three_step_onboarding(
     webhook_client, db, stub_recipients, email_enabled,
 ):
     """Pin the actual user-facing content: the welcome email guides
-    new users through (1) install CloudNode, (2) wait for register,
+    new users through (1) install CameraNode, (2) wait for register,
     (3) add first camera.  This is the whole point of the welcome —
     if a refactor strips the steps from the template, this test
     catches it before users see a blank welcome."""
@@ -256,7 +256,7 @@ def test_welcome_template_contains_three_step_onboarding(
     # "welcome to the product" blast.  Check both bodies — text and
     # HTML versions both must explain the journey.
     for body in (row.body_text, row.body_html):
-        assert "CloudNode" in body, "missing CloudNode mention"
+        assert "CameraNode" in body, "missing CameraNode mention"
         assert "camera" in body.lower(), "missing camera mention"
         # Step numbers OR "step" word should be present somewhere.
         assert any(marker in body for marker in ("1.", "2.", "3.", "Three")), (

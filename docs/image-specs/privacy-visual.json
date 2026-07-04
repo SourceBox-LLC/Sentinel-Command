@@ -2,14 +2,14 @@
   "marketing_image": {
     "meta": {
       "spec_version": "1.0.0",
-      "title": "Privacy Section Visual — Local CloudNode hardware",
+      "title": "Privacy Section Visual — Local CameraNode hardware",
       "campaign": "landing_privacy_v1",
       "brand_name": "SourceBox Sentry",
       "usage_context": "right column of the 'Privacy by design' section on the landing page; replaces the SourceBox-vs-incumbents comparison card"
     },
     "subject": {
       "type": "compact_local_compute_device",
-      "name": "CloudNode-style compact computer with security camera cables",
+      "name": "CameraNode-style compact computer with security camera cables",
       "physical_properties": {
         "shape": "small black or dark grey single-board computer / mini-PC, generic and bezel-less, no logos. Roughly the size of a deck of cards. A small green status LED is illuminated on its front face. Two USB cables exit from the back / right side, suggesting connections to cameras."
       }

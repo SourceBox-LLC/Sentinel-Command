@@ -1,5 +1,5 @@
 """
-WebSocket command channel for CloudNode ↔ Backend communication.
+WebSocket command channel for CameraNode ↔ Backend communication.
 
 Auth:
 
@@ -9,7 +9,7 @@ Auth:
         X-Node-API-Key: nak_<32-byte-hex>
         X-Node-Id: <node_id>
 
-    Pre-v0.1.65 CloudNode clients send these as URL query-string
+    Pre-v0.1.65 CameraNode clients send these as URL query-string
     parameters instead (`?api_key=…&node_id=…`).  We still accept that
     path for back-compat with older nodes, but log a deprecation
     warning each time — every node we ship from v0.1.65+ uses the
@@ -21,7 +21,7 @@ Auth:
     the URL ever escapes the process).  Sentry already scrubs the
     query string (`app/core/sentry.py::_scrub_event`), but defense
     in depth says don't put credentials in URLs at all when you
-    have a choice.  Custom WS clients (which CloudNode is — it's
+    have a choice.  Custom WS clients (which CameraNode is — it's
     not a browser) can set arbitrary headers on the upgrade request.
 
 Message format (both directions):
@@ -286,7 +286,7 @@ async def node_websocket(
     node_id: Optional[str] = Query(None),
 ):
     """
-    Persistent WebSocket channel for a CloudNode.
+    Persistent WebSocket channel for a CameraNode.
     Authentication happens during handshake via headers (preferred)
     or — for pre-v0.1.65 clients — query-string parameters.  See the
     module docstring for the rationale.
@@ -360,7 +360,7 @@ async def node_websocket(
     if auth_path == "query":
         logger.warning(
             "[WS] Node %s authenticated via deprecated query-string "
-            "api_key — upgrade CloudNode to v0.1.65+ to move the "
+            "api_key — upgrade CameraNode to v0.1.65+ to move the "
             "credential into request headers (X-Node-API-Key / "
             "X-Node-Id).  Query-string auth is still accepted but "
             "logs the key in uvicorn / Fly access pipelines.",
@@ -397,7 +397,7 @@ async def node_websocket(
 
             if msg_type == "heartbeat":
                 hb_result = await _handle_heartbeat(node_id, node_db_id, org_id, data.get("payload", {}))
-                # Pass version-compat hints back through the ack so CloudNode
+                # Pass version-compat hints back through the ack so CameraNode
                 # can log "update available" or "you're below the supported
                 # floor" without needing a separate channel.  Keys are
                 # omitted when there's nothing to say (no update, supported)
@@ -589,7 +589,7 @@ async def _handle_heartbeat(node_id: str, node_db_id: int, org_id: str, payload:
 # ── Motion Event Handler ─────────────────────────────────────────────
 
 async def _handle_motion_event(node_id: str, org_id: str, payload: dict):
-    """Persist a motion detection event reported by a CloudNode."""
+    """Persist a motion detection event reported by a CameraNode."""
     camera_id = payload.get("camera_id")
     score = payload.get("score")
     segment_seq = payload.get("segment_seq")

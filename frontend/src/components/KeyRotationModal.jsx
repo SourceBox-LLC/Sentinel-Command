@@ -59,7 +59,7 @@ function KeyRotationModal({ isOpen, onClose, node, onRotate }) {
           <div className="modal-body">
             <p className="modal-description">
               Rotating the API key will immediately invalidate the old key.
-              You'll need to update your CloudNode configuration with the new key.
+              You'll need to update your CameraNode configuration with the new key.
             </p>
             
             <div className="node-info-box">
@@ -108,7 +108,7 @@ function KeyRotationModal({ isOpen, onClose, node, onRotate }) {
               <span className="warning-icon">⚠️</span>
               <div>
                 <strong>Old key invalidated!</strong>
-                <p>Update your CloudNode configuration immediately.</p>
+                <p>Update your CameraNode configuration immediately.</p>
               </div>
             </div>
 
@@ -141,21 +141,21 @@ function KeyRotationModal({ isOpen, onClose, node, onRotate }) {
             </div>
 
             <div className="command-section">
-              <h4>Update your CloudNode:</h4>
+              <h4>Update your CameraNode:</h4>
               <p className="deployment-description">
                 Run the setup wizard on your device to update the API key:
               </p>
               <div className="command-box">
-                <code>sourcebox-sentry-cloudnode setup</code>
+                <code>sourcebox-sentry-cameranode setup</code>
                 <button
                   className="btn btn-small copy-command-btn"
-                  onClick={() => handleCopy("sourcebox-sentry-cloudnode setup")}
+                  onClick={() => handleCopy("sourcebox-sentry-cameranode setup")}
                 >
                   Copy
                 </button>
               </div>
               <div className="command-note">
-                <strong>Tip:</strong> The wizard will prompt you for the new API key, then restart CloudNode.
+                <strong>Tip:</strong> The wizard will prompt you for the new API key, then restart CameraNode.
               </div>
             </div>
 

@@ -64,7 +64,7 @@ terminate the affected Service per Section 4.4 of the
   Customer (account identity, audit logs, stream access logs, motion
   event metadata, settings rows). Fly.io does not see or process
   video content (live segments are RAM-only; recordings live on
-  Customer's CloudNode hardware off Fly's network).
+  Customer's CameraNode hardware off Fly's network).
 - **Location of processing:** United States, with edge network in
   multiple regions.
 - **Cross-border transfers:** Yes (US-based; edge regions in EU,
@@ -92,9 +92,9 @@ terminate the affected Service per Section 4.4 of the
 
 ### Resend — *optional, off by default*
 - **Service provided:** Transactional email delivery for operator-
-  critical alerts (camera offline + recovered, CloudNode offline +
+  critical alerts (camera offline + recovered, CameraNode offline +
   recovered, AI-agent-created incidents, MCP API key audit events,
-  CloudNode host disk approaching full, organization membership
+  CameraNode host disk approaching full, organization membership
   lifecycle — added / role-changed / removed, and motion detection
   with per-camera cooldown + digest). All settings are opt-in
   per-org; six default ON for new orgs, motion defaults OFF.

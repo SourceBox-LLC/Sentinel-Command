@@ -14,7 +14,7 @@ function Faq() {
         </summary>
         <p>
           If a camera's input has audio and its codec is supported (AAC, Opus, MP3),
-          CloudNode passes it through the HLS pipeline and it's available during live
+          CameraNode passes it through the HLS pipeline and it's available during live
           playback. Recordings stored on the node include audio. There is no per-camera
           "mute" toggle yet — remove or mute the input source if you need silent-only.
         </p>
@@ -23,14 +23,14 @@ function Faq() {
       <details className="docs-accordion">
         <summary>
           <span className="docs-accordion-chevron" aria-hidden="true">▶</span>
-          <span className="docs-accordion-title">How do I install CloudNode on Windows?</span>
+          <span className="docs-accordion-title">How do I install CameraNode on Windows?</span>
         </summary>
         <p>
-          Download <code>sourcebox-sentry-cloudnode-windows-x86_64.msi</code> from the{" "}
+          Download <code>sourcebox-sentry-cameranode-windows-x86_64.msi</code> from the{" "}
           <a href="https://github.com/SourceBox-LLC/Sentinel-CameraNode/releases/latest" target="_blank" rel="noopener noreferrer">latest GitHub release</a>{" "}
           and run it. The MSI is unsigned today, so SmartScreen will warn "Windows protected
           your PC" on first run — click <strong>More info → Run anyway</strong>. After install,
-          click the <strong>Sentinel CloudNode</strong> shortcut from the Start menu —
+          click the <strong>Sentinel CameraNode</strong> shortcut from the Start menu —
           first launch runs the setup wizard, every launch after streams cameras directly.
           There is no PowerShell one-liner installer — that path was retired in v0.1.31
           because the MSI is the only Windows install that handles upgrades and Add/Remove
@@ -44,9 +44,9 @@ function Faq() {
           <span className="docs-accordion-title">Can I use IP cameras (RTSP) instead of USB?</span>
         </summary>
         <p>
-          Not today. CloudNode currently only supports USB cameras via each platform's
+          Not today. CameraNode currently only supports USB cameras via each platform's
           native API (Video4Linux2, DirectShow, AVFoundation). RTSP / ONVIF support is on
-          the roadmap — if you have a strong need, open an issue on the CloudNode repo so
+          the roadmap — if you have a strong need, open an issue on the CameraNode repo so
           we can prioritize.
         </p>
       </details>
@@ -70,8 +70,8 @@ function Faq() {
         </summary>
         <p>
           <strong>Email: yes</strong> for the operator-critical events — camera
-          offline + recovered, CloudNode offline + recovered, AI-agent-created
-          incidents, MCP API key audit (created or revoked), CloudNode disk
+          offline + recovered, CameraNode offline + recovered, AI-agent-created
+          incidents, MCP API key audit (created or revoked), CameraNode disk
           almost full, member audit (added / role changed / removed), and
           motion detection (with cooldown + digest).  Each kind is opt-in
           per-org via the{" "}
@@ -102,7 +102,7 @@ function Faq() {
       <details className="docs-accordion">
         <summary>
           <span className="docs-accordion-chevron" aria-hidden="true">▶</span>
-          <span className="docs-accordion-title">Does CloudNode need always-on internet?</span>
+          <span className="docs-accordion-title">Does CameraNode need always-on internet?</span>
         </summary>
         <p>
           For live streaming to Command Center, yes — segments are pushed as they're
@@ -121,7 +121,7 @@ function Faq() {
           <span className="docs-accordion-title">Is my video data secure?</span>
         </summary>
         <ul>
-          <li>All traffic between CloudNode, Command Center, and your browser is TLS-encrypted</li>
+          <li>All traffic between CameraNode, Command Center, and your browser is TLS-encrypted</li>
           <li>Node API keys are stored as SHA-256 hashes server-side and encrypted at rest on the node (AES-256-GCM, machine-derived key)</li>
           <li>Live segments are cached in Command Center RAM for a rolling ~60s window, then evicted — no long-term cloud storage</li>
           <li>Recordings and snapshots live only on your node, in an encrypted SQLite DB</li>
@@ -141,7 +141,7 @@ function Faq() {
           privacy pages points at the file that implements it, and a customer
           or auditor can verify what we actually do — no analytics, no cloud ML
           on your video, recordings encrypted at rest on hardware you own.
-          The piece designed to run on your premises is the CloudNode (GPL-3.0);
+          The piece designed to run on your premises is the CameraNode (GPL-3.0);
           the Command Center is operated by us.
         </p>
       </details>
@@ -174,7 +174,7 @@ function Faq() {
           Sentinel AI passes a JPEG from <code>view_camera</code> to the configured
           LLM endpoint (Ollama Cloud by default) so the model can see what
           triggered the run. The persistent video archive (your recordings) still
-          stays on your CloudNode and never syncs to our cloud. If you don't want
+          stays on your CameraNode and never syncs to our cloud. If you don't want
           any footage leaving your hardware, leave Sentinel AI disabled — motion
           detection, recording, and notifications all work without it.
         </p>
@@ -219,7 +219,7 @@ function Faq() {
           the OS machine ID — <code>/etc/machine-id</code> on Linux, the Cryptography
           MachineGuid on Windows, the hardware UUID on macOS). Copying{" "}
           <code>node.db</code> to a different machine won't decrypt. To move a node:
-          on the new machine, run <code>sourcebox-sentry-cloudnode setup</code> with
+          on the new machine, run <code>sourcebox-sentry-cameranode setup</code> with
           the same <code>node_id</code> and API key — Command Center will re-associate
           the cameras to the new host. The old node should be stopped first to avoid a
           split-brain heartbeat.
@@ -256,8 +256,8 @@ function Faq() {
           <span className="docs-accordion-title">What license is Sentinel under?</span>
         </summary>
         <p>
-          Command Center is AGPL-3.0 and CloudNode is GPL-3.0 — both public so
-          you can audit what we do with your data. CloudNode is the piece that
+          Command Center is AGPL-3.0 and CameraNode is GPL-3.0 — both public so
+          you can audit what we do with your data. CameraNode is the piece that
           runs on your hardware; Command Center is the cloud service we operate.
           For commercial licensing that avoids the copyleft obligations,
           contact <a href="https://github.com/SourceBox-LLC" target="_blank" rel="noopener noreferrer">SourceBox LLC</a>.

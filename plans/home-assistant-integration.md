@@ -18,7 +18,7 @@ session so the long-lived motion SSE doesn't pin a connection for its lifetime.
 
 ## Context
 
-Sentinel's core design is **one Command Center org owning many CloudNodes**, each
+Sentinel's core design is **one Command Center org owning many CameraNodes**, each
 with its own cameras. A node-level Home Assistant integration would force a user
 to add every node to HA separately and re-add it whenever a node moves or a new
 one joins — O(nodes) setup that breaks on churn. The Command Center already
@@ -34,7 +34,7 @@ one):
   ([`ws.py::_handle_motion_event`](../backend/app/api/ws.py#L514) →
   `motion_broadcaster`), and the CC re-broadcasts org-wide via an SSE feed
   ([`motion.py::stream_motion_events`](../backend/app/api/motion.py#L178)). The
-  CloudNode's *local* motion emit was removed in v0.1.61. Motion-triggered
+  CameraNode's *local* motion emit was removed in v0.1.61. Motion-triggered
   automations are the #1 HA use case, and they're a built primitive here.
 - **The CC tracks each node's LAN IP.**
   [`CameraNode.local_ip` + `.http_port`](../backend/app/models/models.py#L237)
@@ -61,7 +61,7 @@ stay on the LAN and never touch the viewer-hour meter.
       │                                   /api/integration/*  (camera list, motion
       │                                                        SSE, recording, status)
       │
-      └──(LAN-direct HLS, co-located)───▶ CloudNode :8080/hls/…  ┐ DATA PLANE
+      └──(LAN-direct HLS, co-located)───▶ CameraNode :8080/hls/…  ┐ DATA PLANE
                                           (proxy fallback when remote) ┘
 ```
 
@@ -161,7 +161,7 @@ component exists. New router **NEW** `backend/app/api/integration.py`, all route
 node is online and has a `local_ip`; always include `proxy_url`
 (`/api/cameras/{id}/stream.m3u8`) so HA can fall back. The node's local HLS is
 **unauthenticated by design** (LAN-trust threat model in
-[`server/api.rs`](../../OpenSentry-CloudNode/src/server/api.rs#L22)) — acceptable
+[`server/api.rs`](../../OpenSentry-CameraNode/src/server/api.rs#L22)) — acceptable
 because HA runs on the same trusted LAN; documented in the integration's threat
 notes.
 
@@ -211,7 +211,7 @@ Goal: a one-screen HA setup that builds every entity from the integration API.
     (disk / version / viewer-hours).
 - Docs: a Command Center docs page ("Connect Home Assistant") + the HACS README.
 - Later: zeroconf — the CC could advertise nodes for HA auto-discovery (depends on
-  the deferred mDNS work in the CloudNode Local-mode plan).
+  the deferred mDNS work in the CameraNode Local-mode plan).
 
 **Verification:** fresh HA install → add integration → enter URL + key → all
 cameras across all nodes appear with live video, snapshots, recording switches,

@@ -149,7 +149,7 @@ def test_get_plan_info(admin_client):
 def test_register_with_bad_api_key_records_error_on_node(admin_client):
     """A registration attempt with a wrong key must write
     ``last_register_error`` on the node row so the UI can surface the
-    reason instead of making the user SSH into the CloudNode to read logs.
+    reason instead of making the user SSH into the CameraNode to read logs.
     """
     create_resp = admin_client.post("/api/nodes", json={"name": "Error Node"})
     node_id = create_resp.json()["node_id"]
@@ -291,7 +291,7 @@ def test_register_persists_node_version(admin_client):
 
 
 def test_register_without_version_is_tolerated(admin_client):
-    """Old CloudNodes that pre-date version reporting must still register —
+    """Old CameraNodes that pre-date version reporting must still register —
     they just get an update_available hint instead of a 426."""
     node_id, _, resp = _create_and_register(admin_client, version=None)
     assert resp.status_code == 200
@@ -308,7 +308,7 @@ def test_register_without_version_is_tolerated(admin_client):
 
 
 def test_register_rejects_too_old_version(admin_client, monkeypatch):
-    """A CloudNode below MIN_SUPPORTED gets HTTP 426 with the install hint."""
+    """A CameraNode below MIN_SUPPORTED gets HTTP 426 with the install hint."""
     # Bump the floor above the version we'll report.
     from app.core import versions as versions_mod
     monkeypatch.setattr(versions_mod.settings, "MIN_SUPPORTED_NODE_VERSION", "0.5.0")
@@ -325,7 +325,7 @@ def test_register_rejects_too_old_version(admin_client, monkeypatch):
 
 def test_register_too_old_records_error_on_node(admin_client, monkeypatch):
     """A 426 must also stamp last_register_error so the dashboard can show why
-    the node is stuck (without making the operator hunt through CloudNode logs)."""
+    the node is stuck (without making the operator hunt through CameraNode logs)."""
     from app.core import versions as versions_mod
     monkeypatch.setattr(versions_mod.settings, "MIN_SUPPORTED_NODE_VERSION", "0.5.0")
     monkeypatch.setattr(versions_mod.settings, "LATEST_NODE_VERSION", "0.5.0")
@@ -366,7 +366,7 @@ def test_register_outdated_includes_update_available(admin_client, monkeypatch):
 
 
 def test_heartbeat_persists_node_version(admin_client):
-    """Heartbeat must keep node_version current so an in-place CloudNode
+    """Heartbeat must keep node_version current so an in-place CameraNode
     upgrade is visible without forcing the operator to re-register."""
     node_id, api_key, _ = _create_and_register(admin_client, version="0.1.0")
 
@@ -387,7 +387,7 @@ def test_heartbeat_persists_node_version(admin_client):
 
 def test_heartbeat_returns_recording_state_per_camera(admin_client, db):
     """v0.1.43+ heartbeat response carries an authoritative per-camera
-    recording_state map.  CloudNode reconciles to this map every tick.
+    recording_state map.  CameraNode reconciles to this map every tick.
     Pin the response shape and the per-camera computation: continuous
     cameras report true, default cameras report false."""
     from app.models.models import Camera, CameraNode
@@ -423,7 +423,7 @@ def test_heartbeat_returns_recording_state_per_camera(admin_client, db):
 
 
 def test_heartbeat_persists_storage_stats(admin_client):
-    """v0.1.41+ CloudNodes report filesystem-aware storage stats on
+    """v0.1.41+ CameraNodes report filesystem-aware storage stats on
     every heartbeat. The dashboard's per-node usage bar reads from
     these columns; if persistence breaks, the bar goes blank."""
     node_id, api_key, _ = _create_and_register(admin_client, version="0.1.41")
@@ -461,7 +461,7 @@ def test_heartbeat_persists_storage_stats(admin_client):
 
 
 def test_heartbeat_without_storage_stats_preserves_last_known(admin_client):
-    """A heartbeat from a v0.1.40-or-older CloudNode (no storage_stats
+    """A heartbeat from a v0.1.40-or-older CameraNode (no storage_stats
     block) must NOT clobber the last-known reading to NULL.  Otherwise
     a brief downgrade or hand-built test client would empty the
     dashboard bar.
@@ -551,10 +551,10 @@ def test_to_dict_exposes_node_version(admin_client):
 
 # ── Plan field on register / heartbeat ───────────────────────────────
 #
-# The CloudNode renders this as a pill badge in its status bar (e.g.
+# The CameraNode renders this as a pill badge in its status bar (e.g.
 # ``[ PRO ]``). The field is advisory — enforcement stays server-side.
 # See `wire_plan_slug()` and the doc comment on
-# `api.types.RegisterResponse.plan` in the cloudnode repo for the full
+# `api.types.RegisterResponse.plan` in the cameranode repo for the full
 # contract.
 
 
@@ -629,7 +629,7 @@ def test_heartbeat_plan_updates_when_setting_changes(admin_client):
 
 def test_heartbeat_reports_disabled_cameras(admin_client):
     """When the backend has suspended some of this node's cameras by plan
-    cap, the heartbeat response lists their camera_ids so the CloudNode
+    cap, the heartbeat response lists their camera_ids so the CameraNode
     can mark them ``suspended`` in the TUI and stop pushing segments."""
     from app.models.models import Camera, CameraNode
     from tests.conftest import TestSession
@@ -686,7 +686,7 @@ def test_heartbeat_disabled_cameras_is_empty_when_none_suspended(admin_client):
     assert hb.json().get("disabled_cameras") == []
 
 
-# ── CloudNode disk-low alert ────────────────────────────────────────
+# ── CameraNode disk-low alert ────────────────────────────────────────
 
 def _heartbeat_with_disk(admin_client, node_id, api_key, *, used_pct):
     """Helper: heartbeat the node with disk usage at the given percent."""
@@ -709,7 +709,7 @@ def _heartbeat_with_disk(admin_client, node_id, api_key, *, used_pct):
     )
 
 
-def test_cloudnode_disk_low_emits_below_threshold_no_op(admin_client):
+def test_cameranode_disk_low_emits_below_threshold_no_op(admin_client):
     """50% disk usage → no notification fired."""
     from app.models.models import Notification
 
@@ -720,7 +720,7 @@ def test_cloudnode_disk_low_emits_below_threshold_no_op(admin_client):
     try:
         notifs = (
             session.query(Notification)
-            .filter_by(kind="cloudnode_disk_low")
+            .filter_by(kind="cameranode_disk_low")
             .all()
         )
         assert len(notifs) == 0
@@ -728,8 +728,8 @@ def test_cloudnode_disk_low_emits_below_threshold_no_op(admin_client):
         session.close()
 
 
-def test_cloudnode_disk_low_emits_at_threshold(admin_client):
-    """92% disk usage → one cloudnode_disk_low notification.
+def test_cameranode_disk_low_emits_at_threshold(admin_client):
+    """92% disk usage → one cameranode_disk_low notification.
     Threshold is 90% so 92% should trip; pin the side of the
     boundary so a future tweak surfaces in the diff."""
     from app.models.models import Notification
@@ -741,7 +741,7 @@ def test_cloudnode_disk_low_emits_at_threshold(admin_client):
     try:
         notifs = (
             session.query(Notification)
-            .filter_by(kind="cloudnode_disk_low")
+            .filter_by(kind="cameranode_disk_low")
             .all()
         )
         assert len(notifs) == 1
@@ -758,7 +758,7 @@ def test_cloudnode_disk_low_emits_at_threshold(admin_client):
         session.close()
 
 
-def test_cloudnode_disk_low_debounces_within_window(admin_client):
+def test_cameranode_disk_low_debounces_within_window(admin_client):
     """Two heartbeats back-to-back at 95% → only one notification.
     Debounce is 6h per-node and persists in Setting so a process
     restart doesn't re-fire."""
@@ -772,7 +772,7 @@ def test_cloudnode_disk_low_debounces_within_window(admin_client):
     try:
         notifs = (
             session.query(Notification)
-            .filter_by(kind="cloudnode_disk_low")
+            .filter_by(kind="cameranode_disk_low")
             .all()
         )
         assert len(notifs) == 1
@@ -780,7 +780,7 @@ def test_cloudnode_disk_low_debounces_within_window(admin_client):
         session.close()
 
 
-def test_cloudnode_disk_low_recovery_clears_debounce(admin_client):
+def test_cameranode_disk_low_recovery_clears_debounce(admin_client):
     """95% → 50% → 95% — the recovery dip resets the debounce so
     the second crisis emits immediately rather than waiting out
     a stale 6h cooldown.  Otherwise a transient cleanup that
@@ -797,7 +797,7 @@ def test_cloudnode_disk_low_recovery_clears_debounce(admin_client):
     try:
         notifs = (
             session.query(Notification)
-            .filter_by(kind="cloudnode_disk_low")
+            .filter_by(kind="cameranode_disk_low")
             .all()
         )
         assert len(notifs) == 2
@@ -805,7 +805,7 @@ def test_cloudnode_disk_low_recovery_clears_debounce(admin_client):
         session.close()
 
 
-def test_cloudnode_disk_low_per_node_independent(admin_client):
+def test_cameranode_disk_low_per_node_independent(admin_client):
     """Two different nodes both at 95% → two notifications (one
     per node).  The debounce key includes node_id so an alert on
     Node A doesn't suppress an alert on Node B."""
@@ -821,7 +821,7 @@ def test_cloudnode_disk_low_per_node_independent(admin_client):
     try:
         notifs = (
             session.query(Notification)
-            .filter_by(kind="cloudnode_disk_low")
+            .filter_by(kind="cameranode_disk_low")
             .all()
         )
         assert len(notifs) == 2
@@ -834,7 +834,7 @@ def test_cloudnode_disk_low_per_node_independent(admin_client):
         session.close()
 
 
-def test_cloudnode_disk_low_check_failure_does_not_break_heartbeat(admin_client, monkeypatch):
+def test_cameranode_disk_low_check_failure_does_not_break_heartbeat(admin_client, monkeypatch):
     """If the disk-low check raises (template missing, recipient
     lookup down, etc.), the heartbeat must still return 200.
     Node ↔ Command Center connectivity is more important than the
@@ -844,7 +844,7 @@ def test_cloudnode_disk_low_check_failure_does_not_break_heartbeat(admin_client,
     def boom(*args, **kwargs):
         raise RuntimeError("notification system having a fit")
     monkeypatch.setattr(
-        nodes_mod, "_check_and_emit_cloudnode_disk_low", boom,
+        nodes_mod, "_check_and_emit_cameranode_disk_low", boom,
     )
 
     node_id, api_key, _ = _create_and_register(admin_client, version="0.1.41")

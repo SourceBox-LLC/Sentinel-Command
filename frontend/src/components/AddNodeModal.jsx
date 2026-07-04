@@ -44,7 +44,7 @@ function AddNodeModal({ isOpen, onClose, onCreate }) {
   // Linux/macOS: install.sh accepts --url/--node-id/--key for
   // non-interactive registration.  The result is a registered node
   // ready to be launched via the foreground TUI dashboard
-  // (`~/.sourcebox-sentry/sourcebox-sentry-cloudnode`).  Foreground
+  // (`~/.sourcebox-sentry/sourcebox-sentry-cameranode`).  Foreground
   // is the recommended primary experience — matches the Windows MSI
   // model where the Start menu shortcut launches the TUI and the
   // service is an explicit second step.
@@ -58,7 +58,7 @@ function AddNodeModal({ isOpen, onClose, onCreate }) {
   const linuxInstallCmd = credentials
     ? `curl -fsSL ${base}/install.sh | bash -s -- --url "${base}" --node-id ${credentials.node_id} --key ${credentials.api_key}`
     : `curl -fsSL ${base}/install.sh | bash`
-  const linuxStartCmd = `~/.sourcebox-sentry/sourcebox-sentry-cloudnode`
+  const linuxStartCmd = `~/.sourcebox-sentry/sourcebox-sentry-cameranode`
   const linuxUnattendedCmd = credentials
     ? `curl -fsSL ${base}/install.sh | bash -s -- --url "${base}" --node-id ${credentials.node_id} --key ${credentials.api_key} --install-service`
     : ''
@@ -67,9 +67,9 @@ function AddNodeModal({ isOpen, onClose, onCreate }) {
     macos: linuxInstallCmd,
   }
   const MSI_DOWNLOAD_URL =
-    'https://github.com/SourceBox-LLC/Sentinel-CameraNode/releases/latest/download/sourcebox-sentry-cloudnode-windows-x86_64.msi'
+    'https://github.com/SourceBox-LLC/Sentinel-CameraNode/releases/latest/download/sourcebox-sentry-cameranode-windows-x86_64.msi'
 
-  const exe = os === 'windows' ? 'sourcebox-sentry-cloudnode.exe' : 'sourcebox-sentry-cloudnode'
+  const exe = os === 'windows' ? 'sourcebox-sentry-cameranode.exe' : 'sourcebox-sentry-cameranode'
   // Quick setup command — kept for the Windows path (after MSI install,
   // operators run this in PowerShell to register the node) and as a
   // fallback / re-registration option on Linux/macOS.  The Linux
@@ -207,7 +207,7 @@ function AddNodeModal({ isOpen, onClose, onCreate }) {
 
               <div className="deployment-content">
                 <div className="command-box">
-                  <h5>{os === 'windows' ? '1. Install CloudNode:' : '1. Install + Register:'}</h5>
+                  <h5>{os === 'windows' ? '1. Install CameraNode:' : '1. Install + Register:'}</h5>
                   <div className="install-tabs">
                     <div className="install-tab-buttons">
                       <button className={`install-tab-btn${os === 'linux' ? ' active' : ''}`} onClick={() => setOs('linux')}>Linux</button>
@@ -252,14 +252,14 @@ function AddNodeModal({ isOpen, onClose, onCreate }) {
                   </div>
                 ) : (
                   <div className="command-box quick-setup-box">
-                    <h5>2. Start CloudNode (foreground dashboard):</h5>
+                    <h5>2. Start CameraNode (foreground dashboard):</h5>
                     <code className="quick-setup-cmd">{linuxStartCmd}</code>
                     <button className="btn btn-small" onClick={() => handleCopy(linuxStartCmd)}>Copy</button>
                   </div>
                 )}
                 <div className="command-note">
                   {os === 'windows'
-                    ? <>The MSI registers a Start menu shortcut for the foreground TUI dashboard — that's the recommended way to run CloudNode. The setup command above registers the node before the first launch. <br/><br/>For 24/7 unattended operation, the MSI also installs an optional Windows Service named <code>SourceBoxSentryCloudNode</code> (manual-start by default). Switch it to automatic from <strong>services.msc</strong> after you've verified the foreground works.</>
+                    ? <>The MSI registers a Start menu shortcut for the foreground TUI dashboard — that's the recommended way to run CameraNode. The setup command above registers the node before the first launch. <br/><br/>For 24/7 unattended operation, the MSI also installs an optional Windows Service named <code>SourceBoxSentryCameraNode</code> (manual-start by default). Switch it to automatic from <strong>services.msc</strong> after you've verified the foreground works.</>
                     : <>The foreground dashboard shows live cameras, segment counts, FFmpeg state, and slash commands. Same primary experience as the Windows MSI's Start menu shortcut.<br/><br/>For 24/7 unattended operation (camera-in-a-closet, no SSH session), append <code>--install-service</code> to the install command:<br/>
                       <code style={{ display: 'block', marginTop: '0.4rem', padding: '0.5rem', fontSize: '0.85em', wordBreak: 'break-all' }}>{linuxUnattendedCmd}</code>
                       <button className="btn btn-small" onClick={() => handleCopy(linuxUnattendedCmd)}>Copy unattended command</button></>

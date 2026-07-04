@@ -31,7 +31,7 @@ class Camera(Base):
     group_id = Column(Integer, ForeignKey("camera_groups.id"), nullable=True)
     last_seen = Column(DateTime)
     # Pipeline state. In addition to the legacy "online" / "offline", the
-    # CloudNode's FFmpeg supervisor now reports "starting", "streaming",
+    # CameraNode's FFmpeg supervisor now reports "starting", "streaming",
     # "restarting", "failed", and "error" so the UI can tell the user
     # why a camera they expect to be live isn't showing video.
     status = Column(String(20), default="offline")
@@ -50,7 +50,7 @@ class Camera(Base):
     # cap would otherwise be exceeded. The oldest `max_cameras` cameras
     # (by `created_at`) keep `disabled_by_plan = False`; the rest are
     # flagged, and `POST /push-segment` rejects their uploads with
-    # HTTP 402 + `plan_limit_hit` so the CloudNode can surface the
+    # HTTP 402 + `plan_limit_hit` so the CameraNode can surface the
     # reason in its TUI. Flag is cleared on upgrade and on re-registration.
     # Default False so fresh installs and unaffected rows behave normally.
     disabled_by_plan = Column(Boolean, nullable=False, default=False, server_default="0")
@@ -58,7 +58,7 @@ class Camera(Base):
     # Per-camera recording policy (v0.1.43+).  The heartbeat handler
     # computes this camera's target recording state per-tick from
     # ``continuous_24_7 OR (scheduled_recording AND in-window)`` and
-    # echoes it back to CloudNode in the heartbeat response, which
+    # echoes it back to CameraNode in the heartbeat response, which
     # reconciles its in-memory recording set to match.
     #
     # Replaces the previous org-level `Setting` rows for the same
@@ -276,7 +276,7 @@ class CameraNode(Base):
     # status badge.  Cleared on successful re-registration.
     last_register_error = Column(String(500), nullable=True)
     last_register_error_at = Column(DateTime, nullable=True)
-    # CloudNode-reported build version (e.g. "0.1.0") + when we last saw it.
+    # CameraNode-reported build version (e.g. "0.1.0") + when we last saw it.
     # Updated by both register and heartbeat; nullable so very old nodes that
     # pre-date version reporting can still register without failing migration.
     # Used by the dashboard to surface "update available" badges and by
@@ -284,7 +284,7 @@ class CameraNode(Base):
     node_version = Column(String(50), nullable=True)
     version_checked_at = Column(DateTime, nullable=True)
 
-    # Filesystem-aware storage stats reported by CloudNode on heartbeat
+    # Filesystem-aware storage stats reported by CameraNode on heartbeat
     # (v0.1.41+).  Used by Settings → Camera Nodes to render a per-node
     # usage bar (used vs configured cap) and warn when the underlying
     # host disk is filling up.  All four are nullable so v0.1.40 and
@@ -583,7 +583,7 @@ class IncidentEvidence(Base):
 
 
 class MotionEvent(Base):
-    """A motion detection event reported by a CloudNode.
+    """A motion detection event reported by a CameraNode.
 
     Created when a node's FFmpeg scene-change analysis exceeds the
     configured threshold for a camera segment.

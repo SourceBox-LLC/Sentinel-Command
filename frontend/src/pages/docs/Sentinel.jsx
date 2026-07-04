@@ -232,7 +232,7 @@ function Sentinel() {
         </p>
       </div>
       <ul>
-        <li><strong>Snapshots only when investigating.</strong> Sentinel AI grabs an ephemeral JPEG via <code>view_camera</code> at the moment of a run — it doesn't ship a continuous stream. Recordings (the persistent video archive) stay on your CloudNode regardless.</li>
+        <li><strong>Snapshots only when investigating.</strong> Sentinel AI grabs an ephemeral JPEG via <code>view_camera</code> at the moment of a run — it doesn't ship a continuous stream. Recordings (the persistent video archive) stay on your CameraNode regardless.</li>
         <li><strong>Trigger-driven only.</strong> Sentinel AI fires only on triggers <em>you</em> configure (motion / incident_opened / manual). No background polling, no continuous monitoring.</li>
         <li><strong>LLM endpoint is yours to point.</strong> The default is Ollama Cloud, but the agent works against a self-hosted Ollama just as well — set <code>OLLAMA_HOST</code> to your own URL and snapshots never leave infrastructure you control.</li>
         <li><strong>Where the agent runs.</strong> The agent process itself runs on hardware we operate (Fly.io, US region). The auth model is two shared secrets (run-callback + MCP bearer) that scope to whichever org each run was dispatched for.</li>

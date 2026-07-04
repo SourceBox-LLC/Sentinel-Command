@@ -81,7 +81,7 @@ def test_promotion_request_enqueues_email_for_admins(
     assert "Admin access requested" in row.subject
     # Body explains what admin access actually grants — the receiver
     # should be able to make a decision from the email alone.
-    assert "CloudNode" in row.body_text
+    assert "CameraNode" in row.body_text
     assert "MCP" in row.body_text
 
 

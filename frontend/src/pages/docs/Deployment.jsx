@@ -8,33 +8,33 @@ function Deployment() {
     <section className="docs-section" id="deployment">
       <h2>Deployment<a href="#deployment" className="docs-anchor">#</a></h2>
       <p>
-        Three ways to run CloudNode in production. Pick the one that matches your
+        Three ways to run CameraNode in production. Pick the one that matches your
         existing ops setup.
       </p>
 
       <h3>Docker (single camera)</h3>
       <p>The most portable option. Maps one USB camera device into the container:</p>
       <div className="docs-code-block">
-        <code>{`docker build -t sourcebox-sentry-cloudnode .
+        <code>{`docker build -t sourcebox-sentry-cameranode .
 
 docker run -d \\
-  --name sourcebox-sentry-cloudnode \\
+  --name sourcebox-sentry-cameranode \\
   --device /dev/video0:/dev/video0 \\
   -e SOURCEBOX_SENTRY_NODE_ID=your_node_id \\
   -e SOURCEBOX_SENTRY_API_KEY=your_api_key \\
   -e SOURCEBOX_SENTRY_API_URL=https://opensentry-command.fly.dev \\
   -p 8080:8080 \\
   -v ./data:/app/data \\
-  sourcebox-sentry-cloudnode`}</code>
+  sourcebox-sentry-cameranode`}</code>
         <button className="docs-copy-btn" onClick={() => copyToClipboard(`docker run -d \\
-  --name sourcebox-sentry-cloudnode \\
+  --name sourcebox-sentry-cameranode \\
   --device /dev/video0:/dev/video0 \\
   -e SOURCEBOX_SENTRY_NODE_ID=your_node_id \\
   -e SOURCEBOX_SENTRY_API_KEY=your_api_key \\
   -e SOURCEBOX_SENTRY_API_URL=https://opensentry-command.fly.dev \\
   -p 8080:8080 \\
   -v ./data:/app/data \\
-  sourcebox-sentry-cloudnode`)}>Copy</button>
+  sourcebox-sentry-cameranode`)}>Copy</button>
       </div>
 
       <h3>Docker (multiple cameras)</h3>
@@ -47,7 +47,7 @@ docker run -d \\
   -e SOURCEBOX_SENTRY_API_KEY=your_api_key \\
   -e SOURCEBOX_SENTRY_API_URL=https://opensentry-command.fly.dev \\
   -p 8080:8080 \\
-  sourcebox-sentry-cloudnode`}</code>
+  sourcebox-sentry-cameranode`}</code>
         <button className="docs-copy-btn" onClick={() => copyToClipboard(`docker run -d \\
   --device /dev/video0:/dev/video0 \\
   --device /dev/video2:/dev/video2 \\
@@ -55,7 +55,7 @@ docker run -d \\
   -e SOURCEBOX_SENTRY_API_KEY=your_api_key \\
   -e SOURCEBOX_SENTRY_API_URL=https://opensentry-command.fly.dev \\
   -p 8080:8080 \\
-  sourcebox-sentry-cloudnode`)}>Copy</button>
+  sourcebox-sentry-cameranode`)}>Copy</button>
       </div>
 
       <h3>Docker Compose</h3>
@@ -75,15 +75,15 @@ docker-compose up -d`)}>Copy</button>
         <code>{`git clone https://github.com/SourceBox-LLC/Sentinel-CameraNode.git
 cd Sentinel-CameraNode
 cargo build --release
-./target/release/sourcebox-sentry-cloudnode setup`}</code>
+./target/release/sourcebox-sentry-cameranode setup`}</code>
         <button className="docs-copy-btn" onClick={() => copyToClipboard(`git clone https://github.com/SourceBox-LLC/Sentinel-CameraNode.git
 cd Sentinel-CameraNode
 cargo build --release
-./target/release/sourcebox-sentry-cloudnode setup`)}>Copy</button>
+./target/release/sourcebox-sentry-cameranode setup`)}>Copy</button>
       </div>
 
       <h3>Cross-compilation (Raspberry Pi)</h3>
-      <p>CloudNode runs on ARM64 Linux — build on a dev machine, copy the binary:</p>
+      <p>CameraNode runs on ARM64 Linux — build on a dev machine, copy the binary:</p>
       <div className="docs-code-block">
         <code>{`rustup target add aarch64-unknown-linux-gnu
 cargo build --release --target aarch64-unknown-linux-gnu`}</code>

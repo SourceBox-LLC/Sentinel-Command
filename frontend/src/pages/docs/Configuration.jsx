@@ -8,7 +8,7 @@ function Configuration() {
     <section className="docs-section" id="configuration">
       <h2>Configuration<a href="#configuration" className="docs-anchor">#</a></h2>
       <p>
-        CloudNode resolves configuration from multiple sources so you can run it
+        CameraNode resolves configuration from multiple sources so you can run it
         however suits your deployment — interactive wizard for a single box,
         environment variables for Docker, CLI flags for one-off overrides.
       </p>
@@ -60,8 +60,8 @@ function Configuration() {
         They override anything in the database and env:
       </p>
       <div className="docs-code-block">
-        <code>sourcebox-sentry-cloudnode --node-id NODE --api-key KEY --api-url URL</code>
-        <button className="docs-copy-btn" onClick={() => copyToClipboard('sourcebox-sentry-cloudnode --node-id NODE --api-key KEY --api-url URL')}>Copy</button>
+        <code>sourcebox-sentry-cameranode --node-id NODE --api-key KEY --api-url URL</code>
+        <button className="docs-copy-btn" onClick={() => copyToClipboard('sourcebox-sentry-cameranode --node-id NODE --api-key KEY --api-url URL')}>Copy</button>
       </div>
 
       <h3>Example <code>config.yaml</code></h3>

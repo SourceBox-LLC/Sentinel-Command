@@ -8,7 +8,7 @@ import { useSharedToken } from "../hooks/useSharedToken.jsx"
 // fetch the chunk (cached thereafter); every other route gets a faster
 // first paint.
 
-// Set to true to connect directly to CloudNode on localhost:8080
+// Set to true to connect directly to CameraNode on localhost:8080
 // Set to false to use backend proxy with authentication
 const LOCAL_TEST_MODE = import.meta.env.VITE_LOCAL_HLS === "true"
 
@@ -35,7 +35,7 @@ function HlsPlayer({ cameraId, cameraName }) {
     // `stalled` is post-connect: MANIFEST_PARSED has fired (loading is
     // false) but the video element hasn't advanced in N seconds.
     // Common cause is a backend segment-cache hole that hls.js is
-    // retry-skipping past (e.g. CloudNode's HLS uploader losing a
+    // retry-skipping past (e.g. CameraNode's HLS uploader losing a
     // batch of segments to the muxer rotating files out from under
     // it).  Without surfacing this state the player goes dead black
     // with no error and no spinner — operator can't tell whether the

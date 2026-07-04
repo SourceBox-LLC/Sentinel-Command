@@ -3,7 +3,7 @@
     "meta": {
       "spec_version": "1.0.0",
       "title": "SourceBox Sentry System Architecture",
-      "description": "Three-zone architecture: LOCAL (USB Camera + CloudNode) → CLOUD (Command Center + RAM cache + Incident DB) → CLIENT (Browser + AI Agent), with HTTPS push and same-origin streaming."
+      "description": "Three-zone architecture: LOCAL (USB Camera + CameraNode) → CLOUD (Command Center + RAM cache + Incident DB) → CLIENT (Browser + AI Agent), with HTTPS push and same-origin streaming."
     },
     "canvas": {
       "width": 1920,
@@ -49,7 +49,7 @@
     ],
     "nodes": [
       {"zone": "zone_local",  "label": "USB Camera",       "subtitle": "UVC / DirectShow / V4L2",       "accent": "blue",   "y_pct": 0.18},
-      {"zone": "zone_local",  "label": "CloudNode",        "subtitle": "Rust · FFmpeg · SQLite",         "accent": "blue",   "y_pct": 0.42},
+      {"zone": "zone_local",  "label": "CameraNode",        "subtitle": "Rust · FFmpeg · SQLite",         "accent": "blue",   "y_pct": 0.42},
       {"zone": "zone_cloud",  "label": "Command Center",   "subtitle": "FastAPI · Clerk · SQLAlchemy",   "accent": "green",  "y_pct": 0.22},
       {"zone": "zone_cloud",  "label": "Segment RAM Cache","subtitle": "~15 × 1s chunks / camera",       "accent": "green",  "y_pct": 0.42},
       {"zone": "zone_cloud",  "label": "Incident DB",      "subtitle": "Reports + evidence metadata",    "accent": "green",  "y_pct": 0.62},
@@ -57,10 +57,10 @@
       {"zone": "zone_client", "label": "AI Agent (MCP)",   "subtitle": "Claude, Cursor, custom",         "accent": "purple", "y_pct": 0.50}
     ],
     "edges": [
-      {"from": "USB Camera",    "to": "CloudNode",       "label": "",            "style": "solid_arrow_grey"},
+      {"from": "USB Camera",    "to": "CameraNode",       "label": "",            "style": "solid_arrow_grey"},
       {"from": "Command Center","to": "Segment RAM Cache","label": "",           "style": "solid_arrow_green"},
       {"from": "Command Center","to": "Incident DB",     "label": "",            "style": "solid_arrow_green"},
-      {"from": "CloudNode",     "to": "Command Center",  "label": "HTTPS push",  "style": "solid_arrow_grey_with_amber_lock_at_midpoint"},
+      {"from": "CameraNode",     "to": "Command Center",  "label": "HTTPS push",  "style": "solid_arrow_grey_with_amber_lock_at_midpoint"},
       {"from": "Command Center","to": "Browser",         "label": "same-origin", "style": "solid_arrow_grey_with_amber_lock_at_midpoint"},
       {"from": "Command Center","to": "AI Agent (MCP)",  "label": "MCP tools",   "style": "dashed_arrow_grey"}
     ],
@@ -75,7 +75,7 @@
       "exact_text": [
         "LOCAL", "CLOUD", "CLIENT",
         "USB Camera", "UVC / DirectShow / V4L2",
-        "CloudNode", "Rust · FFmpeg · SQLite",
+        "CameraNode", "Rust · FFmpeg · SQLite",
         "Command Center", "FastAPI · Clerk · SQLAlchemy",
         "Segment RAM Cache", "~15 × 1s chunks / camera",
         "Incident DB", "Reports + evidence metadata",

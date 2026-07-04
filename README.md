@@ -10,7 +10,7 @@
     &nbsp;·&nbsp;
     <a href="https://opensentry-command.fly.dev/docs">Documentation</a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/SourceBox-LLC/Sentinel-CameraNode">CloudNode</a>
+    <a href="https://github.com/SourceBox-LLC/Sentinel-CameraNode">CameraNode</a>
   </p>
 </p>
 
@@ -31,9 +31,9 @@
 
 ## You don't run this — we host it for you
 
-Sentinel Command Center is a **product we operate as a service**, not something you download and deploy. To use it, just **[sign up on the live app](https://opensentry-command.fly.dev)** — no servers to provision, no Docker, no database to babysit. Pair a [CloudNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode) with a camera and it appears in your dashboard automatically.
+Sentinel Command Center is a **product we operate as a service**, not something you download and deploy. To use it, just **[sign up on the live app](https://opensentry-command.fly.dev)** — no servers to provision, no Docker, no database to babysit. Pair a [CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode) with a camera and it appears in your dashboard automatically.
 
-> **Looking for the part you actually install?** That's **[CloudNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode)** — a small daemon that turns any USB or IP camera into a private, cloud-connected feed. It runs on your hardware and has its own setup guide.
+> **Looking for the part you actually install?** That's **[CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode)** — a small daemon that turns any USB or IP camera into a private, cloud-connected feed. It runs on your hardware and has its own setup guide.
 
 ### So why is this repo public?
 
@@ -43,7 +43,7 @@ Sentinel Command Center is a **product we operate as a service**, not something 
 
 ## What it does
 
-📹 &nbsp;**Live video, private by design** — CloudNodes push video straight to your dashboard through an in-memory proxy. Your recordings stay on your own device; Command Center keeps only a short live buffer in memory, never a copy of your footage at rest.
+📹 &nbsp;**Live video, private by design** — CameraNodes push video straight to your dashboard through an in-memory proxy. Your recordings stay on your own device; Command Center keeps only a short live buffer in memory, never a copy of your footage at rest.
 
 🔔 &nbsp;**Motion & alerts** — real-time motion events, a unified notification inbox, and opt-in email for the things that matter: a camera going offline, a node low on disk, a new incident.
 
@@ -60,7 +60,7 @@ Sentinel Command Center is a **product we operate as a service**, not something 
 ```
    Your network                        Our cloud                       You
  ┌──────────────────┐           ┌──────────────────────┐         ┌──────────────┐
- │     CloudNode    │  outbound │   Command Center     │         │    Browser   │
+ │     CameraNode    │  outbound │   Command Center     │         │    Browser   │
  │  camera + FFmpeg │══════════▶│   live proxy +       │◀═══════▶│   dashboard  │
  │  records locally │   HTTPS   │   dashboard + API    │  HTTPS  │  (live video)│
  │  (your footage)  │           │  (short live buffer, │         │              │
@@ -68,7 +68,7 @@ Sentinel Command Center is a **product we operate as a service**, not something 
                                 └──────────────────────┘
 ```
 
-CloudNode captures and encodes video on your network, then pushes it **outbound** to Command Center over HTTPS — no inbound ports, no port-forwarding, no VPN. Command Center holds a short rolling buffer in memory and streams it to your browser. Your actual recordings never leave your CloudNode.
+CameraNode captures and encodes video on your network, then pushes it **outbound** to Command Center over HTTPS — no inbound ports, no port-forwarding, no VPN. Command Center holds a short rolling buffer in memory and streams it to your browser. Your actual recordings never leave your CameraNode.
 
 → Full architecture, API routes, and data models: **[AGENTS.md](AGENTS.md)**.
 
@@ -79,7 +79,7 @@ CloudNode captures and encodes video on your network, then pushes it **outbound*
 | Project | What it is | |
 |---------|------------|---|
 | **Command Center** *(this repo)* | The hosted dashboard, API, and live-video hub | [Live app ›](https://opensentry-command.fly.dev) |
-| **CloudNode** | The camera daemon you install on your own hardware | [Repo ›](https://github.com/SourceBox-LLC/Sentinel-CameraNode) |
+| **CameraNode** | The camera daemon you install on your own hardware | [Repo ›](https://github.com/SourceBox-LLC/Sentinel-CameraNode) |
 | **Home Assistant integration** | Your Sentinel cameras inside Home Assistant | [Repo ›](https://github.com/SourceBox-LLC/Sentinel-HomeAssistant) |
 | **Sentinel AI agent** | Serverless agent that investigates motion & incidents | [Repo ›](https://github.com/SourceBox-LLC/SourceBox-Sentinel) |
 
@@ -109,5 +109,5 @@ This project is **not currently accepting external code contributions**, but bug
   &nbsp;·&nbsp;
   <a href="https://opensentry-command.fly.dev">Live app</a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/SourceBox-LLC/Sentinel-CameraNode">CloudNode</a>
+  <a href="https://github.com/SourceBox-LLC/Sentinel-CameraNode">CameraNode</a>
 </p>

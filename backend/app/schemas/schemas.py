@@ -16,7 +16,7 @@ class CameraRecordingPolicy(BaseModel):
     Replaces the org-wide ``RecordingSettings`` (v0.1.42 and earlier),
     which persisted but never actually drove any recording.  Per-camera
     is the granularity that matches how recording state is keyed at
-    runtime in CloudNode (``recording_state: HashSet<camera_id>``) and
+    runtime in CameraNode (``recording_state: HashSet<camera_id>``) and
     lets operators record some cameras 24/7 while leaving others off
     for privacy / storage reasons.
 
@@ -76,12 +76,12 @@ class NodeRegister(BaseModel):
     # Whether the node's local HLS server is reachable on the LAN
     # (bind != loopback).  False → CC clears local_ip so the Home
     # Assistant integration never gets a connection-refused stream
-    # URL.  None → old CloudNode that predates the field.
+    # URL.  None → old CameraNode that predates the field.
     lan_streaming: Optional[bool] = None
     cameras: Optional[list[CameraReport]] = []
     video_codec: Optional[str] = Field(None, max_length=50)
     audio_codec: Optional[str] = Field(None, max_length=50)
-    # CloudNode build version ("X.Y.Z" from its Cargo.toml).  Optional so
+    # CameraNode build version ("X.Y.Z" from its Cargo.toml).  Optional so
     # very old nodes that pre-date version reporting can still register;
     # they'll show up as "unknown" in the dashboard and get an
     # update_available hint pointing at the latest release.
@@ -91,19 +91,19 @@ class NodeRegister(BaseModel):
 class CameraStatus(BaseModel):
     camera_id: str = Field(..., max_length=150)
     status: str = Field(..., max_length=20)
-    # Optional failure reason — sent by the CloudNode supervisor when
+    # Optional failure reason — sent by the CameraNode supervisor when
     # the pipeline is restarting, failed, or errored. Old nodes that
     # predate the supervisor simply omit it (the field is Optional).
     last_error: Optional[str] = Field(None, max_length=500)
 
 
 class NodeStorageStats(BaseModel):
-    """Filesystem-aware storage snapshot from CloudNode.
+    """Filesystem-aware storage snapshot from CameraNode.
 
     Reported on every heartbeat by v0.1.41+ nodes; the dashboard
     renders the per-node usage bar from these numbers and warns the
     operator when ``disk_free_bytes`` drops below the safety floor.
-    Optional throughout because (1) older CloudNodes don't send the
+    Optional throughout because (1) older CameraNodes don't send the
     block at all, and (2) a single field can be unknown
     (``disk_free_bytes = 0`` means "couldn't identify the disk" in
     Docker etc.) without invalidating the rest.
@@ -125,10 +125,10 @@ class NodeHeartbeat(BaseModel):
     cameras: Optional[list[CameraStatus]] = []
     # See NodeRegister.node_version — same field, re-sent on every heartbeat
     # so the backend always knows what's actually running (e.g. after the
-    # operator updates CloudNode without re-registering).
+    # operator updates CameraNode without re-registering).
     node_version: Optional[str] = Field(None, max_length=50)
     # Filesystem-aware storage snapshot (v0.1.41+).  Optional so
-    # heartbeats from older CloudNodes that don't send the block
+    # heartbeats from older CameraNodes that don't send the block
     # still pass validation.
     storage_stats: Optional[NodeStorageStats] = None
 

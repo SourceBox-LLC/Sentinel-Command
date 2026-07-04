@@ -8,7 +8,7 @@ function TerminalDashboard() {
     <section className="docs-section" id="terminal-dashboard">
       <h2>Terminal Dashboard<a href="#terminal-dashboard" className="docs-anchor">#</a></h2>
       <p>
-        CloudNode runs a full-screen terminal dashboard while streaming. It shows
+        CameraNode runs a full-screen terminal dashboard while streaming. It shows
         camera status, upload progress, and live logs — and lets you drive the node
         with slash commands without restarting the process.
       </p>
@@ -49,8 +49,8 @@ function TerminalDashboard() {
       <h3>Log levels</h3>
       <p>The dashboard respects <code>RUST_LOG</code>. Set it before starting to see more or less detail:</p>
       <div className="docs-code-block">
-        <code>RUST_LOG=debug ./sourcebox-sentry-cloudnode</code>
-        <button className="docs-copy-btn" onClick={() => copyToClipboard('RUST_LOG=debug ./sourcebox-sentry-cloudnode')}>Copy</button>
+        <code>RUST_LOG=debug ./sourcebox-sentry-cameranode</code>
+        <button className="docs-copy-btn" onClick={() => copyToClipboard('RUST_LOG=debug ./sourcebox-sentry-cameranode')}>Copy</button>
       </div>
     </section>
   )

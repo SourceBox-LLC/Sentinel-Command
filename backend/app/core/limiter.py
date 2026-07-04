@@ -5,7 +5,7 @@ Keys requests by tenant where possible so one loud tenant can't starve
 the global bucket for everyone else:
 
   1. ``X-Node-API-Key`` header → ``node:<sha256-prefix>``
-     — CloudNodes get their own bucket, scoped to the node.
+     — CameraNodes get their own bucket, scoped to the node.
   2. ``Authorization: Bearer <jwt>`` → ``org:<org_id>``
      — Authenticated end-user requests share a bucket per-org.  The JWT
        payload is base64-decoded WITHOUT verification; it's only used
@@ -91,7 +91,7 @@ def _real_client_ip(request: Request) -> str:
 
 def tenant_aware_key(request: Request) -> str:
     """Rate-limit bucket key for a request.  See module docstring."""
-    # CloudNode requests — one bucket per node, identified by the hash
+    # CameraNode requests — one bucket per node, identified by the hash
     # prefix of its API key (not the raw key — never log or bucket on that).
     node_key = request.headers.get("X-Node-API-Key")
     if node_key:

@@ -14,7 +14,7 @@ from tests.conftest import TestSession
 
 def test_wire_plan_slug_strips_org_suffix():
     """The internal ``free_org`` slug must render as ``free`` on the wire
-    so the CloudNode pill badge reads ``[ FREE ]`` rather than
+    so the CameraNode pill badge reads ``[ FREE ]`` rather than
     ``[ FREE_ORG ]``."""
     assert wire_plan_slug("free_org") == "free"
 

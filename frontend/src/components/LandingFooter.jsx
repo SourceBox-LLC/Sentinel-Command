@@ -39,7 +39,7 @@ function LandingFooter() {
                 Command Center
               </a>
               <a href="https://github.com/SourceBox-LLC/Sentinel-CameraNode" target="_blank" rel="noopener noreferrer">
-                CloudNode
+                CameraNode
               </a>
               <a href="https://github.com/SourceBox-LLC" target="_blank" rel="noopener noreferrer">
                 SourceBox LLC

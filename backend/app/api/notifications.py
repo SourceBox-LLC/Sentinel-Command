@@ -66,12 +66,12 @@ _NOTIFICATION_KIND_TO_SETTING: dict[str, tuple[str, bool]] = {
     # or neither).
     "mcp_key_created": ("mcp_key_audit_notifications", True),
     "mcp_key_revoked": ("mcp_key_audit_notifications", True),
-    # CloudNode-side disk warning.  Customer hardware running their
-    # own CloudNode has filled past the threshold — recordings will
+    # CameraNode-side disk warning.  Customer hardware running their
+    # own CameraNode has filled past the threshold — recordings will
     # fail when it caps out.  Customer-actionable (clean up files,
     # expand storage), unlike our Command Center disk which is
     # operator-side and routed via Sentry.
-    "cloudnode_disk_low": ("cloudnode_disk_notifications", True),
+    "cameranode_disk_low": ("cameranode_disk_notifications", True),
     # Org membership lifecycle (security audit) — fired by Clerk
     # webhooks.  All three share a single inbox toggle; same logic
     # as the email side (admins want the whole audit trail or none
@@ -136,10 +136,10 @@ _EMAIL_KIND_TO_SETTING: dict[str, tuple[str, bool]] = {
     # access; nobody should miss that being granted.
     "mcp_key_created":  ("email_mcp_key_audit",    True),
     "mcp_key_revoked":  ("email_mcp_key_audit",    True),
-    # CloudNode host disk approaching full.  Customer hardware,
+    # CameraNode host disk approaching full.  Customer hardware,
     # customer-actionable, separate from the Command Center disk
     # we route via Sentry (operator-side).
-    "cloudnode_disk_low": ("email_cloudnode_disk_low", True),
+    "cameranode_disk_low": ("email_cameranode_disk_low", True),
     # Org membership lifecycle = high-value security audit signal.
     # All three events (add, role change, remove) share one setting
     # key — admins consistently want the whole audit trail or none
@@ -241,7 +241,7 @@ def email_enabled_for_kind(db: Session, org_id: str, kind: str) -> bool:
 # Anchor data: a Setting row per (org_id, camera_id) where the key is
 # ``motion_email_cooldown_start:{camera_id}`` and the value is the ISO
 # timestamp of when the immediate email was sent.  The colon-suffix
-# pattern matches the ``cloudnode_disk_low_emit_at:{node_id}``
+# pattern matches the ``cameranode_disk_low_emit_at:{node_id}``
 # precedent in app/api/nodes.py:72-121.
 #
 # Lifecycle: written by _claim_motion_cooldown_or_silence on the first
@@ -255,7 +255,7 @@ def email_enabled_for_kind(db: Session, org_id: str, kind: str) -> bool:
 def _motion_cooldown_anchor_key(camera_id: str) -> str:
     """Setting key for the per-camera motion email cooldown anchor.
 
-    Mirrors the ``cloudnode_disk_low_emit_at:{node_id}`` pattern in
+    Mirrors the ``cameranode_disk_low_emit_at:{node_id}`` pattern in
     app/api/nodes.py — colon-suffix so the digest loop can find all
     active anchors with a single ``Setting.key.like("motion_email_cooldown_start:%")``
     query, and parse the camera_id back out by splitting on ":".
@@ -289,7 +289,7 @@ def _claim_motion_cooldown_or_silence(
     an explicit transaction.  Two motion events arriving in the same
     microsecond could both see "anchor missing" and both enqueue an
     immediate email.  Worst case is one duplicate first-event email,
-    which we accept (matches the cloudnode_disk_low precedent and is
+    which we accept (matches the cameranode_disk_low precedent and is
     far better than silently losing alerts).  If/when we go multi-
     replica, swap to a dedicated table with INSERT...ON CONFLICT.
     """
@@ -738,7 +738,7 @@ def emit_node_transition(
     """Emit a node online↔offline transition notification.
 
     Audience is ``"admin"`` — node health is an operator concern; regular
-    viewers don't need to know about CloudNode uplink status.
+    viewers don't need to know about CameraNode uplink status.
     """
     if new_status not in ("online", "offline"):
         return None
@@ -750,7 +750,7 @@ def emit_node_transition(
         org_id=org_id,
         kind=kind,
         title=f"Node '{display_name}' is online" if new_status == "online" else f"Node '{display_name}' went offline",
-        body="CloudNode is connected and reporting." if new_status == "online" else "No heartbeat received in over 90 seconds.",
+        body="CameraNode is connected and reporting." if new_status == "online" else "No heartbeat received in over 90 seconds.",
         severity="info" if new_status == "online" else "warning",
         audience="admin",
         link="/admin",
@@ -1084,7 +1084,7 @@ class EmailPreferences(BaseModel):
     email_node_offline: Optional[bool] = None
     email_incident_created: Optional[bool] = None
     email_mcp_key_audit: Optional[bool] = None
-    email_cloudnode_disk_low: Optional[bool] = None
+    email_cameranode_disk_low: Optional[bool] = None
     email_member_audit: Optional[bool] = None
     email_motion: Optional[bool] = None
 

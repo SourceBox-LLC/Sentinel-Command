@@ -1,7 +1,7 @@
 """
-Server-side defenses against malformed codec strings from CloudNodes.
+Server-side defenses against malformed codec strings from CameraNodes.
 
-Older CloudNode builds (v0.1.5 and earlier) shipped garbage H.264 codec
+Older CameraNode builds (v0.1.5 and earlier) shipped garbage H.264 codec
 strings when the Raspberry Pi's `h264_v4l2m2m` encoder wrote `level_idc=0`
 into the SPS.  FFprobe then reported `level=0`, which our `to_hls_codec_string`
 rounded to the nearest valid level (10 — i.e. H.264 level 1.0, max 176×144)
@@ -9,7 +9,7 @@ for segments where ffprobe couldn't parse dimensions.  Browsers rejected
 the MSE attach when the first real 720p/1080p NALU arrived because the
 declared codec said "I can only handle QCIF."
 
-The CloudNode-side fix in v0.1.6 avoids producing these strings.  This
+The CameraNode-side fix in v0.1.6 avoids producing these strings.  This
 module catches the same pattern *on ingest* so a stale binary running in
 the field can't silently brick streaming again while we wait for the fleet
 to update.

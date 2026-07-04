@@ -10,7 +10,7 @@ function Resources() {
         </a>
         <a href="https://github.com/SourceBox-LLC/Sentinel-CameraNode" target="_blank" rel="noopener noreferrer" className="docs-resource-card">
           <div className="docs-resource-icon">📹</div>
-          <h3>CloudNode</h3>
+          <h3>CameraNode</h3>
           <p>Source code on GitHub</p>
         </a>
         <a href="https://github.com/SourceBox-LLC/SourceBox-Sentinel" target="_blank" rel="noopener noreferrer" className="docs-resource-card">
