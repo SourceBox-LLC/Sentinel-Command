@@ -71,7 +71,10 @@ def _build_security_txt() -> str:
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     base = (settings.FRONTEND_URL or "").rstrip("/")
-    policy_url = f"{base}/security#vulnerability-disclosure"
+    # The security policy page now lives on the standalone website
+    # (sentinel-command.com), not this app's frontend.  The Policy: URL
+    # must point there so researchers land on the actual disclosure page.
+    policy_url = "https://sentinel-command.com/security#vulnerability-disclosure"
 
     # Order follows RFC 9116 §2.5 examples for readability.  Comments
     # at the top help human readers; scanners ignore them.

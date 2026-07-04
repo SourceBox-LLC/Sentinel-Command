@@ -58,8 +58,7 @@ function relativeTime(iso) {
  *
  * Routes /incidents AND /incidents/:incidentId both point here; if
  * :incidentId is present we open the report modal on mount.  Lets
- * notification deep-links and the SentinelPage RunDetailDrawer link
- * resolve to a real page.
+ * notification deep-links resolve to a real page.
  */
 export default function IncidentsPage() {
   const { getToken } = useAuth()
