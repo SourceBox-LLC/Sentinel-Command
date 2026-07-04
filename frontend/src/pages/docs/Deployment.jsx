@@ -22,7 +22,7 @@ docker run -d \\
   --device /dev/video0:/dev/video0 \\
   -e SOURCEBOX_SENTRY_NODE_ID=your_node_id \\
   -e SOURCEBOX_SENTRY_API_KEY=your_api_key \\
-  -e SOURCEBOX_SENTRY_API_URL=https://opensentry-command.fly.dev \\
+  -e SOURCEBOX_SENTRY_API_URL=https://sentinel-command.com \\
   -p 8080:8080 \\
   -v ./data:/app/data \\
   sourcebox-sentry-cameranode`}</code>
@@ -31,7 +31,7 @@ docker run -d \\
   --device /dev/video0:/dev/video0 \\
   -e SOURCEBOX_SENTRY_NODE_ID=your_node_id \\
   -e SOURCEBOX_SENTRY_API_KEY=your_api_key \\
-  -e SOURCEBOX_SENTRY_API_URL=https://opensentry-command.fly.dev \\
+  -e SOURCEBOX_SENTRY_API_URL=https://sentinel-command.com \\
   -p 8080:8080 \\
   -v ./data:/app/data \\
   sourcebox-sentry-cameranode`)}>Copy</button>
@@ -45,7 +45,7 @@ docker run -d \\
   --device /dev/video2:/dev/video2 \\
   -e SOURCEBOX_SENTRY_NODE_ID=your_node_id \\
   -e SOURCEBOX_SENTRY_API_KEY=your_api_key \\
-  -e SOURCEBOX_SENTRY_API_URL=https://opensentry-command.fly.dev \\
+  -e SOURCEBOX_SENTRY_API_URL=https://sentinel-command.com \\
   -p 8080:8080 \\
   sourcebox-sentry-cameranode`}</code>
         <button className="docs-copy-btn" onClick={() => copyToClipboard(`docker run -d \\
@@ -53,7 +53,7 @@ docker run -d \\
   --device /dev/video2:/dev/video2 \\
   -e SOURCEBOX_SENTRY_NODE_ID=your_node_id \\
   -e SOURCEBOX_SENTRY_API_KEY=your_api_key \\
-  -e SOURCEBOX_SENTRY_API_URL=https://opensentry-command.fly.dev \\
+  -e SOURCEBOX_SENTRY_API_URL=https://sentinel-command.com \\
   -p 8080:8080 \\
   sourcebox-sentry-cameranode`)}>Copy</button>
       </div>

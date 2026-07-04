@@ -14,7 +14,7 @@ function GettingStarted() {
 
       <h3>The two pieces</h3>
       <ul>
-        <li><strong>Command Center</strong> — The web dashboard at <code>opensentry-command.fly.dev</code>.
+        <li><strong>Command Center</strong> — The web dashboard at <code>sentinel-command.com</code>.
           Lives in the cloud. Hosts your account, cameras, settings, recording
           schedule, audit logs, incident reports, and the MCP endpoint for AI
           assistants. You don't install anything for Command Center — just sign in.</li>
@@ -80,7 +80,7 @@ function GettingStarted() {
           <div className="docs-step-number">1</div>
           <div className="docs-step-content">
             <h4>Create an account</h4>
-            <p>Visit <code>opensentry-command.fly.dev</code>, sign up, and create your organization. You can invite team members later.</p>
+            <p>Visit <code>sentinel-command.com</code>, sign up, and create your organization. You can invite team members later.</p>
           </div>
         </div>
         <div className="docs-step">

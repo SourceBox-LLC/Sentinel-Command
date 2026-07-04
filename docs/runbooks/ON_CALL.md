@@ -19,8 +19,8 @@ checks**, **Likely causes**, **Fix paths**, **When to escalate**.
 
 | Tool / link | Why |
 |---|---|
-| https://opensentry-command.fly.dev/api/health | Liveness — is the process up? |
-| https://opensentry-command.fly.dev/api/health/detailed | DB ping latency, cache + queue depths |
+| https://sentinel-command.com/api/health | Liveness — is the process up? |
+| https://sentinel-command.com/api/health/detailed | DB ping latency, cache + queue depths |
 | `fly logs -a opensentry-command` | Application stderr/stdout |
 | `fly status -a opensentry-command` | Machine health + last deploy |
 | `fly ssh console -a opensentry-command` | Shell into the live machine |
@@ -86,7 +86,7 @@ camera in their org as offline; node heartbeats not coming through.
    are streaming, this is likely customer-side.
 3. Ask the customer: did they restart their CameraNode? Is the host
    machine on a network with outbound HTTPS to
-   `opensentry-command.fly.dev`?
+   `sentinel-command.com`?
 
 **Likely causes.**
 - Customer's home internet dropped and the node hasn't reconnected.
@@ -175,7 +175,7 @@ FastAPI process. WAL mode + NullPool + busy_timeout=5000 (see
 **First checks.**
 1. `fly status -a opensentry-command` — is the machine itself up
    and healthy? Check the "events" timeline for recent restarts.
-2. `curl https://opensentry-command.fly.dev/api/health/detailed` —
+2. `curl https://sentinel-command.com/api/health/detailed` —
    look at:
    - `checks.database.status` and `latency_ms`
    - `checks.disk.percent_used` and `checks.disk.status`

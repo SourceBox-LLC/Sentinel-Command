@@ -47,7 +47,7 @@ function Configuration() {
           <tbody>
             <tr><td><code>SOURCEBOX_SENTRY_NODE_ID</code></td><td>Node ID assigned by Command Center</td></tr>
             <tr><td><code>SOURCEBOX_SENTRY_API_KEY</code></td><td>Node API key (encrypted at rest in the DB)</td></tr>
-            <tr><td><code>SOURCEBOX_SENTRY_API_URL</code></td><td>Command Center URL (<code>https://opensentry-command.fly.dev</code>)</td></tr>
+            <tr><td><code>SOURCEBOX_SENTRY_API_URL</code></td><td>Command Center URL (<code>https://sentinel-command.com</code>)</td></tr>
             <tr><td><code>SOURCEBOX_SENTRY_ENCODER</code></td><td>Force a specific encoder (e.g. <code>h264_nvenc</code>, <code>libx264</code>)</td></tr>
             <tr><td><code>RUST_LOG</code></td><td>Log verbosity: <code>trace</code>, <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code></td></tr>
           </tbody>
@@ -72,7 +72,7 @@ function Configuration() {
       <div className="docs-code-block">
         <code>{`node_id: "node_abc123"
 api_key: "nak_your_key_here"
-api_url: "https://opensentry-command.fly.dev"
+api_url: "https://sentinel-command.com"
 
 motion:
   enabled: true
@@ -86,7 +86,7 @@ storage:
                        # confirms or overrides at install time`}</code>
         <button className="docs-copy-btn" onClick={() => copyToClipboard(`node_id: "node_abc123"
 api_key: "nak_your_key_here"
-api_url: "https://opensentry-command.fly.dev"
+api_url: "https://sentinel-command.com"
 
 motion:
   enabled: true

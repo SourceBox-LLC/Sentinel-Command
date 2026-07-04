@@ -108,7 +108,7 @@ bash /app/scripts/restore_db.sh /data/backups/opensentry-<stamp>.db.gz
 # 4. Start the app and verify BEFORE deleting the .pre-restore copy.
 exit
 fly machine start <machine-id> -a opensentry-command
-curl -fsS https://opensentry-command.fly.dev/api/health/ready
+curl -fsS https://sentinel-command.com/api/health/ready
 ```
 
 Then sanity-check in the dashboard: an org loads, cameras list, a known
