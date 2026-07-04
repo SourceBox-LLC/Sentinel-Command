@@ -70,7 +70,6 @@ def _build_security_txt() -> str:
         datetime.now(tz=UTC) + timedelta(days=_EXPIRY_DAYS)
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    base = (settings.FRONTEND_URL or "").rstrip("/")
     # The security policy page now lives on the standalone website
     # (sentinel-command.com), not this app's frontend.  The Policy: URL
     # must point there so researchers land on the actual disclosure page.
