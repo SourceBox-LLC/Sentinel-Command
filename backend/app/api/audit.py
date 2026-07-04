@@ -18,7 +18,7 @@ def _require_admin_feature(user: AuthUser):
     if "admin" not in user.features:
         raise HTTPException(
             status_code=403,
-            detail="Audit dashboard requires a Pro or Pro Plus plan. Upgrade at /pricing.",
+            detail="Audit dashboard requires a Pro or Pro Plus plan. Upgrade at https://sentinel-command.com/pricing.",
         )
 
 

@@ -419,7 +419,7 @@ def _resolve_org(headers: dict | None) -> tuple[str, Session]:
         limits = RATE_LIMITS.get(plan)
         if limits is None:
             db.close()
-            raise ToolError("MCP requires a Pro or Pro Plus plan. Upgrade at /pricing.")
+            raise ToolError("MCP requires a Pro or Pro Plus plan. Upgrade at https://sentinel-command.com/pricing.")
         allowed, _remaining, breach = _rate_limiter.check(
             key_hash,
             minute_limit=limits["minute"],

@@ -499,7 +499,7 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
                         "CameraNode on the host where your cameras live, "
                         "wait ~30 seconds for it to register, then add "
                         "your first camera from Settings → Cameras.  "
-                        "Full docs at /docs."
+                        "Full docs at https://sentinel-command.com/docs."
                     ),
                     severity="info",
                     audience="admin",

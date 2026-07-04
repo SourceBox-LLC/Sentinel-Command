@@ -155,16 +155,15 @@ def test_security_txt_has_canonical_and_policy(unauthenticated_client):
 
 
 def test_security_txt_policy_anchor_matches_security_page(unauthenticated_client):
-    """Pin the anchor — the /security React page renders an
-    ``id="vulnerability-disclosure"`` section that this URL deep-
-    links to.  A regression that renames the section would leave
-    every scanner+researcher landing on the page header instead of
-    the policy text."""
+    """Pin the anchor — the security page on sentinel-command.com renders an
+    ``id="vulnerability-disclosure"`` section that this URL deep-links to.
+    A regression that renames the section would leave every scanner+researcher
+    landing on the page header instead of the policy text."""
     body = unauthenticated_client.get("/.well-known/security.txt").text
     policy_line = [
         line for line in body.splitlines() if line.startswith("Policy:")
     ][0]
-    assert "/security#vulnerability-disclosure" in policy_line
+    assert "sentinel-command.com/security#vulnerability-disclosure" in policy_line
 
 
 # ── Public + cacheable for scanners ────────────────────────────────
