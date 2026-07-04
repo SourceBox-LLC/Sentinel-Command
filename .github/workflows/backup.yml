@@ -37,19 +37,19 @@ jobs:
 
       - name: Run consistent backup on the machine
         run: |
-          flyctl ssh console -a opensentry-command -C "bash /app/scripts/backup_db.sh"
+          flyctl ssh console -a sentinel-command -C "bash /app/scripts/backup_db.sh"
 
       - name: List volume snapshots (visibility)
         run: |
-          flyctl volumes list -a opensentry-command || true
+          flyctl volumes list -a sentinel-command || true
 
       - name: Pull newest backup off the machine
         if: env.BACKUP_KEY != ''
         run: |
-          LATEST=$(flyctl ssh console -a opensentry-command -C "sh -c 'ls -1t /data/backups/*.db.gz | head -1'" | tr -d '\r' | tail -1)
+          LATEST=$(flyctl ssh console -a sentinel-command -C "sh -c 'ls -1t /data/backups/*.db.gz | head -1'" | tr -d '\r' | tail -1)
           echo "newest backup: $LATEST"
           test -n "$LATEST"
-          flyctl ssh sftp get "$LATEST" ./backup.db.gz -a opensentry-command
+          flyctl ssh sftp get "$LATEST" ./backup.db.gz -a sentinel-command
           ls -lh backup.db.gz
 
       - name: Encrypt for off-platform storage

@@ -39,9 +39,9 @@ function AppSidebar({ open, onClose }) {
     // No PRO lock — Home Assistant integration is available on every tier.
     isAdmin && { to: "/integrations", label: "Integrations" },
     isAdmin && { to: "/incidents", label: "Incidents" },
-    { to: "/sentinel", label: "Sentinel" },
-    { to: "/docs", label: "Help" },
     { to: "/pricing", label: "Pricing" },
+    // Sentinel and Docs now live on the standalone website at
+    // sentinel-command.com — removed from the in-app sidebar.
   ].filter(Boolean)
 
   const showPlanBanner = !!(planInfo && hasAdminFeature)

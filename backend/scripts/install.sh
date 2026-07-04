@@ -12,11 +12,11 @@ set -euo pipefail
 #
 # Usage:
 #   Interactive (downloads binary, prompts for credentials):
-#     curl -fsSL https://opensentry-command.fly.dev/install.sh | bash
+#     curl -fsSL https://app.sentinel-command.com/install.sh | bash
 #
 #   One-shot (downloads + registers; foreground-launchable after):
 #     curl -fsSL .../install.sh | bash -s -- \
-#       --url   https://opensentry-command.fly.dev \
+#       --url   https://app.sentinel-command.com \
 #       --node-id <node_id> \
 #       --key    <api_key>
 #
@@ -582,7 +582,7 @@ elif [ "$IS_REGISTERED" = false ] && [ -r /dev/tty ] && [ -t 1 ]; then
     echo ""
     echo -e "${BOLD}  Register this node with Command Center${NC}"
     echo -e "  ${DIM}We'll run the setup wizard now.  You'll need a node ID and${NC}"
-    echo -e "  ${DIM}API key from ${CYAN}https://opensentry-command.fly.dev${NC}${DIM} → Nodes → Add node.${NC}"
+    echo -e "  ${DIM}API key from ${CYAN}https://app.sentinel-command.com${NC}${DIM} → Nodes → Add node.${NC}"
     echo ""
     if prompt_yes "Run setup wizard now?"; then
         if (cd "$HOME" && "$INSTALL_DIR/sourcebox-sentry-cameranode" setup </dev/tty); then
@@ -625,7 +625,7 @@ install_systemd_service() {
     cat >"$tmp_unit" <<UNIT
 [Unit]
 Description=Sentinel CameraNode
-Documentation=https://opensentry-command.fly.dev
+Documentation=https://app.sentinel-command.com
 After=network-online.target
 Wants=network-online.target
 
@@ -746,7 +746,7 @@ if [ "$SERVICE_RUNNING" = true ]; then
     # Operator opted in to the systemd service (or had it from a prior
     # install).  Service is up — they're done.
     echo -e "  ${GREEN}${BOLD}CameraNode is streaming via systemd.${NC}"
-    echo -e "  ${DIM}View your cameras at ${CYAN}https://opensentry-command.fly.dev${NC}"
+    echo -e "  ${DIM}View your cameras at ${CYAN}https://app.sentinel-command.com${NC}"
     echo ""
     echo -e "  ${DIM}Live logs:  ${CYAN}journalctl -u sourcebox-sentry-cameranode -f${NC}"
     echo -e "  ${DIM}Stop:       ${CYAN}sudo systemctl stop sourcebox-sentry-cameranode${NC}"
@@ -765,11 +765,11 @@ elif [ "$IS_REGISTERED" = true ]; then
     if [ "$HAVE_QUICK_ARGS" = true ]; then
         # We have the quick-args saved, can give them the exact re-run
         # one-liner with --install-service.
-        echo -e "  ${CYAN}curl -fsSL https://opensentry-command.fly.dev/install.sh | bash -s -- \\\\${NC}"
+        echo -e "  ${CYAN}curl -fsSL https://app.sentinel-command.com/install.sh | bash -s -- \\\\${NC}"
         echo -e "  ${CYAN}    --url \"${ARG_URL}\" --node-id ${ARG_NODE_ID} --key <key> \\\\${NC}"
         echo -e "  ${CYAN}    --install-service${NC}"
     else
-        echo -e "  ${CYAN}curl -fsSL https://opensentry-command.fly.dev/install.sh | bash -s -- --install-service${NC}"
+        echo -e "  ${CYAN}curl -fsSL https://app.sentinel-command.com/install.sh | bash -s -- --install-service${NC}"
     fi
     echo -e "  ${DIM}Registers a systemd unit and starts it.  Verify the foreground${NC}"
     echo -e "  ${DIM}flow works first before flipping to unattended.${NC}"
@@ -780,7 +780,7 @@ else
     echo -e "  1. Register:         ${CYAN}cd ~ && ${INSTALL_DIR}/sourcebox-sentry-cameranode setup${NC}"
     echo -e "  2. Start streaming:  ${CYAN}${INSTALL_DIR}/sourcebox-sentry-cameranode${NC}"
     echo ""
-    echo -e "  ${DIM}Get your node ID + API key at ${CYAN}https://opensentry-command.fly.dev${NC}"
+    echo -e "  ${DIM}Get your node ID + API key at ${CYAN}https://app.sentinel-command.com${NC}"
 fi
 
 echo ""

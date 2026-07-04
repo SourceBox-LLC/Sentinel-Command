@@ -290,7 +290,8 @@ app = FastAPI(
     description="FastAPI backend with Clerk authentication for Sentinel Command Center",
     version="2.1.2",
     lifespan=lifespan,
-    # Move FastAPI's auto docs off /docs so the React DocsPage can own that path.
+    # FastAPI's auto docs live at /api-docs (the React docs page was removed
+    # and now lives on sentinel-command.com).
     docs_url="/api-docs",
     redoc_url="/api-redoc",
     openapi_url="/api/openapi.json",
@@ -319,7 +320,7 @@ async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) 
         "error": "rate_limit_exceeded",
         "message": (
             "Too many requests. Back off and retry after the Retry-After window. "
-            "See /docs#api-rate-limits for per-route limits."
+            "See https://sentinel-command.com/docs#api-rate-limits for per-route limits."
         ),
         "limit": limit_str,
         "retry_after_seconds": 60,
@@ -430,7 +431,7 @@ cors_origins = [
 
 extra_origins_raw = os.getenv(
     "CORS_ALLOWED_ORIGINS",
-    "https://opensentry-command.fly.dev",
+    "https://app.sentinel-command.com",
 )
 for raw in extra_origins_raw.split(","):
     validated = _validate_frontend_url(raw)
@@ -1464,8 +1465,9 @@ if static_dir.exists():
 
     @app.middleware("http")
     async def spa_middleware(request: Request, call_next):
-        # Let API, WebSocket, and install routes pass through. /docs is owned by
-        # the React DocsPage; FastAPI's auto docs live at /api-docs (see ctor).
+        # Let API, WebSocket, and install routes pass through. /docs is no
+        # longer a frontend route (docs moved to sentinel-command.com); let it
+        # fall through to the SPA which will redirect to the standalone site.
         # /downloads/ is the backend binary-redirect route (see install.py);
         # without it, /downloads/linux/x86_64 would fall through to the SPA.
         # /.well-known/ + /security.txt are RFC-9116 contact endpoints owned

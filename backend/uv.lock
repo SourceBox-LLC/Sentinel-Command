@@ -993,7 +993,7 @@ wheels = [
 ]
 
 [[package]]
-name = "opensentry-backend"
+name = "sentinel-backend"
 version = "2.1.2"
 source = { virtual = "." }
 dependencies = [

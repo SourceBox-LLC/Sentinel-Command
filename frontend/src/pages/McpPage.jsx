@@ -412,8 +412,8 @@ function McpPage() {
     "claude-code": {
       label: "Claude Code",
       file: "~/.claude.json or .mcp.json",
-      config: JSON.stringify({ mcpServers: { opensentry: { type: "http", url: MCP_URL, headers: { Authorization: `Bearer ${activeKey}` } } } }, null, 2),
-      cli: `claude mcp add --transport http opensentry ${MCP_URL} --header "Authorization: Bearer ${activeKey}"`,
+      config: JSON.stringify({ mcpServers: { sentinel: { type: "http", url: MCP_URL, headers: { Authorization: `Bearer ${activeKey}` } } } }, null, 2),
+      cli: `claude mcp add --transport http sentinel ${MCP_URL} --header "Authorization: Bearer ${activeKey}"`,
     },
     "claude-desktop": {
       label: "Claude Desktop",
@@ -432,7 +432,7 @@ function McpPage() {
       // does its own PATHEXT resolution without the quoting bug.
       config: JSON.stringify({
         mcpServers: {
-          opensentry: setupOs === "windows"
+          sentinel: setupOs === "windows"
             ? { command: "cmd", args: ["/c", "npx", "-y", "mcp-remote", MCP_URL, "--header", `Authorization:Bearer ${activeKey}`] }
             : { command: "npx", args: ["-y", "mcp-remote", MCP_URL, "--header", `Authorization:Bearer ${activeKey}`] }
         }
@@ -441,12 +441,12 @@ function McpPage() {
     cursor: {
       label: "Cursor",
       file: "~/.cursor/mcp.json",
-      config: JSON.stringify({ mcpServers: { opensentry: { url: MCP_URL, headers: { Authorization: `Bearer ${activeKey}` } } } }, null, 2),
+      config: JSON.stringify({ mcpServers: { sentinel: { url: MCP_URL, headers: { Authorization: `Bearer ${activeKey}` } } } }, null, 2),
     },
     windsurf: {
       label: "Windsurf",
       file: "~/.codeium/windsurf/mcp_config.json",
-      config: JSON.stringify({ mcpServers: { opensentry: { serverUrl: MCP_URL, headers: { Authorization: `Bearer ${activeKey}` } } } }, null, 2),
+      config: JSON.stringify({ mcpServers: { sentinel: { serverUrl: MCP_URL, headers: { Authorization: `Bearer ${activeKey}` } } } }, null, 2),
     },
   }
 

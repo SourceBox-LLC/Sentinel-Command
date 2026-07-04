@@ -1,5 +1,5 @@
 [project]
-name = "opensentry-backend"
+name = "sentinel-backend"
 version = "2.1.2"
 description = "Sentinel Command Center Backend - FastAPI with Clerk Auth"
 readme = "README.md"

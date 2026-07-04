@@ -159,4 +159,4 @@ def test_logging_filter_injects_real_values_when_set():
 # never runs in unit tests.  The integration is verified by reading
 # the production code (``app/core/auth.py:194``) and by smoke-testing
 # in production: every authenticated log line carries the org_id,
-# visible in `fly logs -a opensentry-command`.
+# visible in `fly logs -a sentinel-command`.

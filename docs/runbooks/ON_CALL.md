@@ -21,10 +21,10 @@ checks**, **Likely causes**, **Fix paths**, **When to escalate**.
 |---|---|
 | https://sentinel-command.com/api/health | Liveness — is the process up? |
 | https://sentinel-command.com/api/health/detailed | DB ping latency, cache + queue depths |
-| `fly logs -a opensentry-command` | Application stderr/stdout |
-| `fly status -a opensentry-command` | Machine health + last deploy |
-| `fly ssh console -a opensentry-command` | Shell into the live machine |
-| Sentry: project **opensentry-command** | Alert origin, stack traces |
+| `fly logs -a sentinel-command` | Application stderr/stdout |
+| `fly status -a sentinel-command` | Machine health + last deploy |
+| `fly ssh console -a sentinel-command` | Shell into the live machine |
+| Sentry: project **sentinel-command** | Alert origin, stack traces |
 | Clerk dashboard | Auth issues, billing webhook deliveries |
 | GitHub: `SourceBox-LLC/Sentinel-Command` | Source, deploy via push to master |
 
@@ -168,21 +168,21 @@ error overlay.
 
 **Important context.** We use **SQLite on a Fly volume**, NOT Fly's
 managed Postgres. There is no separate database app to check. The
-DB lives at `/data/opensentry.db` on the same machine as the
+DB lives at `/data/sentinel.db` on the same machine as the
 FastAPI process. WAL mode + NullPool + busy_timeout=5000 (see
 `backend/app/core/database.py`).
 
 **First checks.**
-1. `fly status -a opensentry-command` — is the machine itself up
+1. `fly status -a sentinel-command` — is the machine itself up
    and healthy? Check the "events" timeline for recent restarts.
 2. `curl https://sentinel-command.com/api/health/detailed` —
    look at:
    - `checks.database.status` and `latency_ms`
    - `checks.disk.percent_used` and `checks.disk.status`
    - `checks.viewer_usage.pending_writes` (high = flush loop wedged)
-3. `fly logs -a opensentry-command` — search for `SqliteError`,
+3. `fly logs -a sentinel-command` — search for `SqliteError`,
    `database is locked`, `no space left`, or `[DiskCheck]`.
-4. `fly ssh console -a opensentry-command` then
+4. `fly ssh console -a sentinel-command` then
    `df -h /data` to see actual volume usage.
 
 **Likely causes.**
@@ -210,11 +210,11 @@ FastAPI process. WAL mode + NullPool + busy_timeout=5000 (see
 - **Disk full:**
   ```
   # Extend the volume (downtime: machine restart while resize completes)
-  fly volumes extend <volume_id> --size <new_GB> -a opensentry-command
+  fly volumes extend <volume_id> --size <new_GB> -a sentinel-command
   ```
   Then trigger early log cleanup if needed:
   ```
-  fly ssh console -a opensentry-command \
+  fly ssh console -a sentinel-command \
     -C "uv run python -c 'from app.main import run_log_cleanup; \
         from app.core.database import SessionLocal; \
         db = SessionLocal(); \
@@ -222,11 +222,11 @@ FastAPI process. WAL mode + NullPool + busy_timeout=5000 (see
   ```
 - **WAL bloat:** force a checkpoint:
   ```
-  fly ssh console -a opensentry-command \
-    -C "sqlite3 /data/opensentry.db 'PRAGMA wal_checkpoint(TRUNCATE);'"
+  fly ssh console -a sentinel-command \
+    -C "sqlite3 /data/sentinel.db 'PRAGMA wal_checkpoint(TRUNCATE);'"
   ```
 - **`database is locked`:** restart the app machine to clear any
-  stuck readers. `fly machine restart <id> -a opensentry-command`.
+  stuck readers. `fly machine restart <id> -a sentinel-command`.
 - **Viewer-usage flush wedged:** restart the app. Root-cause via
   the app exception trail in Sentry.
 
@@ -352,7 +352,7 @@ exceptions from `app.core.email_worker`.
    - `"ok"` — sending fine
    - `"unconfigured"` — `EMAIL_ENABLED=false` OR `RESEND_API_KEY` unset
    - `"error"` — recent send attempts are failing
-2. `fly logs -a opensentry-command | grep -E "\\[Email\\]|\\[Worker\\]"` —
+2. `fly logs -a sentinel-command | grep -E "\\[Email\\]|\\[Worker\\]"` —
    look for lines like `[Email] Resend send failed` or
    `[Worker] reclaimed N stuck sending rows`.
 3. Resend dashboard — check the "Emails" tab for recent attempts.
@@ -360,8 +360,8 @@ exceptions from `app.core.email_worker`.
    shows the SMTP-level reason.
 4. SSH and query the outbox directly:
    ```
-   fly ssh console -a opensentry-command \
-     -C "sqlite3 /data/opensentry.db \
+   fly ssh console -a sentinel-command \
+     -C "sqlite3 /data/sentinel.db \
        'SELECT status, COUNT(*) FROM email_outbox GROUP BY status;'"
    ```
 
@@ -382,7 +382,7 @@ exceptions from `app.core.email_worker`.
   err=AuthenticationError` everywhere. Generate a new API key in
   Resend, update the Fly secret:
   ```
-  fly secrets set RESEND_API_KEY=re_... -a opensentry-command
+  fly secrets set RESEND_API_KEY=re_... -a sentinel-command
   ```
 - **Resend platform incident.** Check status.resend.com. Just wait
   it out. The outbox queue will drain on its own when Resend
@@ -404,7 +404,7 @@ exceptions from `app.core.email_worker`.
   on `/api/health/detailed`.
 - **Kill switch as last resort:**
   ```
-  fly secrets set EMAIL_ENABLED=false -a opensentry-command
+  fly secrets set EMAIL_ENABLED=false -a sentinel-command
   ```
   This silences the transport entirely. Outbox rows still queue
   but the worker logs "would have sent" and marks them skipped.
@@ -453,7 +453,7 @@ not yet on the latest commit.
   from the log.
 - **Registry push 401.** Token in `FLY_API_TOKEN` is dead. Rotate:
   ```
-  fly tokens create deploy -x 8760h -a opensentry-command \
+  fly tokens create deploy -x 8760h -a sentinel-command \
     | gh secret set FLY_API_TOKEN -R SourceBox-LLC/Sentinel-Command
   fly tokens revoke <old_id>
   gh run rerun <failed_run_id> --failed -R SourceBox-LLC/Sentinel-Command
@@ -481,7 +481,7 @@ not yet on the latest commit.
   ```
   cd backend && uv run python -c "..."  # tests still must pass locally
   cd frontend && npm run build
-  fly deploy -a opensentry-command  # USE WITH CAUTION
+  fly deploy -a sentinel-command  # USE WITH CAUTION
   ```
   This breaks the "every deploy goes through CI" guarantee, so use
   only when truly necessary and document in the runbook log.

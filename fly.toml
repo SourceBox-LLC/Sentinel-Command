@@ -2,14 +2,14 @@
 #
 # See https://fly.io/docs/reference/configuration/ for information about settings
 
-app = "opensentry-command"
+app = "sentinel-command"
 primary_region = "sjc"
 
 [build]
 
 [env]
-  FRONTEND_URL = "https://opensentry-command.fly.dev"
-  DATABASE_URL = "sqlite:////data/opensentry.db"
+  FRONTEND_URL = "https://app.sentinel-command.com"
+  DATABASE_URL = "sqlite:////data/sentinel.db"
   # Segment-cache ceiling MUST stay well under [[vm]].memory_mb below —
   # above physical RAM, the kernel OOM-killer fires (killing every
   # org's streams at once) long before the cache's own eviction can.
@@ -18,7 +18,7 @@ primary_region = "sjc"
   SEGMENT_CACHE_MAX_TOTAL_BYTES = "402653184"
 
 [[mounts]]
-  source = "opensentry_data"
+  source = "sentinel_data"
   destination = "/data"
 
 [deploy]

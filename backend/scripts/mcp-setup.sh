@@ -36,7 +36,7 @@ if [[ -z "$API_KEY" || -z "$SERVER_URL" ]]; then
     echo "Usage: bash mcp-setup.sh <api_key> <server_url>"
     echo ""
     echo "Get your command from the Sentinel MCP dashboard:"
-    echo "  https://opensentry-command.fly.dev/mcp"
+    echo "  https://app.sentinel-command.com/mcp"
     exit 1
 fi
 
@@ -322,19 +322,19 @@ if not isinstance(config.get("mcpServers"), dict):
 # every client.  That shape is correct for Claude Code (which speaks
 # streamable HTTP MCP natively) but Claude Desktop's MCP loader
 # rejects it with "not valid MCP server configurations and were
-# skipped: opensentry".  Claude Desktop only loads stdio servers;
+# skipped: sentinel".  Claude Desktop only loads stdio servers;
 # remote HTTP MCP servers need to be wrapped with the `mcp-remote`
 # adapter (npx package) which fronts the HTTP server as a local
 # stdio process.  Cursor accepts {"url", "headers"} (no "type" field).
 # Windsurf uses "serverUrl" instead of "url".
 if client_name == "Claude Code":
-    opensentry_config = {
+    sentinel_config = {
         "type": "http",
         "url": server_url,
         "headers": {"Authorization": f"Bearer {api_key}"},
     }
 elif client_name == "Claude Desktop":
-    opensentry_config = {
+    sentinel_config = {
         "command": "npx",
         "args": [
             "-y", "mcp-remote", server_url,
@@ -342,23 +342,23 @@ elif client_name == "Claude Desktop":
         ],
     }
 elif client_name == "Cursor":
-    opensentry_config = {
+    sentinel_config = {
         "url": server_url,
         "headers": {"Authorization": f"Bearer {api_key}"},
     }
 elif client_name == "Windsurf":
-    opensentry_config = {
+    sentinel_config = {
         "serverUrl": server_url,
         "headers": {"Authorization": f"Bearer {api_key}"},
     }
 else:
-    opensentry_config = {
+    sentinel_config = {
         "type": "http",
         "url": server_url,
         "headers": {"Authorization": f"Bearer {api_key}"},
     }
 
-config["mcpServers"]["opensentry"] = opensentry_config
+config["mcpServers"]["sentinel"] = sentinel_config
 
 # Write back atomically — write to a tempfile in the same dir, then rename.
 # Avoids the "half-written config on crash" failure mode.

@@ -23,10 +23,10 @@
 #
 # USAGE
 #   On the Fly machine:   bash backend/scripts/backup_db.sh
-#   Locally:              DB_PATH=./opensentry.db bash backend/scripts/backup_db.sh
+#   Locally:              DB_PATH=./sentinel.db bash backend/scripts/backup_db.sh
 #
 # ENV
-#   DB_PATH                default /data/opensentry.db
+#   DB_PATH                default /data/sentinel.db
 #   BACKUP_DIR             default /data/backups
 #   BACKUP_RETENTION_DAYS  default 14  (local copies)
 #   BACKUP_S3_BUCKET       optional, e.g. s3://my-bucket/cc-backups
@@ -39,7 +39,7 @@
 
 set -euo pipefail
 
-DB_PATH="${DB_PATH:-/data/opensentry.db}"
+DB_PATH="${DB_PATH:-/data/sentinel.db}"
 BACKUP_DIR="${BACKUP_DIR:-/data/backups}"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 
@@ -52,7 +52,7 @@ command -v sqlite3 >/dev/null 2>&1 || die "sqlite3 not found on PATH"
 mkdir -p "$BACKUP_DIR"
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-WORK="$BACKUP_DIR/opensentry-${STAMP}.db"
+WORK="$BACKUP_DIR/sentinel-${STAMP}.db"
 FINAL="${WORK}.gz"
 
 log "checkpointing WAL into the main DB file..."
@@ -89,6 +89,6 @@ else
 fi
 
 log "pruning local backups older than ${RETENTION_DAYS} days..."
-find "$BACKUP_DIR" -name 'opensentry-*.db.gz' -type f -mtime "+${RETENTION_DAYS}" -print -delete || true
+find "$BACKUP_DIR" -name 'sentinel-*.db.gz' -type f -mtime "+${RETENTION_DAYS}" -print -delete || true
 
 log "done."
