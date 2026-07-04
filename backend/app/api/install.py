@@ -2,7 +2,7 @@
 Install script routes for CameraNode and MCP client setup.
 
 CameraNode install:
-  Linux/macOS:  curl -fsSL https://opensentry-command.fly.dev/install.sh | bash
+  Linux/macOS:  curl -fsSL https://app.sentinel-command.com/install.sh | bash
   Windows:      MSI installer from the latest GitHub release. There is no
                 PowerShell one-liner — the MSI is the supported Windows
                 install path. See the CameraNode README for the download

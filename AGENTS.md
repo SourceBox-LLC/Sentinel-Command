@@ -34,7 +34,7 @@ Backend config is loaded from environment variables (see `backend/.env.example`)
 
 **Optional:**
 - `CLERK_WEBHOOK_SECRET` — Svix signature for Clerk subscription + organizationMembership webhooks
-- `DATABASE_URL` — defaults to `sqlite:///./opensentry.db`. Production uses `sqlite:////data/opensentry.db` on a Fly volume — single-machine deploy, NullPool, WAL, busy_timeout=5000 (see `app/core/database.py`).
+- `DATABASE_URL` — defaults to `sqlite:///./sentinel.db`. Production uses `sqlite:////data/sentinel.db` on a Fly volume — single-machine deploy, NullPool, WAL, busy_timeout=5000 (see `app/core/database.py`).
 - `FRONTEND_URL` — extra CORS origin (must have scheme, no trailing slash)
 - `REDIS_URL` — slowapi rate-limiter shared storage. Without it, per-process in-memory counters (single-VM safe; multi-VM round-robins around the limit). Currently in production via Upstash on Fly.
 - `SEGMENT_CACHE_MAX_PER_CAMERA` — segments cached in memory per camera (default **60**, ~60s — CameraNode emits 1-second segments)
@@ -45,7 +45,7 @@ Backend config is loaded from environment variables (see `backend/.env.example`)
 - `INACTIVE_CAMERA_CLEANUP_HOURS` — free caches for cameras offline this long (default 24)
 - `LOG_RETENTION_DAYS` — stream + MCP + audit + motion + notification + email log retention (default 90; per-tier override via plan slug — Free 30 / Pro 90 / Pro Plus 365)
 - `OFFLINE_SWEEP_INTERVAL_SECONDS` — how often to mark stale rows offline (default 30)
-- `SENTRY_DSN` — error tracking. In production this is managed by the Fly Sentry extension (`fly ext sentry create -a opensentry-command`) which provisions a sponsored Team plan and auto-injects the secret; you rarely set this by hand. `app/core/sentry.py::init_sentry()` is a no-op when the DSN is absent, so local dev needs no extra config. Dashboard: `fly ext sentry dashboard -a opensentry-command`.
+- `SENTRY_DSN` — error tracking. In production this is managed by the Fly Sentry extension (`fly ext sentry create -a sentinel-command`) which provisions a sponsored Team plan and auto-injects the secret; you rarely set this by hand. `app/core/sentry.py::init_sentry()` is a no-op when the DSN is absent, so local dev needs no extra config. Dashboard: `fly ext sentry dashboard -a sentinel-command`.
 
 **Email (Resend, optional):**
 - `EMAIL_ENABLED` — global kill-switch (default `false`). Code can ship with it off; flip to `true` once DNS propagates and a smoke test passes. Worker still runs when off; transport short-circuits with a logged "would have sent" line.
@@ -656,7 +656,7 @@ Every SSE broadcaster (`MotionBroadcaster`, `NotificationBroadcaster`, `McpActiv
 1. Accept `<api_key> <server_url>` (positional)
 2. Detect installed MCP clients (Claude Code, Claude Desktop, Cursor, Windsurf)
 3. Prompt the user for which ones to configure
-4. Merge an `opensentry` entry into each client's JSON config (creating directories + backing up corrupted files)
+4. Merge an `sentinel` entry into each client's JSON config (creating directories + backing up corrupted files)
 
 **Windows invocation pattern** — `irm … | iex -Args …` **does not work** (`iex` has no `-Args`). Use the scriptblock pattern instead, which is what the dashboard prints:
 

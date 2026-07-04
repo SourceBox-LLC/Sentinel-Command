@@ -129,14 +129,14 @@ jobs:
       # Why two-step (build → machine update) instead of plain `fly deploy`:
       #
       # We run a single Fly Machine with a single persistent volume
-      # (`opensentry_data` at /data, holding the SQLite DB).  `fly deploy`
+      # (`sentinel_data` at /data, holding the SQLite DB).  `fly deploy`
       # for this topology is non-deterministic: sometimes it sees the
       # existing machine and updates it in place, sometimes it decides
       # the image config has "drifted enough" and tries to provision a
       # NEW machine alongside the old.  The new-machine path errors
       # immediately because the volume only has one attachment slot:
       #     "creating a new machine in group 'app' requires an
-      #      unattached 'opensentry_data' volume."
+      #      unattached 'sentinel_data' volume."
       # We hit this on consecutive runs 2026-04-28 with strategy=rolling
       # AND strategy=immediate, and `max_unavailable` is rolling-only so
       # it didn't help either.
@@ -161,7 +161,7 @@ jobs:
       #     the manifest under its own internal namespace
       #     (vo4x1o84n7ozql5y), so the subsequent `fly machine update`
       #     got MANIFEST_UNKNOWN looking for the image at the
-      #     opensentry-command path.  Mismatch between depot's push
+      #     sentinel-command path.  Mismatch between depot's push
       #     and the two-step pattern we use.
       #   - 2026-05-04 afternoon (current): build locally on the
       #     GitHub runner with docker/build-push-action and push
@@ -195,7 +195,7 @@ jobs:
           # format was deployment-<ULID> — a SHA is more useful for
           # cross-referencing the image to the source revision when
           # debugging.
-          tags: registry.fly.io/opensentry-command:deployment-${{ github.sha }}
+          tags: registry.fly.io/sentinel-command:deployment-${{ github.sha }}
           # GitHub Actions cache for layers — ~30s saved on warm
           # builds vs. cold.  scope=deploy keeps it isolated from
           # any future workflows that might also use buildx.
@@ -205,7 +205,7 @@ jobs:
       - name: Export image tag for next step
         id: image
         run: |
-          IMAGE="registry.fly.io/opensentry-command:deployment-${{ github.sha }}"
+          IMAGE="registry.fly.io/sentinel-command:deployment-${{ github.sha }}"
           echo "Captured image: $IMAGE"
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
@@ -215,13 +215,13 @@ jobs:
           # We currently run exactly one machine.  If we ever scale to
           # multiple machines (or migrate to LiteFS / Postgres so we
           # don't need a single volume), this script needs to loop.
-          MACHINE=$(flyctl machines list -a opensentry-command --json | jq -r '.[0].id')
+          MACHINE=$(flyctl machines list -a sentinel-command --json | jq -r '.[0].id')
           if [ -z "$MACHINE" ] || [ "$MACHINE" = "null" ]; then
-            echo "::error::No machines found for opensentry-command"
+            echo "::error::No machines found for sentinel-command"
             exit 1
           fi
           echo "Updating machine $MACHINE to $IMAGE"
-          flyctl machine update "$MACHINE" --image "$IMAGE" --yes -a opensentry-command
+          flyctl machine update "$MACHINE" --image "$IMAGE" --yes -a sentinel-command
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           # Image tag comes from the `image` step (the export step

@@ -161,7 +161,7 @@ component exists. New router **NEW** `backend/app/api/integration.py`, all route
 node is online and has a `local_ip`; always include `proxy_url`
 (`/api/cameras/{id}/stream.m3u8`) so HA can fall back. The node's local HLS is
 **unauthenticated by design** (LAN-trust threat model in
-[`server/api.rs`](../../OpenSentry-CameraNode/src/server/api.rs#L22)) — acceptable
+[`server/api.rs`](../../Sentinel-CameraNode/src/server/api.rs#L22)) — acceptable
 because HA runs on the same trusted LAN; documented in the integration's threat
 notes.
 

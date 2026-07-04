@@ -9,8 +9,8 @@ This is the runbook `ON_CALL.md` deliberately doesn't cover: not "the
 app is slow" but **"the data is gone."** Everything customer-facing —
 accounts, cameras, nodes, incidents, MCP keys, audit logs, and the
 `Setting(org_plan)` row that links an org to its paid plan — lives in
-one SQLite file (`/data/opensentry.db`) on one Fly volume
-(`opensentry_data`) on one machine. There is no live replica. Recovery
+one SQLite file (`/data/sentinel.db`) on one Fly volume
+(`sentinel_data`) on one machine. There is no live replica. Recovery
 is **restore from a backup**, so the backup must exist and the restore
 must have been rehearsed.
 
@@ -35,7 +35,7 @@ gzips it, optionally uploads off-platform, and prunes old local copies.
 
 | Env | Default | Purpose |
 |---|---|---|
-| `DB_PATH` | `/data/opensentry.db` | source DB |
+| `DB_PATH` | `/data/sentinel.db` | source DB |
 | `BACKUP_DIR` | `/data/backups` | local destination |
 | `BACKUP_RETENTION_DAYS` | `14` | local prune window |
 | `BACKUP_S3_BUCKET` | _(unset)_ | off-platform target, e.g. `s3://bucket/cc` (needs `aws` CLI + creds) |
@@ -94,30 +94,30 @@ re-checks integrity.
 
 ```bash
 # 1. Stop the app so nothing writes during the swap.
-fly status -a opensentry-command                 # note the machine id
-fly machine stop <machine-id> -a opensentry-command
+fly status -a sentinel-command                 # note the machine id
+fly machine stop <machine-id> -a sentinel-command
 
 # 2. Get a backup onto the machine (if restoring from S3).
-fly ssh console -a opensentry-command
+fly ssh console -a sentinel-command
 #   inside the machine:
-#   aws s3 cp s3://bucket/cc/opensentry-<stamp>.db.gz /data/backups/
+#   aws s3 cp s3://bucket/cc/sentinel-<stamp>.db.gz /data/backups/
 
 # 3. Restore (verifies integrity, keeps a rollback copy).
-bash /app/scripts/restore_db.sh /data/backups/opensentry-<stamp>.db.gz
+bash /app/scripts/restore_db.sh /data/backups/sentinel-<stamp>.db.gz
 
 # 4. Start the app and verify BEFORE deleting the .pre-restore copy.
 exit
-fly machine start <machine-id> -a opensentry-command
+fly machine start <machine-id> -a sentinel-command
 curl -fsS https://sentinel-command.com/api/health/ready
 ```
 
 Then sanity-check in the dashboard: an org loads, cameras list, a known
 incident is present, and a paid org still shows its plan. Only after
-that, remove `/data/opensentry.db.pre-restore-<stamp>`.
+that, remove `/data/sentinel.db.pre-restore-<stamp>`.
 
 ### If the whole machine/volume is gone
 
-1. Recreate the app/volume (`fly volumes create opensentry_data ...`) and
+1. Recreate the app/volume (`fly volumes create sentinel_data ...`) and
    deploy the image (push to `master`, or `fly deploy`).
 2. The app starts on an **empty** DB and recreates the schema on boot.
 3. Stop it, pull the latest off-platform backup onto the new volume, and

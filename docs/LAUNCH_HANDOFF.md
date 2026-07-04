@@ -44,7 +44,7 @@ charges don't post, the dev-mode badge shows in the UI, and the
    fly secrets set \
      CLERK_PUBLISHABLE_KEY=pk_live_... \
      CLERK_SECRET_KEY=sk_live_... \
-     -a opensentry-command
+     -a sentinel-command
    ```
 4. Verify the Clerk webhook endpoint
    `https://sentinel-command.com/api/webhooks/clerk` is
@@ -95,7 +95,7 @@ the answer for those.
      RESEND_WEBHOOK_SECRET=whsec_... \
      EMAIL_FROM_ADDRESS=notifications@sourceboxsentry.com \
      EMAIL_ENABLED=true \
-     -a opensentry-command
+     -a sentinel-command
    ```
 5. Smoke test: kill a CameraNode for >90s, watch the test admin's inbox
    for the offline email, click the unsubscribe link, verify the
@@ -171,7 +171,7 @@ hard-coded for that origin (`backend/app/main.py::cors_origins`).
 
 **State now.** Sentry is fully wired and verified in production.
 `SENTRY_DSN` is set in Fly secrets via the Sentry extension
-(`fly ext sentry create -a opensentry-command` provisioned a sponsored
+(`fly ext sentry create -a sentinel-command` provisioned a sponsored
 Team plan and auto-injected the DSN). `SENTRY_TRACES_SAMPLE_RATE=0.1`
 keeps us inside the free-tier event budget. `app/core/sentry.py::init_sentry()`
 no-ops gracefully when DSN is absent (local dev), so no extra config
@@ -185,7 +185,7 @@ captures as a server-side event. This replaced an earlier (incorrect)
 attempt to email customer admins about the platform disk — see ADR
 in commit `594b86c` for the multi-tenant violation rationale.
 
-Dashboard: `fly ext sentry dashboard -a opensentry-command`.
+Dashboard: `fly ext sentry dashboard -a sentinel-command`.
 
 ---
 
@@ -219,15 +219,15 @@ accidentally.
 ## 7. Backups and disaster recovery
 
 **State now.** **We use SQLite on a Fly volume**, not Fly's managed
-Postgres. `DATABASE_URL=sqlite:////data/opensentry.db` per `fly.toml`.
-The volume is `opensentry_data` mounted at `/data`. Fly snapshots
+Postgres. `DATABASE_URL=sqlite:////data/sentinel.db` per `fly.toml`.
+The volume is `sentinel_data` mounted at `/data`. Fly snapshots
 the volume daily on their default schedule (5-day retention on the
 Free plan, longer on paid).
 
 **What you need to do.**
 1. Verify the volume snapshot schedule:
    ```
-   fly volumes snapshots list <volume_id> -a opensentry-command
+   fly volumes snapshots list <volume_id> -a sentinel-command
    ```
    You should see daily snapshots going back 5+ days.
 2. **Test a restore.** This is the only thing that turns "we have
@@ -235,16 +235,16 @@ Free plan, longer on paid).
    you onboard the first paying customer:
    - Pick a recent snapshot and create a new volume from it:
      ```
-     fly volumes create opensentry_data_restore_test \
-       --snapshot-id <snap_id> -a opensentry-command
+     fly volumes create sentinel_data_restore_test \
+       --snapshot-id <snap_id> -a sentinel-command
      ```
    - Spin up a temporary machine pointing at the restored volume
      (or detach prod, attach the restore, verify, swap back —
      riskier but cleaner).
    - Confirm SQLite opens cleanly + tables are intact:
      ```
-     fly ssh console -a opensentry-command \
-       -C "sqlite3 /data/opensentry.db '.tables'"
+     fly ssh console -a sentinel-command \
+       -C "sqlite3 /data/sentinel.db '.tables'"
      ```
    - Sanity-check key tables have rows: `Camera`, `CameraNode`,
      `Setting`, `Notification`.

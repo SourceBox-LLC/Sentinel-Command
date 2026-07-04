@@ -32,7 +32,7 @@ if (-not $ApiKey -or -not $ServerUrl) {
     Write-Host "  Usage (remote): & ([scriptblock]::Create((irm <url>/mcp-setup.ps1))) <api_key> <server_url>"
     Write-Host ""
     Write-Host "  Get your command from the Sentinel MCP dashboard:"
-    Write-Host "  https://opensentry-command.fly.dev/mcp" -ForegroundColor Cyan
+    Write-Host "  https://app.sentinel-command.com/mcp" -ForegroundColor Cyan
     Write-Host ""
     exit 1
 }
@@ -342,12 +342,12 @@ function Configure-Client {
     # every client.  That shape is correct for Claude Code (which
     # speaks streamable HTTP MCP natively) but Claude Desktop's MCP
     # loader rejects it with "not valid MCP server configurations and
-    # were skipped: opensentry".  Claude Desktop only loads stdio
+    # were skipped: sentinel".  Claude Desktop only loads stdio
     # servers; remote HTTP MCP servers need to be wrapped with the
     # `mcp-remote` adapter (npx package) which fronts the HTTP server
     # as a local stdio process.  Cursor accepts `{url, headers}` (no
     # `type` field).  Windsurf uses `serverUrl` instead of `url`.
-    $opensentryConfig = switch ($Name) {
+    $sentinelConfig = switch ($Name) {
         'Claude Code' {
             [ordered]@{
                 type = "http"
@@ -400,7 +400,7 @@ function Configure-Client {
         }
     }
 
-    $config["mcpServers"]["opensentry"] = $opensentryConfig
+    $config["mcpServers"]["sentinel"] = $sentinelConfig
 
     # Claude Desktop's mcp-remote adapter needs Node.js.  Warn early
     # rather than letting the user discover it via a cryptic
@@ -433,7 +433,7 @@ function Configure-Client {
                 # outer function parameter `$Name`.  Reassigning it inside
                 # this loop quietly clobbers the client name that the
                 # summary block reads later, so the user sees
-                # "Configured: * opensentry" instead of "* Claude Desktop".
+                # "Configured: * sentinel" instead of "* Claude Desktop".
                 $srvName = $srv.Name
                 $val = $srv.Value
                 if ($null -ne $val -and $null -ne $val.args) {

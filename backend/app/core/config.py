@@ -11,7 +11,7 @@ class Config:
     CLERK_PUBLISHABLE_KEY: str = os.getenv("CLERK_PUBLISHABLE_KEY", "")
     CLERK_WEBHOOK_SECRET: str = os.getenv("CLERK_WEBHOOK_SECRET", "")
 
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./opensentry.db")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./sentinel.db")
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
     # Rate-limiter shared storage.  In production set REDIS_URL to a

@@ -15,15 +15,15 @@
 #   On Fly:  fly machine stop <id>   (or scale to 0), restore, then start.
 #
 # USAGE
-#   bash backend/scripts/restore_db.sh /data/backups/opensentry-<stamp>.db.gz
-#   DB_PATH=./opensentry.db bash backend/scripts/restore_db.sh ./backup.db.gz
+#   bash backend/scripts/restore_db.sh /data/backups/sentinel-<stamp>.db.gz
+#   DB_PATH=./sentinel.db bash backend/scripts/restore_db.sh ./backup.db.gz
 #
 # ENV
-#   DB_PATH   default /data/opensentry.db
+#   DB_PATH   default /data/sentinel.db
 
 set -euo pipefail
 
-DB_PATH="${DB_PATH:-/data/opensentry.db}"
+DB_PATH="${DB_PATH:-/data/sentinel.db}"
 SRC="${1:-}"
 
 log() { printf '[restore_db] %s\n' "$*"; }
