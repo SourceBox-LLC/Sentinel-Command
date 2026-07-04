@@ -12,7 +12,7 @@
 //     mount.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
@@ -315,8 +315,16 @@ describe('IncidentsPage', () => {
     const onDeleted = mockModalProps.mock.calls.at(-1)[0].onDeleted
 
     // Simulate the modal calling onDeleted(id) after a successful
-    // delete (which is what the modal does internally)
-    onDeleted(1)
+    // delete (which is what the modal does internally).  The callback
+    // fires synchronous React state updates (setIncidents +
+    // setIncidentCounts + handleModalClose), so it MUST be wrapped in
+    // act() — otherwise the update isn't flushed before the assertion
+    // below runs and the test flakes (especially under CI load).  This
+    // is exactly the "An update ... was not wrapped in act(...)"
+    // warning the test was emitting.
+    act(() => {
+      onDeleted(1)
+    })
 
     // Row should be optimistically removed (no API refresh required)
     await waitFor(() =>
