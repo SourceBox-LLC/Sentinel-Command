@@ -272,6 +272,69 @@ def test_delete_cascades_to_camera_and_incident_evidence(db, fully_seeded_org):
     )
 
 
+def test_delete_succeeds_when_camera_assigned_to_group(db):
+    """Regression for the FK-abort bug: a Camera assigned to a
+    CameraGroup (``group_id`` set) used to make ``delete_org_data`` raise
+    ``FOREIGN KEY constraint failed`` on the ``DELETE FROM camera_groups``
+    bulk step and abort the ENTIRE erasure — the org's data was never
+    deleted (GDPR Article 17 violation, 500 to the customer).
+
+    Root cause: the session is autoflush=False, so the per-row
+    ``db.delete(node)`` cascade that removes Camera rows stayed pending;
+    the group bulk-delete then ran while those FK-referencing Camera
+    rows still physically existed.  The fix flushes the cascade deletes
+    (and mops up orphan cameras) BEFORE deleting camera_groups.
+
+    The pre-existing fixture never assigns a group_id, so it missed this
+    entirely — this test wires the exact trigger: POST
+    /api/cameras/{id}/group sets Camera.group_id (cameras.py)."""
+    node = CameraNode(
+        node_id="n_grouped", org_id=TEST_ORG,
+        api_key_hash="nh_grouped", name="node_grouped",
+    )
+    db.add(node)
+    group = CameraGroup(org_id=TEST_ORG, name="Front Yard", color="#0f0", icon="x")
+    db.add(group)
+    db.flush()  # assign ids
+    db.add(Camera(
+        camera_id="c_grouped", org_id=TEST_ORG,
+        node_id=node.id, group_id=group.id, name="cam_grouped",
+    ))
+    db.commit()
+
+    # Must NOT raise FOREIGN KEY constraint failed.
+    delete_org_data(db, TEST_ORG)
+    db.commit()
+
+    assert db.query(Camera).filter_by(org_id=TEST_ORG).count() == 0
+    assert db.query(CameraGroup).filter_by(org_id=TEST_ORG).count() == 0
+    assert db.query(CameraNode).filter_by(org_id=TEST_ORG).count() == 0
+
+
+def test_delete_succeeds_with_orphan_camera_in_group(db):
+    """Harder edge case the flush-only fix would still miss: an orphan
+    Camera (``node_id=None``, the transient state during node deletion)
+    that still carries a ``group_id``.  Because it has no parent node,
+    the CameraNode cascade never reaches it; if the camera_groups
+    bulk-delete ran before the orphan mop-up, the FK would fire.  The
+    fix mops up ALL cameras (including orphans) before deleting
+    camera_groups, so this must succeed too."""
+    group = CameraGroup(org_id=TEST_ORG, name="Orphans", color="#f00", icon="x")
+    db.add(group)
+    db.flush()
+    db.add(Camera(
+        camera_id="c_orphan", org_id=TEST_ORG,
+        node_id=None, group_id=group.id, name="orphan_cam",
+    ))
+    db.commit()
+
+    delete_org_data(db, TEST_ORG)
+    db.commit()
+
+    assert db.query(Camera).filter_by(org_id=TEST_ORG).count() == 0
+    assert db.query(CameraGroup).filter_by(org_id=TEST_ORG).count() == 0
+
+
 def test_delete_is_idempotent(db, fully_seeded_org):
     """A Clerk webhook ``organization.deleted`` redelivery (Svix retries
     on any 5xx) hits the same handler again after the data is already
