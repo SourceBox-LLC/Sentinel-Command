@@ -38,18 +38,19 @@ if (!PUBLISHABLE_KEY) {
 // `variables` (not @clerk/themes) keeps us off the extra dependency.
 const clerkAppearance = {
   variables: {
-    colorBackground: '#12121a',
+    colorBackground: '#12141c',
     colorPrimary: '#22c55e',
-    colorText: '#ffffff',
+    colorText: '#f4f4f5',
     colorTextSecondary: '#a1a1aa',
-    colorTextOnPrimaryBackground: '#000000',
-    colorInputBackground: 'rgba(255, 255, 255, 0.03)',
-    colorInputText: '#ffffff',
+    colorTextOnPrimaryBackground: '#04170b',
+    colorInputBackground: 'rgba(0, 0, 0, 0.35)',
+    colorInputText: '#f4f4f5',
     colorNeutral: '#ffffff',
     colorDanger: '#ef4444',
     colorSuccess: '#22c55e',
     colorWarning: '#f59e0b',
-    borderRadius: '8px',
+    borderRadius: '10px',
+    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   },
 }
 

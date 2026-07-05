@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Link } from "react-router-dom"
 import { useAuth } from "@clerk/clerk-react"
 import InstallCameraNodeCard from "./InstallCameraNodeCard.jsx"
+import { LogoMark } from "./Logo.jsx"
 import { requestAdminPromotion } from "../services/api"
 
 // Dashboard empty-state heroes, differentiated by role. Admins get the
@@ -24,7 +25,9 @@ export function AdminWelcomeHero() {
   return (
     <div className="welcome-hero">
       <div className="welcome-hero-header">
-        <div className="welcome-hero-icon" aria-hidden="true">👋</div>
+        <div className="welcome-hero-icon" aria-hidden="true">
+          <LogoMark size={46} />
+        </div>
         <h2 className="welcome-hero-title">Welcome to Sentinel</h2>
         <p className="welcome-hero-subtitle">
           Your control plane is ready. Sentinel runs on your own hardware &mdash; let&rsquo;s get the first camera online.
@@ -88,7 +91,9 @@ export function MemberWelcomeHero({ orgName }) {
   return (
     <div className="welcome-hero">
       <div className="welcome-hero-header">
-        <div className="welcome-hero-icon" aria-hidden="true">👋</div>
+        <div className="welcome-hero-icon" aria-hidden="true">
+          <LogoMark size={46} />
+        </div>
         <h2 className="welcome-hero-title">
           {orgName ? `Welcome to ${orgName}` : "Welcome"}
         </h2>
