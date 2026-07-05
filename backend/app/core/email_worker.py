@@ -260,6 +260,16 @@ def _process_row(
     # to share one key.
     idem = f"outbox-{row.id}"
 
+    # Transactional emails (sign-up welcome, MCP key changes, member
+    # changes) use noreply@sentinel-command.com since no reply is expected.
+    # Alert/notification emails use notifications@sentinel-command.com.
+    transactional_kinds = frozenset({
+        "welcome", "mcp_key_created", "mcp_key_revoked",
+        "member_added", "member_removed", "member_role_changed",
+        "member_promotion_requested",
+    })
+    from_override = settings.EMAIL_NOREPLY_ADDRESS if row.kind in transactional_kinds else None
+
     result: EmailSendResult = send_email(
         to=row.recipient_email,
         subject=row.subject,
@@ -267,6 +277,7 @@ def _process_row(
         body_html=row.body_html,
         kind=row.kind,
         idempotency_key=idem,
+        from_address=from_override,
     )
 
     if result.skipped:

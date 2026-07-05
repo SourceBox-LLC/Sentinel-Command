@@ -92,6 +92,7 @@ def send_email(
     body_html: str,
     kind: str,
     idempotency_key: Optional[str] = None,
+    from_address: Optional[str] = None,
 ) -> EmailSendResult:
     """Send a single email via Resend.
 
@@ -144,10 +145,12 @@ def send_email(
             error="resend_unconfigured: RESEND_API_KEY or EMAIL_FROM_ADDRESS missing",
         )
 
+    # Use the override (e.g. noreply@) if provided, otherwise the default.
+    effective_from = from_address or settings.EMAIL_FROM_ADDRESS
     from_field = (
-        f"{settings.EMAIL_FROM_NAME} <{settings.EMAIL_FROM_ADDRESS}>"
+        f"{settings.EMAIL_FROM_NAME} <{effective_from}>"
         if settings.EMAIL_FROM_NAME
-        else settings.EMAIL_FROM_ADDRESS
+        else effective_from
     )
 
     payload: dict = {

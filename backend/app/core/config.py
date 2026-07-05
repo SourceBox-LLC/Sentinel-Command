@@ -118,9 +118,15 @@ class Config:
     RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
     RESEND_WEBHOOK_SECRET: str = os.getenv("RESEND_WEBHOOK_SECRET", "")
     EMAIL_FROM_ADDRESS: str = os.getenv(
-        "EMAIL_FROM_ADDRESS", "notifications@sourceboxsentry.com"
+        "EMAIL_FROM_ADDRESS", "notifications@sentinel-command.com"
     )
     EMAIL_FROM_NAME: str = os.getenv("EMAIL_FROM_NAME", "Sentinel by SourceBox")
+
+    # Separate from address for transactional emails (sign-up, password
+    # reset, MCP key changes) where no reply is expected.
+    EMAIL_NOREPLY_ADDRESS: str = os.getenv(
+        "EMAIL_NOREPLY_ADDRESS", "noreply@sentinel-command.com"
+    )
     EMAIL_ENABLED: bool = os.getenv("EMAIL_ENABLED", "false").lower() == "true"
     # Worker tunables.  5s tick keeps median time-to-deliver under 10s
     # without hammering SQLite; 20-row batch keeps a single tick under
