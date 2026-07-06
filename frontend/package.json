@@ -38,7 +38,7 @@
     "globals": "^17.4.0",
     "happy-dom": "^20.10.6",
     "vite": "^8.0.1",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.10"
   },
   "overridesNotes": {
     "postcss": "Forced >= 8.5.10 transitively (Vite 8.0.7 still pulls 8.5.8). Closes Dependabot alert #8 (GHSA-qx2v-qp2m-jg93 / CVE-2026-41305) — XSS via unescaped </style> in CSS stringify output. Not reachable in our build (we don't process user-submitted CSS) but the override is cheaper than arguing reachability. Remove once Vite's own pin moves past 8.5.10.",
