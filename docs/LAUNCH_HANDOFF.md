@@ -229,18 +229,18 @@ accidentally.
 
 ## 7. Backups and disaster recovery
 
-> **2026-07-06 restore drill — VERIFIED, with one blocker found.** A Fly
-> volume snapshot was restored end-to-end into a throwaway volume:
-> `PRAGMA integrity_check` = ok, all 20 tables present, restore path
-> works (see `docs/runbooks/DISASTER_RECOVERY.md` rehearsal log). **But**
-> the drill revealed the live DB is `/data/opensentry.db`, not
-> `/data/sentinel.db` as every config/script/doc assumes — so the
-> automated `backup_db.sh` job (default `DB_PATH=/data/sentinel.db`,
-> run un-overridden by `.github/workflows/backup.yml`) is backing up a
-> file that doesn't exist; there was no `/data/backups/` dir on the
-> volume. **Before launch:** reconcile the filename (point the tooling at
-> `opensentry.db`, or rename the file to `sentinel.db`) and re-run the
-> drill. Fly snapshots are a working safety net in the meantime.
+> **2026-07-06 restore drill — VERIFIED; blocker found AND fixed.** A Fly
+> volume snapshot restored end-to-end into a throwaway volume:
+> `PRAGMA integrity_check` = ok, all 20 tables present (see
+> `docs/runbooks/DISASTER_RECOVERY.md`). The drill exposed that the live
+> DB was `/data/opensentry.db` (a `DATABASE_URL` **secret** overrode the
+> `fly.toml` sentinel.db env), so `backup_db.sh` had been failing on the
+> missing `/data/sentinel.db`. **Fixed same day:** secret repointed to
+> `sqlite:////data/sentinel.db`, app restarted onto a fresh `sentinel.db`
+> (empty pre-launch DB, no data lost), leftover `opensentry.db` + orphaned
+> `opensentry_data` volume removed, `/api/health/detailed` = database ok,
+> and a manual backup run **succeeded**. Remaining optional: set
+> `BACKUP_ENCRYPTION_KEY` for encrypted off-platform artifact copies.
 
 **State now.** **We use SQLite on a Fly volume**, not Fly's managed
 Postgres. `DATABASE_URL=sqlite:////data/sentinel.db` per `fly.toml`.
@@ -386,9 +386,10 @@ a page.
 
 ```
 [ ] Clerk production keys swapped (item 1)
-[~] Backup restore tested (item 7) — Fly snapshot restore VERIFIED 2026-07-06;
-    BUT found: prod DB is /data/opensentry.db not sentinel.db, so the app-level
-    backup_db.sh job targets a nonexistent file. Reconcile + re-drill before launch.
+[X] Backup restore tested (item 7) — Fly snapshot restore VERIFIED 2026-07-06;
+    the opensentry.db/sentinel.db mismatch found during the drill was FIXED same
+    day (DATABASE_URL secret repointed to sentinel.db, app healthy, backup job now
+    succeeds). Optional: set BACKUP_ENCRYPTION_KEY for off-platform copies.
 [ ] DPA + sub-processors PDF on file with lawyer signoff (item 6)
 [ ] Status page live and pointed at /api/health/ready (item 3)
 [X] Sentry alerts confirmed firing in production env (item 5)        — done 2026-05-03

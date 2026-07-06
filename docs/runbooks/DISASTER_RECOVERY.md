@@ -13,30 +13,21 @@ one SQLite file on one Fly volume (`sentinel_data`) on one machine.
 There is no live replica. Recovery is **restore from a backup**, so the
 backup must exist and the restore must have been rehearsed.
 
-> ⚠️ **CRITICAL FILENAME DISCREPANCY (found in the 2026-07-06 restore
-> drill — reconcile before onboarding paying customers).** The live DB
-> file on the production volume is **`/data/opensentry.db`**, NOT
-> `/data/sentinel.db`. The app reaches it via a `DATABASE_URL`
-> override; the OpenSentry→Sentinel rename updated `fly.toml`, this
-> runbook, and the backup/restore scripts to say `sentinel.db`, but the
-> file on the volume was never renamed. Consequences:
-> - `backend/scripts/backup_db.sh` defaults `DB_PATH=/data/sentinel.db`
->   and `.github/workflows/backup.yml` runs it with **no override** — so
->   the automated daily backup targets a file that does not exist. The
->   restored snapshot had **no `/data/backups/` directory**, i.e. the
->   app-level consistent/off-platform backups are effectively not
->   running. Fly **volume snapshots** (verified restorable in the drill)
->   are currently the only working backup.
-> - Every `sentinel.db` path in this runbook below should read
->   `opensentry.db` until the mismatch is reconciled.
->
-> **Fix (pick one, then make repo + prod agree):** (a) point the tooling
-> at reality — set `DB_PATH`/`DATABASE_URL` to `/data/opensentry.db` in
-> `backup.yml`, `backup_db.sh`, `restore_db.sh`, `fly.toml`, and this
-> doc; or (b) rename the file on the volume to `sentinel.db` (stop app →
-> `mv` the `.db` + `-wal` + `-shm` → clear the `DATABASE_URL` override →
-> start), then everything already matches. (a) is zero-downtime; (b) is
-> cleaner naming but a maintenance-window migration.
+> ✅ **Filename reconciled (2026-07-06) — this runbook's `sentinel.db`
+> paths are now correct.** A discrepancy was found and fixed the same
+> day: the live DB was `/data/opensentry.db` while all tooling expected
+> `sentinel.db`, because a `DATABASE_URL` **secret** (which overrides the
+> `fly.toml` env) was still pinned to the old OpenSentry-era filename. The
+> daily `backup_db.sh` job had been *failing* on the missing
+> `/data/sentinel.db` since the volume was recreated on ~07-05. Fix
+> applied: the secret now points to `sqlite:////data/sentinel.db`; the app
+> was restarted onto a fresh `sentinel.db` (the old file held zero rows —
+> pre-launch, no data lost); the leftover `opensentry.db` and the orphaned
+> `opensentry_data` volume were removed; and the backup job now succeeds
+> (verified — `sentinel-…​.db.gz` produced in `/data/backups`). Still
+> open: set the `BACKUP_ENCRYPTION_KEY` repo secret so backups also get an
+> off-platform encrypted copy (today they're Fly-volume-local + Fly
+> snapshots only).
 
 ---
 
@@ -182,8 +173,11 @@ that, remove `/data/sentinel.db.pre-restore-<stamp>`.
   orgs onboarded yet). Throwaway machine + volume destroyed after;
   production volume/machine never touched (no downtime). **Finding:** the
   DB file is `/data/opensentry.db`, not `sentinel.db`, and there was no
-  `/data/backups/` directory — see the CRITICAL FILENAME DISCREPANCY
-  callout at the top. The Fly snapshot path is verified working; the
-  app-level `backup_db.sh` path needs the filename fix before it can be
-  trusted. **Re-run this drill after reconciling the filename**, and
-  again once there is real customer data to restore (non-zero rows).
+  `/data/backups/` directory. **Resolved same day** (see the reconciled
+  callout at the top): the `DATABASE_URL` secret was repointed to
+  `sentinel.db`, the app restarted onto a fresh `sentinel.db`, the
+  leftover `opensentry.db` + orphaned `opensentry_data` volume were
+  removed, and a `workflow_dispatch` of the backup job then **succeeded**
+  (`sentinel-20260706T064510Z.db.gz`). `/api/health/detailed` reported
+  `database: ok` after the switch. **Re-run this drill once there is real
+  customer data to restore (non-zero rows).**
