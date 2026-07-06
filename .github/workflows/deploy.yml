@@ -25,7 +25,7 @@ jobs:
         # specific versions like v8.1.0.  Pin to the exact tag and
         # bump manually when there's a reason to.  v8.x is the first
         # Node.js 24-ready major.
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@v8.3.0
 
       - name: Set up Python
         run: uv python install 3.12
