@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect } from "react"
-import { Routes, Route, Navigate, useNavigate } from "react-router-dom"
+import { Routes, Route, Navigate, Link, useLocation, useNavigate } from "react-router-dom"
 import { useAuth, useClerk, useOrganization, CreateOrganization } from "@clerk/clerk-react"
 import Layout from "./components/Layout.jsx"
 import LoadingSpinner from "./components/LoadingSpinner.jsx"
@@ -87,18 +87,38 @@ function RequireAdmin({ children }) {
   return children
 }
 
-// The marketing landing page, documentation, pricing, legal, and security
-// pages now live on the standalone website at sentinel-command.com.
-// Redirect any visit to the bare root there.
+// The marketing landing page, documentation, legal, and security pages
+// now live on the standalone website at sentinel-command.com, but the
+// app hosted them before the split — old bookmarks, emails, and indexed
+// URLs still point here. Forward the full path so those land on the
+// same page over there. Hash included: security.txt and SECURITY.md
+// point at /security#vulnerability-disclosure.
 const STANDALONE_SITE = "https://sentinel-command.com"
 
-function RedirectToStandalone() {
+function RedirectToStandalone({ to }) {
+  const { pathname, search, hash } = useLocation()
   useEffect(() => {
-    window.location.replace(STANDALONE_SITE)
-  }, [])
+    window.location.replace(`${STANDALONE_SITE}${to ?? `${pathname}${search}${hash}`}`)
+  }, [to, pathname, search, hash])
   return (
     <div className="loading-container">
       <LoadingSpinner />
+    </div>
+  )
+}
+
+function NotFoundPage() {
+  return (
+    <div className="org-creation-page">
+      <div className="org-creation-card">
+        <div className="org-creation-icon">🔍</div>
+        <h1 className="org-creation-title">Page not found</h1>
+        <p className="org-creation-subtitle">
+          There's nothing at this address. Looking for the main site? It's
+          at <a href={STANDALONE_SITE}>sentinel-command.com</a>.
+        </p>
+        <Link to="/dashboard" className="btn btn-primary">Go to dashboard</Link>
+      </div>
     </div>
   )
 }
@@ -126,6 +146,15 @@ function App() {
         <Routes>
         {/* Root redirects to the standalone marketing/docs site */}
         <Route path="/" element={<RedirectToStandalone />} />
+
+        {/* Marketing/docs paths this app served before the standalone-site
+            split (92d6f83) — forward to the same path over there so old
+            bookmarks, emails, and indexed URLs keep resolving. */}
+        <Route path="/security" element={<RedirectToStandalone />} />
+        {/* The website's docs live at /documentation/, not /docs */}
+        <Route path="/docs" element={<RedirectToStandalone to="/documentation/" />} />
+        <Route path="/sentinel" element={<RedirectToStandalone />} />
+        <Route path="/legal/*" element={<RedirectToStandalone />} />
 
         {/* Auth routes (public but use Clerk components) */}
         <Route path="/sign-in/*" element={<SignInPage />} />
@@ -218,6 +247,10 @@ function App() {
             }
           />
         </Route>
+
+        {/* Anything else is a 404 — without this, React Router renders
+            nothing and the user gets a blank page. */}
+        <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Suspense>
       <CookieNotice />

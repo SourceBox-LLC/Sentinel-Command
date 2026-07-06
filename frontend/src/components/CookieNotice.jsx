@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react"
-import { Link } from "react-router-dom"
 
 // Lightweight, dismissible cookie NOTICE — not a consent-management
 // platform. We only set strictly-necessary authentication-session
@@ -40,7 +39,7 @@ function CookieNotice() {
       <p className="cookie-notice-text">
         We use only strictly-necessary cookies to keep you signed in. No
         analytics, ad, or tracking cookies — ever.{" "}
-        <Link to="/legal/privacy">Learn more</Link>.
+        <a href="https://sentinel-command.com/legal/privacy">Learn more</a>.
       </p>
       <button type="button" className="cookie-notice-btn" onClick={dismiss}>
         Got it
