@@ -26,7 +26,7 @@ dependencies = [
     "slowapi>=0.1.10",
     "redis>=5.0.0",
     "websockets>=12.0",
-    "fastmcp>=3.0.0",
+    "fastmcp>=3.4.3",
     "sentry-sdk[fastapi]>=2.64.0",
     # IANA timezone database for Python's stdlib `zoneinfo`.
     # Required on Windows (where the OS doesn't ship the database) and
