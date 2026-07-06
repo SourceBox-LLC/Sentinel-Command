@@ -162,6 +162,15 @@ def send_email(
         ],
     }
 
+    # Route replies to the monitored support inbox.  The From address is
+    # send-only (notifications@ isn't forwarded by ImprovMX), so without a
+    # Reply-To a customer hitting "reply" on an alert would reach nobody.
+    # Omitted entirely when EMAIL_REPLY_TO is blank so an operator can
+    # opt out.  Resend accepts a string or a list; a string is fine here.
+    reply_to = (settings.EMAIL_REPLY_TO or "").strip()
+    if reply_to:
+        payload["reply_to"] = reply_to
+
     # Resend's HTTP idempotency header — same value on retry tells
     # Resend to short-circuit to the original send instead of
     # delivering a duplicate message.  This MUST go through the

@@ -84,6 +84,7 @@ def test_send_email_success_extracts_message_id(monkeypatch):
     monkeypatch.setattr(email_mod.settings, "EMAIL_ENABLED", True)
     monkeypatch.setattr(email_mod.settings, "RESEND_API_KEY", "re_test_dummy")
     monkeypatch.setattr(email_mod.settings, "EMAIL_FROM_ADDRESS", "n@s.test")
+    monkeypatch.setattr(email_mod.settings, "EMAIL_REPLY_TO", "support@s.test")
 
     captured: dict = {}
     def fake_send(payload, options=None):
@@ -112,6 +113,9 @@ def test_send_email_success_extracts_message_id(monkeypatch):
     assert p["text"] == "Plain"
     assert p["html"] == "<p>HTML</p>"
     assert {"name": "event", "value": "camera_offline"} in p["tags"]
+    # Reply-To routes customer replies to the monitored support inbox
+    # (the From address is send-only).
+    assert p["reply_to"] == "support@s.test"
     # Idempotency MUST be in options, not the message-level headers
     # dict — Resend's SDK only sets the HTTP Idempotency-Key header
     # when it sees options['idempotency_key'].
@@ -120,6 +124,30 @@ def test_send_email_success_extracts_message_id(monkeypatch):
     # idempotency value — that would put it on the outgoing email
     # as an SMTP header instead, doing nothing for retry safety.
     assert "headers" not in p or "Idempotency-Key" not in p.get("headers", {})
+
+
+def test_send_email_omits_reply_to_when_unset(monkeypatch):
+    """An operator can opt out of the Reply-To header by setting
+    EMAIL_REPLY_TO empty — in which case the payload must NOT carry a
+    reply_to key at all (rather than an empty string, which some
+    providers reject).  Belt for a deployment that genuinely wants a
+    hard no-reply From with no reply routing."""
+    monkeypatch.setattr(email_mod.settings, "EMAIL_ENABLED", True)
+    monkeypatch.setattr(email_mod.settings, "RESEND_API_KEY", "re_test_dummy")
+    monkeypatch.setattr(email_mod.settings, "EMAIL_FROM_ADDRESS", "n@s.test")
+    monkeypatch.setattr(email_mod.settings, "EMAIL_REPLY_TO", "")
+
+    captured: dict = {}
+    def fake_send(payload, options=None):
+        captured["payload"] = payload
+        return {"id": "msg_x"}
+    monkeypatch.setattr(email_mod.resend.Emails, "send", fake_send)
+
+    send_email(
+        to="alice@example.com", subject="s", body_text="t",
+        body_html="<p>t</p>", kind="camera_offline",
+    )
+    assert "reply_to" not in captured["payload"]
 
 
 def test_send_email_no_message_id_returns_failure(monkeypatch):
