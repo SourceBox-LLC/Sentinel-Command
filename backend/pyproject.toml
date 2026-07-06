@@ -5,7 +5,7 @@ description = "Sentinel Command Center Backend - FastAPI with Clerk Auth"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.138.2",
+    "fastapi>=0.139.0",
     "uvicorn>=0.50.2",
     "sqlalchemy>=2.0.51",
     "pydantic>=2.0.0",
