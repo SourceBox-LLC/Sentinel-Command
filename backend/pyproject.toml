@@ -8,7 +8,7 @@ dependencies = [
     "fastapi>=0.139.0",
     "uvicorn>=0.50.2",
     "sqlalchemy>=2.0.51",
-    "pydantic>=2.0.0",
+    "pydantic>=2.13.4",
     "python-dotenv>=1.0.0",
     # Pinned >=0.0.31 for CVE-2026-53538/53539/53540 — three DoS
     # advisories against 0.0.27 (Content-Length confusion, multipart
