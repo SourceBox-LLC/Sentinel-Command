@@ -57,7 +57,14 @@ The dev-mode badge in the corner should disappear.
 
 ---
 
-## 2. Notification transport — Resend email 🟡 (code shipped, operator action remaining)
+## 2. Notification transport — Resend email ✅ DONE (live)
+
+> **2026-07-05:** Resend is configured and `EMAIL_ENABLED=true` in
+> production. All 15 notification-email kinds are render-covered by
+> `backend/tests/test_email_templates.py`. The original operator
+> walkthrough is retained below for reference.
+
+
 
 **State now.** Email v1 + v1.1 are fully built and deployed. **12
 notification kinds gated by 7 per-org per-kind toggles.** Six default
@@ -314,21 +321,32 @@ verifying the schedule annually.
 
 ---
 
-## 10. Customer support process
+## 10. Customer support process ✅ DONE (inbox live)
 
-**State now.** Support routes are described in the legal page and
-implied in the DPA, but no actual support inbox is configured.
+**State now (2026-07-05).** Support + security mailboxes are live via
+**ImprovMX** email forwarding on `sentinel-command.com` (MX →
+`mx1/mx2.improvmx.com`), forwarding to the operator inbox:
 
-**What you need to do.**
-1. Set up a `support@yourdomain.tld` mailbox. Forward to your
-   personal email or use Front / Help Scout for triage if volume
-   warrants.
-2. Define an internal target: respond to first email within X
-   business hours. Don't promise an SLA on the public site at the
-   Free / Pro tiers (the security page already says "No formal SLA
-   on Free or Pro").
-3. Document common questions in `/docs#faq` (already pretty good)
-   so customers can self-serve.
+- `support@sentinel-command.com` — customer support. Wired into the
+  in-app `ErrorBoundary` crash screen, the `SUB_PROCESSORS.md`
+  sub-processor-concern channel.
+- `security@sentinel-command.com` — vulnerability reports. Published
+  as the **primary** `Contact:` in `/.well-known/security.txt` (GitHub
+  Security Advisories remains as the secondary channel), in
+  `SECURITY.md`, and in the DPA's vulnerability-management section.
+
+ImprovMX free tier covers this comfortably; note it handles *incoming*
+mail only — outbound transactional email still goes through Resend
+(item 2). Both coexist on the domain: MX points at ImprovMX, SPF/DKIM
+(TXT) authorize Resend, so there's no conflict.
+
+**Remaining (optional, not blocking).**
+1. Define an internal first-response target (e.g. within 1 business
+   day). Don't promise an SLA on the public site at the Free / Pro
+   tiers (the security page already says "No formal SLA on Free or
+   Pro").
+2. Keep `/docs#faq` current so customers can self-serve the common
+   questions before they email.
 
 ---
 
@@ -353,12 +371,12 @@ a page.
 [ ] Clerk production keys swapped (item 1)
 [ ] Backup restore tested at least once (item 7)
 [ ] DPA + sub-processors PDF on file with lawyer signoff (item 6)
-[ ] Status page live and pointed at /api/health/detailed (item 3)
+[ ] Status page live and pointed at /api/health/ready (item 3)
 [X] Sentry alerts confirmed firing in production env (item 5)        — done 2026-05-03
 [ ] Custom domain (if applicable) live + Clerk allows it (item 4)
 [X] Branch protection enabled on master (item 9)                      — done 2026-05-04
-[ ] Support inbox configured and monitored (item 10)
-[ ] Resend signup + EMAIL_ENABLED=true + smoke test (item 2)
+[X] Support inbox configured and monitored (item 10)                 — done 2026-07-05 (ImprovMX: support@ + security@)
+[X] Resend signup + EMAIL_ENABLED=true + smoke test (item 2)         — done
 [ ] Run `cd backend && uv run pytest` — all green (450+ tests)
 [ ] Run `cd frontend && npm run build && npm audit --omit=dev` — both clean
 [ ] Browse the live site at 375px, 1024px, 1440px — nothing broken
