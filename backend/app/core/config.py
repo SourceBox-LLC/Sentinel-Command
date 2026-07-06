@@ -121,22 +121,18 @@ class Config:
     # is rejected.  sentinel-command.com is the verified sending domain
     # (Resend DKIM at resend._domainkey.sentinel-command.com + SPF/Return-
     # Path on send.sentinel-command.com); sourceboxsentry.com is NOT set up
-    # in Resend, so the old default here would have bounced.  noreply@ is
-    # an equally-valid alternative From on the same verified domain if you
-    # prefer a no-reply sender — just override this env var.
+    # in Resend, so the old default here would have bounced.
+    #
+    # This is a NO-REPLY sender by design — customers aren't meant to reply
+    # to notifications; support is a separate proactive channel
+    # (support@sentinel-command.com, emailed directly).  So we deliberately
+    # set no Reply-To.  noreply@sentinel-command.com is an equally-valid
+    # From on the same verified domain if you prefer that local-part — just
+    # override this env var.
     EMAIL_FROM_ADDRESS: str = os.getenv(
         "EMAIL_FROM_ADDRESS", "notifications@sentinel-command.com"
     )
     EMAIL_FROM_NAME: str = os.getenv("EMAIL_FROM_NAME", "Sentinel by SourceBox")
-    # Reply-To for outbound mail.  The From address (notifications@) is
-    # send-only — the ImprovMX inbox only forwards support@ and security@ —
-    # so without this a customer replying to a notification/welcome email
-    # would hit an unmonitored mailbox (or bounce).  Pointing Reply-To at
-    # the monitored support inbox means replies reach a human.  Set empty
-    # to omit the header entirely.
-    EMAIL_REPLY_TO: str = os.getenv(
-        "EMAIL_REPLY_TO", "support@sentinel-command.com"
-    )
     EMAIL_ENABLED: bool = os.getenv("EMAIL_ENABLED", "false").lower() == "true"
     # Worker tunables.  5s tick keeps median time-to-deliver under 10s
     # without hammering SQLite; 20-row batch keeps a single tick under

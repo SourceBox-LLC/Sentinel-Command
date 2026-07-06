@@ -101,14 +101,13 @@ the answer for those.
      RESEND_API_KEY=re_... \
      RESEND_WEBHOOK_SECRET=whsec_... \
      EMAIL_FROM_ADDRESS=notifications@sentinel-command.com \
-     EMAIL_REPLY_TO=support@sentinel-command.com \
      EMAIL_ENABLED=true \
      -a sentinel-command
    ```
    (Done — sending is verified on `sentinel-command.com`; the code
    defaults already match these values so the secrets are only needed
-   to override. `EMAIL_REPLY_TO` routes replies to the monitored
-   support inbox since `notifications@` is send-only.)
+   to override. `notifications@` is a no-reply sender by design —
+   support is a separate channel at `support@sentinel-command.com`.)
 5. Smoke test: kill a CameraNode for >90s, watch the test admin's inbox
    for the offline email, click the unsubscribe link, verify the
    toggle flipped off in `/settings`. See plan file
