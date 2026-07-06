@@ -229,6 +229,19 @@ accidentally.
 
 ## 7. Backups and disaster recovery
 
+> **2026-07-06 restore drill — VERIFIED, with one blocker found.** A Fly
+> volume snapshot was restored end-to-end into a throwaway volume:
+> `PRAGMA integrity_check` = ok, all 20 tables present, restore path
+> works (see `docs/runbooks/DISASTER_RECOVERY.md` rehearsal log). **But**
+> the drill revealed the live DB is `/data/opensentry.db`, not
+> `/data/sentinel.db` as every config/script/doc assumes — so the
+> automated `backup_db.sh` job (default `DB_PATH=/data/sentinel.db`,
+> run un-overridden by `.github/workflows/backup.yml`) is backing up a
+> file that doesn't exist; there was no `/data/backups/` dir on the
+> volume. **Before launch:** reconcile the filename (point the tooling at
+> `opensentry.db`, or rename the file to `sentinel.db`) and re-run the
+> drill. Fly snapshots are a working safety net in the meantime.
+
 **State now.** **We use SQLite on a Fly volume**, not Fly's managed
 Postgres. `DATABASE_URL=sqlite:////data/sentinel.db` per `fly.toml`.
 The volume is `sentinel_data` mounted at `/data`. Fly snapshots
@@ -373,7 +386,9 @@ a page.
 
 ```
 [ ] Clerk production keys swapped (item 1)
-[ ] Backup restore tested at least once (item 7)
+[~] Backup restore tested (item 7) — Fly snapshot restore VERIFIED 2026-07-06;
+    BUT found: prod DB is /data/opensentry.db not sentinel.db, so the app-level
+    backup_db.sh job targets a nonexistent file. Reconcile + re-drill before launch.
 [ ] DPA + sub-processors PDF on file with lawyer signoff (item 6)
 [ ] Status page live and pointed at /api/health/ready (item 3)
 [X] Sentry alerts confirmed firing in production env (item 5)        — done 2026-05-03
