@@ -162,6 +162,12 @@ def send_email(
         ],
     }
 
+    # No Reply-To by design: notifications@ / noreply@ are no-reply
+    # senders.  Customers aren't meant to reply to alerts — support is a
+    # separate proactive channel (support@sentinel-command.com).  A reply
+    # simply hits the send-only mailbox and bounces, which is the intended
+    # no-reply behaviour.
+
     # Resend's HTTP idempotency header — same value on retry tells
     # Resend to short-circuit to the original send instead of
     # delivering a duplicate message.  This MUST go through the

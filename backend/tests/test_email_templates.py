@@ -9,6 +9,7 @@ strings, body copy) is exercised end-to-end via test_notifications.
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -90,6 +91,100 @@ def test_notification_proxy_handles_non_dict_meta():
     notif = _fake_notif(meta_json='["a", "b"]')
     proxy = email_templates._NotificationProxy(notif)
     assert proxy.meta == {}
+
+
+# ── Every-kind coverage sweep ────────────────────────────────────────
+#
+# Only camera_offline was previously rendered end-to-end.  With
+# EMAIL_ENABLED=true in production, every one of these 15 kinds actually
+# sends, so a broken per-kind template (Jinja syntax error, or an
+# operation that raises on its real context) would ship.  Because the
+# renderer catches template errors and silently substitutes the GENERIC
+# fallback (see _render_or_fallback), such a break would NOT crash the
+# worker — it would just email a degraded, less-specific message.  This
+# sweep renders every kind with realistic per-kind context and fails if
+# the renderer had to fall back for any of them.
+#
+# Each entry is (kind, meta_dict).  meta covers exactly the
+# ``notification.meta.*`` keys that kind's templates reference (grepped
+# from app/templates/emails/); a value listed here that then shows up in
+# the rendered body proves the real template consumed it.
+_ALL_EMAIL_KINDS = [
+    ("camera_offline", {}),
+    ("camera_online", {}),
+    ("node_offline", {}),
+    ("node_online", {}),
+    ("incident_created", {"incident_id": 7}),
+    ("mcp_key_created", {}),
+    ("mcp_key_revoked", {}),
+    ("cameranode_disk_low", {"percent_used": 92}),
+    ("member_added", {"role": "admin"}),
+    ("member_role_changed", {"new_role": "admin"}),
+    ("member_removed", {}),
+    ("member_promotion_requested", {"requester_email": "member@example.test"}),
+    ("motion", {"score": 78}),
+    ("motion_digest", {
+        "event_count": 12,
+        "window_start": "2026-07-05T09:00:00+00:00",
+        "window_end": "2026-07-05T09:15:00+00:00",
+        "cooldown_minutes": 15,
+    }),
+    ("welcome", {}),
+]
+
+
+@pytest.mark.parametrize("kind,meta", _ALL_EMAIL_KINDS)
+def test_every_email_kind_renders_its_own_template(kind, meta, caplog):
+    """Render every notification kind with realistic context and assert
+    its DEDICATED template rendered — i.e. the renderer did NOT log a
+    "template not found" / "template render failed" and silently fall
+    back to the generic block.
+
+    This is the regression catch for a per-kind template that ships
+    broken: with EMAIL_ENABLED on it would send a degraded email to a
+    real customer for a real event (a new incident, an admin promotion,
+    a disk-full warning) without any loud failure."""
+    import json
+
+    notif = _fake_notif(
+        title=f"{kind} title",
+        body=f"{kind} body copy.",
+        # A camera-scoped link so camera/motion/incident templates that
+        # gate on notification.link render their CTA branch.
+        link="/dashboard?camera=cam_x",
+        camera_id="cam_x",
+        meta_json=json.dumps(meta) if meta else None,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.core.email_templates"):
+        subject, body_text, body_html = email_templates.render(
+            kind, notif, unsubscribe_url="https://x.test/u",
+        )
+
+    # No fallback path was taken — both TemplateNotFound (warning) and
+    # render failure (exception) log through this logger.
+    template_errors = [
+        r.getMessage() for r in caplog.records
+        if r.name == "app.core.email_templates"
+    ]
+    assert not template_errors, (
+        f"kind {kind!r} fell back instead of using its template: {template_errors}"
+    )
+
+    # Shape: all three parts present, HTML wrapped by the brand layout.
+    assert subject.strip(), f"{kind}: empty subject"
+    assert body_text.strip(), f"{kind}: empty text body"
+    assert "<!DOCTYPE html>" in body_html, f"{kind}: HTML not layout-wrapped"
+    assert "https://x.test/u" in body_html, f"{kind}: unsubscribe link missing"
+
+    # Meta-bearing kinds must actually surface their meta value — proves
+    # the template consumed the field rather than rendering a blank slot
+    # (Jinja's default Undefined renders empty without erroring).
+    for value in meta.values():
+        assert str(value) in body_text or str(value) in body_html, (
+            f"{kind}: meta value {value!r} never appeared in the rendered "
+            f"email — template likely references a different key"
+        )
 
 
 # ── render() integration ─────────────────────────────────────────────

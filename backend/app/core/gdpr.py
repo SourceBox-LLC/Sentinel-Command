@@ -164,30 +164,55 @@ def delete_org_data(db: Session, org_id: str) -> dict[str, int]:
     # cascade ON DELETE clauses on Camera + IncidentEvidence fire).
     # The bulk-delete loop below would bypass the SQLAlchemy
     # cascade and either FK-constraint-fail or leave orphans.
+    #
+    # Count the cascade-child (Camera) rows that will be removed via the
+    # CameraNode cascade BEFORE we delete their parents, so the audit
+    # payload reflects the real number of cameras erased — the per-row
+    # session.delete cascade never surfaces a count of its own.
+    cascade_child_pre = {
+        Model.__tablename__: db.query(Model).filter_by(org_id=org_id).count()
+        for Model in ORG_SCOPED_CASCADE_CHILDREN
+    }
     for Model in ORG_SCOPED_CASCADE_PARENTS:
         rows = db.query(Model).filter_by(org_id=org_id).all()
         for row in rows:
             db.delete(row)
         counts[Model.__tablename__] = len(rows)
 
-    # Bulk delete the rest — fast, doesn't materialize objects.
+    # CRITICAL: flush the pending cascade deletes to the DB *now*, before
+    # any bulk Query.delete() below runs.  The session is autoflush=False
+    # (see core/database.py), so db.delete(node) above only *marks* the
+    # cascaded Camera rows for deletion — no SQL is emitted yet.  If we
+    # let the ORG_SCOPED_MODELS loop delete `camera_groups` while those
+    # Camera rows are still physically present (Camera.group_id is a FK to
+    # camera_groups.id with no ON DELETE, and PRAGMA foreign_keys=ON), the
+    # bulk group delete raises `FOREIGN KEY constraint failed` and the
+    # ENTIRE erasure aborts — the org's data is never deleted (a GDPR
+    # Article 17 violation).  Flushing here writes the Camera/evidence
+    # deletes first so the group delete has nothing referencing it.
+    db.flush()
+
+    # Mop-up bulk delete of cascade-child tables — most rows are already
+    # gone via the parent cascade + flush above, but this catches the
+    # orphan-with-null-FK edge case (see ORG_SCOPED_CASCADE_CHILDREN
+    # docstring).  Runs BEFORE ORG_SCOPED_MODELS so that every Camera row
+    # (including a transient orphan that still carries a group_id) is gone
+    # before `camera_groups` is deleted — the only DB-level FK into
+    # `cameras` besides `camera_nodes` (both handled above).
+    for Model in ORG_SCOPED_CASCADE_CHILDREN:
+        db.query(Model).filter_by(org_id=org_id).delete(
+            synchronize_session=False,
+        )
+        counts[Model.__tablename__] = cascade_child_pre.get(Model.__tablename__, 0)
+
+    # Bulk delete the rest — fast, doesn't materialize objects.  Safe now
+    # that all cascade children (Camera) are gone: nothing references
+    # camera_groups anymore.
     for Model in ORG_SCOPED_MODELS:
         count = db.query(Model).filter_by(org_id=org_id).delete(
             synchronize_session=False,
         )
         counts[Model.__tablename__] = count
-
-    # Mop-up bulk delete of cascade-child tables — most rows are
-    # already gone via the parent cascade above, but this catches
-    # the orphan-with-null-FK edge case (see ORG_SCOPED_CASCADE_CHILDREN
-    # docstring above).  Returns 0 in the common case.
-    for Model in ORG_SCOPED_CASCADE_CHILDREN:
-        count = db.query(Model).filter_by(org_id=org_id).delete(
-            synchronize_session=False,
-        )
-        # Add to existing count from the cascade phase if present.
-        prev = counts.get(Model.__tablename__, 0)
-        counts[Model.__tablename__] = prev + count
 
     # Flush so subsequent queries in the same transaction see the
     # deletes.  Commit is the caller's responsibility (see docstring).

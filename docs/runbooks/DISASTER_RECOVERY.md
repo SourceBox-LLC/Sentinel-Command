@@ -9,10 +9,25 @@ This is the runbook `ON_CALL.md` deliberately doesn't cover: not "the
 app is slow" but **"the data is gone."** Everything customer-facing —
 accounts, cameras, nodes, incidents, MCP keys, audit logs, and the
 `Setting(org_plan)` row that links an org to its paid plan — lives in
-one SQLite file (`/data/sentinel.db`) on one Fly volume
-(`sentinel_data`) on one machine. There is no live replica. Recovery
-is **restore from a backup**, so the backup must exist and the restore
-must have been rehearsed.
+one SQLite file on one Fly volume (`sentinel_data`) on one machine.
+There is no live replica. Recovery is **restore from a backup**, so the
+backup must exist and the restore must have been rehearsed.
+
+> ✅ **Filename reconciled (2026-07-06) — this runbook's `sentinel.db`
+> paths are now correct.** A discrepancy was found and fixed the same
+> day: the live DB was `/data/opensentry.db` while all tooling expected
+> `sentinel.db`, because a `DATABASE_URL` **secret** (which overrides the
+> `fly.toml` env) was still pinned to the old OpenSentry-era filename. The
+> daily `backup_db.sh` job had been *failing* on the missing
+> `/data/sentinel.db` since the volume was recreated on ~07-05. Fix
+> applied: the secret now points to `sqlite:////data/sentinel.db`; the app
+> was restarted onto a fresh `sentinel.db` (the old file held zero rows —
+> pre-launch, no data lost); the leftover `opensentry.db` and the orphaned
+> `opensentry_data` volume were removed; and the backup job now succeeds
+> (verified — `sentinel-…​.db.gz` produced in `/data/backups`). Still
+> open: set the `BACKUP_ENCRYPTION_KEY` repo secret so backups also get an
+> off-platform encrypted copy (today they're Fly-volume-local + Fly
+> snapshots only).
 
 ---
 
@@ -149,4 +164,20 @@ that, remove `/data/sentinel.db.pre-restore-<stamp>`.
 
 ### Rehearsal log
 
-- _(none yet — run the drill before onboarding the first paying customer)_
+- **2026-07-06 — Fly volume-snapshot restore drill. PASS (with a
+  finding).** Restored the newest snapshot (`vs_ggX2o2kX99xofojJJAJ35`,
+  ~4h old, 5-day retention) of `sentinel_data` into a throwaway volume
+  (`sentinel_restore_test`), mounted it on a disposable alpine machine,
+  and verified: `PRAGMA integrity_check` → **ok**; all **20 tables**
+  present. Row counts were 0 across the board — expected pre-launch (no
+  orgs onboarded yet). Throwaway machine + volume destroyed after;
+  production volume/machine never touched (no downtime). **Finding:** the
+  DB file is `/data/opensentry.db`, not `sentinel.db`, and there was no
+  `/data/backups/` directory. **Resolved same day** (see the reconciled
+  callout at the top): the `DATABASE_URL` secret was repointed to
+  `sentinel.db`, the app restarted onto a fresh `sentinel.db`, the
+  leftover `opensentry.db` + orphaned `opensentry_data` volume were
+  removed, and a `workflow_dispatch` of the backup job then **succeeded**
+  (`sentinel-20260706T064510Z.db.gz`). `/api/health/detailed` reported
+  `database: ok` after the switch. **Re-run this drill once there is real
+  customer data to restore (non-zero rows).**

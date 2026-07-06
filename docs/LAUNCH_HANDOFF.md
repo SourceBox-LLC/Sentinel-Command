@@ -57,7 +57,14 @@ The dev-mode badge in the corner should disappear.
 
 ---
 
-## 2. Notification transport — Resend email 🟡 (code shipped, operator action remaining)
+## 2. Notification transport — Resend email ✅ DONE (live)
+
+> **2026-07-05:** Resend is configured and `EMAIL_ENABLED=true` in
+> production. All 15 notification-email kinds are render-covered by
+> `backend/tests/test_email_templates.py`. The original operator
+> walkthrough is retained below for reference.
+
+
 
 **State now.** Email v1 + v1.1 are fully built and deployed. **12
 notification kinds gated by 7 per-org per-kind toggles.** Six default
@@ -93,10 +100,14 @@ the answer for those.
    fly secrets set \
      RESEND_API_KEY=re_... \
      RESEND_WEBHOOK_SECRET=whsec_... \
-     EMAIL_FROM_ADDRESS=notifications@sourceboxsentry.com \
+     EMAIL_FROM_ADDRESS=notifications@sentinel-command.com \
      EMAIL_ENABLED=true \
      -a sentinel-command
    ```
+   (Done — sending is verified on `sentinel-command.com`; the code
+   defaults already match these values so the secrets are only needed
+   to override. `notifications@` is a no-reply sender by design —
+   support is a separate channel at `support@sentinel-command.com`.)
 5. Smoke test: kill a CameraNode for >90s, watch the test admin's inbox
    for the offline email, click the unsubscribe link, verify the
    toggle flipped off in `/settings`. See plan file
@@ -218,6 +229,19 @@ accidentally.
 
 ## 7. Backups and disaster recovery
 
+> **2026-07-06 restore drill — VERIFIED; blocker found AND fixed.** A Fly
+> volume snapshot restored end-to-end into a throwaway volume:
+> `PRAGMA integrity_check` = ok, all 20 tables present (see
+> `docs/runbooks/DISASTER_RECOVERY.md`). The drill exposed that the live
+> DB was `/data/opensentry.db` (a `DATABASE_URL` **secret** overrode the
+> `fly.toml` sentinel.db env), so `backup_db.sh` had been failing on the
+> missing `/data/sentinel.db`. **Fixed same day:** secret repointed to
+> `sqlite:////data/sentinel.db`, app restarted onto a fresh `sentinel.db`
+> (empty pre-launch DB, no data lost), leftover `opensentry.db` + orphaned
+> `opensentry_data` volume removed, `/api/health/detailed` = database ok,
+> and a manual backup run **succeeded**. Remaining optional: set
+> `BACKUP_ENCRYPTION_KEY` for encrypted off-platform artifact copies.
+
 **State now.** **We use SQLite on a Fly volume**, not Fly's managed
 Postgres. `DATABASE_URL=sqlite:////data/sentinel.db` per `fly.toml`.
 The volume is `sentinel_data` mounted at `/data`. Fly snapshots
@@ -314,21 +338,32 @@ verifying the schedule annually.
 
 ---
 
-## 10. Customer support process
+## 10. Customer support process ✅ DONE (inbox live)
 
-**State now.** Support routes are described in the legal page and
-implied in the DPA, but no actual support inbox is configured.
+**State now (2026-07-05).** Support + security mailboxes are live via
+**ImprovMX** email forwarding on `sentinel-command.com` (MX →
+`mx1/mx2.improvmx.com`), forwarding to the operator inbox:
 
-**What you need to do.**
-1. Set up a `support@yourdomain.tld` mailbox. Forward to your
-   personal email or use Front / Help Scout for triage if volume
-   warrants.
-2. Define an internal target: respond to first email within X
-   business hours. Don't promise an SLA on the public site at the
-   Free / Pro tiers (the security page already says "No formal SLA
-   on Free or Pro").
-3. Document common questions in `/docs#faq` (already pretty good)
-   so customers can self-serve.
+- `support@sentinel-command.com` — customer support. Wired into the
+  in-app `ErrorBoundary` crash screen, the `SUB_PROCESSORS.md`
+  sub-processor-concern channel.
+- `security@sentinel-command.com` — vulnerability reports. Published
+  as the **primary** `Contact:` in `/.well-known/security.txt` (GitHub
+  Security Advisories remains as the secondary channel), in
+  `SECURITY.md`, and in the DPA's vulnerability-management section.
+
+ImprovMX free tier covers this comfortably; note it handles *incoming*
+mail only — outbound transactional email still goes through Resend
+(item 2). Both coexist on the domain: MX points at ImprovMX, SPF/DKIM
+(TXT) authorize Resend, so there's no conflict.
+
+**Remaining (optional, not blocking).**
+1. Define an internal first-response target (e.g. within 1 business
+   day). Don't promise an SLA on the public site at the Free / Pro
+   tiers (the security page already says "No formal SLA on Free or
+   Pro").
+2. Keep `/docs#faq` current so customers can self-serve the common
+   questions before they email.
 
 ---
 
@@ -351,14 +386,17 @@ a page.
 
 ```
 [ ] Clerk production keys swapped (item 1)
-[ ] Backup restore tested at least once (item 7)
+[X] Backup restore tested (item 7) — Fly snapshot restore VERIFIED 2026-07-06;
+    the opensentry.db/sentinel.db mismatch found during the drill was FIXED same
+    day (DATABASE_URL secret repointed to sentinel.db, app healthy, backup job now
+    succeeds). Optional: set BACKUP_ENCRYPTION_KEY for off-platform copies.
 [ ] DPA + sub-processors PDF on file with lawyer signoff (item 6)
-[ ] Status page live and pointed at /api/health/detailed (item 3)
+[ ] Status page live and pointed at /api/health/ready (item 3)
 [X] Sentry alerts confirmed firing in production env (item 5)        — done 2026-05-03
 [ ] Custom domain (if applicable) live + Clerk allows it (item 4)
 [X] Branch protection enabled on master (item 9)                      — done 2026-05-04
-[ ] Support inbox configured and monitored (item 10)
-[ ] Resend signup + EMAIL_ENABLED=true + smoke test (item 2)
+[X] Support inbox configured and monitored (item 10)                 — done 2026-07-05 (ImprovMX: support@ + security@)
+[X] Resend signup + EMAIL_ENABLED=true + smoke test (item 2)         — done
 [ ] Run `cd backend && uv run pytest` — all green (450+ tests)
 [ ] Run `cd frontend && npm run build && npm audit --omit=dev` — both clean
 [ ] Browse the live site at 375px, 1024px, 1440px — nothing broken

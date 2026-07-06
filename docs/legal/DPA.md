@@ -363,8 +363,9 @@ Organization.
 
 ## Vulnerability management
 
-- Security issues may be reported privately at the GitHub Security
-  Advisories endpoint linked from `/security`.
+- Security issues may be reported privately by email to
+  <security@sentinel-command.com> or at the GitHub Security Advisories
+  endpoint linked from `/security`.
 - Dependency vulnerabilities are tracked via Dependabot and patched
   within reasonable timeframes proportional to severity.
 

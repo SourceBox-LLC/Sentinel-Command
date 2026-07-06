@@ -9,13 +9,10 @@ Pinned invariants:
      "site has no security contact" findings.
   2. Response is ``text/plain; charset=utf-8`` so a browser renders
      it as text rather than offering to download.
-  3. ``Contact:`` field is present (RFC requires ≥ 1).  Pinned to
-     the GitHub Security Advisory URL — modern best practice for OSS
-     and works today without us needing to operate a security@
-     mailbox.  An email fallback was published briefly but pulled
-     because the sourceboxsentry.com domain isn't provisioned for
-     incoming mail yet — a bounced report is worse than no email
-     channel at all.  Add an email Contact: back when MX is live.
+  3. ``Contact:`` fields are present (RFC requires ≥ 1).  We publish
+     two, most-preferred first: the monitored security@sentinel-command.com
+     mailbox (MX live via ImprovMX) and the GitHub Security Advisory
+     URL for researchers who prefer structured private triage.
   4. ``Expires:`` is in the future and within RFC 9116's 1-year
      window.  Generated dynamically per request so the file never
      goes stale at rest — a regression to a static expiry date
@@ -88,39 +85,56 @@ def test_security_txt_has_contact_field(unauthenticated_client):
     assert len(contacts) >= 1, f"expected ≥1 Contact: line, got body:\n{body}"
 
 
-def test_security_txt_primary_contact_is_github_security_advisories(
+def test_security_txt_primary_contact_is_security_mailbox(
     unauthenticated_client,
 ):
-    """Pin the primary contact channel.  GitHub Security Advisories is
-    the modern best practice for OSS projects + works without us
-    needing to operate a security@ mailbox.  A regression that swaps
-    this for a non-existent URL would leave reporters with no working
-    channel."""
+    """Pin the PRIMARY contact channel: the monitored security@ mailbox,
+    listed first (RFC 9116 §2.5.3 — Contact fields are in order of
+    preference).  This is the channel most researchers try first; a
+    regression that dropped or reordered it would push them to the
+    secondary GitHub path or leave them with no email option."""
+    body = unauthenticated_client.get("/.well-known/security.txt").text
+    contact_lines = [line for line in body.splitlines() if line.startswith("Contact:")]
+    assert contact_lines, "no Contact: lines"
+    # First Contact line is the security mailbox (most preferred).
+    assert contact_lines[0] == "Contact: mailto:security@sentinel-command.com", (
+        f"primary contact should be the security mailbox, got {contact_lines[0]!r}"
+    )
+
+
+def test_security_txt_lists_github_advisories_as_secondary(
+    unauthenticated_client,
+):
+    """The GitHub Security Advisory URL stays published as an alternate
+    channel for researchers who prefer structured private triage + the
+    CVE workflow.  A regression that dropped it would remove that path."""
     body = unauthenticated_client.get("/.well-known/security.txt").text
     assert (
-        "https://github.com/SourceBox-LLC/Sentinel-Command/security/advisories/new"
+        "Contact: https://github.com/SourceBox-LLC/Sentinel-Command/security/advisories/new"
         in body
     )
 
 
-def test_security_txt_does_not_publish_dead_email_addresses(
+def test_security_txt_email_contact_uses_live_mx_domain(
     unauthenticated_client,
 ):
-    """Negative pin: we do NOT publish an email contact today because
-    sourceboxsentry.com has no MX records and bounces would burn
-    reporters.  Catches a regression that re-adds an email Contact
-    line referring to an unprovisioned address.
-
-    Once MX is live, replace this test with a positive
-    ``test_security_txt_has_email_fallback`` that asserts the
-    real working address is present."""
+    """Positive pin (replaces the old 'no dead email' negative test):
+    the published email contact MUST be on sentinel-command.com — the
+    domain whose MX is live via ImprovMX — so reports actually deliver.
+    Guards against a regression that reintroduces an address on a
+    send-only domain (e.g. sourceboxsentry.com, which has no MX) where
+    reports would silently bounce."""
     body = unauthenticated_client.get("/.well-known/security.txt").text
-    # No mailto: contact lines until the domain can actually receive mail.
-    contact_lines = [line for line in body.splitlines() if line.startswith("Contact:")]
-    assert not any("mailto:" in line for line in contact_lines), (
-        "security.txt published an email contact, but no MX records are "
-        "configured for sourceboxsentry.com -- reports would bounce"
-    )
+    mailto_lines = [
+        line for line in body.splitlines()
+        if line.startswith("Contact:") and "mailto:" in line
+    ]
+    assert mailto_lines, "expected at least one mailto: Contact line"
+    for line in mailto_lines:
+        assert "@sentinel-command.com" in line, (
+            f"email contact {line!r} is not on the MX-live domain — "
+            f"reports would bounce"
+        )
 
 
 def test_security_txt_expires_in_future_and_within_one_year(

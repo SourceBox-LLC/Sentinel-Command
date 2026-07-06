@@ -117,8 +117,20 @@ class Config:
     # local dev doesn't burn the free-tier daily limit.
     RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
     RESEND_WEBHOOK_SECRET: str = os.getenv("RESEND_WEBHOOK_SECRET", "")
+    # Outbound sender.  MUST be on a Resend-verified domain or every send
+    # is rejected.  sentinel-command.com is the verified sending domain
+    # (Resend DKIM at resend._domainkey.sentinel-command.com + SPF/Return-
+    # Path on send.sentinel-command.com); sourceboxsentry.com is NOT set up
+    # in Resend, so the old default here would have bounced.
+    #
+    # This is a NO-REPLY sender by design — customers aren't meant to reply
+    # to notifications; support is a separate proactive channel
+    # (support@sentinel-command.com, emailed directly).  So we deliberately
+    # set no Reply-To.  noreply@sentinel-command.com is an equally-valid
+    # From on the same verified domain if you prefer that local-part — just
+    # override this env var.
     EMAIL_FROM_ADDRESS: str = os.getenv(
-        "EMAIL_FROM_ADDRESS", "notifications@sourceboxsentry.com"
+        "EMAIL_FROM_ADDRESS", "notifications@sentinel-command.com"
     )
     EMAIL_FROM_NAME: str = os.getenv("EMAIL_FROM_NAME", "Sentinel by SourceBox")
     EMAIL_ENABLED: bool = os.getenv("EMAIL_ENABLED", "false").lower() == "true"

@@ -112,6 +112,8 @@ def test_send_email_success_extracts_message_id(monkeypatch):
     assert p["text"] == "Plain"
     assert p["html"] == "<p>HTML</p>"
     assert {"name": "event", "value": "camera_offline"} in p["tags"]
+    # No-reply sender by design — we deliberately don't set a Reply-To.
+    assert "reply_to" not in p
     # Idempotency MUST be in options, not the message-level headers
     # dict — Resend's SDK only sets the HTTP Idempotency-Key header
     # when it sees options['idempotency_key'].

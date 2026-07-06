@@ -75,7 +75,14 @@ class ErrorBoundary extends Component {
             }}
           >
             The error has been logged. Try reloading — if it keeps
-            happening, contact support with this message:
+            happening, email{" "}
+            <a
+              href="mailto:support@sentinel-command.com"
+              style={{ color: "var(--accent-green, #22c55e)" }}
+            >
+              support@sentinel-command.com
+            </a>{" "}
+            with this message:
           </p>
           <pre
             style={{

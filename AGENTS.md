@@ -51,7 +51,7 @@ Backend config is loaded from environment variables (see `backend/.env.example`)
 - `EMAIL_ENABLED` — global kill-switch (default `false`). Code can ship with it off; flip to `true` once DNS propagates and a smoke test passes. Worker still runs when off; transport short-circuits with a logged "would have sent" line.
 - `RESEND_API_KEY` — Resend transactional API key (`re_…`)
 - `RESEND_WEBHOOK_SECRET` — Svix signing secret for the `/api/webhooks/resend` bounce/complaint handler
-- `EMAIL_FROM_ADDRESS` — default `notifications@sourceboxsentry.com` (must be on a verified Resend domain)
+- `EMAIL_FROM_ADDRESS` — default `notifications@sentinel-command.com` (must be on a Resend-verified sending domain; sentinel-command.com is verified — DKIM + SPF/Return-Path on `send.sentinel-command.com` — sourceboxsentry.com is not). No-reply by design: no Reply-To is set — support is a separate proactive channel (`support@sentinel-command.com`).
 - `EMAIL_FROM_NAME` — default `Sentinel by SourceBox`
 - `EMAIL_WORKER_INTERVAL_SECONDS` — outbox-drain tick interval (default 5)
 - `EMAIL_WORKER_BATCH_SIZE` — max rows drained per tick (default 20)

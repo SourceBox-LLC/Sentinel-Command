@@ -26,10 +26,19 @@ TEST_ORG_ID = "org_test123"
 TEST_WEBHOOK_SECRET = "whsec_dGVzdHNlY3JldHRlc3RzZWNyZXR0ZXN0c2VjcmV0MTI="
 
 
-def _signed_post(client, event_type: str, data: dict, *, secret: str = TEST_WEBHOOK_SECRET):
-    """POST a signed Clerk-style webhook to /api/webhooks/clerk."""
+def _signed_post(
+    client, event_type: str, data: dict, *,
+    secret: str = TEST_WEBHOOK_SECRET, msg_id: str | None = None,
+):
+    """POST a signed Clerk-style webhook to /api/webhooks/clerk.
+
+    ``msg_id`` defaults to a value derived from ``event_type`` (fine for
+    single-shot tests).  Pass a distinct ``msg_id`` when a test posts the
+    SAME event type more than once — otherwise the Svix idempotency guard
+    dedups the second call and it silently no-ops.
+    """
     payload = json.dumps({"type": event_type, "data": data})
-    msg_id = f"msg_{event_type.replace('.', '_')}_test"
+    msg_id = msg_id or f"msg_{event_type.replace('.', '_')}_test"
     ts = datetime.now(tz=UTC)
 
     sig = Webhook(secret).sign(msg_id, ts, payload)
@@ -192,6 +201,73 @@ def test_subscription_item_past_due_also_sets_flag(webhook_client, db):
     })
     assert resp.status_code == 200
     assert Setting.get(db, TEST_ORG_ID, "payment_past_due") == "true"
+
+
+def test_updated_snapshot_does_not_clear_held_past_due(webhook_client, db):
+    """Regression: a routine ``subscription.updated`` snapshot carrying an
+    ACTIVE paid plan slug must NOT clear a past-due flag we're already
+    holding.
+
+    During Stripe/Clerk dunning the subscription item stays
+    ``status=active`` with its paid slug while the card keeps failing
+    (past-due is a payment state, not an item-status change), and this
+    handler itself fires ``subscription.updated`` via
+    ``set_org_member_limit``.  The old code cleared past-due whenever the
+    slug was paid, wiping the marker mid-dunning; combined with the
+    pastDue re-stamp guard that reset the 7-day grace clock every cycle,
+    an org with a permanently failing card rode paid caps for free.  Only
+    ``paymentAttempt.updated(status=paid)`` is authoritative (see
+    ``test_payment_paid_clears_past_due``)."""
+    anchor = "2026-01-01T00:00:00+00:00"
+    Setting.set(db, TEST_ORG_ID, "org_plan", "pro")
+    Setting.set(db, TEST_ORG_ID, "payment_past_due", "true")
+    Setting.set(db, TEST_ORG_ID, "payment_past_due_at", anchor)
+
+    resp = _signed_post(webhook_client, "subscription.updated", {
+        "payer": {"organization_id": TEST_ORG_ID},
+        "items": [{"status": "active", "plan": {"slug": "pro"}}],
+    })
+    assert resp.status_code == 200
+    # Flag still held, grace clock NOT reset.
+    assert Setting.get(db, TEST_ORG_ID, "payment_past_due") == "true"
+    assert Setting.get(db, TEST_ORG_ID, "payment_past_due_at") == anchor
+
+
+def test_dunning_cycle_does_not_reset_grace_clock(webhook_client, db):
+    """The full exploit sequence the fix closes: pastDue (grace clock
+    starts) -> subscription.updated(active paid slug) -> pastDue again.
+
+    Before the fix the middle snapshot cleared past-due, so the second
+    pastDue saw ``already_past_due == false`` and re-stamped a fresh
+    anchor — the 7-day grace clock never advanced and the org was never
+    downgraded.  Now the anchor from the FIRST pastDue survives the
+    snapshot, so the second pastDue leaves it untouched and the grace
+    window keeps counting from the original failure."""
+    Setting.set(db, TEST_ORG_ID, "org_plan", "pro")
+
+    # 1) First payment failure — stamps the grace anchor.
+    _signed_post(webhook_client, "subscription.pastDue", {
+        "payer": {"organization_id": TEST_ORG_ID},
+        "past_due_at": "2026-01-01T00:00:00+00:00",
+    }, msg_id="msg_pastdue_1")
+    first_anchor = Setting.get(db, TEST_ORG_ID, "payment_past_due_at")
+    assert first_anchor, "first pastDue should stamp the grace anchor"
+
+    # 2) Routine snapshot mid-dunning — must NOT clear the past-due flag.
+    _signed_post(webhook_client, "subscription.updated", {
+        "payer": {"organization_id": TEST_ORG_ID},
+        "items": [{"status": "active", "plan": {"slug": "pro"}}],
+    }, msg_id="msg_updated_mid")
+    assert Setting.get(db, TEST_ORG_ID, "payment_past_due") == "true"
+
+    # 3) Next dunning retry fails — anchor UNCHANGED (clock not reset).
+    _signed_post(webhook_client, "subscription.pastDue", {
+        "payer": {"organization_id": TEST_ORG_ID},
+        "past_due_at": "2026-06-01T00:00:00+00:00",
+    }, msg_id="msg_pastdue_2")
+    assert Setting.get(db, TEST_ORG_ID, "payment_past_due_at") == first_anchor, (
+        "grace clock was reset — dunning cycle can ride paid caps forever"
+    )
 
 
 def test_payment_paid_clears_past_due(webhook_client, db):

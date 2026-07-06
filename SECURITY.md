@@ -2,17 +2,18 @@
 
 SourceBox Sentry is a security-focused application and we take vulnerabilities seriously.
 
-The full policy — scope, response timelines, safe-harbour terms, and the standard machine-readable [`security.txt`](https://sourceboxsentry.com/.well-known/security.txt) — lives at:
+The full policy — scope, response timelines, safe-harbour terms, and the standard machine-readable [`security.txt`](https://app.sentinel-command.com/.well-known/security.txt) — lives at:
 
-**https://sourceboxsentry.com/security#vulnerability-disclosure**
+**https://sentinel-command.com/security#vulnerability-disclosure**
 
 This file is the GitHub-standard summary; the deployed page above is canonical when the two disagree.
 
 ## Reporting a vulnerability
 
-File a private [Security Advisory on this repository](https://github.com/SourceBox-LLC/Sentinel-Command/security/advisories/new). This gives us a private channel for triage and the standard CVE workflow if one is warranted. A free GitHub account is enough — you don't need to be a contributor to file one.
+Two channels, use whichever you prefer:
 
-We don't yet operate a `security@` mailbox — the `sourceboxsentry.com` domain isn't provisioned for incoming mail. A bounced report is worse than no email channel at all, so we publish only the GitHub path until MX records are live.
+- **Email:** [`security@sentinel-command.com`](mailto:security@sentinel-command.com) — a monitored mailbox for security reports.
+- **GitHub:** file a private [Security Advisory on this repository](https://github.com/SourceBox-LLC/Sentinel-Command/security/advisories/new) for structured private triage and the standard CVE workflow if one is warranted. A free GitHub account is enough — you don't need to be a contributor to file one.
 
 **Please do NOT:**
 
@@ -36,7 +37,7 @@ We don't yet operate a `security@` mailbox — the `sourceboxsentry.com` domain 
 
 **In scope:**
 
-- The deployed Command Center API and web application (https://sourceboxsentry.com)
+- The deployed Command Center API and web application (https://app.sentinel-command.com)
 - The CameraNode binary + repository ([`SourceBox-LLC/Sentinel-CameraNode`](https://github.com/SourceBox-LLC/Sentinel-CameraNode))
 - Auth / authorization, including IDOR, privilege escalation, and tenant-isolation breaks
 - RCE, SSRF, XSS, CSRF, SQL injection, deserialization

@@ -33,10 +33,15 @@ PLAN_MEMBER_LIMITS = {
     "pro_plus": 20,
 }
 
-# Paid plan slugs. Seeing a subscription.updated with one of these means the
-# payment card is active (Clerk wouldn't mark the subscription live otherwise),
-# so we can clear any past-due flag we were holding. Kept local to this module
-# rather than imported from plans.py to keep webhook semantics self-contained.
+# Paid plan slugs used to size the Clerk member limit and drive camera-cap
+# enforcement on a subscription snapshot.  NOTE: a subscription.updated
+# carrying one of these does NOT prove the card is currently good — during
+# Stripe dunning the item stays active/paid-slug while the payment keeps
+# failing (past-due is a payment state, not an item-status change).  The
+# authoritative "card recovered" signal is paymentAttempt.updated
+# status=="paid"; only that path clears a held past-due flag.  Kept local to
+# this module rather than imported from plans.py to keep webhook semantics
+# self-contained.
 PAID_PLAN_SLUGS_WEBHOOK = frozenset({"pro", "pro_plus"})
 
 
@@ -153,17 +158,34 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
             set_org_member_limit(org_id, limit)
             # Persist plan in DB so API-key-authenticated endpoints can look it up
             Setting.set(db, org_id, "org_plan", plan_slug, commit=False)
-            # If the subscription is now on a paid plan, clear any lingering
-            # past-due flag. Clerk only emits subscription.active/updated once
-            # the payment has actually gone through, so seeing this event with
-            # a paid plan means the card is good again — the org should get
-            # their paid caps back immediately, not after the next
-            # paymentAttempt.updated trickles in. Without this clear, an org
-            # that upgrades *during* the grace window stays capped at free
-            # because effective_plan_for_caps still sees past_due=true.
+            # Do NOT clear a HELD past-due flag just because this snapshot
+            # carries a paid plan slug.  During Stripe/Clerk dunning the
+            # subscription item stays status=="active" with its paid slug —
+            # past-due is a *payment* state, not an item-status change (the
+            # pastDue branch below deliberately leaves the plan intact; the
+            # plan only actually drops at subscriptionItem.ended).  So a
+            # routine subscription.updated snapshot — which THIS handler
+            # itself triggers via set_org_member_limit, and which Clerk also
+            # emits on seat/metadata changes — would otherwise wipe the
+            # past-due marker mid-dunning and, via the pastDue re-stamp guard
+            # below, reset the 7-day grace clock every cycle, letting an org
+            # with a permanently failing card ride paid caps for free.
+            #
+            # The authoritative "card recovered" signal is
+            # paymentAttempt.updated status=="paid" (handled below), which
+            # clears past-due AND re-runs enforce_camera_cap immediately.  A
+            # genuine upgrade during the grace window also produces that paid
+            # attempt, so nothing legitimate depends on clearing it here.
+            # Only clear when we were NOT already holding a past-due flag —
+            # in which case the set is a harmless no-op that keeps the intent
+            # explicit for future readers.
             if plan_slug in PAID_PLAN_SLUGS_WEBHOOK:
-                Setting.set(db, org_id, "payment_past_due", "false", commit=False)
-                Setting.set(db, org_id, "payment_past_due_at", "", commit=False)
+                already_past_due = (
+                    Setting.get(db, org_id, "payment_past_due", "false") == "true"
+                )
+                if not already_past_due:
+                    Setting.set(db, org_id, "payment_past_due", "false", commit=False)
+                    Setting.set(db, org_id, "payment_past_due_at", "", commit=False)
                 if has_active_item:
                     # Re-subscribe / un-cancel: an ACTIVE paid item
                     # supersedes any pending scheduled cancellation.  A
