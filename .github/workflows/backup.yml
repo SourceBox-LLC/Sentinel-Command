@@ -65,7 +65,7 @@ jobs:
 
       - name: Store encrypted backup as artifact (30-day retention)
         if: env.BACKUP_KEY != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: db-backup-${{ github.run_id }}
           path: backup.db.gz.enc
