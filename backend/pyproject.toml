@@ -7,6 +7,13 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.139.0",
     "uvicorn>=0.51.0",
+    # Pinned >=8.3.3 for PYSEC-2026-2132 — advisory against 8.3.1
+    # (the version uvicorn's base CLI pulls in).  click is a transitive
+    # dep of uvicorn; pinning it as a direct dep keeps uv.lock honest and
+    # stops `pip-audit --strict` from going red, matching the same pattern
+    # used for python-multipart and pyjwt above.  Dependabot / pip-audit
+    # will start failing the strict scan if this slides back below 8.3.3.
+    "click>=8.3.3",
     "sqlalchemy>=2.0.51",
     "pydantic>=2.13.4",
     "python-dotenv>=1.0.0",
