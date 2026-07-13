@@ -34,7 +34,7 @@ dependencies = [
     # zoneinfo isn't included.  No-op overhead on systems that already
     # have the database.  Used by the heartbeat handler's per-camera
     # scheduled-recording check to interpret HH:MM in the org's tz.
-    "tzdata>=2024.1",
+    "tzdata>=2026.3",
     # Resend transactional email SDK.  Used for operator-critical
     # notifications (camera offline, node offline, disk critical, new
     # incident).  Free tier covers ~100 active orgs at v1 event scope;
