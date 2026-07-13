@@ -170,4 +170,10 @@ constraint-dependencies = [
     # pydantic-settings: GHSA-4xgf-cpjx-pc3j (fixed in 2.14.2). Transitive
     # via fastmcp. Remove once fastmcp's own pin clears 2.14.2.
     "pydantic-settings>=2.14.2",
+    # click: PYSEC-2026-2132 (fixed in 8.3.3).  Transitive via uvicorn
+    # (and any CLI tool that uses click).  Surfaced when pip-audit --strict
+    # scanned the locked env after the fastmcp 3.4.4 bump landed via PR #84;
+    # 8.3.1 was already on disk, advisory landed during that quiet week.
+    # Remove once uvicorn's own pin clears click 8.3.3.
+    "click>=8.3.3",
 ]
