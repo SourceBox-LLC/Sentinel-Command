@@ -1511,15 +1511,15 @@ wheels = [
 
 [[package]]
 name = "resend"
-version = "2.32.2"
+version = "2.33.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dc/d5/2c46334104cce931170d756c7478263744b3eb168179c329d90a065f9b6b/resend-2.32.2.tar.gz", hash = "sha256:448001810f32e7aea39bab27318263fdc69f5764be16b7c6241ed7714dc07ea3", size = 46202, upload-time = "2026-06-17T19:47:28.243Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1d/fd/6833d1146ed294e838fffcc1478f624ccee8ed90bd33ae20dcdaeb8c46b4/resend-2.33.0.tar.gz", hash = "sha256:860619a366a51e556b99c80a4f5d909c798d84968cb895fb569e89b70ebe5a86", size = 49442, upload-time = "2026-07-13T18:44:44.226Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c3/e9/64b7f15e4d2b9bc363e1a6e0abc518f7aea4b8dfeab8d15a25e508c31fb2/resend-2.32.2-py2.py3-none-any.whl", hash = "sha256:1a8df5ef54b3a5cb7bb18b745f85fda07f1fa8f79b83dd9a25f6e37fbd625ef2", size = 72664, upload-time = "2026-06-17T19:47:26.915Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/65/7bc28462421359f88d3d58dbdddc70034a6952a9dd0905de906296207b00/resend-2.33.0-py2.py3-none-any.whl", hash = "sha256:c63088e6bfd4a869bff418164dbb73e9fef0d00297db52f9b4a7142173057cc8", size = 79152, upload-time = "2026-07-13T18:44:42.912Z" },
 ]
 
 [[package]]
@@ -1717,7 +1717,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-multipart", specifier = ">=0.0.31" },
     { name = "redis", specifier = ">=5.0.0" },
-    { name = "resend", specifier = ">=2.32.2" },
+    { name = "resend", specifier = ">=2.33.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.20" },
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.64.0" },
     { name = "slowapi", specifier = ">=0.1.10" },
