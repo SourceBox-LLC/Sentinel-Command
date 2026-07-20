@@ -68,7 +68,7 @@ jobs:
         run: uv run pytest -q
 
       # ── Frontend — npm update, then deploy.yml's frontend gates ──
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: "npm"
