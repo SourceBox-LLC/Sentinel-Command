@@ -25,7 +25,7 @@ dependencies = [
     "clerk-backend-api>=5.0.6",
     "slowapi>=0.1.10",
     "redis>=5.0.0",
-    "websockets>=16.1",
+    "websockets>=16.1.1",
     "fastmcp>=3.4.4",
     "sentry-sdk[fastapi]>=2.65.0",
     # IANA timezone database for Python's stdlib `zoneinfo`.
