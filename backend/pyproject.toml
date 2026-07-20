@@ -21,7 +21,7 @@ dependencies = [
     # deploy and turned pip-audit --strict red even though no code changed.
     "pyjwt>=2.13.0",
     "httpx>=0.27.0",
-    "svix>=1.96.1",
+    "svix>=1.98.0",
     "clerk-backend-api>=5.0.6",
     "slowapi>=0.1.10",
     "redis>=5.0.0",
