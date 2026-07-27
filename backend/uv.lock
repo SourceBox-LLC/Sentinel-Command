@@ -1728,7 +1728,7 @@ requires-dist = [
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.66.0" },
     { name = "slowapi", specifier = ">=0.1.10" },
     { name = "sqlalchemy", specifier = ">=2.0.51" },
-    { name = "svix", specifier = ">=1.98.0" },
+    { name = "svix", specifier = ">=1.99.1" },
     { name = "tzdata", specifier = ">=2026.3" },
     { name = "uvicorn", specifier = ">=0.51.0" },
     { name = "websockets", specifier = ">=16.1.1" },
@@ -1866,7 +1866,7 @@ wheels = [
 
 [[package]]
 name = "svix"
-version = "1.98.0"
+version = "1.99.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
@@ -1876,9 +1876,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "standardwebhooks" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3d/b5/375a2f8611b7b0084bf279ae3a198246bf669df865b7a75e06b834e815b2/svix-1.98.0.tar.gz", hash = "sha256:19c72a7aca07d0768b3f81ad28868d0e8bc3834e84ced9d331fb97dae011520a", size = 55762, upload-time = "2026-07-17T23:04:39.262Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/48/f5/f12d2a1254c9c891b4cfdf0e94bdf706057b0328df5f4ba9aeb6b2be3b78/svix-1.99.1.tar.gz", hash = "sha256:70374aeb3cc19fcff384e9e22a35fce16c57bf1c95a325b940dc0b5b765c7047", size = 55766, upload-time = "2026-07-23T16:33:52.134Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3c/31/14abc1a102bfb3cbaa2be86e8ece60f93d8f2a7f834ddf51c74c6c9ff154/svix-1.98.0-py3-none-any.whl", hash = "sha256:75dd3ac196753de15e7cc238c97b1a61dd95c0e8fa8aac49d9c1be079bd7439c", size = 156158, upload-time = "2026-07-17T23:04:37.617Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/fc/0d33bc99ede3fe0a029e47c947a3c2ad1b9cba1d6fcbc432765f5ac282b0/svix-1.99.1-py3-none-any.whl", hash = "sha256:c5e4af1cbcf19ed93b5a02c91f036850d10fc3d22a83092ecfcb83f637f5bb61", size = 156158, upload-time = "2026-07-23T16:33:50.79Z" },
 ]
 
 [[package]]
