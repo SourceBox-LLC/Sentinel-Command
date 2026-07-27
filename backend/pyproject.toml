@@ -7,6 +7,15 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.140.7",
     "uvicorn>=0.51.0",
+    # Pinned >=8.3.3 for PYSEC-2026-2132 against click 8.3.1 (transitive
+    # via uvicorn, which only requires click>=7.0 so any 8.x is fine).
+    # The advisory's listed fix version is 8.3.3; `uv lock` resolves the
+    # floor to the latest 8.x (currently 8.4.2), which is also clean
+    # per OSV.  Without this pin pip-audit --strict fails the deploy
+    # because the unlocked transitive resolves back to the vulnerable
+    # 8.3.1.  Remove this floor once click's next minor (8.5+) is the
+    # default uvicorn-pulled version.
+    "click>=8.3.3",
     "sqlalchemy>=2.0.51",
     "pydantic>=2.13.4",
     "python-dotenv>=1.0.0",
