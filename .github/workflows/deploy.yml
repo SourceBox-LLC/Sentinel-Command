@@ -86,9 +86,66 @@ jobs:
       #
       # `--omit=dev` skips devDependencies because they don't ship
       # to production; the prod bundle is what reaches a user.
+      #
+      # ── Advisory waiver: GHSA-qwww-vcr4-c8h2 (react-router) ───────
+      # react-router 7.12.0–8.2.0 carries a HIGH "RSC Mode CSRF Bypass"
+      # advisory.  We run react-router-dom@7.18.1 (the latest published
+      # `dom` package) in classic SPA mode — `<BrowserRouter>` +
+      # declarative `<Routes>`/`<Route>`, no `createBrowserRouter`,
+      # no `RouterProvider`, no `useFetcher`/`useActionData`/`<Form>`,
+      # no RSC/SSR.  The vulnerable code path (action execution before
+      # the 400 response in RSC mode) is NOT reachable in this app.
+      #
+      # No patched `react-router-dom` exists yet: 7.18.1 is the latest
+      # on the registry, and the advisory's "patched >= 8.3.0" only
+      # applies to the bare `react-router` package (no `react-router-dom`
+      # 8.x has been published).  npm's only suggested remediation is a
+      # breaking downgrade to react-router-dom@7.11.0, which would lose
+      # 7.12→7.18 fixes and is riskier than the (unreachable) vuln.
+      #
+      # This mirrors the backend pip-audit convention: when a CVE has no
+      # fix yet, suppress the specific advisory with a citation and
+      # revisit date instead of blocking every deploy.  npm v9 `audit`
+      # has no per-advisory `--ignore` flag, so we filter the JSON
+      # output and fail only on vulnerabilities OTHER than this one.
+      # Remove this waiver once react-router-dom publishes a fixed 8.x
+      # (or a 7.x patch) and bump the pin in package.json.
       - name: npm audit (production deps only, high+critical)
         working-directory: frontend
-        run: npm audit --audit-level=high --omit=dev
+        run: |
+          # Waived advisory IDs (GitHub Advisory URL slugs). Each MUST
+          # have a justification comment above. Revisit on every bump.
+          WAIVED="GHSA-qwww-vcr4-c8h2"
+
+          # Run the audit and capture JSON.  --audit-level=high keeps
+          # the gate at high+critical; --omit=dev scopes to prod deps.
+          REPORT="$(npm audit --audit-level=high --omit=dev --json || true)"
+
+          # Extract advisory URL slugs that are NOT in the waive list.
+          # `npm audit --json` nests advisories under .vulnerabilities
+          # → <pkg> → .via[] (each advisory is a dict with .url).
+          UNWAIVED="$(printf '%s' "$REPORT" | jq -r '
+            [.vulnerabilities[]? |
+              .via[]? |
+              select(type == "object") |
+              .url // empty
+            ] |
+            map(gsub("https://github.com/advisories/"; "")) |
+            . - ["'"$WAIVED"'"] |
+            unique |
+            .[]
+          ')"
+
+          if [ -n "$UNWAIVED" ]; then
+            echo "::error::npm audit found un-waived high+critical advisories:"
+            echo "$UNWAIVED"
+            echo ""
+            echo "Full report:"
+            printf '%s\n' "$REPORT" | jq '.vulnerabilities | to_entries | map(select(.value.severity != "low" and .value.severity != "moderate")) | from_entries'
+            exit 1
+          fi
+
+          echo "::notice::npm audit passed (1 documented waiver active: $WAIVED — react-router RSC-mode CSRF bypass, not reachable in SPA BrowserRouter mode; no patched react-router-dom published yet)."
 
       # Vitest component tests — run BEFORE the build so a regression
       # caught by tests doesn't get the chance to ship via a successful

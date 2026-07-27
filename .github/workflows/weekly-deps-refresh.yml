@@ -81,7 +81,31 @@ jobs:
         run: npm update
       - name: Frontend audit (production deps, high+critical)
         working-directory: frontend
-        run: npm audit --audit-level=high --omit=dev
+        # Gate parity with deploy.yml — same waived-advisory filter.
+        # See deploy.yml "npm audit" step for the GHSA-qwww-vcr4-c8h2
+        # (react-router RSC-mode CSRF bypass) waiver justification:
+        # app uses SPA BrowserRouter, not RSC; no patched
+        # react-router-dom published yet.
+        run: |
+          WAIVED="GHSA-qwww-vcr4-c8h2"
+          REPORT="$(npm audit --audit-level=high --omit=dev --json || true)"
+          UNWAIVED="$(printf '%s' "$REPORT" | jq -r '
+            [.vulnerabilities[]? |
+              .via[]? |
+              select(type == "object") |
+              .url // empty
+            ] |
+            map(gsub("https://github.com/advisories/"; "")) |
+            . - ["'"$WAIVED"'"] |
+            unique |
+            .[]
+          ')"
+          if [ -n "$UNWAIVED" ]; then
+            echo "::error::npm audit found un-waived high+critical advisories:"
+            echo "$UNWAIVED"
+            exit 1
+          fi
+          echo "::notice::npm audit passed (1 documented waiver active: $WAIVED)."
       - name: Frontend tests (vitest)
         working-directory: frontend
         run: npm test
