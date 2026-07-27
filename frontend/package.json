@@ -45,7 +45,7 @@
     "js-cookie": "Forced >= 3.0.7 transitively (@clerk/shared 3.47.5 pulls 3.0.5). Closes GHSA-qjx8-664m-686j — per-instance prototype hijack in assign() enabling cookie-attribute injection (high). js-cookie's get/set/remove API has been stable since 3.0.0 so the bump is API-safe for Clerk. The npm-audit --audit-level=high gate in CI failed the deploy on this; remove the override once Clerk's own @clerk/shared pin clears js-cookie 3.0.6+."
   },
   "overrides": {
-    "postcss": "^8.5.10",
+    "postcss": "^8.5.23",
     "js-cookie": "^3.0.7"
   }
 }
