@@ -47,6 +47,11 @@ dependencies = [
     # for Jinja2Templates but we depend on it directly so the email
     # path doesn't break if FastAPI ever drops the optional dep.
     "jinja2>=3.1.0",
+    # Pinned >=8.3.3 for PYSEC-2026-2132 against click 8.3.1 (advisory
+    # landed after the last green deploy).  click is a transitive dep
+    # via uvicorn; pinning it here lets pip-audit --strict go green
+    # without waiting on uvicorn to bump its lower bound.
+    "click>=8.3.3",
 ]
 
 [project.optional-dependencies]
@@ -170,4 +175,13 @@ constraint-dependencies = [
     # pydantic-settings: GHSA-4xgf-cpjx-pc3j (fixed in 2.14.2). Transitive
     # via fastmcp. Remove once fastmcp's own pin clears 2.14.2.
     "pydantic-settings>=2.14.2",
+    # click: PYSEC-2026-2132 / CVE-2026-7246 / GHSA-47fr-3ffg-hgmw
+    # (command injection in click.edit(), fixed in 8.3.3). Transitive via
+    # uvicorn, which depends on `click` with no version specifier, so uv
+    # resolves it to whatever's latest — 8.3.1 when the advisory landed.
+    # No app code calls click.edit() (it's a CLI helper used by uvicorn's
+    # launcher), so the vulnerable path isn't reachable in this service,
+    # but pip-audit --strict is a deploy gate and correctly fails the scan.
+    # Remove once uvicorn's own click pin moves past 8.3.3.
+    "click>=8.3.3",
 ]
