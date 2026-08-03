@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import { Link } from "react-router-dom"
+import { Link } from "react-router"
 import { useAuth, useOrganization } from "@clerk/clerk-react"
 import { getStreamLogs, getStreamStats, getCameras, getMcpLogs, getMcpLogStats, downloadStreamLogsCsv, downloadMcpLogsCsv } from "../services/api"
 import { useToasts } from "../hooks/useToasts.jsx"

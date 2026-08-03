@@ -1,5 +1,5 @@
 import { SignUp } from "@clerk/clerk-react"
-import { Link } from "react-router-dom"
+import { Link } from "react-router"
 import { LogoMark } from "../components/Logo.jsx"
 
 function SignUpPage() {

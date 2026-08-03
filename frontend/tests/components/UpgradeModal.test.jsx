@@ -5,14 +5,14 @@
 // PLAN_LIMITS — that's the bug we just fixed in commit 9ac7e8d. These
 // tests pin the current numbers so the next drift fails CI loudly.
 //
-// UpgradeModal uses <Link> from react-router-dom, so we wrap renders in
+// UpgradeModal uses <Link> from react-router, so we wrap renders in
 // <MemoryRouter>. It does NOT use Clerk hooks directly — it just receives
 // `currentPlan` as a prop — so no Clerk mocking is needed.
 
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 
 import UpgradeModal from '../../src/components/UpgradeModal.jsx'
 

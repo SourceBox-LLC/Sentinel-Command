@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Outlet, Link, useLocation } from "react-router-dom"
+import { Outlet, Link, useLocation } from "react-router"
 import { SignedIn, SignedOut, UserButton, OrganizationSwitcher, useOrganization } from "@clerk/clerk-react"
 import { usePlanInfo } from "../hooks/usePlanInfo.jsx"
 import AppSidebar from "./AppSidebar.jsx"

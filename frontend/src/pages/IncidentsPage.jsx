@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { useNavigate, useParams } from "react-router-dom"
+import { useNavigate, useParams } from "react-router"
 import { useAuth, useOrganization } from "@clerk/clerk-react"
 
 import { getIncidents, getIncidentCounts } from "../services/api"

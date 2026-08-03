@@ -53,9 +53,25 @@ jobs:
       # the advisory DB counts.  When a CVE shows up with no fix
       # yet, add ``--ignore-vuln <PYSEC-ID>`` here with a comment
       # citing the upstream issue and the date we plan to revisit.
+      #
+      # cryptography 48.0.1 — three CVEs that are currently UNFIXABLE.
+      # The latest clerk-backend-api (6.0.1) pins
+      # `cryptography>=45.0.0,<49.0.0`, so versions ≥49.0.0 — the fix
+      # for all three — make the dep tree unsatisfiable.  No clerk
+      # release permits cryptography 49+ as of 2026-08-03.  Ignored
+      # until clerk-backend-api raises its cryptography cap past 50.0.0.
+      #   - CVE-2026-69248 (fix 49.0.0)
+      #   - CVE-2026-69249 (fix 49.0.0)
+      #   - CVE-2026-69247 (fix 50.0.0)
+      # Revisit: when clerk-backend-api > 6.0.1 ships, drop these
+      # ignores and bump the constraint-dependencies entry to >=50.0.0.
       - name: Dependency scan (pip-audit)
         working-directory: backend
-        run: uv run pip-audit --strict
+        run: |
+          uv run pip-audit --strict \
+            --ignore-vuln CVE-2026-69248 \
+            --ignore-vuln CVE-2026-69249 \
+            --ignore-vuln CVE-2026-69247
 
       - name: Run tests
         working-directory: backend

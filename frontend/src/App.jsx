@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect } from "react"
-import { Routes, Route, Navigate, useNavigate } from "react-router-dom"
+import { Routes, Route, Navigate, useNavigate } from "react-router"
 import { useAuth, useClerk, useOrganization, CreateOrganization } from "@clerk/clerk-react"
 import Layout from "./components/Layout.jsx"
 import LoadingSpinner from "./components/LoadingSpinner.jsx"
