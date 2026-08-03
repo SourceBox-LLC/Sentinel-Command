@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Link } from "react-router-dom"
+import { Link } from "react-router"
 import { useAuth } from "@clerk/clerk-react"
 import InstallCameraNodeCard from "./InstallCameraNodeCard.jsx"
 import { LogoMark } from "./Logo.jsx"

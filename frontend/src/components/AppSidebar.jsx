@@ -1,4 +1,4 @@
-import { Link, useLocation } from "react-router-dom"
+import { Link, useLocation } from "react-router"
 import { useOrganization } from "@clerk/clerk-react"
 import { usePlanInfo } from "../hooks/usePlanInfo.jsx"
 

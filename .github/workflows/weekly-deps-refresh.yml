@@ -60,9 +60,17 @@ jobs:
       - name: Lint with ruff
         working-directory: backend
         run: uv run ruff check
+      # cryptography 48.0.1 — three CVEs currently UNFIXABLE: clerk-backend-api
+      # 6.0.1 caps cryptography<49.0.0, so ≥49.0.0 (the fix for all three)
+      # makes the tree unsatisfiable.  Mirrors deploy.yml's ignore list;
+      # drop both when clerk-backend-api raises its cap past 50.0.0.
       - name: Backend dependency scan (pip-audit --strict)
         working-directory: backend
-        run: uv run pip-audit --strict
+        run: |
+          uv run pip-audit --strict \
+            --ignore-vuln CVE-2026-69248 \
+            --ignore-vuln CVE-2026-69249 \
+            --ignore-vuln CVE-2026-69247
       - name: Backend tests
         working-directory: backend
         run: uv run pytest -q

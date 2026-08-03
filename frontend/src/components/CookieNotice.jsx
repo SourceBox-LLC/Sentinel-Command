@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Link } from "react-router-dom"
+import { Link } from "react-router"
 
 // Lightweight, dismissible cookie NOTICE — not a consent-management
 // platform. We only set strictly-necessary authentication-session

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react"
-import { Link } from "react-router-dom"
+import { Link } from "react-router"
 import { useAuth, useOrganization } from "@clerk/clerk-react"
 import { getNode } from "../services/api"
 
