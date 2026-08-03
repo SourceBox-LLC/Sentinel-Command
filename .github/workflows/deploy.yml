@@ -55,7 +55,18 @@ jobs:
       # citing the upstream issue and the date we plan to revisit.
       - name: Dependency scan (pip-audit)
         working-directory: backend
-        run: uv run pip-audit --strict
+        run: |
+          uv run pip-audit --strict \
+            --ignore-vuln CVE-2026-69247 \
+            --ignore-vuln CVE-2026-69248 \
+            --ignore-vuln CVE-2026-69249
+        # cryptography 48.0.1 advisories waived 2026-08-03:
+        #   CVE-2026-69248 (fix 49.0.0), CVE-2026-69249 (fix 49.0.0),
+        #   CVE-2026-69247 (fix 50.0.0).
+        # 48.0.1 is the highest version clerk-backend-api allows (every
+        # clerk release caps cryptography below 49.0.0), so no forward
+        # fix is resolvable until clerk relaxes its upper bound.  See
+        # backend/pyproject.toml constraint-dependencies comment.
 
       - name: Run tests
         working-directory: backend

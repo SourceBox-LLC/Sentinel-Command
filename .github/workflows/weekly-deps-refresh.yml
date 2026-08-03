@@ -62,7 +62,11 @@ jobs:
         run: uv run ruff check
       - name: Backend dependency scan (pip-audit --strict)
         working-directory: backend
-        run: uv run pip-audit --strict
+        run: |
+          uv run pip-audit --strict \
+            --ignore-vuln CVE-2026-69247 \
+            --ignore-vuln CVE-2026-69248 \
+            --ignore-vuln CVE-2026-69249
       - name: Backend tests
         working-directory: backend
         run: uv run pytest -q
