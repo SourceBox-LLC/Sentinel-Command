@@ -47,7 +47,34 @@ log() { printf '[backup_db] %s\n' "$*"; }
 die() { printf '[backup_db] ERROR: %s\n' "$*" >&2; exit 1; }
 
 command -v sqlite3 >/dev/null 2>&1 || die "sqlite3 not found on PATH"
-[ -f "$DB_PATH" ] || die "database not found at $DB_PATH"
+
+# Resolve the live DB file. The rename (opensentry → sentinel, PR #53)
+# changed DATABASE_URL and this script's default to /data/sentinel.db, but
+# the data file on the existing Fly volume was NOT renamed — it still lives
+# at /data/opensentry.db. Hard-failing here means the daily backup safety
+# net goes dark while production runs against the orphaned old file. So:
+# if the expected path is missing, look for the pre-rename fallback in the
+# same directory and back THAT up, with a loud warning. This keeps real
+# data protected through the rename dust and surfaces the drift instead of
+# masking it. The proper fix is to rename the file on the volume
+# (ops runbook), but the backup must not wait for it.
+if [ ! -f "$DB_PATH" ]; then
+  DB_DIR="$(dirname "$DB_PATH")"
+  FALLBACK="$DB_DIR/opensentry.db"       # pre-rename name (hard-coded; the only legacy alias we carry)
+  if [ -f "$FALLBACK" ]; then
+    # Keep WAL/SHM siblings consistent if present.
+    [ -f "$FALLBACK-wal" ] && cp "$FALLBACK-wal" "$DB_PATH-wal"
+    [ -f "$FALLBACK-shm" ] && cp "$FALLBACK-shm" "$DB_PATH-shm"
+    printf '[backup_db] WARNING: %s not found — backing up the pre-rename %s instead.\n' "$DB_PATH" "$FALLBACK" >&2
+    printf '[backup_db] WARNING: this means DATABASE_URL points at %s but the\n' "$DB_PATH" >&2
+    printf '[backup_db]          real data still lives at %s. The app is running against\n' "$FALLBACK" >&2
+    printf '[backup_db]          the WRONG file (or no file). See docs/runbooks for the\n' >&2
+    printf '[backup_db]          rename-volume-file ops fix. Backup proceeds on the real data.\n' >&2
+    DB_PATH="$FALLBACK"
+  else
+    die "database not found at $DB_PATH (and no pre-rename fallback at $FALLBACK)"
+  fi
+fi
 
 mkdir -p "$BACKUP_DIR"
 
