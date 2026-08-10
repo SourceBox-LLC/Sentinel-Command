@@ -160,7 +160,25 @@ constraint-dependencies = [
     # cryptography: GHSA-537c-gmf6-5ccf (fixed in 48.0.1). Transitive via
     # clerk-backend-api / authlib. Remove once a direct dep's own pin
     # clears cryptography 48.0.1.
+    # NOTE: three further advisories — PYSEC-2026-3552 (fix 50.0.0),
+    # PYSEC-2026-3553/3554 (fix 49.0.0) — landed against 48.0.1 after the
+    # last green deploy, but the fixed versions are NOT installable yet:
+    # clerk-backend-api 6.0.1 (latest published) caps cryptography to
+    # <49.0.0, so the highest reachable version is still 48.0.1. Those
+    # three IDs are suppressed in the pip-audit step via --ignore-vuln
+    # (see .github/workflows/deploy.yml). The vulnerable paths
+    # (pkcs7_decrypt_*, X.509 path-building on attacker-controlled
+    # chains) are not reachable from this codebase, which never calls
+    # cryptography directly. Revisit when clerk-backend-api ships a
+    # release allowing cryptography>=49.0.0.
     "cryptography>=48.0.1",
+    # click: PYSEC-2026-2132 (command injection in click.edit() — an
+    # unprivileged account can pass arbitrary OS commands; versions
+    # 8.3.2 and below). Fixed in 8.3.3. Transitive via uvicorn; we never
+    # call click.edit() (the vulnerable path — it's an interactive
+    # $EDITOR helper unusable from a server), but pip-audit --strict
+    # flags it. Remove once uvicorn's own pin clears click 8.3.3.
+    "click>=8.3.3",
     # joserfc: CVE-2026-48990 (fixed in 1.6.7). Transitive via
     # clerk-backend-api. Remove once clerk's own pin clears 1.6.7.
     "joserfc>=1.6.7",
