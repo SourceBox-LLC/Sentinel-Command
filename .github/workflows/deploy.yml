@@ -53,9 +53,24 @@ jobs:
       # the advisory DB counts.  When a CVE shows up with no fix
       # yet, add ``--ignore-vuln <PYSEC-ID>`` here with a comment
       # citing the upstream issue and the date we plan to revisit.
+      #
+      # 2026-08-10 — cryptography 48.0.1 carries three advisories
+      # (PYSEC-2026-3552/3553/3554) whose fixes (49.0.0 / 50.0.0)
+      # are blocked upstream: clerk-backend-api 6.0.1 caps
+      # cryptography to <49.0.0, so the fixed versions cannot be
+      # installed while we depend on clerk.  None of the vulnerable
+      # paths are reachable from our code (no pkcs7_decrypt_*,
+      # no X.509 verification of attacker-controlled cert chains).
+      # Suppress until clerk-backend-api ships a release allowing
+      # cryptography>=50.0.0.  See backend/pyproject.toml
+      # (constraint-dependencies) for the full write-up.
       - name: Dependency scan (pip-audit)
         working-directory: backend
-        run: uv run pip-audit --strict
+        run: |
+          uv run pip-audit --strict \
+            --ignore-vuln PYSEC-2026-3552 \
+            --ignore-vuln PYSEC-2026-3553 \
+            --ignore-vuln PYSEC-2026-3554
 
       - name: Run tests
         working-directory: backend
