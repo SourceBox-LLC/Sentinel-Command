@@ -60,9 +60,21 @@ jobs:
       - name: Lint with ruff
         working-directory: backend
         run: uv run ruff check
+      # Backend dependency scan.  Mirrors the pip-audit gate in
+      # deploy.yml — same --ignore-vuln suppressions must be applied
+      # here so this weekly refresh doesn't report a failure the
+      # deploy gate itself would tolerate.
+      # 2026-08-10 — cryptography 48.0.1 advisories (PYSEC-2026-3552/
+      # 3553/3554) suppressed here too; fixes blocked upstream by
+      # clerk-backend-api 6.0.1's <49.0.0 cap.  See deploy.yml and
+      # backend/pyproject.toml (constraint-dependencies) for details.
       - name: Backend dependency scan (pip-audit --strict)
         working-directory: backend
-        run: uv run pip-audit --strict
+        run: |
+          uv run pip-audit --strict \
+            --ignore-vuln PYSEC-2026-3552 \
+            --ignore-vuln PYSEC-2026-3553 \
+            --ignore-vuln PYSEC-2026-3554
       - name: Backend tests
         working-directory: backend
         run: uv run pytest -q
