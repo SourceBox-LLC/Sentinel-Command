@@ -157,10 +157,16 @@ constraint-dependencies = [
     "idna>=3.15",
     "starlette>=1.3.1",
     "pip>=26.1.2",
-    # cryptography: GHSA-537c-gmf6-5ccf (fixed in 48.0.1). Transitive via
-    # clerk-backend-api / authlib. Remove once a direct dep's own pin
-    # clears cryptography 48.0.1.
+    # cryptography: GHSA-537c-gmf6-5ccf (fixed in 48.0.1, the original
+    # pin). PYSEC-2026-3552/3553/3554 also affect 48.0.1 but their fixes
+    # (49.0.0 / 50.0.0) are blocked by clerk-backend-api 6.0.1's
+    # cryptography<49.0.0 cap — see the --ignore-vuln entries in
+    # deploy.yml. Remove once clerk widens its cryptography pin past 50.0.0.
     "cryptography>=48.0.1",
+    # click: PYSEC-2026-2132 (fixed in 8.3.3). Transitive via
+    # uvicorn (which depends on click for its CLI). Remove once uvicorn's
+    # own pin clears click 8.3.3.
+    "click>=8.3.3",
     # joserfc: CVE-2026-48990 (fixed in 1.6.7). Transitive via
     # clerk-backend-api. Remove once clerk's own pin clears 1.6.7.
     "joserfc>=1.6.7",

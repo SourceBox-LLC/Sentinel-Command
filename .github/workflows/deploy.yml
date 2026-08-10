@@ -55,7 +55,15 @@ jobs:
       # citing the upstream issue and the date we plan to revisit.
       - name: Dependency scan (pip-audit)
         working-directory: backend
-        run: uv run pip-audit --strict
+        run: |
+          uv run pip-audit --strict \
+            # PYSEC-2026-3552/3553/3554 affect cryptography 48.0.1 but their
+            # fixes (49.0.0 / 50.0.0) are blocked by clerk-backend-api 6.0.1's
+            # cryptography<49.0.0 pin. Ignore until clerk widens its pin.
+            # See backend/pyproject.toml constraint-dependencies (cryptography).
+            --ignore-vuln PYSEC-2026-3552 \
+            --ignore-vuln PYSEC-2026-3553 \
+            --ignore-vuln PYSEC-2026-3554
 
       - name: Run tests
         working-directory: backend
