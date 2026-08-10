@@ -55,7 +55,18 @@ jobs:
       # citing the upstream issue and the date we plan to revisit.
       - name: Dependency scan (pip-audit)
         working-directory: backend
-        run: uv run pip-audit --strict
+        run: |
+          uv run pip-audit --strict \
+            --ignore-vuln PYSEC-2026-3552 \
+            --ignore-vuln PYSEC-2026-3553 \
+            --ignore-vuln PYSEC-2026-3554
+          # cryptography 48.0.1 carries three advisories published
+          # 2026-08-04 (PYSEC-2026-3552/3553/3554 = CVE-2026-69247/49/48)
+          # that are fixed only in 49.0.0 / 50.0.0.  clerk-backend-api
+          # caps cryptography <49.0.0, so we cannot reach the fix while
+          # clerk pins it.  Suppressed pending a clerk release that
+          # lifts the cap — revisit 2026-09-10.  See backend/pyproject.toml
+          # [tool.uv] constraint comment for the full rationale.
 
       - name: Run tests
         working-directory: backend
