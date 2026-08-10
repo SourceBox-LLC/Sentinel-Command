@@ -55,7 +55,19 @@ jobs:
       # citing the upstream issue and the date we plan to revisit.
       - name: Dependency scan (pip-audit)
         working-directory: backend
-        run: uv run pip-audit --strict
+        run: |
+          uv run pip-audit --strict \
+            # cryptography 48.0.1 carries three advisories (PYSEC-2026-3552,
+            # PYSEC-2026-3553, PYSEC-2026-3554) whose fix versions (50.0.0 /
+            # 49.0.0) are NOT reachable: every published clerk-backend-api
+            # (latest 6.0.1) caps cryptography<49.0.0, and we depend on
+            # clerk-backend-api>=5.0.6 directly. This is an upstream blocker
+            # — waiving until Clerk releases a version supporting
+            # cryptography>=49.0.0. Tracked here; revisit on the next
+            # clerk-backend-api release. (2026-08-10)
+            --ignore-vuln PYSEC-2026-3552 \
+            --ignore-vuln PYSEC-2026-3553 \
+            --ignore-vuln PYSEC-2026-3554
 
       - name: Run tests
         working-directory: backend
