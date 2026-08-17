@@ -161,6 +161,25 @@ constraint-dependencies = [
     # clerk-backend-api / authlib. Remove once a direct dep's own pin
     # clears cryptography 48.0.1.
     "cryptography>=48.0.1",
+    # cryptography 48.0.1 carries three further advisories whose fixes
+    # are NOT installable yet:
+    #   - PYSEC-2026-3552 (Bleichenbacher oracle in pkcs7_decrypt_*,
+    #     fixed 50.0.0)
+    #   - PYSEC-2026-3553 (exponential cert path-building DoS, fixed
+    #     49.0.0)
+    #   - PYSEC-2026-3554 (wildcard DNS SAN escape from permittedSubtrees,
+    #     fixed 49.0.0)
+    # None of the vulnerable paths are reachable from our code (we use
+    # PyJWT + clerk-backend-api for JWT/JWS, never cryptography's
+    # pkcs7_decrypt_* or X.509 verification of attacker-controlled
+    # chains), and clerk-backend-api 6.0.1 (latest) declares
+    # cryptography<49.0.0,>=45.0.0 -- so the highest version uv can
+    # resolve is still 48.0.1. Until clerk ships a release allowing
+    # cryptography>=50.0.0, these three IDs are suppressed in the
+    # pip-audit step via --ignore-vuln (see .github/workflows/deploy.yml
+    # and weekly-deps-refresh.yml). Revisit when clerk-backend-api
+    # bumps its cryptography upper bound.
+    #
     # joserfc: CVE-2026-48990 (fixed in 1.6.7). Transitive via
     # clerk-backend-api. Remove once clerk's own pin clears 1.6.7.
     "joserfc>=1.6.7",
@@ -170,4 +189,12 @@ constraint-dependencies = [
     # pydantic-settings: GHSA-4xgf-cpjx-pc3j (fixed in 2.14.2). Transitive
     # via fastmcp. Remove once fastmcp's own pin clears 2.14.2.
     "pydantic-settings>=2.14.2",
+    # click: PYSEC-2026-2132 (command injection in click.edit() -- an
+    # unprivileged account can pass arbitrary OS commands through the
+    # $EDITOR helper; affects <=8.3.2). Fixed in 8.3.3. Transitive via
+    # uvicorn (CLI entrypoint) and fastmcp-slim / mcp. We never call
+    # click.edit() (interactive $EDITOR helper, unusable from a
+    # server process) but pip-audit --strict flags it. Remove once
+    # uvicorn or mcp's own pin clears click 8.3.3.
+    "click>=8.3.3",
 ]
