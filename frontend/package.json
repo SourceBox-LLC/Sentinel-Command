@@ -42,10 +42,12 @@
   },
   "overridesNotes": {
     "postcss": "Forced >= 8.5.10 transitively (Vite 8.0.7 still pulls 8.5.8). Closes Dependabot alert #8 (GHSA-qx2v-qp2m-jg93 / CVE-2026-41305) — XSS via unescaped </style> in CSS stringify output. Not reachable in our build (we don't process user-submitted CSS) but the override is cheaper than arguing reachability. Remove once Vite's own pin moves past 8.5.10.",
-    "js-cookie": "Forced >= 3.0.7 transitively (@clerk/shared 3.47.5 pulls 3.0.5). Closes GHSA-qjx8-664m-686j — per-instance prototype hijack in assign() enabling cookie-attribute injection (high). js-cookie's get/set/remove API has been stable since 3.0.0 so the bump is API-safe for Clerk. The npm-audit --audit-level=high gate in CI failed the deploy on this; remove the override once Clerk's own @clerk/shared pin clears js-cookie 3.0.6+."
+    "js-cookie": "Forced >= 3.0.7 transitively (@clerk/shared 3.47.5 pulls 3.0.5). Closes GHSA-qjx8-664m-686j — per-instance prototype hijack in assign() enabling cookie-attribute injection (high). js-cookie's get/set/remove API has been stable since 3.0.0 so the bump is API-safe for Clerk. The npm-audit --audit-level=high gate in CI failed the deploy on this; remove the override once Clerk's own @clerk/shared pin clears js-cookie 3.0.6+.",
+    "@babel/core": "Forced >= 7.29.6 transitively (eslint-plugin-react-hooks 7.1.1 -> @babel/helper-module-transforms 7.28.6 -> @babel/core 7.29.0). Closes the Dependabot security-update run that failed with security_update_not_possible: Dependabot's only computed patch path downgraded eslint-plugin-react-hooks 7.1.1 -> 5.2.0, so it refused to open a PR. @babel/core is dev-only (build/lint tooling, never shipped to users) so this is not reachable in production, but the override is cheaper than leaving the alert open and every security-update retry re-failing. 7.29.6 satisfies both transitive edges (^7.24.4 and ^7.0.0) so no dependency is downgraded. Remove once eslint-plugin-react-hooks (or its @babel/helper-module-transforms pin) moves @babel/core past 7.29.0 on its own."
   },
   "overrides": {
     "postcss": "^8.5.23",
-    "js-cookie": "^3.0.7"
+    "js-cookie": "^3.0.7",
+    "@babel/core": "^7.29.6"
   }
 }
