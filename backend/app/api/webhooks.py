@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import UTC, datetime
 
@@ -95,7 +96,15 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
 
     try:
         wh = Webhook(settings.CLERK_WEBHOOK_SECRET)
-        event = wh.verify(payload, headers)
+        # svix 2.0.0 changed Webhook.verify() to return None (it only
+        # validates the signature now; the parsed event is no longer
+        # returned).  Parse the verified payload ourselves so the code
+        # is identical under svix 1.x (verify returns the dict) and
+        # 2.x (verify returns None).  verify() still raises
+        # WebhookVerificationError on a bad signature in both versions,
+        # so this block only runs when the payload is authentic.
+        wh.verify(payload, headers)
+        event = json.loads(payload)
     except WebhookVerificationError:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid signature") from None
 
@@ -666,7 +675,14 @@ async def resend_webhook(request: Request, db: Session = Depends(get_db)):
 
     try:
         wh = Webhook(settings.RESEND_WEBHOOK_SECRET)
-        event = wh.verify(payload, headers)
+        # svix 2.0.0 changed Webhook.verify() to return None (it only
+        # validates the signature now; the parsed event is no longer
+        # returned).  Parse the verified payload ourselves so the code
+        # is identical under svix 1.x (verify returns the dict) and
+        # 2.x (verify returns None).  See the Clerk handler above for
+        # the full rationale.
+        wh.verify(payload, headers)
+        event = json.loads(payload)
     except WebhookVerificationError:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid signature") from None
 
