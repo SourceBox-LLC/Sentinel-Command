@@ -42,10 +42,12 @@
   },
   "overridesNotes": {
     "postcss": "Forced >= 8.5.10 transitively (Vite 8.0.7 still pulls 8.5.8). Closes Dependabot alert #8 (GHSA-qx2v-qp2m-jg93 / CVE-2026-41305) — XSS via unescaped </style> in CSS stringify output. Not reachable in our build (we don't process user-submitted CSS) but the override is cheaper than arguing reachability. Remove once Vite's own pin moves past 8.5.10.",
-    "js-cookie": "Forced >= 3.0.7 transitively (@clerk/shared 3.47.5 pulls 3.0.5). Closes GHSA-qjx8-664m-686j — per-instance prototype hijack in assign() enabling cookie-attribute injection (high). js-cookie's get/set/remove API has been stable since 3.0.0 so the bump is API-safe for Clerk. The npm-audit --audit-level=high gate in CI failed the deploy on this; remove the override once Clerk's own @clerk/shared pin clears js-cookie 3.0.6+."
+    "js-cookie": "Forced >= 3.0.7 transitively (@clerk/shared 3.47.5 pulls 3.0.5). Closes GHSA-qjx8-664m-686j — per-instance prototype hijack in assign() enabling cookie-attribute injection (high). js-cookie's get/set/remove API has been stable since 3.0.0 so the bump is API-safe for Clerk. The npm-audit --audit-level=high gate in CI failed the deploy on this; remove the override once Clerk's own @clerk/shared pin clears js-cookie 3.0.6+.",
+    "@babel/core": "Forced >= 7.29.7 transitively (pulled at 7.29.0 by eslint-plugin-react-hooks@7.1.1 / @babel/helper-module-transforms@7.28.6). Closes GHSA-4x5r-pxfx-6jf8 — Arbitrary File Read via sourceMappingURL Comment (low, CVSS 3.2). Not reachable in our build (Vite/babel transforms source we control, no attacker-supplied sourceMappingURL) but the override lets Dependabot's security-update job resolve cleanly instead of failing with security_update_not_possible — without it Dependabot would try to downgrade eslint-plugin-react-hooks 7.1.1 to 5.2.0. 7.29.7 satisfies eslint-plugin-react-hooks' ^7.24.4 and @babel/helper-module-transforms' ^7.0.0, so no downgrade occurs. Remove once eslint-plugin-react-hooks ships against a >=7.29.6 baseline or @babel/core 8 is adopted."
   },
   "overrides": {
     "postcss": "^8.5.23",
-    "js-cookie": "^3.0.7"
+    "js-cookie": "^3.0.7",
+    "@babel/core": "^7.29.7"
   }
 }
