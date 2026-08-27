@@ -170,4 +170,9 @@ constraint-dependencies = [
     # pydantic-settings: GHSA-4xgf-cpjx-pc3j (fixed in 2.14.2). Transitive
     # via fastmcp. Remove once fastmcp's own pin clears 2.14.2.
     "pydantic-settings>=2.14.2",
+    # click: PYSEC-2026-2132 (fixed in 8.3.3). Transitive via uvicorn (and
+    # any CLI tool built on click).  Advisory landed ~2026-07-20 and turned
+    # pip-audit --strict red on the fastapi-0.139.2 bump run.  Remove once
+    # uvicorn's own click pin clears 8.3.3.
+    "click>=8.3.3",
 ]
