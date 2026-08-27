@@ -36,13 +36,27 @@ jobs:
 
       # Patch + minor: approve and enable auto-merge. GitHub then merges
       # automatically once required status checks (see setting #2) pass.
+      #
+      # `gh pr merge --auto` can fail transiently with "Base branch was
+      # modified. Review and try the merge again." if `master` advances
+      # while this job is running (GitHub invalidates the merge state).
+      # That's a race, not a real problem — retry a few times with backoff.
       - name: Approve + enable auto-merge (patch & minor)
         if: >-
           steps.meta.outputs.update-type == 'version-update:semver-patch' ||
           steps.meta.outputs.update-type == 'version-update:semver-minor'
         run: |
           gh pr review --approve "$PR_URL"
-          gh pr merge --auto --squash "$PR_URL"
+          for attempt in 1 2 3 4 5; do
+            if gh pr merge --auto --squash "$PR_URL"; then
+              echo "Auto-merge enabled on attempt $attempt."
+              exit 0
+            fi
+            echo "Attempt $attempt failed (likely base-branch race); retrying in ${attempt}0s..."
+            sleep "${attempt}0"
+          done
+          echo "::error::Failed to enable auto-merge after 5 attempts"
+          exit 1
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
