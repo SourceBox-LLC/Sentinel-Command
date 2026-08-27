@@ -62,7 +62,15 @@ jobs:
         run: uv run ruff check
       - name: Backend dependency scan (pip-audit --strict)
         working-directory: backend
-        run: uv run pip-audit --strict
+        # The three cryptography ignores mirror deploy.yml — fixed
+        # versions (49.0.0/50.0.0) are blocked by clerk-backend-api's
+        # <49.0.0 cap; vulnerable paths unreachable in our code. See
+        # deploy.yml for the full reachability rationale.
+        run: |
+          uv run pip-audit --strict \
+            --ignore-vuln PYSEC-2026-3552 \
+            --ignore-vuln PYSEC-2026-3553 \
+            --ignore-vuln PYSEC-2026-3554
       - name: Backend tests
         working-directory: backend
         run: uv run pytest -q
