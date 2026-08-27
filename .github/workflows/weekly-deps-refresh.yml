@@ -62,7 +62,16 @@ jobs:
         run: uv run ruff check
       - name: Backend dependency scan (pip-audit --strict)
         working-directory: backend
-        run: uv run pip-audit --strict
+        # cryptography 48.0.1 advisories (PYSEC-2026-3552/3553/3554) are
+        # unfixable upstream — clerk-backend-api (all versions, latest
+        # 6.0.1) caps cryptography<49.0.0. Waiving until Clerk releases
+        # a version supporting cryptography>=49.0.0. Keep in sync with
+        # the same waivers in deploy.yml. (2026-08-10)
+        run: |
+          uv run pip-audit --strict \
+            --ignore-vuln PYSEC-2026-3552 \
+            --ignore-vuln PYSEC-2026-3553 \
+            --ignore-vuln PYSEC-2026-3554
       - name: Backend tests
         working-directory: backend
         run: uv run pytest -q
