@@ -36,13 +36,44 @@ jobs:
 
       # Patch + minor: approve and enable auto-merge. GitHub then merges
       # automatically once required status checks (see setting #2) pass.
+      #
+      # Idempotency note: `pull_request` fires on multiple events (opened,
+      # synchronize, reopened, ready_for_review), so a Dependabot PR can
+      # trigger several runs of this workflow that race each other. The
+      # first run to complete enables auto-merge and the PR merges; later
+      # runs then hit "Pull Request is not mergeable" (the PR is already
+      # merged/closing) and the job fails — a false alarm. To avoid that:
+      #   - Skip everything if the PR is already closed/merged.
+      #   - Tolerate a racy "not mergeable" failure from `gh pr merge` so a
+      #     losing run exits success instead of failing the check.
       - name: Approve + enable auto-merge (patch & minor)
         if: >-
           steps.meta.outputs.update-type == 'version-update:semver-patch' ||
           steps.meta.outputs.update-type == 'version-update:semver-minor'
         run: |
-          gh pr review --approve "$PR_URL"
-          gh pr merge --auto --squash "$PR_URL"
+          # Bail out early if another run already closed/merged this PR.
+          PR_STATE="$(gh pr view "$PR_URL" --json state --jq '.state')"
+          if [ "$PR_STATE" != "OPEN" ]; then
+            echo "PR is $PR_STATE (already merged/closed by another run) — nothing to do."
+            exit 0
+          fi
+
+          # Approve. `gh pr review` no-ops if already approved by this token.
+          gh pr review --approve "$PR_URL" || \
+            echo "approve skipped (likely already approved)."
+
+          # Enable auto-merge. Tolerate the racy "not mergeable" error that
+          # happens when a parallel run merged the PR between our state
+          # check above and now — that's a win, not a failure.
+          if ! gh pr merge --auto --squash "$PR_URL"; then
+            PR_STATE2="$(gh pr view "$PR_URL" --json state --jq '.state')"
+            if [ "$PR_STATE2" != "OPEN" ]; then
+              echo "PR merged/closed by another run during this step — exiting success."
+              exit 0
+            fi
+            echo "::warning::gh pr merge --auto failed and PR is still OPEN"
+            exit 1
+          fi
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
