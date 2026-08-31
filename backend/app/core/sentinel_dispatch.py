@@ -41,6 +41,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.license_client import is_sentinel_licensed
 from app.core.plans import effective_plan_for_caps
 from app.models.models import SentinelConfig, SentinelRun, Setting
 
@@ -309,6 +310,15 @@ def _can_dispatch_for_kind(
     plan = effective_plan_for_caps(db, cfg.org_id)
     if plan not in SENTINEL_PLANS:
         return False, "plan_not_eligible"
+
+    # Self-hosted installs are unconditionally "self_host" per the
+    # plan-gate check above — that alone would make Sentinel free for
+    # everyone self-hosting, since self_host has no billing at all.
+    # This is the separate license gate that closes that: self_host
+    # additionally needs a currently-valid Sentinel license (see
+    # app/core/license_client.py). No-op for hosted Clerk orgs.
+    if plan == "self_host" and not is_sentinel_licensed(db):
+        return False, "license_required"
 
     field = _KIND_TO_TRIGGER_FIELD.get(kind)
     if field is None:
@@ -649,6 +659,8 @@ def dispatch_manual_run(
     plan = effective_plan_for_caps(db, org_id)
     if plan not in SENTINEL_PLANS:
         raise ValueError("plan_not_eligible")
+    if plan == "self_host" and not is_sentinel_licensed(db):
+        raise ValueError("license_required")
     cap = cap_for_plan(plan)
 
     if max(0, cap - runs_used_this_month(db, org_id)) <= 0:

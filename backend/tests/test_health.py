@@ -36,14 +36,17 @@ def test_health_detailed_returns_full_shape(unauthenticated_client):
     assert data["uptime_seconds"] >= 0
     assert "started_at" in data
     assert "time" in data
-    # 8 keys: 4 dependency probes (shared with /api/health/ready) +
+    # 9 keys: 4 dependency probes (shared with /api/health/ready) +
     # 4 in-process subsystem snapshots (HLS cache, viewer usage,
-    # SSE, Resend transport).  Status-page consumers may render any
-    # of these; pinning the set catches "someone added/removed a key
-    # without updating the dashboard schema."
+    # SSE, Resend transport) + the self-host Sentinel license state
+    # (never critical — see probe_sentinel_license — so it isn't one
+    # of the /api/health/ready-shared probes above). Status-page
+    # consumers may render any of these; pinning the set catches
+    # "someone added/removed a key without updating the dashboard
+    # schema."
     assert set(data["checks"].keys()) == {
         "database", "clerk", "disk", "email_worker",
-        "hls_cache", "viewer_usage", "sse", "resend",
+        "hls_cache", "viewer_usage", "sse", "resend", "sentinel_license",
     }
 
 

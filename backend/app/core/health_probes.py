@@ -172,6 +172,47 @@ async def probe_clerk(timeout_seconds: float = 5.0) -> ProbeResult:
         )
 
 
+def probe_sentinel_license() -> ProbeResult:
+    """Report the cached Sentinel AI license state for self-hosted
+    installs (see app/core/license_client.py for the full contract).
+
+    Deliberately never "critical" — an unlicensed or grace-degraded
+    Sentinel feature is not a Command Center outage, so this must
+    never flip /api/health/ready's rollup. It's surfaced on
+    /api/health/detailed only, for an operator to notice.
+    """
+    if not settings.is_local_auth():
+        return ProbeResult(status="disabled", data={})
+
+    if not settings.SENTINEL_LICENSE_KEY:
+        return ProbeResult(status="unconfigured", data={})
+
+    from app.core.license_client import SENTINEL_LICENSE_GRACE_HOURS, is_sentinel_licensed
+    from app.models.models import Setting
+
+    db = SessionLocal()
+    try:
+        licensed = is_sentinel_licensed(db)
+        reachable = Setting.get(db, settings.LOCAL_ORG_ID, "sentinel_license_last_check_reachable", "")
+        last_check_at = Setting.get(db, settings.LOCAL_ORG_ID, "sentinel_license_last_check_at", "")
+        last_ok_at = Setting.get(db, settings.LOCAL_ORG_ID, "sentinel_license_last_ok_at", "")
+    finally:
+        db.close()
+
+    data = {
+        "licensed": licensed,
+        "last_check_reachable": reachable == "true",
+        "last_check_at": last_check_at or None,
+        "last_ok_at": last_ok_at or None,
+        "grace_hours": SENTINEL_LICENSE_GRACE_HOURS,
+    }
+    # "warn" (not "critical") when the service is unreachable — whether
+    # currently coasting on grace or already exhausted, this is an
+    # admin-visible heads-up, not a page.
+    status = "ok" if reachable == "true" else "warn"
+    return ProbeResult(status=status, data=data)
+
+
 # Disk-usage thresholds match the existing detailed endpoint's:
 #   - 95%+ → critical (write failures imminent; should page)
 #   - 80%+ → warn (plan a volume resize; not yet failing)

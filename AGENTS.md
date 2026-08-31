@@ -276,7 +276,9 @@ MCP Client ──Bearer osc_…──→ FastMCP → ScopeMiddleware → tools
 ### Local auth (self-hosted, `AUTH_PROVIDER=local`)
 
 An alternate human-login mode for single-admin, fully self-hosted installs — no
-Clerk account, no billing, everything unlocked. `get_current_user()` dispatches
+Clerk account, no billing. Everything is unlocked EXCEPT Sentinel AI, which is
+licensed separately (see below) since it's the one feature with a real ongoing
+LLM cost regardless of who's running the dashboard. `get_current_user()` dispatches
 on `settings.AUTH_PROVIDER` between the Clerk path above and
 `core/local_auth.py`'s local-JWT path; both produce the same `AuthUser` shape,
 so every downstream route, `require_view`/`require_admin`/`require_active_billing`,
@@ -303,6 +305,23 @@ and the plan-enforcement engine work unmodified regardless of provider.
   Clerk account to send webhooks); the hourly Clerk-plan-reconciliation loop
   isn't scheduled; `core/recipients.py` returns `[LOCAL_ADMIN_EMAIL]` directly
   instead of querying Clerk org membership.
+- **Sentinel AI license gate**: a genuinely separate service (sibling repo
+  `Sentinel-License-Service`, not part of this codebase) validates a license
+  key an operator configures via `SENTINEL_LICENSE_KEY`. `core/license_client.py`
+  checks in every 15 min (`_sentinel_license_reconcile_loop` in `main.py`),
+  caching the verdict in the same `Setting` KV pair shape Clerk's billing
+  webhook already uses (`sentinel_license_valid`, `sentinel_license_last_ok_at`,
+  etc.) — no new table. Fail-open for `SENTINEL_LICENSE_GRACE_HOURS` (72h) if
+  the service is unreachable, using the last known-good state; fail closed
+  immediately (no grace) the moment the service is reachable and explicitly
+  says no. The gate itself is a plain boolean check layered on top of the
+  existing plan gate at three call sites — `_can_dispatch_for_kind` and
+  `dispatch_manual_run` (`core/sentinel_dispatch.py`), `_has_sentinel_access`
+  (`api/sentinel.py`) — plus the multi-tenant agent's MCP auth resolver
+  (`mcp/server.py::_resolve_via_agent_key`), which independently re-checks the
+  same plan set and needs the same license check for the same reason.
+  `resolve_org_plan()`'s self_host short-circuit is untouched — camera caps,
+  viewer-hours, MCP access, everything else self-host unlocks is unaffected.
 - **Frontend**: `frontend/src/auth/` is a facade — `VITE_AUTH_PROVIDER=clerk`
   (default) re-exports `@clerk/clerk-react`'s hooks/components directly;
   `VITE_AUTH_PROVIDER=local` selects `frontend/src/auth/local.jsx`'s

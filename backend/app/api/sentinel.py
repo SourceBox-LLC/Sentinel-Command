@@ -40,6 +40,7 @@ from app.core.audit import write_audit
 from app.core.auth import AuthUser, require_admin, require_view
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.license_client import is_sentinel_licensed
 from app.core.plans import effective_plan_for_caps, get_plan_display_name
 from app.core.sentinel_dispatch import (
     SENTINEL_PLANS,
@@ -74,8 +75,31 @@ def _has_sentinel_access(db: Session, org_id: str) -> bool:
     """True iff the org's effective plan is in the Sentinel-eligible
     set (Pro or Pro Plus today).  Free / past-due-too-long orgs
     return False and are gated out of write endpoints / dispatch /
-    the agent MCP path."""
-    return effective_plan_for_caps(db, org_id) in SENTINEL_PLANS
+    the agent MCP path.
+
+    Self-hosted orgs are unconditionally "self_host" (Sentinel-eligible
+    by plan alone, since self-host has no billing at all) — the
+    additional `is_sentinel_licensed` check is what actually requires a
+    paid license for self-host. No-op for hosted Clerk orgs.
+    """
+    plan = effective_plan_for_caps(db, org_id)
+    if plan not in SENTINEL_PLANS:
+        return False
+    if plan == "self_host" and not is_sentinel_licensed(db):
+        return False
+    return True
+
+
+def _sentinel_access_denial_detail(db: Session, org_id: str) -> dict:
+    """402 detail body for denied Sentinel access — distinguishes "need
+    a paid Clerk plan" from "self-hosted, need a Sentinel license" so a
+    frontend can eventually show the right call to action instead of an
+    "upgrade to Pro" CTA that doesn't apply to a self-hosted install.
+    """
+    plan = effective_plan_for_caps(db, org_id)
+    if plan == "self_host" and not is_sentinel_licensed(db):
+        return {"error": "license_required"}
+    return {"error": "plan_required", "plan": "pro"}
 
 
 def _ensure_config_row(db: Session, org_id: str) -> SentinelConfig:
@@ -170,7 +194,13 @@ async def get_config(
     """
     cfg = _ensure_config_row(db, user.org_id)
     plan = effective_plan_for_caps(db, user.org_id)
-    has_access = plan in SENTINEL_PLANS
+    # _has_sentinel_access (not a raw `plan in SENTINEL_PLANS` check)
+    # so a self-hosted install without a valid license shows the same
+    # gated state here that dispatch/PATCH/manual-run already enforce —
+    # this endpoint used to only check plan membership, which meant an
+    # unlicensed self-host org saw plan_gated: false and a full cap
+    # here while every write path correctly blocked it underneath.
+    has_access = _has_sentinel_access(db, user.org_id)
     return {
         "config": cfg.to_dict(),
         "plan_gated": not has_access,
@@ -179,8 +209,10 @@ async def get_config(
         "plan_required": "pro",
         "plan_current": get_plan_display_name(plan),
         # Cap for the org's CURRENT plan — drives the run-budget UI.
-        # 0 when the org isn't on a Sentinel-eligible plan.
-        "monthly_cap": cap_for_plan(plan),
+        # 0 when the org isn't on a Sentinel-eligible plan OR (self-host)
+        # doesn't have a valid license, even though the plan itself
+        # ("self_host") nominally carries a non-zero cap.
+        "monthly_cap": cap_for_plan(plan) if has_access else 0,
     }
 
 
@@ -202,7 +234,7 @@ async def patch_config(
     if not _has_sentinel_access(db, user.org_id):
         raise HTTPException(
             status_code=402,
-            detail={"error": "plan_required", "plan": "pro"},
+            detail=_sentinel_access_denial_detail(db, user.org_id),
         )
 
     cfg = _ensure_config_row(db, user.org_id)
@@ -425,7 +457,7 @@ async def post_manual_run(
     if not _has_sentinel_access(db, user.org_id):
         raise HTTPException(
             status_code=402,
-            detail={"error": "plan_required", "plan": "pro"},
+            detail=_sentinel_access_denial_detail(db, user.org_id),
         )
 
     try:
@@ -450,6 +482,16 @@ async def post_manual_run(
             raise HTTPException(
                 status_code=402,
                 detail={"error": "plan_required", "plan": "pro"},
+            ) from exc
+        if str(exc) == "license_required":
+            # Defense-in-depth only in practice: the upfront
+            # _has_sentinel_access check above already catches this
+            # for the one real caller of dispatch_manual_run. Mapped
+            # anyway so it can't fall through to an unhandled 500 if
+            # that ever changes.
+            raise HTTPException(
+                status_code=402,
+                detail={"error": "license_required"},
             ) from exc
         if str(exc) == "dispatch_globally_disabled":
             # Operator paused the agent fleet-wide (kill-switch or the

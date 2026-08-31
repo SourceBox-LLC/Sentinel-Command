@@ -273,6 +273,16 @@ async def lifespan(app):
     # errored.  See _sentinel_reaper_loop below + reap_stranded_runs
     # in app/core/sentinel_dispatch.py.
     sentinel_reaper_task = asyncio.create_task(_sentinel_reaper_loop())
+    # Self-host-only: checks in with the separate Sentinel License
+    # Service so Sentinel AI can be gated on a paid license (everything
+    # else about self-host stays free/unlocked). No-op — task not even
+    # scheduled — for hosted Clerk orgs or a self-host install that
+    # hasn't configured a key yet.
+    sentinel_license_task = (
+        asyncio.create_task(_sentinel_license_reconcile_loop())
+        if settings.is_local_auth() and settings.SENTINEL_LICENSE_KEY
+        else None
+    )
     print(
         f"[App] Sentinel Command Center started "
         f"(log retention: {LOG_RETENTION_DAYS}d, "
@@ -292,6 +302,8 @@ async def lifespan(app):
     disk_check_task.cancel()
     motion_digest_task.cancel()
     sentinel_reaper_task.cancel()
+    if sentinel_license_task is not None:
+        sentinel_license_task.cancel()
     print("[System] Shutdown complete")
 
 
@@ -1402,6 +1414,38 @@ async def _sentinel_reaper_loop():
             logger.exception("[SentinelReaper] Sweep failed")
 
 
+SENTINEL_LICENSE_CHECKIN_INTERVAL_SECONDS = 15 * 60
+
+
+async def _sentinel_license_reconcile_loop():
+    """Background task — check in with the (separate) Sentinel License
+    Service and cache the verdict, for self-hosted installs that have
+    configured a license key. See app/core/license_client.py for the
+    full fail-open/fail-closed contract this feeds.
+
+    Unlike _plan_reconcile_loop (sleeps first, hourly), this does one
+    immediate check-in at boot before its first sleep — a freshly
+    started self-hosted install with a valid key shouldn't have to
+    wait 15 minutes for Sentinel access to light up. The interval
+    itself is deliberately tighter than the hourly Clerk-reconcile
+    cadence: a revoked self-host license should stop working within
+    ~15 minutes, not up to an hour.
+    """
+    from app.core.license_client import check_in_with_license_service, warn_if_in_extended_grace
+
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await check_in_with_license_service(db)
+                warn_if_in_extended_grace(db)
+            finally:
+                db.close()
+        except Exception:
+            logger.exception("[SentinelLicense] check-in tick failed")
+        await asyncio.sleep(SENTINEL_LICENSE_CHECKIN_INTERVAL_SECONDS)
+
+
 # ── Pre-auth rate limit for the /mcp/ ASGI mount ──────────────────────
 #
 # /mcp is mounted as an ASGI app (FastMCP), not a FastAPI route, so the
@@ -1675,6 +1719,7 @@ async def health_check_detailed():
         probe_database,
         probe_disk,
         probe_email_worker,
+        probe_sentinel_license,
     )
 
     now_wall = datetime.now(tz=UTC)
@@ -1695,6 +1740,8 @@ async def health_check_detailed():
     clerk = clerk_probe.to_dict()
     disk = disk_probe.to_dict()
     email_worker_check = worker_probe.to_dict()
+    sentinel_license = await asyncio.to_thread(probe_sentinel_license)
+    sentinel_license_check = sentinel_license.to_dict()
 
     # ── In-memory subsystem snapshots ────────────────────────
     # All read without locks: a momentary inconsistency in a count is
@@ -1773,7 +1820,11 @@ async def health_check_detailed():
     critical_probes = [db_check, clerk, disk, email_worker_check]
     if any(p.get("status") == "critical" for p in critical_probes):
         overall = "unhealthy"
-    elif viewer_usage["status"] == "warn" or disk["status"] == "warn":
+    elif (
+        viewer_usage["status"] == "warn"
+        or disk["status"] == "warn"
+        or sentinel_license_check["status"] == "warn"
+    ):
         overall = "degraded"
     else:
         overall = "healthy"
@@ -1793,5 +1844,6 @@ async def health_check_detailed():
             "viewer_usage": viewer_usage,
             "sse": sse,
             "resend": resend,
+            "sentinel_license": sentinel_license_check,
         },
     }

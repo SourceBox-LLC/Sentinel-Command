@@ -30,6 +30,16 @@ class Config:
     LOCAL_ADMIN_EMAIL: str = os.getenv("LOCAL_ADMIN_EMAIL", "")
     LOCAL_ORG_ID: str = os.getenv("LOCAL_ORG_ID", "self-host")
 
+    # Self-hosted Sentinel AI licensing — see app/core/license_client.py.
+    # Optional: a self-hosted install with no key simply never gets
+    # Sentinel AI access (everything else stays free and unaffected).
+    # The service is a genuinely separate deployment from this backend
+    # (see the sibling Sentinel-License-Service repo).
+    SENTINEL_LICENSE_KEY: str = os.getenv("SENTINEL_LICENSE_KEY", "")
+    SENTINEL_LICENSE_SERVICE_URL: str = os.getenv(
+        "SENTINEL_LICENSE_SERVICE_URL", "https://sentinel-license.fly.dev"
+    )
+
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./sentinel.db")
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
