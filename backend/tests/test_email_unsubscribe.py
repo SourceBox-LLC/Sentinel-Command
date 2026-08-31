@@ -150,6 +150,39 @@ def test_fail_closed_when_clerk_secret_unset(monkeypatch):
     assert email_unsubscribe.verify_token(token) is None
 
 
+def test_hosted_mode_ignores_app_secret_key(monkeypatch):
+    """Regression: _get_secret() used to prefer APP_SECRET_KEY over
+    CLERK_SECRET_KEY whenever it was merely set, with no AUTH_PROVIDER
+    gate at all. A hosted (AUTH_PROVIDER=clerk) deployment must keep
+    deriving from CLERK_SECRET_KEY unconditionally — an operator
+    setting the generically-named APP_SECRET_KEY for any unrelated
+    future purpose must never silently invalidate every outstanding
+    unsubscribe link."""
+    from app.core.config import settings as app_settings
+
+    assert app_settings.AUTH_PROVIDER == "clerk"  # test suite default
+    secret_before = email_unsubscribe._get_secret()
+
+    monkeypatch.setattr(app_settings, "APP_SECRET_KEY", "some-unrelated-future-secret")
+
+    assert email_unsubscribe._get_secret() == secret_before
+
+
+def test_local_mode_uses_app_secret_key_not_clerk(monkeypatch):
+    """Self-hosted installs have no Clerk key at all — APP_SECRET_KEY
+    must be the source there, not merely preferred when set."""
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "AUTH_PROVIDER", "local")
+    monkeypatch.setattr(app_settings, "APP_SECRET_KEY", "local-secret-key-value")
+
+    secret = email_unsubscribe._get_secret()
+    assert secret is not None
+    # Changing CLERK_SECRET_KEY must have zero effect in local mode.
+    monkeypatch.setattr(app_settings, "CLERK_SECRET_KEY", "something-else-entirely")
+    assert email_unsubscribe._get_secret() == secret
+
+
 # ── URL construction ────────────────────────────────────────────────
 
 def test_build_unsubscribe_url_includes_token(monkeypatch):

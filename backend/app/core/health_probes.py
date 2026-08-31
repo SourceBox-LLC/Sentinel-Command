@@ -172,7 +172,16 @@ async def probe_clerk(timeout_seconds: float = 5.0) -> ProbeResult:
         )
 
 
-def probe_sentinel_license() -> ProbeResult:
+# Grace window for a freshly-started process — the background
+# check-in loop's immediate boot-time tick (see
+# _sentinel_license_reconcile_loop in main.py) hasn't necessarily
+# landed yet. Mirrors EMAIL_WORKER_STARTUP_GRACE_SECONDS's pattern
+# above: "never ticked" only means "unhealthy" once we're past a
+# window where that's actually surprising.
+SENTINEL_LICENSE_PROBE_STARTUP_GRACE_SECONDS = 30.0
+
+
+def probe_sentinel_license(uptime_seconds: float) -> ProbeResult:
     """Report the cached Sentinel AI license state for self-hosted
     installs (see app/core/license_client.py for the full contract).
 
@@ -180,6 +189,11 @@ def probe_sentinel_license() -> ProbeResult:
     Sentinel feature is not a Command Center outage, so this must
     never flip /api/health/ready's rollup. It's surfaced on
     /api/health/detailed only, for an operator to notice.
+
+    Status reflects actual license validity, not just reachability —
+    a revoked/expired/suspended license with a perfectly reachable
+    license service must never report "ok" just because the HTTP
+    round-trip succeeded.
     """
     if not settings.is_local_auth():
         return ProbeResult(status="disabled", data={})
@@ -187,15 +201,21 @@ def probe_sentinel_license() -> ProbeResult:
     if not settings.SENTINEL_LICENSE_KEY:
         return ProbeResult(status="unconfigured", data={})
 
-    from app.core.license_client import SENTINEL_LICENSE_GRACE_HOURS, is_sentinel_licensed
+    from app.core.license_client import (
+        _LAST_CHECK_AT,
+        _LAST_CHECK_REACHABLE,
+        _LAST_OK_AT,
+        SENTINEL_LICENSE_GRACE_HOURS,
+        is_sentinel_licensed,
+    )
     from app.models.models import Setting
 
     db = SessionLocal()
     try:
         licensed = is_sentinel_licensed(db)
-        reachable = Setting.get(db, settings.LOCAL_ORG_ID, "sentinel_license_last_check_reachable", "")
-        last_check_at = Setting.get(db, settings.LOCAL_ORG_ID, "sentinel_license_last_check_at", "")
-        last_ok_at = Setting.get(db, settings.LOCAL_ORG_ID, "sentinel_license_last_ok_at", "")
+        reachable = Setting.get(db, settings.LOCAL_ORG_ID, _LAST_CHECK_REACHABLE, "")
+        last_check_at = Setting.get(db, settings.LOCAL_ORG_ID, _LAST_CHECK_AT, "")
+        last_ok_at = Setting.get(db, settings.LOCAL_ORG_ID, _LAST_OK_AT, "")
     finally:
         db.close()
 
@@ -206,10 +226,20 @@ def probe_sentinel_license() -> ProbeResult:
         "last_ok_at": last_ok_at or None,
         "grace_hours": SENTINEL_LICENSE_GRACE_HOURS,
     }
-    # "warn" (not "critical") when the service is unreachable — whether
-    # currently coasting on grace or already exhausted, this is an
-    # admin-visible heads-up, not a page.
-    status = "ok" if reachable == "true" else "warn"
+
+    if not last_check_at and uptime_seconds < SENTINEL_LICENSE_PROBE_STARTUP_GRACE_SECONDS:
+        # No check-in has landed yet, but the process just started —
+        # give the boot-time tick a few seconds rather than reporting
+        # "warn" on every single restart.
+        data["note"] = "startup grace"
+        return ProbeResult(status="ok", data=data)
+
+    # Only a confirmed-fresh, confirmed-valid answer is "ok". Coasting
+    # on grace (service unreachable, licensed=True from a past check-in)
+    # and an explicit denial (licensed=False even though reachable=True)
+    # both surface as "warn" — never "critical" per the docstring above
+    # — but neither should be silently reported as fully healthy.
+    status = "ok" if (licensed and reachable == "true") else "warn"
     return ProbeResult(status=status, data=data)
 
 

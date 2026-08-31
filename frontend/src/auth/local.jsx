@@ -9,7 +9,7 @@
  * know which mode is active.
  */
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { API_URL } from "../services/api.js"
 
 const TOKEN_KEY = "sentinel_local_token"
@@ -46,9 +46,14 @@ function readToken() {
 function writeToken(token) {
   try {
     localStorage.setItem(TOKEN_KEY, token)
+    return true
   } catch {
-    // Private browsing / storage disabled — session just won't survive
-    // a reload, which is a degraded-but-safe fallback, not a crash.
+    // Private browsing / storage disabled. Returning false lets the
+    // caller keep an in-memory fallback (see LocalAuthProvider's
+    // tokenRef) so the session still works for this tab — it just
+    // won't survive a reload — instead of silently degrading into a
+    // signed-in UI with a getToken() that returns null.
+    return false
   }
 }
 
@@ -83,16 +88,33 @@ function useLocalAuthContext() {
 
 export function LocalAuthProvider({ children }) {
   const [isSignedIn, setIsSignedIn] = useState(() => !!readToken())
+  // In-memory fallback alongside localStorage: if a write ever fails
+  // (Safari private browsing, a storage-blocking extension, quota),
+  // getToken() below still returns the right value for THIS tab/session
+  // — matching what "degraded but safe, just won't survive a reload"
+  // is actually supposed to mean, instead of the UI silently believing
+  // it's signed in while every real API call gets a null token.
+  const tokenRef = useRef(readToken())
 
   const login = useCallback((token) => {
-    writeToken(token)
+    tokenRef.current = token
+    if (!writeToken(token)) {
+      console.warn(
+        "[LocalAuth] Could not persist the session (storage blocked or " +
+          "unavailable) — this tab will stay signed in, but the session " +
+          "will not survive a reload."
+      )
+    }
     setIsSignedIn(true)
   }, [])
 
   const logout = useCallback(async () => {
+    tokenRef.current = null
     clearToken()
     setIsSignedIn(false)
   }, [])
+
+  const getToken = useCallback(async () => tokenRef.current ?? readToken(), [])
 
   // Keep the session alive across a long-open tab (this is a
   // security-camera dashboard plausibly left open on a wall-mounted
@@ -104,7 +126,7 @@ export function LocalAuthProvider({ children }) {
     let cancelled = false
 
     const maybeRefresh = async () => {
-      const token = readToken()
+      const token = tokenRef.current ?? readToken()
       if (!token) return
       const expMs = decodeJwtExpMs(token)
       if (expMs == null || expMs - Date.now() > REFRESH_THRESHOLD_MS) return
@@ -123,6 +145,12 @@ export function LocalAuthProvider({ children }) {
           return
         }
         const data = await res.json()
+        // Re-check after the SECOND await too — a sign-out racing this
+        // call already flips `cancelled` via the cleanup below, but
+        // without this check that race could still write a fresh
+        // token into storage after logout() just cleared it.
+        if (cancelled) return
+        tokenRef.current = data.token
         writeToken(data.token)
       } catch {
         // Network blip — try again on the next tick.
@@ -137,19 +165,24 @@ export function LocalAuthProvider({ children }) {
     }
   }, [isSignedIn, logout])
 
+  const value = useMemo(
+    () => ({ isSignedIn, login, logout, getToken }),
+    [isSignedIn, login, logout, getToken]
+  )
+
   return (
-    <LocalAuthContext.Provider value={{ isSignedIn, login, logout }}>
+    <LocalAuthContext.Provider value={value}>
       {children}
     </LocalAuthContext.Provider>
   )
 }
 
 export function useAuth() {
-  const { isSignedIn } = useLocalAuthContext()
+  const { isSignedIn, getToken } = useLocalAuthContext()
   return {
     isLoaded: true,
     isSignedIn,
-    getToken: async () => readToken(),
+    getToken,
     // Single fixed admin is always org:admin — no Clerk permission
     // bitmap to check against.
     has: () => true,

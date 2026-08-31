@@ -20,11 +20,17 @@ from app.core import license_client
 from app.core.config import settings
 from app.models.models import Setting
 
+_UNSET = object()
+
 
 class _FakeResponse:
-    def __init__(self, status_code: int = 200, json_data: dict | None = None):
+    def __init__(self, status_code: int = 200, json_data=_UNSET):
         self.status_code = status_code
-        self._json_data = json_data or {}
+        # A sentinel default (not `json_data or {}`) so an explicitly
+        # falsy body — None, [], "", 0 — passes through as itself
+        # instead of silently becoming {} when a test wants to exercise
+        # exactly those malformed-response shapes.
+        self._json_data = {} if json_data is _UNSET else json_data
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -225,3 +231,126 @@ def test_install_id_is_generated_once_and_stable(db):
     second = license_client._get_or_create_install_id(db)
     assert first == second
     assert len(first) == 32  # secrets.token_hex(16)
+
+
+# ── Malformed check-in responses (regression: must not crash) ────────
+
+
+@pytest.mark.parametrize("body", [None, [], "just a string", 42, True])
+async def test_checkin_treats_non_dict_200_response_as_unreachable(monkeypatch, db, body):
+    """A non-object 200 JSON body must never raise — data.get("valid")
+    on a non-dict would previously escape uncaught, skipping every
+    Setting write for that tick and freezing whatever state was cached
+    before (possibly fail-open) indefinitely."""
+    _mock_http(monkeypatch, response=_FakeResponse(200, body))
+
+    await license_client.check_in_with_license_service(db)  # must not raise
+
+    assert Setting.get(db, settings.LOCAL_ORG_ID, "sentinel_license_last_check_reachable") == "false"
+    assert license_client.is_sentinel_licensed(db) is False
+
+
+# ── Naive timestamps (regression: must not raise TypeError) ──────────
+
+
+def test_is_sentinel_licensed_handles_naive_last_ok_at(db):
+    """datetime.fromisoformat happily parses a naive (no-offset) string
+    without raising — only the later `datetime.now(tz=UTC) - naive_dt`
+    subtraction raises TypeError, which used to be uncaught."""
+    naive = datetime.now(tz=UTC).replace(tzinfo=None).isoformat()
+    Setting.set(db, settings.LOCAL_ORG_ID, "sentinel_license_valid", "true", commit=False)
+    Setting.set(db, settings.LOCAL_ORG_ID, "sentinel_license_last_check_reachable", "false", commit=False)
+    Setting.set(db, settings.LOCAL_ORG_ID, "sentinel_license_last_ok_at", naive)
+
+    # A naive-but-recent timestamp is normalized to UTC and still
+    # grants grace — must not raise.
+    assert license_client.is_sentinel_licensed(db) is True
+
+
+def test_warn_if_in_extended_grace_handles_naive_last_ok_at(db):
+    naive = (datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(hours=2))
+    Setting.set(db, settings.LOCAL_ORG_ID, "sentinel_license_last_check_reachable", "false", commit=False)
+    Setting.set(db, settings.LOCAL_ORG_ID, "sentinel_license_last_ok_at", naive.isoformat())
+
+    license_client.warn_if_in_extended_grace(db)  # must not raise
+
+
+def test_parse_iso_or_none_rejects_garbage_without_raising():
+    assert license_client._parse_iso_or_none("not a timestamp") is None
+    assert license_client._parse_iso_or_none("") is None
+
+
+# ── Shared license-gate predicate ─────────────────────────────────────
+
+
+def test_sentinel_blocked_by_license_true_only_for_self_host_and_unlicensed(monkeypatch, db):
+    # self_host + unlicensed -> blocked
+    assert license_client.sentinel_blocked_by_license("self_host", db) is True
+
+    # self_host + licensed -> not blocked
+    Setting.set(db, settings.LOCAL_ORG_ID, "sentinel_license_valid", "true", commit=False)
+    Setting.set(db, settings.LOCAL_ORG_ID, "sentinel_license_last_check_reachable", "true", commit=False)
+    Setting.set(db, settings.LOCAL_ORG_ID, "sentinel_license_last_ok_at", datetime.now(tz=UTC).isoformat())
+    assert license_client.sentinel_blocked_by_license("self_host", db) is False
+
+
+def test_sentinel_blocked_by_license_never_blocks_other_plans(db):
+    # The predicate only ever applies to "self_host" — other plans
+    # (pro/pro_plus/free_org) are governed purely by plan membership
+    # elsewhere and must never be blocked by this predicate.
+    for plan in ("pro", "pro_plus", "free_org"):
+        assert license_client.sentinel_blocked_by_license(plan, db) is False
+
+
+# ── probe_sentinel_license (health_probes.py) ─────────────────────────
+
+
+def test_probe_reports_warn_when_reachable_but_explicitly_unlicensed(db):
+    """Regression: status used to be derived from reachability alone,
+    so a reachable-but-revoked license reported "ok" — the actual
+    licensed:false verdict was buried in the data dict, never
+    reflected in the status field that drives the health rollup."""
+    from app.core.health_probes import probe_sentinel_license
+
+    Setting.set(db, settings.LOCAL_ORG_ID, "sentinel_license_valid", "false", commit=False)
+    Setting.set(db, settings.LOCAL_ORG_ID, "sentinel_license_last_check_reachable", "true", commit=False)
+    Setting.set(db, settings.LOCAL_ORG_ID, "sentinel_license_last_check_at", datetime.now(tz=UTC).isoformat())
+
+    result = probe_sentinel_license(uptime_seconds=999)
+
+    assert result.data["licensed"] is False
+    assert result.status == "warn"
+
+
+def test_probe_reports_ok_when_reachable_and_licensed(db):
+    from app.core.health_probes import probe_sentinel_license
+
+    Setting.set(db, settings.LOCAL_ORG_ID, "sentinel_license_valid", "true", commit=False)
+    Setting.set(db, settings.LOCAL_ORG_ID, "sentinel_license_last_check_reachable", "true", commit=False)
+    now_iso = datetime.now(tz=UTC).isoformat()
+    Setting.set(db, settings.LOCAL_ORG_ID, "sentinel_license_last_check_at", now_iso, commit=False)
+    Setting.set(db, settings.LOCAL_ORG_ID, "sentinel_license_last_ok_at", now_iso)
+
+    result = probe_sentinel_license(uptime_seconds=999)
+
+    assert result.status == "ok"
+
+
+def test_probe_applies_startup_grace_before_first_checkin(db):
+    """Regression: with no check-in yet, a fresh boot used to report
+    "warn" immediately — probe_email_worker's sibling pattern grants a
+    startup grace window instead."""
+    from app.core.health_probes import probe_sentinel_license
+
+    result = probe_sentinel_license(uptime_seconds=1.0)
+
+    assert result.status == "ok"
+    assert result.data.get("note") == "startup grace"
+
+
+def test_probe_reports_warn_after_startup_grace_with_no_checkin(db):
+    from app.core.health_probes import probe_sentinel_license
+
+    result = probe_sentinel_license(uptime_seconds=999)
+
+    assert result.status == "warn"

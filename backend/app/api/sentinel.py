@@ -40,7 +40,7 @@ from app.core.audit import write_audit
 from app.core.auth import AuthUser, require_admin, require_view
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.license_client import is_sentinel_licensed
+from app.core.license_client import sentinel_blocked_by_license
 from app.core.plans import effective_plan_for_caps, get_plan_display_name
 from app.core.sentinel_dispatch import (
     SENTINEL_PLANS,
@@ -71,35 +71,31 @@ _VALID_SCHEDULE_MODES = {"always", "scheduled", "off"}
 _VALID_DAY_KEYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 
 
-def _has_sentinel_access(db: Session, org_id: str) -> bool:
-    """True iff the org's effective plan is in the Sentinel-eligible
-    set (Pro or Pro Plus today).  Free / past-due-too-long orgs
-    return False and are gated out of write endpoints / dispatch /
-    the agent MCP path.
+def _resolve_sentinel_access(db: Session, org_id: str) -> tuple[bool, dict]:
+    """Single computation of both "is Sentinel access granted" and, if
+    not, why — a 402 caller uses `denial_detail` directly rather than
+    re-deriving it from a second, independent plan/license lookup a few
+    DB round-trips later, which could otherwise disagree with the
+    first check if state changed in between (e.g. the background
+    license-reconcile loop committing mid-request).
 
-    Self-hosted orgs are unconditionally "self_host" (Sentinel-eligible
-    by plan alone, since self-host has no billing at all) — the
-    additional `is_sentinel_licensed` check is what actually requires a
-    paid license for self-host. No-op for hosted Clerk orgs.
+    Free / past-due-too-long orgs get `plan_required`. Self-hosted
+    orgs are unconditionally "self_host" (Sentinel-eligible by plan
+    alone, since self-host has no billing at all) — the additional
+    `sentinel_blocked_by_license` check is what actually requires a
+    paid license for self-host, surfaced as `license_required` instead
+    of the "upgrade to Pro" CTA that doesn't apply there. No-op for
+    hosted Clerk orgs either way.
+
+    Returns `(has_access, denial_detail)`; `denial_detail` is only
+    meaningful when `has_access` is False.
     """
     plan = effective_plan_for_caps(db, org_id)
     if plan not in SENTINEL_PLANS:
-        return False
-    if plan == "self_host" and not is_sentinel_licensed(db):
-        return False
-    return True
-
-
-def _sentinel_access_denial_detail(db: Session, org_id: str) -> dict:
-    """402 detail body for denied Sentinel access — distinguishes "need
-    a paid Clerk plan" from "self-hosted, need a Sentinel license" so a
-    frontend can eventually show the right call to action instead of an
-    "upgrade to Pro" CTA that doesn't apply to a self-hosted install.
-    """
-    plan = effective_plan_for_caps(db, org_id)
-    if plan == "self_host" and not is_sentinel_licensed(db):
-        return {"error": "license_required"}
-    return {"error": "plan_required", "plan": "pro"}
+        return False, {"error": "plan_required", "plan": "pro"}
+    if sentinel_blocked_by_license(plan, db):
+        return False, {"error": "license_required"}
+    return True, {}
 
 
 def _ensure_config_row(db: Session, org_id: str) -> SentinelConfig:
@@ -194,16 +190,21 @@ async def get_config(
     """
     cfg = _ensure_config_row(db, user.org_id)
     plan = effective_plan_for_caps(db, user.org_id)
-    # _has_sentinel_access (not a raw `plan in SENTINEL_PLANS` check)
+    # _resolve_sentinel_access (not a raw `plan in SENTINEL_PLANS` check)
     # so a self-hosted install without a valid license shows the same
     # gated state here that dispatch/PATCH/manual-run already enforce —
     # this endpoint used to only check plan membership, which meant an
     # unlicensed self-host org saw plan_gated: false and a full cap
     # here while every write path correctly blocked it underneath.
-    has_access = _has_sentinel_access(db, user.org_id)
+    has_access, denial_detail = _resolve_sentinel_access(db, user.org_id)
     return {
         "config": cfg.to_dict(),
         "plan_gated": not has_access,
+        # "plan_required" or "license_required" — lets a future
+        # frontend distinguish "upgrade to Pro" from "self-hosted,
+        # needs a Sentinel license" instead of always showing the
+        # Clerk-upgrade CTA. None when access is granted.
+        "plan_gated_reason": denial_detail.get("error") if not has_access else None,
         # Minimum tier that gets ANY Sentinel access; the UI uses this
         # for the "upgrade to Pro" CTA on the locked banner.
         "plan_required": "pro",
@@ -231,11 +232,9 @@ async def patch_config(
     Returns the full config so the frontend doesn't need a follow-up
     GET to reflect the new state.
     """
-    if not _has_sentinel_access(db, user.org_id):
-        raise HTTPException(
-            status_code=402,
-            detail=_sentinel_access_denial_detail(db, user.org_id),
-        )
+    has_access, denial_detail = _resolve_sentinel_access(db, user.org_id)
+    if not has_access:
+        raise HTTPException(status_code=402, detail=denial_detail)
 
     cfg = _ensure_config_row(db, user.org_id)
     changes: list[str] = []
@@ -454,11 +453,9 @@ async def post_manual_run(
     deliberately NOT enforced — the operator clicked "Run now" to
     override them.
     """
-    if not _has_sentinel_access(db, user.org_id):
-        raise HTTPException(
-            status_code=402,
-            detail=_sentinel_access_denial_detail(db, user.org_id),
-        )
+    has_access, denial_detail = _resolve_sentinel_access(db, user.org_id)
+    if not has_access:
+        raise HTTPException(status_code=402, detail=denial_detail)
 
     try:
         run = dispatch_manual_run(
@@ -485,7 +482,7 @@ async def post_manual_run(
             ) from exc
         if str(exc) == "license_required":
             # Defense-in-depth only in practice: the upfront
-            # _has_sentinel_access check above already catches this
+            # _resolve_sentinel_access check above already catches this
             # for the one real caller of dispatch_manual_run. Mapped
             # anyway so it can't fall through to an unhandled 500 if
             # that ever changes.

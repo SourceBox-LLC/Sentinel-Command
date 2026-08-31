@@ -65,6 +65,30 @@ _LAST_GRACE_WARNING_AT = "sentinel_license_last_grace_warning_at"
 _INSTALL_ID = "sentinel_install_id"
 
 
+def _parse_iso_or_none(raw: str) -> datetime | None:
+    """Parse a stored ISO-8601 timestamp, normalizing to tz-aware UTC.
+
+    Every current writer in this module stores tz-aware strings (via
+    ``datetime.now(tz=UTC).isoformat()``), so this never hits the naive
+    branch today — but treating a naive value as UTC rather than
+    letting it flow through untouched avoids a `TypeError` later at
+    `datetime.now(tz=UTC) - naive_dt` (mixing aware and naive datetimes
+    raises), which would otherwise turn a fail-closed gate into an
+    unhandled 500 the moment any future writer, migration, or manual
+    DB edit ever stores a naive timestamp here. Catches both
+    `ValueError` (malformed string) and `TypeError` (non-string input)
+    defensively, even though normalizing already prevents the specific
+    TypeError this was written for.
+    """
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except (ValueError, TypeError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
 def _get_or_create_install_id(db: Session) -> str:
     from app.models.models import Setting
 
@@ -106,10 +130,19 @@ async def check_in_with_license_service(db: Session) -> None:
             )
         resp.raise_for_status()
         data = resp.json()
+        if not isinstance(data, dict):
+            raise ValueError(f"expected a JSON object, got {type(data).__name__}")
+        valid = bool(data.get("valid"))
     except Exception:
+        # Covers network errors, non-2xx, and a malformed/non-object
+        # response body — any of these mean we can't trust the answer,
+        # so treat it identically to "unreachable" (grace window
+        # applies) rather than letting a parsing error escape uncaught,
+        # which would skip the Setting writes below entirely and leave
+        # a stale cached state in place indefinitely.
         logger.warning(
-            "[SentinelLicense] check-in failed (network/5xx) — treating as "
-            "unreachable, grace window (if any) applies",
+            "[SentinelLicense] check-in failed (network/5xx/malformed response) — "
+            "treating as unreachable, grace window (if any) applies",
             exc_info=True,
         )
         Setting.set(db, settings.LOCAL_ORG_ID, _LAST_CHECK_AT, now_iso, commit=False)
@@ -117,7 +150,6 @@ async def check_in_with_license_service(db: Session) -> None:
         db.commit()
         return
 
-    valid = bool(data.get("valid"))
     Setting.set(db, settings.LOCAL_ORG_ID, _LAST_CHECK_AT, now_iso, commit=False)
     Setting.set(db, settings.LOCAL_ORG_ID, _LAST_CHECK_REACHABLE, "true", commit=False)
     Setting.set(db, settings.LOCAL_ORG_ID, _LICENSE_VALID, "true" if valid else "false", commit=False)
@@ -156,12 +188,32 @@ def is_sentinel_licensed(db: Session) -> bool:
     if not last_ok_raw:
         return False  # never had a good check-in to grant grace from
 
-    try:
-        last_ok_at = datetime.fromisoformat(last_ok_raw)
-    except ValueError:
+    last_ok_at = _parse_iso_or_none(last_ok_raw)
+    if last_ok_at is None:
         return False
 
     return datetime.now(tz=UTC) - last_ok_at <= timedelta(hours=SENTINEL_LICENSE_GRACE_HOURS)
+
+
+# The one plan slug the license gate applies to. `self_host` is
+# Sentinel-eligible by plan alone (it's in SENTINEL_PLANS) but ALSO
+# needs a valid license — every other plan (free_org/pro/pro_plus) is
+# governed purely by the existing plan-membership check and never
+# reaches this predicate's `is_sentinel_licensed` call at all.
+_LICENSE_GATED_PLAN = "self_host"
+
+
+def sentinel_blocked_by_license(plan: str, db: Session) -> bool:
+    """True iff `plan` requires a Sentinel license and this org doesn't
+    currently have a valid one.
+
+    Single source of truth for the self-host license gate, reused at
+    every Sentinel access-control call site (api/sentinel.py,
+    core/sentinel_dispatch.py, mcp/server.py) — previously this exact
+    condition was hand-copied at 5 call sites across 3 files with
+    nothing enforcing they stayed in sync.
+    """
+    return plan == _LICENSE_GATED_PLAN and not is_sentinel_licensed(db)
 
 
 def warn_if_in_extended_grace(db: Session) -> None:
@@ -183,9 +235,8 @@ def warn_if_in_extended_grace(db: Session) -> None:
     last_ok_raw = Setting.get(db, settings.LOCAL_ORG_ID, _LAST_OK_AT, "")
     if not last_ok_raw:
         return
-    try:
-        last_ok_at = datetime.fromisoformat(last_ok_raw)
-    except ValueError:
+    last_ok_at = _parse_iso_or_none(last_ok_raw)
+    if last_ok_at is None:
         return
 
     age = datetime.now(tz=UTC) - last_ok_at
@@ -194,12 +245,11 @@ def warn_if_in_extended_grace(db: Session) -> None:
 
     last_warning_raw = Setting.get(db, settings.LOCAL_ORG_ID, _LAST_GRACE_WARNING_AT, "")
     if last_warning_raw:
-        try:
-            last_warning_at = datetime.fromisoformat(last_warning_raw)
-            if datetime.now(tz=UTC) - last_warning_at < timedelta(hours=_GRACE_WARNING_REPEAT_HOURS):
-                return
-        except ValueError:
-            pass
+        last_warning_at = _parse_iso_or_none(last_warning_raw)
+        if last_warning_at is not None and (
+            datetime.now(tz=UTC) - last_warning_at < timedelta(hours=_GRACE_WARNING_REPEAT_HOURS)
+        ):
+            return
 
     remaining = timedelta(hours=SENTINEL_LICENSE_GRACE_HOURS) - age
     if remaining > timedelta(0):

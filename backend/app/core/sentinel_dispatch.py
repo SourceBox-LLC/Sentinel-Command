@@ -41,7 +41,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.license_client import is_sentinel_licensed
+from app.core.license_client import sentinel_blocked_by_license
 from app.core.plans import effective_plan_for_caps
 from app.models.models import SentinelConfig, SentinelRun, Setting
 
@@ -317,7 +317,7 @@ def _can_dispatch_for_kind(
     # This is the separate license gate that closes that: self_host
     # additionally needs a currently-valid Sentinel license (see
     # app/core/license_client.py). No-op for hosted Clerk orgs.
-    if plan == "self_host" and not is_sentinel_licensed(db):
+    if sentinel_blocked_by_license(plan, db):
         return False, "license_required"
 
     field = _KIND_TO_TRIGGER_FIELD.get(kind)
@@ -659,7 +659,7 @@ def dispatch_manual_run(
     plan = effective_plan_for_caps(db, org_id)
     if plan not in SENTINEL_PLANS:
         raise ValueError("plan_not_eligible")
-    if plan == "self_host" and not is_sentinel_licensed(db):
+    if sentinel_blocked_by_license(plan, db):
         raise ValueError("license_required")
     cap = cap_for_plan(plan)
 

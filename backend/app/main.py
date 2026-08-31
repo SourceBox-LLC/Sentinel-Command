@@ -1740,7 +1740,7 @@ async def health_check_detailed():
     clerk = clerk_probe.to_dict()
     disk = disk_probe.to_dict()
     email_worker_check = worker_probe.to_dict()
-    sentinel_license = await asyncio.to_thread(probe_sentinel_license)
+    sentinel_license = await asyncio.to_thread(probe_sentinel_license, uptime_s)
     sentinel_license_check = sentinel_license.to_dict()
 
     # ── In-memory subsystem snapshots ────────────────────────

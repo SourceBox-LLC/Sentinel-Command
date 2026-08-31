@@ -20,6 +20,7 @@ import {
   useAuth,
   useOrganization,
   useClerk,
+  useLocalLogin,
   SignedIn,
   SignedOut,
   UserButton,
@@ -228,5 +229,85 @@ describe("background token refresh", () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(fetchSpy).not.toHaveBeenCalled()
     expect(localStorage.getItem(TOKEN_KEY)).toBe(token)
+  })
+
+  it("does not resurrect the session if sign-out happens while a refresh is mid-flight", async () => {
+    // Regression: the `cancelled` guard was checked once (right after
+    // the fetch await) but not re-checked after the second await
+    // (res.json()) — a sign-out landing in that window could still
+    // write a fresh token into storage after logout() had just
+    // cleared it.
+    localStorage.setItem(TOKEN_KEY, makeToken(3600)) // 1h — under the refresh threshold
+
+    let resolveJson
+    const jsonPromise = new Promise((resolve) => { resolveJson = resolve })
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => jsonPromise }))
+
+    function SignOutButton() {
+      const { signOut } = useClerk()
+      return <button onClick={signOut}>sign out now</button>
+    }
+
+    const user = userEvent.setup()
+    render(
+      <LocalAuthProvider>
+        <Probe />
+        <SignOutButton />
+      </LocalAuthProvider>,
+    )
+
+    await waitFor(() => expect(fetch).toHaveBeenCalled())
+
+    // Sign out (via a real click, so React's state update is properly
+    // act()-wrapped) while the refresh's res.json() is still pending.
+    await user.click(screen.getByText("sign out now"))
+    await waitFor(() => expect(localStorage.getItem(TOKEN_KEY)).toBeNull())
+
+    // Now let the in-flight refresh's second await resolve.
+    resolveJson({ token: "should-not-be-written" })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(localStorage.getItem(TOKEN_KEY)).toBeNull()
+  })
+})
+
+describe("login() storage-failure fallback", () => {
+  it("keeps getToken() working in-memory even when localStorage.setItem throws", async () => {
+    // Spy on the localStorage instance directly, not Storage.prototype —
+    // happy-dom's Storage implementation doesn't necessarily route
+    // instance calls through the prototype chain.
+    const setItemSpy = vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
+      throw new Error("QuotaExceededError")
+    })
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+
+    function LoginButton() {
+      const login = useLocalLogin()
+      return <button onClick={() => login("in-memory-only-token")}>do login</button>
+    }
+
+    const user = userEvent.setup()
+    render(
+      <LocalAuthProvider>
+        <Probe />
+        <LoginButton />
+      </LocalAuthProvider>,
+    )
+
+    await user.click(screen.getByText("do login"))
+    expect(screen.getByTestId("signed-in")).toHaveTextContent("true")
+
+    // The UI believes it's signed in — getToken() must actually back
+    // that up via the in-memory fallback, not return null.
+    await user.click(screen.getByText("capture token"))
+    await waitFor(() =>
+      expect(screen.getByTestId("captured-token")).toHaveTextContent("in-memory-only-token"),
+    )
+
+    // The degraded-persistence case is surfaced, not fully silent.
+    expect(warnSpy).toHaveBeenCalled()
+
+    setItemSpy.mockRestore()
+    warnSpy.mockRestore()
   })
 })

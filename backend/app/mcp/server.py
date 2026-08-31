@@ -415,7 +415,7 @@ def _resolve_org(headers: dict | None) -> tuple[str, Session]:
         # with it, not keep full Pro limits until a cancellation webhook
         # that may never arrive.  (The sentinel-agent auth path below
         # already used the effective plan; this aligns the key path.)
-        from app.core.plans import effective_plan_for_caps
+        from app.core.plans import effective_plan_for_caps, get_plan_display_name
         plan = effective_plan_for_caps(db, mcp_key.org_id)
         limits = RATE_LIMITS.get(plan)
         if limits is None:
@@ -428,7 +428,12 @@ def _resolve_org(headers: dict | None) -> tuple[str, Session]:
         )
         if not allowed:
             db.close()
-            plan_name = "Pro Plus" if plan == "pro_plus" else plan.title()
+            # Reuse plans.py's single source of truth for display names
+            # (already maps self_host -> "Self-Hosted") instead of a
+            # second hand-rolled special case that only knew about
+            # pro_plus and fell back to plan.title() ("Self_Host") for
+            # anything else.
+            plan_name = get_plan_display_name(plan)
             if breach == "minute":
                 raise ToolError(
                     f"Rate limit exceeded: {limits['minute']} calls/min allowed "
@@ -492,7 +497,7 @@ def _resolve_via_agent_key(headers: dict, _agent_key: str) -> tuple[str, Session
 
     db = SessionLocal()
     try:
-        from app.core.license_client import is_sentinel_licensed
+        from app.core.license_client import sentinel_blocked_by_license
         from app.core.plans import effective_plan_for_caps
         from app.core.sentinel_dispatch import SENTINEL_PLANS
         from app.models.models import SentinelConfig, SentinelRun
@@ -517,7 +522,7 @@ def _resolve_via_agent_key(headers: dict, _agent_key: str) -> tuple[str, Session
         # let the agent act on behalf of an unlicensed self-host org
         # even though dispatch itself is blocked. No-op for hosted
         # Clerk orgs.
-        if plan == "self_host" and not is_sentinel_licensed(db):
+        if sentinel_blocked_by_license(plan, db):
             db.close()
             raise ToolError(
                 "Agent override target org is self-hosted without a valid "
