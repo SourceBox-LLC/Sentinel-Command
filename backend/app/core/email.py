@@ -129,13 +129,7 @@ def send_email(
         )
         return EmailSendResult(ok=True, skipped=True)
 
-    # Inline the configured-check (rather than calling
-    # ``settings.is_email_configured()``) so test monkeypatches that
-    # set the attribute on the ``settings`` instance take effect —
-    # the classmethod form reads from ``cls`` which the instance
-    # monkeypatch doesn't shadow.  The classmethod survives for the
-    # health endpoint use case where shadowing isn't a concern.
-    if not (settings.RESEND_API_KEY and settings.EMAIL_FROM_ADDRESS):
+    if not settings.is_email_configured():
         # Distinguishes operator misconfiguration from a real outage.
         # Worker treats this as 'failed' permanently — retrying won't
         # help until the operator fixes the secret.

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { useAuth, useOrganization } from "@clerk/clerk-react"
+import { useAuth, useOrganization } from "../auth/index.jsx"
 import { getPlanInfo } from "../services/api"
 
 const PlanInfoContext = createContext(null)

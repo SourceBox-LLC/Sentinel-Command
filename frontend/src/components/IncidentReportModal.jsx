@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 // 157 KB-gzip chunk into the IncidentsPage bundle, fetched and parsed
 // on EVERY /incidents visit before paint — even when no clip evidence
 // is ever opened.
-import { useAuth } from "@clerk/clerk-react"
+import { useAuth } from "../auth/index.jsx"
 import {
   getIncident,
   patchIncident,

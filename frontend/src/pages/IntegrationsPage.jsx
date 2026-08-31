@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { useAuth, useOrganization } from "@clerk/clerk-react"
+import { useAuth, useOrganization } from "../auth/index.jsx"
 import {
   getIntegrationKeys,
   createIntegrationKey,

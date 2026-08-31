@@ -129,6 +129,12 @@ async def probe_clerk(timeout_seconds: float = 5.0) -> ProbeResult:
     authenticated request can succeed → app is effectively down
     even though /api/health says "ok".
     """
+    if settings.is_local_auth():
+        # Self-hosted: there's no Clerk account by design, not a
+        # forgotten setup step — report distinctly from "unconfigured"
+        # so an operator doesn't read this as a misconfiguration.
+        return ProbeResult(status="disabled", data={})
+
     if not settings.CLERK_SECRET_KEY:
         # No way to even attempt the call — surfaces as unconfigured.
         # Probably a dev environment without Clerk wired up; not a

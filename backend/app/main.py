@@ -32,6 +32,7 @@ from app.api import (
     incidents,
     install,
     integration,
+    local_auth,
     mcp_activity,
     mcp_keys,
     motion,
@@ -237,7 +238,15 @@ async def lifespan(app):
     offline_sweep_task = asyncio.create_task(_offline_sweep_loop())
     viewer_usage_task = asyncio.create_task(_viewer_usage_flush_loop())
     segment_evict_task = asyncio.create_task(_segment_cache_evict_loop())
-    plan_reconcile_task = asyncio.create_task(_plan_reconcile_loop())
+    # Self-hosted installs have no Clerk billing to reconcile against —
+    # the loop would just no-op forever (org_plan is never written for
+    # the local org), so skip scheduling it entirely rather than burn a
+    # task slot and an hourly log line for nothing.
+    plan_reconcile_task = (
+        asyncio.create_task(_plan_reconcile_loop())
+        if settings.is_clerk_auth()
+        else None
+    )
     release_refresh_task = asyncio.create_task(_release_cache_refresh_loop())
     # Email worker drains EmailOutbox via Resend.  Ships always-on so
     # the kill-switch can be flipped via env var without a redeploy;
@@ -276,7 +285,8 @@ async def lifespan(app):
     offline_sweep_task.cancel()
     viewer_usage_task.cancel()
     segment_evict_task.cancel()
-    plan_reconcile_task.cancel()
+    if plan_reconcile_task is not None:
+        plan_reconcile_task.cancel()
     release_refresh_task.cancel()
     email_worker_task.cancel()
     disk_check_task.cancel()
@@ -527,7 +537,13 @@ async def security_headers(request: Request, call_next):
 
 # Include API routers
 app.include_router(cameras.router)
-app.include_router(webhooks.router)
+if settings.is_clerk_auth():
+    app.include_router(webhooks.router)
+else:
+    # Self-hosted: no Clerk account to send webhooks, and no
+    # CLERK_WEBHOOK_SECRET to verify them against — don't expose a
+    # dead endpoint.
+    app.include_router(local_auth.router)
 app.include_router(nodes.router)
 app.include_router(audit.router)
 app.include_router(hls.router)

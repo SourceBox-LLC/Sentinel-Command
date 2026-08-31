@@ -149,8 +149,9 @@ def compute_allowed_tools(scope_mode: str | None, scope_tools: list[str] | None)
 #                   agent stuck in a loop burning through your Clerk API spend
 #                   and your DB throughput for 8 hours while you sleep)
 RATE_LIMITS = {
-    "pro":      {"minute": 30,  "daily": 5_000},
-    "pro_plus": {"minute": 120, "daily": 30_000},
+    "pro":       {"minute": 30,  "daily": 5_000},
+    "pro_plus":  {"minute": 120, "daily": 30_000},
+    "self_host": {"minute": 120, "daily": 30_000},
 }
 DEFAULT_RATE_LIMIT = None  # Block unrecognized plans (MCP requires Pro+)
 

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.clerk import clerk
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.local_auth import verify_token as verify_local_token
 
 
 class AuthUser:
@@ -103,6 +104,42 @@ def convert_to_httpx_request(fastapi_request: Request) -> httpx.Request:
 
 
 async def get_current_user(request: Request) -> AuthUser:
+    if settings.is_local_auth():
+        return await _get_current_user_local(request)
+    return await _get_current_user_clerk(request)
+
+
+async def _get_current_user_local(request: Request) -> AuthUser:
+    """Local (self-hosted) session verification — a single fixed admin
+    account, no Clerk involved at all. See app/core/local_auth.py."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
+        )
+    claims = verify_local_token(auth_header[len("Bearer "):])
+    if claims is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
+        )
+    return AuthUser(
+        user_id=claims["user_id"],
+        org_id=claims["org_id"],
+        org_role=claims["org_role"],
+        org_permissions=[],
+        email=settings.LOCAL_ADMIN_EMAIL,
+        username=settings.LOCAL_ADMIN_USERNAME,
+        # Fully unlocked, no billing/licensing gate in this mode — see
+        # the "self_host" tier in app/core/plans.py. "admin" unlocks the
+        # paid-tier feature gates in app/api/audit.py and
+        # app/api/cameras.py; "cameras" mirrors the wire-visible feature
+        # flag Clerk sends for camera access.
+        plan="self_host",
+        features=["admin", "cameras"],
+    )
+
+
+async def _get_current_user_clerk(request: Request) -> AuthUser:
     if not settings.is_clerk_configured():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

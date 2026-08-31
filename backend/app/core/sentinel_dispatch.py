@@ -61,6 +61,7 @@ logger = logging.getLogger(__name__)
 MONTHLY_RUN_CAP_BY_PLAN: dict[str, int] = {
     "pro": 100,
     "pro_plus": 500,
+    "self_host": 500,
 }
 
 # Set of plans that get to use Sentinel at all.  Used as the

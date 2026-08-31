@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, memo } from "react"
-import { useAuth } from "@clerk/clerk-react"
+import { useAuth } from "../auth/index.jsx"
 import { requestSnapshot, setRecording } from "../services/api"
 import { useToasts } from "../hooks/useToasts.jsx"
 import HlsPlayer from "./HlsPlayer.jsx"

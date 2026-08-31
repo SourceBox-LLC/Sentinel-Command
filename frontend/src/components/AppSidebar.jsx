@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom"
-import { useOrganization } from "@clerk/clerk-react"
+import { useOrganization } from "../auth/index.jsx"
 import { usePlanInfo } from "../hooks/usePlanInfo.jsx"
 
 /* 18px stroke icons for the nav rail. Inline (not FeatureIcons) because
