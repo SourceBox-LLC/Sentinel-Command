@@ -149,8 +149,9 @@ def compute_allowed_tools(scope_mode: str | None, scope_tools: list[str] | None)
 #                   agent stuck in a loop burning through your Clerk API spend
 #                   and your DB throughput for 8 hours while you sleep)
 RATE_LIMITS = {
-    "pro":      {"minute": 30,  "daily": 5_000},
-    "pro_plus": {"minute": 120, "daily": 30_000},
+    "pro":       {"minute": 30,  "daily": 5_000},
+    "pro_plus":  {"minute": 120, "daily": 30_000},
+    "self_host": {"minute": 120, "daily": 30_000},
 }
 DEFAULT_RATE_LIMIT = None  # Block unrecognized plans (MCP requires Pro+)
 
@@ -491,6 +492,7 @@ def _resolve_via_agent_key(headers: dict, _agent_key: str) -> tuple[str, Session
 
     db = SessionLocal()
     try:
+        from app.core.license_client import is_sentinel_licensed
         from app.core.plans import effective_plan_for_caps
         from app.core.sentinel_dispatch import SENTINEL_PLANS
         from app.models.models import SentinelConfig, SentinelRun
@@ -506,6 +508,20 @@ def _resolve_via_agent_key(headers: dict, _agent_key: str) -> tuple[str, Session
             raise ToolError(
                 f"Agent override target org is not on a Sentinel-eligible "
                 f"plan (plan={plan!r})"
+            )
+        # Self-hosted installs are unconditionally "self_host" per the
+        # check above — additionally require a currently-valid Sentinel
+        # license here too, for the same reason the comment above says
+        # every Sentinel surface must check the same set: without this,
+        # a stale pending run or a leaked SENTINEL_AGENT_MCP_KEY could
+        # let the agent act on behalf of an unlicensed self-host org
+        # even though dispatch itself is blocked. No-op for hosted
+        # Clerk orgs.
+        if plan == "self_host" and not is_sentinel_licensed(db):
+            db.close()
+            raise ToolError(
+                "Agent override target org is self-hosted without a valid "
+                "Sentinel license"
             )
         # Apply the org's actual plan tier's MCP rate limits — Pro orgs
         # get Pro's per-minute / per-day caps, Pro Plus gets Pro Plus's.

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useCallback, useState } from "react"
-import { useAuth } from "@clerk/clerk-react"
+import { useAuth } from "../auth/index.jsx"
 
 /**
  * Shared auth token for HLS players.

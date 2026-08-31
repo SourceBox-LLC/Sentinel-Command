@@ -47,6 +47,7 @@ dependencies = [
     # for Jinja2Templates but we depend on it directly so the email
     # path doesn't break if FastAPI ever drops the optional dep.
     "jinja2>=3.1.0",
+    "argon2-cffi>=25.1.0",
 ]
 
 [project.optional-dependencies]

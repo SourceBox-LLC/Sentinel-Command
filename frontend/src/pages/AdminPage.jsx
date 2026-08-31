@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react"
 import { Link } from "react-router-dom"
-import { useAuth, useOrganization } from "@clerk/clerk-react"
+import { useAuth, useOrganization } from "../auth/index.jsx"
 import { getStreamLogs, getStreamStats, getCameras, getMcpLogs, getMcpLogStats, downloadStreamLogsCsv, downloadMcpLogsCsv } from "../services/api"
 import { useToasts } from "../hooks/useToasts.jsx"
 import { usePlanInfo } from "../hooks/usePlanInfo.jsx"

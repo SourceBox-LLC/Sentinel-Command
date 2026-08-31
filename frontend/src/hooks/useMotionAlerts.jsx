@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react"
-import { useAuth, useOrganization } from "@clerk/clerk-react"
+import { useAuth, useOrganization } from "../auth/index.jsx"
 import { useToasts } from "./useToasts.jsx"
 
 const API_URL = import.meta.env.VITE_API_URL || ""

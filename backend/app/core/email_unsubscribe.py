@@ -64,14 +64,21 @@ _DERIVE_LABEL = b"sentinel-email-unsubscribe-v1"
 
 
 def _get_secret() -> Optional[str]:
-    """Derive the signing secret from CLERK_SECRET_KEY.
+    """Derive the signing secret from APP_SECRET_KEY, falling back to
+    CLERK_SECRET_KEY.
 
-    Returns None when the Clerk secret is unset — callers fail closed
+    Self-hosted installs (AUTH_PROVIDER=local) have no Clerk key at all,
+    so they need APP_SECRET_KEY to sign unsubscribe links. Hosted
+    deployments keep deriving from CLERK_SECRET_KEY unchanged (so every
+    currently-outstanding link stays valid) unless an operator also sets
+    APP_SECRET_KEY, in which case it takes priority.
+
+    Returns None when neither secret is configured — callers fail closed
     (mint raises, verify rejects).  The old behaviour fell back to a
     hardcoded ``test-secret-not-for-production`` string, which made the
     PUBLIC unsubscribe endpoint forgeable on any misconfigured deploy.
     """
-    base = settings.CLERK_SECRET_KEY
+    base = settings.APP_SECRET_KEY or settings.CLERK_SECRET_KEY
     if not base:
         return None
     return _hmac.new(base.encode("utf-8"), _DERIVE_LABEL, hashlib.sha256).hexdigest()

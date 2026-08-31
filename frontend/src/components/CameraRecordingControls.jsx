@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { useAuth } from "@clerk/clerk-react"
+import { useAuth } from "../auth/index.jsx"
 import { updateCameraRecordingPolicy, assignCameraGroup } from "../services/api"
 import HelpTooltip from "./HelpTooltip.jsx"
 

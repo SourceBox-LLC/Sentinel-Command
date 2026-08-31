@@ -8390,4 +8390,137 @@ body {
     }
 }
 
+/* ── Local (self-hosted) auth — frontend/src/auth/local.jsx ────────── */
+
+.local-signin-form {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    max-width: 22rem;
+    padding: 2rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    box-shadow: var(--card-highlight);
+}
+
+.local-signin-title {
+    margin: 0 0 0.75rem;
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.local-signin-label {
+    margin-top: 0.5rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.local-signin-input {
+    padding: 0.6rem 0.75rem;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.local-signin-input:focus {
+    outline: none;
+    border-color: var(--accent-green);
+}
+
+.local-signin-error {
+    margin: 0.5rem 0 0;
+    font-size: 0.82rem;
+    color: var(--accent-red);
+}
+
+.local-signin-submit {
+    margin-top: 1rem;
+    width: 100%;
+    justify-content: center;
+}
+
+.local-user-button {
+    position: relative;
+}
+
+.local-user-button-trigger {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #04170b;
+    background: var(--accent-green);
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.local-user-button-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    min-width: 10rem;
+    padding: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+    z-index: 50;
+}
+
+.local-user-button-label {
+    padding: 0.35rem 0.5rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.local-user-button-signout {
+    padding: 0.45rem 0.5rem;
+    font-size: 0.85rem;
+    text-align: left;
+    color: var(--text-primary);
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.local-user-button-signout:hover {
+    background: var(--bg-card-hover);
+}
+
+.pricing-self-host-notice {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 2rem;
+    text-align: center;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+}
+
+.pricing-self-host-notice h2 {
+    margin: 0;
+    color: var(--text-primary);
+}
+
+.pricing-self-host-notice p {
+    margin: 0;
+    color: var(--text-secondary);
+}
+
 

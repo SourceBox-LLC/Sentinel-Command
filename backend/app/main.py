@@ -32,6 +32,7 @@ from app.api import (
     incidents,
     install,
     integration,
+    local_auth,
     mcp_activity,
     mcp_keys,
     motion,
@@ -237,7 +238,15 @@ async def lifespan(app):
     offline_sweep_task = asyncio.create_task(_offline_sweep_loop())
     viewer_usage_task = asyncio.create_task(_viewer_usage_flush_loop())
     segment_evict_task = asyncio.create_task(_segment_cache_evict_loop())
-    plan_reconcile_task = asyncio.create_task(_plan_reconcile_loop())
+    # Self-hosted installs have no Clerk billing to reconcile against —
+    # the loop would just no-op forever (org_plan is never written for
+    # the local org), so skip scheduling it entirely rather than burn a
+    # task slot and an hourly log line for nothing.
+    plan_reconcile_task = (
+        asyncio.create_task(_plan_reconcile_loop())
+        if settings.is_clerk_auth()
+        else None
+    )
     release_refresh_task = asyncio.create_task(_release_cache_refresh_loop())
     # Email worker drains EmailOutbox via Resend.  Ships always-on so
     # the kill-switch can be flipped via env var without a redeploy;
@@ -264,6 +273,16 @@ async def lifespan(app):
     # errored.  See _sentinel_reaper_loop below + reap_stranded_runs
     # in app/core/sentinel_dispatch.py.
     sentinel_reaper_task = asyncio.create_task(_sentinel_reaper_loop())
+    # Self-host-only: checks in with the separate Sentinel License
+    # Service so Sentinel AI can be gated on a paid license (everything
+    # else about self-host stays free/unlocked). No-op — task not even
+    # scheduled — for hosted Clerk orgs or a self-host install that
+    # hasn't configured a key yet.
+    sentinel_license_task = (
+        asyncio.create_task(_sentinel_license_reconcile_loop())
+        if settings.is_local_auth() and settings.SENTINEL_LICENSE_KEY
+        else None
+    )
     print(
         f"[App] Sentinel Command Center started "
         f"(log retention: {LOG_RETENTION_DAYS}d, "
@@ -276,12 +295,15 @@ async def lifespan(app):
     offline_sweep_task.cancel()
     viewer_usage_task.cancel()
     segment_evict_task.cancel()
-    plan_reconcile_task.cancel()
+    if plan_reconcile_task is not None:
+        plan_reconcile_task.cancel()
     release_refresh_task.cancel()
     email_worker_task.cancel()
     disk_check_task.cancel()
     motion_digest_task.cancel()
     sentinel_reaper_task.cancel()
+    if sentinel_license_task is not None:
+        sentinel_license_task.cancel()
     print("[System] Shutdown complete")
 
 
@@ -527,7 +549,13 @@ async def security_headers(request: Request, call_next):
 
 # Include API routers
 app.include_router(cameras.router)
-app.include_router(webhooks.router)
+if settings.is_clerk_auth():
+    app.include_router(webhooks.router)
+else:
+    # Self-hosted: no Clerk account to send webhooks, and no
+    # CLERK_WEBHOOK_SECRET to verify them against — don't expose a
+    # dead endpoint.
+    app.include_router(local_auth.router)
 app.include_router(nodes.router)
 app.include_router(audit.router)
 app.include_router(hls.router)
@@ -1386,6 +1414,38 @@ async def _sentinel_reaper_loop():
             logger.exception("[SentinelReaper] Sweep failed")
 
 
+SENTINEL_LICENSE_CHECKIN_INTERVAL_SECONDS = 15 * 60
+
+
+async def _sentinel_license_reconcile_loop():
+    """Background task — check in with the (separate) Sentinel License
+    Service and cache the verdict, for self-hosted installs that have
+    configured a license key. See app/core/license_client.py for the
+    full fail-open/fail-closed contract this feeds.
+
+    Unlike _plan_reconcile_loop (sleeps first, hourly), this does one
+    immediate check-in at boot before its first sleep — a freshly
+    started self-hosted install with a valid key shouldn't have to
+    wait 15 minutes for Sentinel access to light up. The interval
+    itself is deliberately tighter than the hourly Clerk-reconcile
+    cadence: a revoked self-host license should stop working within
+    ~15 minutes, not up to an hour.
+    """
+    from app.core.license_client import check_in_with_license_service, warn_if_in_extended_grace
+
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await check_in_with_license_service(db)
+                warn_if_in_extended_grace(db)
+            finally:
+                db.close()
+        except Exception:
+            logger.exception("[SentinelLicense] check-in tick failed")
+        await asyncio.sleep(SENTINEL_LICENSE_CHECKIN_INTERVAL_SECONDS)
+
+
 # ── Pre-auth rate limit for the /mcp/ ASGI mount ──────────────────────
 #
 # /mcp is mounted as an ASGI app (FastMCP), not a FastAPI route, so the
@@ -1659,6 +1719,7 @@ async def health_check_detailed():
         probe_database,
         probe_disk,
         probe_email_worker,
+        probe_sentinel_license,
     )
 
     now_wall = datetime.now(tz=UTC)
@@ -1679,6 +1740,8 @@ async def health_check_detailed():
     clerk = clerk_probe.to_dict()
     disk = disk_probe.to_dict()
     email_worker_check = worker_probe.to_dict()
+    sentinel_license = await asyncio.to_thread(probe_sentinel_license)
+    sentinel_license_check = sentinel_license.to_dict()
 
     # ── In-memory subsystem snapshots ────────────────────────
     # All read without locks: a momentary inconsistency in a count is
@@ -1757,7 +1820,11 @@ async def health_check_detailed():
     critical_probes = [db_check, clerk, disk, email_worker_check]
     if any(p.get("status") == "critical" for p in critical_probes):
         overall = "unhealthy"
-    elif viewer_usage["status"] == "warn" or disk["status"] == "warn":
+    elif (
+        viewer_usage["status"] == "warn"
+        or disk["status"] == "warn"
+        or sentinel_license_check["status"] == "warn"
+    ):
         overall = "degraded"
     else:
         overall = "healthy"
@@ -1777,5 +1844,6 @@ async def health_check_detailed():
             "viewer_usage": viewer_usage,
             "sse": sse,
             "resend": resend,
+            "sentinel_license": sentinel_license_check,
         },
     }

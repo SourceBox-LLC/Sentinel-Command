@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Link } from "react-router-dom"
-import { useAuth, useOrganization } from "@clerk/clerk-react"
+import { useAuth, useOrganization } from "../auth/index.jsx"
 import { getNode } from "../services/api"
 
 // Shows a dismissible banner on the dashboard right after a new node has been

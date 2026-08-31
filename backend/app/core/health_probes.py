@@ -129,6 +129,12 @@ async def probe_clerk(timeout_seconds: float = 5.0) -> ProbeResult:
     authenticated request can succeed → app is effectively down
     even though /api/health says "ok".
     """
+    if settings.is_local_auth():
+        # Self-hosted: there's no Clerk account by design, not a
+        # forgotten setup step — report distinctly from "unconfigured"
+        # so an operator doesn't read this as a misconfiguration.
+        return ProbeResult(status="disabled", data={})
+
     if not settings.CLERK_SECRET_KEY:
         # No way to even attempt the call — surfaces as unconfigured.
         # Probably a dev environment without Clerk wired up; not a
@@ -164,6 +170,47 @@ async def probe_clerk(timeout_seconds: float = 5.0) -> ProbeResult:
             status="critical",
             data={"error_class": type(exc).__name__},
         )
+
+
+def probe_sentinel_license() -> ProbeResult:
+    """Report the cached Sentinel AI license state for self-hosted
+    installs (see app/core/license_client.py for the full contract).
+
+    Deliberately never "critical" — an unlicensed or grace-degraded
+    Sentinel feature is not a Command Center outage, so this must
+    never flip /api/health/ready's rollup. It's surfaced on
+    /api/health/detailed only, for an operator to notice.
+    """
+    if not settings.is_local_auth():
+        return ProbeResult(status="disabled", data={})
+
+    if not settings.SENTINEL_LICENSE_KEY:
+        return ProbeResult(status="unconfigured", data={})
+
+    from app.core.license_client import SENTINEL_LICENSE_GRACE_HOURS, is_sentinel_licensed
+    from app.models.models import Setting
+
+    db = SessionLocal()
+    try:
+        licensed = is_sentinel_licensed(db)
+        reachable = Setting.get(db, settings.LOCAL_ORG_ID, "sentinel_license_last_check_reachable", "")
+        last_check_at = Setting.get(db, settings.LOCAL_ORG_ID, "sentinel_license_last_check_at", "")
+        last_ok_at = Setting.get(db, settings.LOCAL_ORG_ID, "sentinel_license_last_ok_at", "")
+    finally:
+        db.close()
+
+    data = {
+        "licensed": licensed,
+        "last_check_reachable": reachable == "true",
+        "last_check_at": last_check_at or None,
+        "last_ok_at": last_ok_at or None,
+        "grace_hours": SENTINEL_LICENSE_GRACE_HOURS,
+    }
+    # "warn" (not "critical") when the service is unreachable — whether
+    # currently coasting on grace or already exhausted, this is an
+    # admin-visible heads-up, not a page.
+    status = "ok" if reachable == "true" else "warn"
+    return ProbeResult(status=status, data=data)
 
 
 # Disk-usage thresholds match the existing detailed endpoint's:
