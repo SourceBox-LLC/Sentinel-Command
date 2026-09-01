@@ -33,7 +33,7 @@ See [SECURITY.md](SECURITY.md). Do **not** file public issues for vulnerabilitie
 
 ## Local development setup
 
-For engineers cloning the repo to read, audit, or contribute fixes locally. (End users do not run Command Center — they sign up at the live SaaS.)
+For engineers cloning the repo to read, audit, or contribute fixes locally. (Most end users sign up at the live SaaS rather than running Command Center themselves — but self-hosting via `AUTH_PROVIDER=local` is a supported mode, not just a dev-only setup; see [AGENTS.md › Build & Run](AGENTS.md#build--run).)
 
 Sentinel has two main components:
 

@@ -314,10 +314,11 @@ and the plan-enforcement engine work unmodified regardless of provider.
   etc.) — no new table. Fail-open for `SENTINEL_LICENSE_GRACE_HOURS` (72h) if
   the service is unreachable, using the last known-good state; fail closed
   immediately (no grace) the moment the service is reachable and explicitly
-  says no. The gate itself is a plain boolean check layered on top of the
-  existing plan gate at three call sites — `_can_dispatch_for_kind` and
-  `dispatch_manual_run` (`core/sentinel_dispatch.py`), `_has_sentinel_access`
-  (`api/sentinel.py`) — plus the multi-tenant agent's MCP auth resolver
+  says no. The gate itself is `license_client.py::sentinel_blocked_by_license(plan, db)`
+  — a single shared predicate layered on top of the existing plan gate at four
+  call sites: `_can_dispatch_for_kind` and `dispatch_manual_run`
+  (`core/sentinel_dispatch.py`), `_resolve_sentinel_access` (`api/sentinel.py`),
+  and the multi-tenant agent's MCP auth resolver
   (`mcp/server.py::_resolve_via_agent_key`), which independently re-checks the
   same plan set and needs the same license check for the same reason.
   `resolve_org_plan()`'s self_host short-circuit is untouched — camera caps,
