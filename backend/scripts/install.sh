@@ -25,6 +25,11 @@ set -euo pipefail
 #       --url   <url> --node-id <id> --key <key> \
 #       --install-service
 #
+#   Force a from-source build, skipping the pre-built release check
+#   entirely (combine with the credential flags above if you also
+#   want one-shot registration):
+#     curl -fsSL .../install.sh | bash -s -- --source
+#
 # When --node-id and --key are passed, the script overwrites any stale
 # node.db from a previous install (e.g. cargo-run testing) so the new
 # credentials actually take effect.
@@ -33,6 +38,13 @@ set -euo pipefail
 # or starts a systemd service.  This keeps Linux consistent with the
 # Windows model where foreground TUI is primary and the service is a
 # deliberate second step.
+#
+# --source is OPT-IN: without it, the script always prefers a matching
+# pre-built binary from the latest GitHub release when one exists, and
+# only builds from source as a fallback (e.g. no release binary for
+# your arch yet). Pass --source to build the latest master instead —
+# useful for testing unreleased changes, or for anyone who'd rather
+# compile locally than trust a pre-built binary.
 
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -56,6 +68,7 @@ ARG_URL=""
 ARG_NODE_ID=""
 ARG_KEY=""
 ARG_INSTALL_SERVICE=false
+ARG_FORCE_SOURCE=false
 
 # The space-separated forms (`--flag value`) consume two tokens, but a bare
 # `shift 2` trips "shift count out of range" when the flag is the trailing
@@ -88,6 +101,13 @@ while [ $# -gt 0 ]; do
             # foreground TUI is still the default, this just adds a
             # systemd unit that survives logout and reboots.
             ARG_INSTALL_SERVICE=true
+            shift ;;
+        --source|--from-source)
+            # Opt-in flag to skip the pre-built-release check and
+            # build the latest master from source instead — see the
+            # "Fall back to building from source" step below, which
+            # this flag routes straight into.
+            ARG_FORCE_SOURCE=true
             shift ;;
         *)
             # Unknown arg — ignore so future install.sh versions can
@@ -217,28 +237,33 @@ apt_install_pkgs() {
 }
 
 # ── Try downloading pre-built binary ───────────────────────────────
-LATEST_URL="https://api.github.com/repos/${REPO}/releases/latest"
-
-echo -e "${DIM}Checking for pre-built release...${NC}"
-
+# Skipped entirely when --source was passed: DOWNLOAD_URL stays empty,
+# which routes straight into the "Fall back to building from source"
+# step below without duplicating that logic here.
 DOWNLOAD_URL=""
 RELEASE_TAG=""
 
-if RELEASE_JSON=$(curl -fsSL "$LATEST_URL" 2>/dev/null); then
-    # NOTE: these pipelines end in `grep` which returns 1 if it finds nothing.
-    # Under `set -o pipefail`, that exit code propagates out of the $(...)
-    # and, because we're assigning to a variable, `set -e` would silently
-    # abort the entire script. The `|| true` keeps us alive so we can fall
-    # through to the source-build path when there's no matching binary
-    # (e.g. linux-aarch64 users hitting a release that only ships x86_64).
-    RELEASE_TAG=$(echo "$RELEASE_JSON" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//' || true)
+if [ "$ARG_FORCE_SOURCE" = true ]; then
+    echo -e "${DIM}--source passed — skipping the release check, building from source...${NC}"
+else
+    echo -e "${DIM}Checking for pre-built release...${NC}"
 
-    # Look for matching binary in release assets
-    ASSET_PATTERN="${PLATFORM}.*${ARCH}"
-    DOWNLOAD_URL=$(echo "$RELEASE_JSON" | grep -o '"browser_download_url": "[^"]*'"${ASSET_PATTERN}"'[^"]*"' | head -1 | sed 's/"browser_download_url": "//;s/"$//' || true)
+    if RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null); then
+        # NOTE: these pipelines end in `grep` which returns 1 if it finds nothing.
+        # Under `set -o pipefail`, that exit code propagates out of the $(...)
+        # and, because we're assigning to a variable, `set -e` would silently
+        # abort the entire script. The `|| true` keeps us alive so we can fall
+        # through to the source-build path when there's no matching binary
+        # (e.g. linux-aarch64 users hitting a release that only ships x86_64).
+        RELEASE_TAG=$(echo "$RELEASE_JSON" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//' || true)
 
-    if [ -z "$DOWNLOAD_URL" ] && [ -n "$RELEASE_TAG" ]; then
-        echo -e "  Release ${CYAN}${RELEASE_TAG}${NC} found, but no ${CYAN}${PLATFORM}-${ARCH}${NC} binary in its assets."
+        # Look for matching binary in release assets
+        ASSET_PATTERN="${PLATFORM}.*${ARCH}"
+        DOWNLOAD_URL=$(echo "$RELEASE_JSON" | grep -o '"browser_download_url": "[^"]*'"${ASSET_PATTERN}"'[^"]*"' | head -1 | sed 's/"browser_download_url": "//;s/"$//' || true)
+
+        if [ -z "$DOWNLOAD_URL" ] && [ -n "$RELEASE_TAG" ]; then
+            echo -e "  Release ${CYAN}${RELEASE_TAG}${NC} found, but no ${CYAN}${PLATFORM}-${ARCH}${NC} binary in its assets."
+        fi
     fi
 fi
 
@@ -318,14 +343,18 @@ fi
 
 # ── Fall back to building from source ──────────────────────────────
 #
-# Pi users (aarch64 / armv7) always hit this path until we publish
-# ARM binaries in the release matrix — so this needs to be a real
-# "install everything for you" flow, not a "here's what to type" wall
-# of text.  We auto-install the whole build toolchain via apt and
-# bootstrap rustup non-interactively; the operator just presses Enter.
+# Reached three ways: --source was passed, no release binary matches
+# this platform/arch (armv7 users, or a release that predates this
+# arch's entry in the CI matrix), or the download itself failed. Needs
+# to be a real "install everything for you" flow, not a "here's what
+# to type" wall of text — we auto-install the whole build toolchain
+# via apt and bootstrap rustup non-interactively; the operator just
+# presses Enter.
 if [ -z "$DOWNLOAD_URL" ]; then
-    echo -e "${YELLOW}No pre-built binary available. Building from source...${NC}"
-    echo ""
+    if [ "$ARG_FORCE_SOURCE" = false ]; then
+        echo -e "${YELLOW}No pre-built binary available. Building from source...${NC}"
+        echo ""
+    fi
 
     # ── Build toolchain (gcc / make / pkg-config / libbz2) ─────────
     # On Debian/Ubuntu/Raspberry Pi OS, `build-essential` pulls in
