@@ -331,6 +331,14 @@ and the plan-enforcement engine work unmodified regardless of provider.
   is active. `SignInPage`/`SignUpPage`/`PricingPage`/`Layout`'s `UserButton` +
   `OrganizationSwitcher` branch explicitly on `IS_LOCAL_AUTH` since those have
   no equivalent Clerk-hosted UI to fall back on.
+- **Not the same login as a paired CameraNode's own local-admin auth**:
+  Sentinel-CameraNode's `Local` mode has its own independent password
+  (added the same session as this feature) protecting that node's own
+  standalone browser dashboard when it's LAN-exposed. The two logins
+  share no session, no password, and no trust boundary — an operator
+  running both self-hosted has two separate credentials to remember.
+  See that repo's `docs/runbooks/local-mode-setup.md` for the
+  CameraNode-side detail.
 
 ### API key (CameraNode)
 
