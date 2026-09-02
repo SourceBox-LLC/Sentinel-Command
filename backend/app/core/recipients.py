@@ -23,6 +23,7 @@ from threading import Lock
 from typing import Optional
 
 from app.core.clerk import clerk
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,12 @@ def get_recipient_emails(org_id: str, audience: str) -> list[str]:
     worker tick.
     """
     audience = audience if audience in ("all", "admin") else "all"
+
+    # Self-hosted: no Clerk to ask, no membership list — the single
+    # local admin is the only possible recipient (of either audience).
+    if settings.is_local_auth():
+        return [settings.LOCAL_ADMIN_EMAIL] if settings.LOCAL_ADMIN_EMAIL else []
+
     cache_key = (org_id, audience)
 
     # Cache check — racy but the read-then-write is benign.  Worst

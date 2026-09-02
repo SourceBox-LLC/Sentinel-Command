@@ -18,6 +18,8 @@ import threading
 import time
 from datetime import UTC, datetime, timedelta
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 # Grace window after a failed payment before we tighten the caps.  Matches
@@ -64,10 +66,24 @@ PLAN_LIMITS = {
         "max_sse_subscribers": 100,
         "log_retention_days": 365,
     },
+    # Self-hosted, single-admin install (AUTH_PROVIDER=local — see
+    # resolve_org_plan below). No billing, no licensing gate: this tier
+    # ships fully unlocked. max_sse_subscribers stays bounded (not a
+    # paywall lever here) because it's a real anti-runaway-connection
+    # safety valve for a single-process backend. max_seats is honest but
+    # unused — local mode has no invite flow to enforce it against.
+    "self_host": {
+        "max_cameras": 999,
+        "max_nodes": 999,
+        "max_seats": 1,
+        "max_viewer_hours_per_month": 999999,
+        "max_sse_subscribers": 50,
+        "log_retention_days": 365,
+    },
 }
 
 # Slugs we trust without re-checking against Clerk.
-PAID_PLAN_SLUGS = frozenset({"pro", "pro_plus"})
+PAID_PLAN_SLUGS = frozenset({"pro", "pro_plus", "self_host"})
 
 # Min seconds between consecutive live Clerk lookups for the same org.
 # Prevents non-paid callers from generating excessive Clerk API traffic
@@ -198,7 +214,17 @@ def resolve_org_plan(db, org_id: str) -> str:
 
     Live lookups for the same org are throttled to once per 60 seconds
     so a free-tier caller hammering MCP can't drive Clerk API spend.
+
+    Self-hosted (AUTH_PROVIDER=local) short-circuits to "self_host"
+    immediately, before touching Setting or Clerk at all. This is the
+    single choke point for every non-JWT plan lookup (node registration,
+    MCP, Sentinel dispatch, the hourly reconcile sweep) — patching only
+    get_current_user's AuthUser.plan would miss all of those, since none
+    of them ever build an AuthUser.
     """
+    if settings.is_local_auth():
+        return "self_host"
+
     from app.models.models import Setting
 
     cached = Setting.get(db, org_id, "org_plan", "")
@@ -255,6 +281,7 @@ def get_plan_display_name(plan: str) -> str:
         "free_org": "Free",
         "pro": "Pro",
         "pro_plus": "Pro Plus",
+        "self_host": "Self-Hosted",
     }
     return names.get(plan, "Free")
 
@@ -329,6 +356,14 @@ def effective_plan_for_caps(db, org_id: str, *, use_cache: bool = True) -> str:
                 return hit[1]
 
     nominal = resolve_org_plan(db, org_id)
+
+    # Self-hosted installs are never past-due — nothing ever writes
+    # payment_past_due for the local org (there's no billing webhook in
+    # this mode). Short-circuit explicitly rather than relying on that
+    # key merely being unset, so this holds even if something stray
+    # writes it (e.g. manual DB poking, a future feature).
+    if settings.is_local_auth():
+        return _cache_effective(org_id, nominal)
 
     past_due = Setting.get(db, org_id, "payment_past_due", "false") == "true"
     if not past_due:

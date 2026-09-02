@@ -2,10 +2,15 @@
 
 from datetime import UTC, datetime, timedelta, timezone
 
+from app.core.config import settings
 from app.core.plans import (
+    PAID_PLAN_SLUGS,
     PAYMENT_GRACE_DAYS,
+    PLAN_LIMITS,
     effective_plan_for_caps,
     enforce_camera_cap,
+    get_plan_display_name,
+    resolve_org_plan,
     wire_plan_slug,
 )
 from app.models.models import Camera, CameraNode, Setting
@@ -384,3 +389,65 @@ def test_prune_resolve_cache_records_sweep_time(monkeypatch):
     # A call 1s later is gated off, so the stamp does not advance.
     plans._prune_resolve_cache(now + 1.0)
     assert plans._last_resolve_prune_at == now
+
+
+# ── Self-hosted (AUTH_PROVIDER=local) short-circuit ─────────────────────
+#
+# This is the single highest-value fix for local mode: resolve_org_plan
+# is the choke point for every NON-JWT plan lookup (node registration,
+# MCP, Sentinel dispatch, the hourly reconcile sweep) — none of those
+# ever build an AuthUser, so a fix scoped only to get_current_user would
+# silently leave them all on free-tier limits.
+
+
+def test_resolve_org_plan_short_circuits_to_self_host(monkeypatch):
+    """In local mode, resolve_org_plan must return "self_host" immediately
+    — before touching Setting or Clerk at all — regardless of org_id or
+    any cached Setting value."""
+    monkeypatch.setattr(settings, "AUTH_PROVIDER", "local")
+    db = TestSession()
+    try:
+        # Even an org with a stale/conflicting cached plan must be
+        # overridden — local mode ignores Setting entirely.
+        Setting.set(db, "any-org-id", "org_plan", "free_org")
+        db.commit()
+        assert resolve_org_plan(db, "any-org-id") == "self_host"
+    finally:
+        db.close()
+
+
+def test_effective_plan_for_caps_short_circuits_to_self_host(monkeypatch):
+    """effective_plan_for_caps calls resolve_org_plan first, so the local
+    short-circuit must propagate through it too — including bypassing the
+    past-due grace-period downgrade logic entirely."""
+    monkeypatch.setattr(settings, "AUTH_PROVIDER", "local")
+    db = TestSession()
+    try:
+        # Even a "past the grace period" org must stay on self_host —
+        # local mode is never past-due.
+        Setting.set(db, "org_local_past_due", "org_plan", "pro")
+        _set_past_due(db, "org_local_past_due", days_ago=PAYMENT_GRACE_DAYS + 5)
+        db.commit()
+        assert effective_plan_for_caps(db, "org_local_past_due") == "self_host"
+    finally:
+        db.close()
+
+
+def test_self_host_plan_limits_are_registered():
+    """The self_host tier must have its own PLAN_LIMITS entry — without
+    one, get_plan_limits() silently falls back to the free tier."""
+    assert "self_host" in PLAN_LIMITS
+    limits = PLAN_LIMITS["self_host"]
+    assert limits["max_cameras"] > PLAN_LIMITS["pro_plus"]["max_cameras"]
+    assert limits["max_viewer_hours_per_month"] > PLAN_LIMITS["pro_plus"]["max_viewer_hours_per_month"]
+
+
+def test_self_host_is_a_paid_slug():
+    """cameras.py's _require_active_paid_plan double-checks
+    effective_plan_for_caps(...) in PAID_PLAN_SLUGS — self_host must be
+    a member or that check fails for local admins."""
+    assert "self_host" in PAID_PLAN_SLUGS
+
+
+def test_self_host_display_name():
+    assert get_plan_display_name("self_host") == "Self-Hosted"

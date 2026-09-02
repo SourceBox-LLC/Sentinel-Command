@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect } from "react"
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom"
-import { useAuth, useClerk, useOrganization, CreateOrganization } from "@clerk/clerk-react"
+import { useAuth, useClerk, useOrganization, CreateOrganization } from "./auth/index.jsx"
 import Layout from "./components/Layout.jsx"
 import LoadingSpinner from "./components/LoadingSpinner.jsx"
 import ErrorBoundary from "./components/ErrorBoundary.jsx"
@@ -127,7 +127,7 @@ function App() {
         {/* Root redirects to the standalone marketing/docs site */}
         <Route path="/" element={<RedirectToStandalone />} />
 
-        {/* Auth routes (public but use Clerk components) */}
+        {/* Auth routes (public) */}
         <Route path="/sign-in/*" element={<SignInPage />} />
         <Route path="/sign-up/*" element={<SignUpPage />} />
 

@@ -6,10 +6,39 @@ load_dotenv()
 
 
 class Config:
-    # Clerk Authentication (required)
+    # Auth provider switch. "clerk" (default) is the hosted multi-tenant
+    # SaaS mode this app has always run in. "local" is a single-admin,
+    # fully self-hosted mode with no Clerk dependency at all — see
+    # app/core/local_auth.py and app/core/clerk.py's conditional client
+    # construction. Any other value is treated as "clerk".
+    AUTH_PROVIDER: str = os.getenv("AUTH_PROVIDER", "clerk")
+
+    # Clerk Authentication (required when AUTH_PROVIDER=clerk)
     CLERK_SECRET_KEY: str = os.getenv("CLERK_SECRET_KEY", "")
     CLERK_PUBLISHABLE_KEY: str = os.getenv("CLERK_PUBLISHABLE_KEY", "")
     CLERK_WEBHOOK_SECRET: str = os.getenv("CLERK_WEBHOOK_SECRET", "")
+
+    # ── Local (self-hosted) auth — only used when AUTH_PROVIDER=local ──
+    # Single fixed admin account: no invite flow, no multi-user, no
+    # local Organization table. LOCAL_ORG_ID is the constant org_id
+    # stamped on every row this install ever writes — it's an opaque
+    # string everywhere in the schema (no FK), so any value works, it
+    # just needs to stay stable across restarts.
+    APP_SECRET_KEY: str = os.getenv("APP_SECRET_KEY", "")
+    LOCAL_ADMIN_USERNAME: str = os.getenv("LOCAL_ADMIN_USERNAME", "")
+    LOCAL_ADMIN_PASSWORD_HASH: str = os.getenv("LOCAL_ADMIN_PASSWORD_HASH", "")
+    LOCAL_ADMIN_EMAIL: str = os.getenv("LOCAL_ADMIN_EMAIL", "")
+    LOCAL_ORG_ID: str = os.getenv("LOCAL_ORG_ID", "self-host")
+
+    # Self-hosted Sentinel AI licensing — see app/core/license_client.py.
+    # Optional: a self-hosted install with no key simply never gets
+    # Sentinel AI access (everything else stays free and unaffected).
+    # The service is a genuinely separate deployment from this backend
+    # (see the sibling Sentinel-License-Service repo).
+    SENTINEL_LICENSE_KEY: str = os.getenv("SENTINEL_LICENSE_KEY", "")
+    SENTINEL_LICENSE_SERVICE_URL: str = os.getenv(
+        "SENTINEL_LICENSE_SERVICE_URL", "https://sentinel-license.fly.dev"
+    )
 
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./sentinel.db")
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
@@ -149,18 +178,42 @@ class Config:
     # API has a real outage.
     EMAIL_MAX_ATTEMPTS: int = int(os.getenv("EMAIL_MAX_ATTEMPTS", "3"))
 
-    @classmethod
-    def is_clerk_configured(cls) -> bool:
-        return bool(cls.CLERK_SECRET_KEY and cls.CLERK_PUBLISHABLE_KEY)
+    # NOTE: these are plain instance methods (self, not cls) even though
+    # nothing here varies per-instance in production — settings is a
+    # singleton. Tests monkeypatch attributes directly on that `settings`
+    # instance (e.g. `monkeypatch.setattr(settings, "AUTH_PROVIDER", ...)`),
+    # and instance attribute lookup checks the instance's own __dict__
+    # before falling back to the class — a @classmethod reading `cls.X`
+    # skips the instance entirely and would silently see the original
+    # class-level default instead of the monkeypatched value. Keep these
+    # as instance methods so they stay test-monkeypatch-safe.
 
-    @classmethod
-    def is_email_configured(cls) -> bool:
+    def is_clerk_configured(self) -> bool:
+        return bool(self.CLERK_SECRET_KEY and self.CLERK_PUBLISHABLE_KEY)
+
+    def is_local_auth(self) -> bool:
+        return self.AUTH_PROVIDER == "local"
+
+    def is_clerk_auth(self) -> bool:
+        # Exact complement of is_local_auth(), not a separate literal
+        # check — any value other than "local" (unset, "clerk", a typo)
+        # falls through to Clerk, the safe default. Every AUTH_PROVIDER
+        # branch in the codebase must route through one of these two so
+        # they can never disagree about which mode is active.
+        return not self.is_local_auth()
+
+    def is_local_auth_configured(self) -> bool:
+        return bool(
+            self.APP_SECRET_KEY and self.LOCAL_ADMIN_USERNAME and self.LOCAL_ADMIN_PASSWORD_HASH
+        )
+
+    def is_email_configured(self) -> bool:
         """True iff the Resend transport has the credentials it needs.
         EMAIL_ENABLED is the operator switch; this checks the wiring.
         Health endpoint reports both separately so an operator can tell
         'I forgot to set the secret' from 'I left the kill-switch off'.
         """
-        return bool(cls.RESEND_API_KEY and cls.EMAIL_FROM_ADDRESS)
+        return bool(self.RESEND_API_KEY and self.EMAIL_FROM_ADDRESS)
 
     # ── Sentinel agent service-to-service auth ────────────────────────
     # The Sentinel agent (separate Fly app, ships in slice 3) calls

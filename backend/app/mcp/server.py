@@ -149,8 +149,9 @@ def compute_allowed_tools(scope_mode: str | None, scope_tools: list[str] | None)
 #                   agent stuck in a loop burning through your Clerk API spend
 #                   and your DB throughput for 8 hours while you sleep)
 RATE_LIMITS = {
-    "pro":      {"minute": 30,  "daily": 5_000},
-    "pro_plus": {"minute": 120, "daily": 30_000},
+    "pro":       {"minute": 30,  "daily": 5_000},
+    "pro_plus":  {"minute": 120, "daily": 30_000},
+    "self_host": {"minute": 120, "daily": 30_000},
 }
 DEFAULT_RATE_LIMIT = None  # Block unrecognized plans (MCP requires Pro+)
 
@@ -414,7 +415,7 @@ def _resolve_org(headers: dict | None) -> tuple[str, Session]:
         # with it, not keep full Pro limits until a cancellation webhook
         # that may never arrive.  (The sentinel-agent auth path below
         # already used the effective plan; this aligns the key path.)
-        from app.core.plans import effective_plan_for_caps
+        from app.core.plans import effective_plan_for_caps, get_plan_display_name
         plan = effective_plan_for_caps(db, mcp_key.org_id)
         limits = RATE_LIMITS.get(plan)
         if limits is None:
@@ -427,7 +428,12 @@ def _resolve_org(headers: dict | None) -> tuple[str, Session]:
         )
         if not allowed:
             db.close()
-            plan_name = "Pro Plus" if plan == "pro_plus" else plan.title()
+            # Reuse plans.py's single source of truth for display names
+            # (already maps self_host -> "Self-Hosted") instead of a
+            # second hand-rolled special case that only knew about
+            # pro_plus and fell back to plan.title() ("Self_Host") for
+            # anything else.
+            plan_name = get_plan_display_name(plan)
             if breach == "minute":
                 raise ToolError(
                     f"Rate limit exceeded: {limits['minute']} calls/min allowed "
@@ -491,6 +497,7 @@ def _resolve_via_agent_key(headers: dict, _agent_key: str) -> tuple[str, Session
 
     db = SessionLocal()
     try:
+        from app.core.license_client import sentinel_blocked_by_license
         from app.core.plans import effective_plan_for_caps
         from app.core.sentinel_dispatch import SENTINEL_PLANS
         from app.models.models import SentinelConfig, SentinelRun
@@ -506,6 +513,20 @@ def _resolve_via_agent_key(headers: dict, _agent_key: str) -> tuple[str, Session
             raise ToolError(
                 f"Agent override target org is not on a Sentinel-eligible "
                 f"plan (plan={plan!r})"
+            )
+        # Self-hosted installs are unconditionally "self_host" per the
+        # check above — additionally require a currently-valid Sentinel
+        # license here too, for the same reason the comment above says
+        # every Sentinel surface must check the same set: without this,
+        # a stale pending run or a leaked SENTINEL_AGENT_MCP_KEY could
+        # let the agent act on behalf of an unlicensed self-host org
+        # even though dispatch itself is blocked. No-op for hosted
+        # Clerk orgs.
+        if sentinel_blocked_by_license(plan, db):
+            db.close()
+            raise ToolError(
+                "Agent override target org is self-hosted without a valid "
+                "Sentinel license"
             )
         # Apply the org's actual plan tier's MCP rate limits — Pro orgs
         # get Pro's per-minute / per-day caps, Pro Plus gets Pro Plus's.

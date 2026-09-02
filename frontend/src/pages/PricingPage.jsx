@@ -1,4 +1,5 @@
 import { PricingTable } from "@clerk/clerk-react"
+import { IS_LOCAL_AUTH } from "../auth/index.jsx"
 
 function PricingPage() {
   return (
@@ -19,9 +20,20 @@ function PricingPage() {
         </p>
       </div>
 
-      <div className="pricing-table-wrapper">
-        <PricingTable for="organization" />
-      </div>
+      {IS_LOCAL_AUTH ? (
+        <div className="pricing-table-wrapper pricing-self-host-notice">
+          <h2>You're running Sentinel self-hosted</h2>
+          <p>
+            This install has no billing and no usage caps — every feature
+            is unlocked. Pricing and hosted plans only apply to the
+            managed Command Center service.
+          </p>
+        </div>
+      ) : (
+        <div className="pricing-table-wrapper">
+          <PricingTable for="organization" />
+        </div>
+      )}
 
       <p className="pricing-detail-footnote">
         Need higher caps? If you legitimately need more than 200 cameras or

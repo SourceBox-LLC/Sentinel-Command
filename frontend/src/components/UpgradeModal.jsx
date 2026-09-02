@@ -56,10 +56,15 @@ function UpgradeModal({ isOpen, onClose, feature, currentPlan }) {
   if (!isOpen) return null
 
   const msg = UPGRADE_MESSAGES[feature] || UPGRADE_MESSAGES.nodes
+  // self_host falls through to "Free" without this branch — this modal
+  // is unlikely to trigger for self-host in practice (its caps are
+  // effectively unlimited), but a self-hosted admin who does hit it
+  // shouldn't be told they're on a Clerk plan they've never had.
   const planName =
     currentPlan === "free_org" ? "Free" :
     currentPlan === "pro" ? "Pro" :
-    isProPlus(currentPlan) ? "Pro Plus" : "Free"
+    isProPlus(currentPlan) ? "Pro Plus" :
+    currentPlan === "self_host" ? "Self-Hosted" : "Free"
 
   return (
     <div className="modal-overlay" onClick={onClose}>

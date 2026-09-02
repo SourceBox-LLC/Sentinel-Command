@@ -29,11 +29,13 @@
 
 ---
 
-## You don't run this — we host it for you
+## Hosted, or run it yourself
 
-Sentinel Command Center is a **product we operate as a service**, not something you download and deploy. To use it, just **[sign up on the live app](https://sentinel-command.com)** — no servers to provision, no Docker, no database to babysit. Pair a [CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode) with a camera and it appears in your dashboard automatically.
+**Most people should just use the hosted app.** Sentinel Command Center is a **product we operate as a service** — **[sign up on the live app](https://sentinel-command.com)** and pair it with a [CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode) — no servers to provision, no Docker, no database to babysit.
 
-> **Looking for the part you actually install?** That's **[CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode)** — a small daemon that turns any USB or IP camera into a private, cloud-connected feed. It runs on your hardware and has its own setup guide.
+**Prefer to run it yourself?** Set `AUTH_PROVIDER=local` and Command Center runs fully self-hosted — a single fixed admin account, no Clerk account, no billing, every feature unlocked except the optional Sentinel AI agent (which has a real ongoing LLM cost and needs a separately licensed key). See [AGENTS.md › Build & Run](AGENTS.md#build--run) for the self-hosted quick start.
+
+> **Looking for the part you actually install either way?** That's **[CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode)** — a small daemon that turns any USB or IP camera into a private, cloud-connected feed. It runs on your hardware and has its own setup guide.
 
 ### So why is this repo public?
 
@@ -98,7 +100,7 @@ CameraNode captures and encodes video on your network, then pushes it **outbound
 
 ## License & contributions
 
-[**AGPL-3.0**](LICENSE) — source-available. Command Center is operated by **SourceBox LLC** as a SaaS; the source is public so customers can verify the implementation behind the product's privacy and security claims. Running your own copy is permitted under the license, but it isn't the intended use — and AGPL §13 requires anyone who modifies it and offers it over a network to publish their changes.
+[**AGPL-3.0**](LICENSE) — source-available. Command Center is operated by **SourceBox LLC** as a SaaS, and the source is public so customers can verify the implementation behind the product's privacy and security claims — but self-hosting (`AUTH_PROVIDER=local`, see above) is a supported, intended use too, not just something the license happens to permit. AGPL §13 requires anyone who modifies it and offers it over a network to publish their changes.
 
 This project is **not currently accepting external code contributions**, but bug reports and feature ideas are very welcome via [Issues](https://github.com/SourceBox-LLC/Sentinel-Command/issues) and [Discussions](https://github.com/SourceBox-LLC/Sentinel-Command/discussions). See [CONTRIBUTING.md](CONTRIBUTING.md).
 

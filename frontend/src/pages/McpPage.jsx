@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react"
 import { Link } from "react-router-dom"
-import { useAuth, useOrganization } from "@clerk/clerk-react"
+import { useAuth, useOrganization } from "../auth/index.jsx"
 import {
   getMcpKeys, createMcpKey, revokeMcpKey,
   getMcpActivity, getMcpSessions, getMcpStats,

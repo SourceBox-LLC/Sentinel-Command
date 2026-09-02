@@ -1,8 +1,16 @@
 import { SignUp } from "@clerk/clerk-react"
-import { Link } from "react-router-dom"
+import { Navigate, Link } from "react-router-dom"
 import { LogoMark } from "../components/Logo.jsx"
+import { IS_LOCAL_AUTH } from "../auth/index.jsx"
 
 function SignUpPage() {
+  // Self-hosted: a single fixed admin account, provisioned once via
+  // backend/scripts/hash_local_admin_password.py — there's nothing to
+  // sign up for.
+  if (IS_LOCAL_AUTH) {
+    return <Navigate to="/sign-in" replace />
+  }
+
   return (
     <div className="auth-layout">
       <div className="bg-grid"></div>
@@ -14,7 +22,7 @@ function SignUpPage() {
         <span className="auth-logo-highlight">Sentinel</span>
         <span className="auth-logo-text"> by SourceBox</span>
       </Link>
-      
+
       <div className="auth-page">
         <SignUp
           routing="path"

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
-import { useAuth, useOrganization } from "@clerk/clerk-react"
+import { useAuth, useOrganization } from "../auth/index.jsx"
 
 import { getIncidents, getIncidentCounts } from "../services/api"
 import IncidentReportModal from "../components/IncidentReportModal.jsx"

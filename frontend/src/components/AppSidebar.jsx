@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom"
-import { useOrganization } from "@clerk/clerk-react"
+import { useOrganization } from "../auth/index.jsx"
 import { usePlanInfo } from "../hooks/usePlanInfo.jsx"
 
 /* 18px stroke icons for the nav rail. Inline (not FeatureIcons) because
@@ -126,7 +126,14 @@ function AppSidebar({ open, onClose }) {
   const showPlanBanner = !!(planInfo && hasAdminFeature)
   const showUsage = !!(planInfo && typeof planInfo.usage?.viewer_hours_limit === "number")
   const isProPlus = planInfo?.plan === "pro_plus"
-  const planClass = isProPlus ? "pro-plus" : "pro"
+  const isSelfHost = planInfo?.plan === "self_host"
+  // self_host always has the "admin" feature (see backend
+  // _get_current_user_local), so showPlanBanner is always true for a
+  // self-hosted install — without this branch it fell through to the
+  // "pro" class/badge, mislabeling every self-hosted deployment as
+  // being on a paid hosted Clerk plan.
+  const planClass = isSelfHost ? "self-host" : isProPlus ? "pro-plus" : "pro"
+  const planBadgeText = isSelfHost ? "SELF-HOSTED" : isProPlus ? "PRO PLUS" : "PRO"
 
   let usageUsed = 0
   let usageLimit = 0
@@ -167,7 +174,7 @@ function AppSidebar({ open, onClose }) {
       {showPlanBanner && (
         <div className={`pro-status-bar pro-status-${planClass}`}>
           <div className="pro-status-left">
-            <span className="pro-status-badge">{isProPlus ? "PRO PLUS" : "PRO"}</span>
+            <span className="pro-status-badge">{planBadgeText}</span>
             <span className="pro-status-text">
               {planInfo.usage.cameras} / {planInfo.limits.max_cameras >= 999 ? "∞" : planInfo.limits.max_cameras} cameras
               {" · "}

@@ -64,14 +64,26 @@ _DERIVE_LABEL = b"sentinel-email-unsubscribe-v1"
 
 
 def _get_secret() -> Optional[str]:
-    """Derive the signing secret from CLERK_SECRET_KEY.
+    """Derive the signing secret — APP_SECRET_KEY for self-hosted
+    installs, CLERK_SECRET_KEY for hosted ones.
 
-    Returns None when the Clerk secret is unset — callers fail closed
-    (mint raises, verify rejects).  The old behaviour fell back to a
-    hardcoded ``test-secret-not-for-production`` string, which made the
-    PUBLIC unsubscribe endpoint forgeable on any misconfigured deploy.
+    Self-hosted installs (AUTH_PROVIDER=local) have no Clerk key at
+    all, so they need APP_SECRET_KEY to sign unsubscribe links. Hosted
+    deployments keep deriving from CLERK_SECRET_KEY exactly as before
+    — gated strictly on AUTH_PROVIDER, not merely "prefer APP_SECRET_KEY
+    if set", so a hosted operator setting APP_SECRET_KEY for some
+    unrelated future purpose (a generically-named var is an obvious
+    reuse candidate) can never silently change a hosted deployment's
+    derivation and invalidate every outstanding unsubscribe link
+    (TTL 400 days) with no warning.
+
+    Returns None when the relevant secret is unconfigured — callers
+    fail closed (mint raises, verify rejects).  The old behaviour fell
+    back to a hardcoded ``test-secret-not-for-production`` string,
+    which made the PUBLIC unsubscribe endpoint forgeable on any
+    misconfigured deploy.
     """
-    base = settings.CLERK_SECRET_KEY
+    base = settings.APP_SECRET_KEY if settings.is_local_auth() else settings.CLERK_SECRET_KEY
     if not base:
         return None
     return _hmac.new(base.encode("utf-8"), _DERIVE_LABEL, hashlib.sha256).hexdigest()
@@ -87,8 +99,9 @@ def make_token(org_id: str, kind: str, recipient: str) -> str:
     """
     secret = _get_secret()
     if secret is None:
+        missing = "APP_SECRET_KEY" if settings.is_local_auth() else "CLERK_SECRET_KEY"
         raise RuntimeError(
-            "email_unsubscribe: CLERK_SECRET_KEY unset — cannot sign tokens"
+            f"email_unsubscribe: {missing} unset — cannot sign tokens"
         )
     now = int(time.time())
     payload = {
