@@ -181,6 +181,50 @@ if ! check_cmd curl; then
     exit 1
 fi
 
+# ── Privilege escalation ───────────────────────────────────────────
+# Every privileged step below goes through $SUDO rather than a literal
+# `sudo`. Minimal images and containers routinely run as root WITHOUT
+# sudo installed, where a hardcoded `sudo apt-get` dies with "sudo:
+# command not found" — so root uses an empty prefix and runs the
+# command directly. A non-root user with no sudo gets an empty prefix
+# too: the privileged command then fails on its own with a permission
+# error naming what it couldn't do, which is more useful than this
+# script guessing.
+if [ "$(id -u)" -eq 0 ]; then
+    SUDO=""
+elif check_cmd sudo; then
+    SUDO="sudo"
+else
+    SUDO=""
+    echo -e "  ${YELLOW}Not running as root and sudo isn't installed — steps that${NC}"
+    echo -e "  ${YELLOW}need elevation (package installs, systemd) will be skipped${NC}"
+    echo -e "  ${YELLOW}or fail. Re-run as root to get the full install.${NC}"
+fi
+
+# Name the right package manager in manual-install hints. Deliberately
+# ONLY affects the wording of hints — actual auto-install stays apt-only
+# (see apt_install_pkgs). Printing `sudo apt install ffmpeg` to a Fedora
+# or Arch user is worse than printing nothing: it's advice that can't
+# work on their system.
+manual_install_hint() {
+    local pkgs="$*"
+    if check_cmd apt-get; then
+        echo "sudo apt install ${pkgs}"
+    elif check_cmd dnf; then
+        echo "sudo dnf install ${pkgs}"
+    elif check_cmd pacman; then
+        echo "sudo pacman -S ${pkgs}"
+    elif check_cmd apk; then
+        echo "sudo apk add ${pkgs}"
+    elif check_cmd zypper; then
+        echo "sudo zypper install ${pkgs}"
+    elif [ "$PLATFORM" = "macos" ]; then
+        echo "brew install ${pkgs}"
+    else
+        echo "install with your system package manager: ${pkgs}"
+    fi
+}
+
 # ── Shared prompt helper ───────────────────────────────────────────
 # The installer is usually run via `curl | bash`, so stdin is the pipe
 # from curl, not a terminal.  Reading from /dev/tty is how we still get
@@ -217,18 +261,18 @@ apt_install_pkgs() {
     shift
     local pkgs="$*"
     if ! check_cmd apt-get; then
-        echo -e "  ${DIM}Install manually: ${CYAN}sudo apt install ${pkgs}${NC}"
+        echo -e "  ${DIM}Install manually: ${CYAN}$(manual_install_hint "$pkgs")${NC}"
         return 1
     fi
     if ! prompt_yes "${prompt_msg}"; then
-        echo -e "  ${DIM}Skipped — install manually: ${CYAN}sudo apt install ${pkgs}${NC}"
+        echo -e "  ${DIM}Skipped — install manually: ${CYAN}$(manual_install_hint "$pkgs")${NC}"
         return 1
     fi
     echo -e "  ${DIM}Running: sudo apt-get install -y ${pkgs}${NC}"
     # Run `apt-get update` opportunistically — a stale cache is the #1
     # cause of "E: Unable to locate package" errors on fresh Pi images.
     # Quiet flag keeps the output from drowning out the installer banner.
-    if sudo apt-get update -qq && sudo apt-get install -y $pkgs; then
+    if $SUDO apt-get update -qq && $SUDO apt-get install -y $pkgs; then
         return 0
     else
         echo -e "  ${RED}apt install failed for: ${pkgs}${NC}"
@@ -243,8 +287,25 @@ apt_install_pkgs() {
 DOWNLOAD_URL=""
 RELEASE_TAG=""
 
+# Alpine and other musl-libc systems: every published Linux binary is
+# built against glibc (release.yml's targets are all *-linux-gnu), so a
+# prebuilt would land successfully and then fail to exec with the
+# infamously misleading "No such file or directory" — the kernel
+# reporting a missing ELF interpreter, not a missing file. Route
+# straight to a source build instead, which produces a musl-linked
+# binary that actually runs.
+IS_MUSL=false
+if [ "$PLATFORM" = "linux" ]; then
+    if ls /lib/ld-musl-* >/dev/null 2>&1 || (ldd --version 2>&1 | grep -qi musl); then
+        IS_MUSL=true
+    fi
+fi
+
 if [ "$ARG_FORCE_SOURCE" = true ]; then
     echo -e "${DIM}--source passed — skipping the release check, building from source...${NC}"
+elif [ "$IS_MUSL" = true ]; then
+    echo -e "${DIM}musl libc detected — published binaries are glibc-linked and${NC}"
+    echo -e "${DIM}won't run here, so building from source instead...${NC}"
 else
     echo -e "${DIM}Checking for pre-built release...${NC}"
 
@@ -359,7 +420,12 @@ fi
 # via apt and bootstrap rustup non-interactively; the operator just
 # presses Enter.
 if [ -z "$DOWNLOAD_URL" ]; then
-    if [ "$ARG_FORCE_SOURCE" = false ]; then
+    # Suppressed when we already explained why we're here — --source
+    # was explicit, and the musl branch printed its own reason. Saying
+    # "No pre-built binary available" after either would be redundant
+    # at best and misleading at worst (on musl a binary DOES exist, it
+    # just can't run).
+    if [ "$ARG_FORCE_SOURCE" = false ] && [ "$IS_MUSL" = false ]; then
         echo -e "${YELLOW}No pre-built binary available. Building from source...${NC}"
         echo ""
     fi
@@ -392,12 +458,37 @@ if [ -z "$DOWNLOAD_URL" ]; then
                 exit 1
             fi
         fi
-    elif ! check_cmd git; then
-        echo -e "${RED}git is required but not installed.${NC}"
-        if [ "$PLATFORM" = "macos" ]; then
-            echo -e "Install: ${CYAN}xcode-select --install${NC}"
+    else
+        # Non-apt systems (Fedora, Arch, Alpine, openSUSE, macOS) get
+        # the same pre-flight CHECK but no auto-install — deliberately
+        # keeping the "don't try to drive every package manager"
+        # decision above, while still refusing to send someone into a
+        # 10-15 minute compile that's going to die at the link step.
+        # Without this, only Debian-family users got protected from the
+        # exact failure this check exists to prevent.
+        MISSING_TOOLS=""
+        check_cmd git        || MISSING_TOOLS="$MISSING_TOOLS git"
+        check_cmd cc         || check_cmd gcc || MISSING_TOOLS="$MISSING_TOOLS gcc"
+        check_cmd make       || MISSING_TOOLS="$MISSING_TOOLS make"
+        check_cmd pkg-config || MISSING_TOOLS="$MISSING_TOOLS pkg-config"
+        if [ -n "$(echo "$MISSING_TOOLS" | tr -d ' ')" ]; then
+            echo -e "${RED}Missing build tools:${NC}${CYAN}${MISSING_TOOLS}${NC}"
+            if [ "$PLATFORM" = "macos" ]; then
+                # On macOS the compiler, make and git all arrive
+                # together with the Command Line Tools — one command
+                # covers the whole list.
+                echo -e "Install: ${CYAN}xcode-select --install${NC}"
+            else
+                echo -e "Install: ${CYAN}$(manual_install_hint "$MISSING_TOOLS")${NC}"
+                # bzip2 headers have no CLI to probe for, so they can't
+                # join the list above — but they're the single most
+                # common source-build failure, and worth naming before
+                # someone burns 15 minutes finding out.
+                echo -e "  ${DIM}You'll likely also need the bzip2 development headers${NC}"
+                echo -e "  ${DIM}(libbz2-devel / bzip2-dev, depending on the distro).${NC}"
+            fi
+            exit 1
         fi
-        exit 1
     fi
 
     # ── Rust toolchain via rustup ──────────────────────────────────
@@ -494,8 +585,19 @@ if [ -z "$DOWNLOAD_URL" ]; then
                 # distro packages run years behind (Ubuntu 22.04 ships
                 # Node 12), and 20 is what release.yml builds with.
                 echo -e "  ${DIM}Running: NodeSource setup_20.x, then apt-get install nodejs${NC}"
-                if curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - >/dev/null 2>&1 \
-                   && sudo apt-get install -y nodejs; then
+                # `$SUDO -E bash -` would expand to `-E bash -` when
+                # already root (empty $SUDO), which the shell would try
+                # to execute as a command named `-E`. Pick the whole
+                # invocation instead of prefixing a flag we only want
+                # when sudo is actually in play.
+                if [ -n "$SUDO" ]; then
+                    NODESOURCE_RUNNER=("$SUDO" -E bash -)
+                else
+                    NODESOURCE_RUNNER=(bash -)
+                fi
+                if curl -fsSL https://deb.nodesource.com/setup_20.x \
+                     | "${NODESOURCE_RUNNER[@]}" >/dev/null 2>&1 \
+                   && $SUDO apt-get install -y nodejs; then
                     NODE_OK=true
                     echo -e "  Node:      ${GREEN}$(node -v 2>/dev/null) (installed)${NC}"
                 else
@@ -528,6 +630,28 @@ if [ -z "$DOWNLOAD_URL" ]; then
         echo -e "  ${YELLOW}18+ is available to add it.${NC}"
     fi
 
+    # Low-RAM heads-up. rustc peaks well over 1 GB linking a release
+    # build of this crate graph, so a 512 MB Pi Zero 2W or a 1 GB Pi 3
+    # will typically get OOM-killed partway through — and the kernel
+    # kills cargo with a bare "signal: 9", which reads like a mystery
+    # crash rather than "you ran out of memory". Worth naming up front,
+    # especially since armv7 has no published binary at all (see
+    # release.yml's target matrix) so every 32-bit Pi lands here.
+    # A warning, not a blocker: swap or ZRAM can carry it through, and
+    # the operator knows their box better than we do.
+    if [ "$PLATFORM" = "linux" ] && [ -r /proc/meminfo ]; then
+        MEM_KB=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+        case "$MEM_KB" in
+            ''|*[!0-9]*) MEM_KB=0 ;;
+        esac
+        if [ "$MEM_KB" -gt 0 ] && [ "$MEM_KB" -lt 1500000 ]; then
+            echo -e "  ${YELLOW}Only $((MEM_KB / 1024)) MB RAM detected — a release build may be${NC}"
+            echo -e "  ${YELLOW}OOM-killed (cargo dies with 'signal: 9'). If that happens, add${NC}"
+            echo -e "  ${YELLOW}swap/ZRAM and re-run, or install on a machine with more memory.${NC}"
+            echo ""
+        fi
+    fi
+
     # Build time on a Pi 4 is ~10-15 min — the `quiet` flag hides
     # cargo's per-crate progress but we print a heads-up so operators
     # don't think the terminal hung.
@@ -557,7 +681,7 @@ if check_cmd ffmpeg; then
     # we're on a Linux box with apt — no prompt, it's tiny and useful.
     if [ "$PLATFORM" = "linux" ] && ! check_cmd v4l2-ctl && check_cmd apt-get; then
         echo -e "  ${DIM}Installing v4l-utils for camera diagnostics...${NC}"
-        sudo apt-get install -y v4l-utils >/dev/null 2>&1 || true
+        $SUDO apt-get install -y v4l-utils >/dev/null 2>&1 || true
     fi
 else
     echo -e "  ffmpeg:    ${YELLOW}not found${NC}"
@@ -614,7 +738,7 @@ if [ "$PLATFORM" = "linux" ] && { [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "armv7"
         echo -e "  ${BOLD}User ${CURRENT_USER} is not in the 'video' group.${NC}"
         echo -e "  ${DIM}USB cameras live at /dev/video* and need this group for access.${NC}"
         if prompt_yes "Add ${CURRENT_USER} to the video group?"; then
-            if sudo usermod -a -G video "$CURRENT_USER"; then
+            if $SUDO usermod -a -G video "$CURRENT_USER"; then
                 echo -e "  ${GREEN}Added to video group.${NC}  ${DIM}Log out + back in for it to take effect${NC}"
                 echo -e "  ${DIM}(or just reboot — the systemd service works without this).${NC}"
             else
@@ -787,15 +911,15 @@ UNIT
 
     echo ""
     echo -e "${DIM}Installing systemd unit to ${svc_file}...${NC}"
-    if ! sudo install -m 0644 "$tmp_unit" "$svc_file"; then
+    if ! $SUDO install -m 0644 "$tmp_unit" "$svc_file"; then
         rm -f "$tmp_unit"
         echo -e "  ${RED}Failed to install unit file. Skipping auto-start.${NC}"
         return 1
     fi
     rm -f "$tmp_unit"
 
-    sudo systemctl daemon-reload
-    if ! sudo systemctl enable "$svc_name" >/dev/null 2>&1; then
+    $SUDO systemctl daemon-reload
+    if ! $SUDO systemctl enable "$svc_name" >/dev/null 2>&1; then
         echo -e "  ${YELLOW}Unit installed but enable failed. Check: systemctl status ${svc_name}${NC}"
         return 1
     fi
@@ -805,9 +929,9 @@ UNIT
     # binary/unit actually takes effect.  `restart` is idempotent across
     # both "not yet running" and "was running the old binary".
     echo -e "  ${DIM}Starting service...${NC}"
-    if sudo systemctl restart "$svc_name"; then
+    if $SUDO systemctl restart "$svc_name"; then
         sleep 2
-        if sudo systemctl is-active --quiet "$svc_name"; then
+        if $SUDO systemctl is-active --quiet "$svc_name"; then
             echo -e "  ${GREEN}Service is running.${NC}"
             echo -e "  ${DIM}Status:     ${CYAN}systemctl status ${svc_name}${NC}"
             echo -e "  ${DIM}Live logs:  ${CYAN}journalctl -u ${svc_name} -f${NC}"
@@ -855,6 +979,21 @@ if [ "$PLATFORM" = "linux" ] && check_cmd systemctl && [ -d /etc/systemd/system 
             echo -e "${DIM}Installing systemd service (--install-service passed)...${NC}"
         fi
         install_systemd_service || true
+    fi
+elif [ "$ARG_INSTALL_SERVICE" = true ]; then
+    # Asked for unattended operation on a platform with no systemd.
+    # Silently ignoring the flag would leave the operator believing
+    # they'd set up a 24/7 node that in fact stops the moment they
+    # close the terminal.
+    if [ "$PLATFORM" = "macos" ]; then
+        echo ""
+        echo -e "  ${YELLOW}--install-service is Linux/systemd-only — macOS uses launchd,${NC}"
+        echo -e "  ${YELLOW}which this installer doesn't configure. Start the node in the${NC}"
+        echo -e "  ${YELLOW}foreground, or write a launchd plist yourself for 24/7 use.${NC}"
+    else
+        echo ""
+        echo -e "  ${YELLOW}--install-service needs systemd, which wasn't found here.${NC}"
+        echo -e "  ${YELLOW}Start the node in the foreground instead.${NC}"
     fi
 fi
 
