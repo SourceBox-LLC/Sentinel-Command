@@ -283,6 +283,16 @@ async def lifespan(app):
         if settings.is_local_auth() and settings.SENTINEL_LICENSE_KEY
         else None
     )
+    # Self-host-only, same shape as the license task above: no-op for
+    # hosted Clerk orgs or a self-host install with no license key.
+    # Whether this install actually has the sync entitlement is checked
+    # per-tick inside push_pending_changes() (it can change at runtime
+    # if the license is revoked), not gated here at task-creation time.
+    data_sync_task = (
+        asyncio.create_task(_data_sync_loop())
+        if settings.is_local_auth() and settings.SENTINEL_LICENSE_KEY
+        else None
+    )
     print(
         f"[App] Sentinel Command Center started "
         f"(log retention: {LOG_RETENTION_DAYS}d, "
@@ -304,6 +314,8 @@ async def lifespan(app):
     sentinel_reaper_task.cancel()
     if sentinel_license_task is not None:
         sentinel_license_task.cancel()
+    if data_sync_task is not None:
+        data_sync_task.cancel()
     print("[System] Shutdown complete")
 
 
@@ -1444,6 +1456,35 @@ async def _sentinel_license_reconcile_loop():
         except Exception:
             logger.exception("[SentinelLicense] check-in tick failed")
         await asyncio.sleep(SENTINEL_LICENSE_CHECKIN_INTERVAL_SECONDS)
+
+
+# 30 min, not 15 like the license check-in loop: sync pushes real data
+# batches (potentially many, on a large install's first run) rather than
+# one small check-in request, so it's deliberately lower-frequency/
+# lower-urgency. push_pending_changes() itself no-ops immediately if the
+# license doesn't have the sync entitlement, so a tighter interval would
+# just mean more wasted no-op ticks for the common case (no sync bought).
+SENTINEL_SYNC_INTERVAL_SECONDS = 30 * 60
+
+
+async def _data_sync_loop():
+    """Background task — push local data changes to Sentinel-Sync-Service
+    for self-hosted installs with the sync entitlement. See
+    app/core/sync_client.py for the one-way-mirror design and the
+    per-table cursor/deletion-reconciliation contract.
+    """
+    from app.core.sync_client import push_pending_changes
+
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await push_pending_changes(db)
+            finally:
+                db.close()
+        except Exception:
+            logger.exception("[SentinelSync] push tick failed")
+        await asyncio.sleep(SENTINEL_SYNC_INTERVAL_SECONDS)
 
 
 # ── Pre-auth rate limit for the /mcp/ ASGI mount ──────────────────────
