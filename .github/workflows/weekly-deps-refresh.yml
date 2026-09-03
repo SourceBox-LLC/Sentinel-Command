@@ -68,9 +68,12 @@ jobs:
         run: uv run pytest -q
 
       # ── Frontend — npm update, then deploy.yml's frontend gates ──
+      # Node 22 LTS — see deploy.yml for why (npm 9's retired audit
+      # endpoint was 400-ing on valid lockfiles; npm 10 uses the
+      # replacement bulk advisory endpoint).
       - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
       - name: Install frontend deps from the current lock
