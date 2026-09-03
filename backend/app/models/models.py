@@ -40,6 +40,15 @@ class Camera(Base):
     # node reports a healthy status.
     last_error = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(tz=UTC).replace(tzinfo=None))
+    # Added for the cloud data-sync tier (app/core/sync_client.py), which
+    # needs a per-row high-water mark to select "changed since last
+    # push" — this table is mutated after insert (status, recording
+    # policy) so created_at alone can't detect an update.
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(tz=UTC).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(tz=UTC).replace(tzinfo=None),
+    )
 
     # Codec detection fields
     video_codec = Column(String(50), nullable=True)  # e.g., "avc1.42e01e"
@@ -149,6 +158,13 @@ class CameraGroup(Base):
     color = Column(String(7), default="#22c55e")
     icon = Column(String(10), default="📁")
     created_at = Column(DateTime, default=lambda: datetime.now(tz=UTC).replace(tzinfo=None))
+    # See Camera.updated_at above — same rationale (name/color/icon are
+    # editable after creation).
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(tz=UTC).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(tz=UTC).replace(tzinfo=None),
+    )
 
     cameras = relationship("Camera", back_populates="group")
 
@@ -294,6 +310,14 @@ class CameraNode(Base):
     storage_disk_free_bytes = Column(BigInteger, nullable=True)
     storage_disk_total_bytes = Column(BigInteger, nullable=True)
     storage_reported_at = Column(DateTime, nullable=True)
+
+    # See Camera.updated_at above — same rationale. This table is
+    # mutated constantly (heartbeat updates status/storage stats).
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(tz=UTC).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(tz=UTC).replace(tzinfo=None),
+    )
 
     cameras = relationship(
         "Camera", back_populates="node", cascade="all, delete-orphan"
@@ -1194,6 +1218,16 @@ class SentinelRun(Base):
     # JSON list of tool-call entries: [{"tool", "args", "result"}, ...]
     # Truncated server-side to last 50 entries at write time.
     tool_trace = Column(Text, nullable=True)
+
+    # See Camera.updated_at above — same rationale. This table's state
+    # machine (pending -> running -> terminal) mutates the row well
+    # after triggered_at, which the cloud data-sync tier needs to
+    # detect.
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(tz=UTC).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(tz=UTC).replace(tzinfo=None),
+    )
 
     # Composite index for the hot path: list runs for an org ordered
     # by recency.  `sync_schema` doesn't add indexes after the fact,

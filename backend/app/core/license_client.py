@@ -63,6 +63,11 @@ _LAST_CHECK_REACHABLE = "sentinel_license_last_check_reachable"
 _LAST_OK_AT = "sentinel_license_last_ok_at"
 _LAST_GRACE_WARNING_AT = "sentinel_license_last_grace_warning_at"
 _INSTALL_ID = "sentinel_install_id"
+# Separate opt-in entitlement on the same license (see
+# app/core/sync_client.py) — a license can be Sentinel-AI-valid without
+# also being sync-enabled, so this is tracked independently of
+# _LICENSE_VALID rather than folded into it.
+_SYNC_ENABLED = "sentinel_data_sync_enabled"
 
 
 def _parse_iso_or_none(raw: str) -> datetime | None:
@@ -153,6 +158,15 @@ async def check_in_with_license_service(db: Session) -> None:
     Setting.set(db, settings.LOCAL_ORG_ID, _LAST_CHECK_AT, now_iso, commit=False)
     Setting.set(db, settings.LOCAL_ORG_ID, _LAST_CHECK_REACHABLE, "true", commit=False)
     Setting.set(db, settings.LOCAL_ORG_ID, _LICENSE_VALID, "true" if valid else "false", commit=False)
+    # False whenever the check-in itself came back invalid (revoked/
+    # expired/suspended/not_found never populate sync_enabled in the
+    # response body, so `data.get(...)` naturally reads None/False here) —
+    # a license losing validity must also lose sync access immediately,
+    # not keep coasting on a stale cached "true".
+    Setting.set(
+        db, settings.LOCAL_ORG_ID, _SYNC_ENABLED,
+        "true" if valid and data.get("sync_enabled") else "false", commit=False,
+    )
     if valid:
         Setting.set(db, settings.LOCAL_ORG_ID, _LAST_OK_AT, now_iso, commit=False)
     else:
@@ -193,6 +207,27 @@ def is_sentinel_licensed(db: Session) -> bool:
         return False
 
     return datetime.now(tz=UTC) - last_ok_at <= timedelta(hours=SENTINEL_LICENSE_GRACE_HOURS)
+
+
+def is_sync_enabled(db: Session) -> bool:
+    """Read-side gate for the cloud data-sync tier (app/core/sync_client.py).
+
+    Requires both: the license itself currently trusted as valid (same
+    reachability/grace semantics as is_sentinel_licensed — a license
+    outage grace-periods sync the same way it grace-periods Sentinel AI,
+    since the risk of syncing a few extra hours past a billing hiccup is
+    minor) AND the separate sync_enabled entitlement bit, since a
+    license can be Sentinel-AI-valid without having bought sync.
+    """
+    if not settings.is_local_auth() or not settings.SENTINEL_LICENSE_KEY:
+        return False
+
+    if not is_sentinel_licensed(db):
+        return False
+
+    from app.models.models import Setting
+
+    return Setting.get(db, settings.LOCAL_ORG_ID, _SYNC_ENABLED, "") == "true"
 
 
 # The one plan slug the license gate applies to. `self_host` is

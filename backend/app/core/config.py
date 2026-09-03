@@ -40,6 +40,18 @@ class Config:
         "SENTINEL_LICENSE_SERVICE_URL", "https://sentinel-license.fly.dev"
     )
 
+    # Self-hosted cloud data-sync — see app/core/sync_client.py. Reuses
+    # SENTINEL_LICENSE_KEY (validated against License-Service's
+    # /v1/licenses/entitlements) rather than a second key; sync is a
+    # separate opt-in entitlement on the same license, not a separate
+    # credential. Points at a different service from Sentinel AI
+    # licensing — Sentinel-Sync-Service is a standalone deployment,
+    # sized for higher-volume/larger-payload traffic than license
+    # check-ins.
+    SENTINEL_SYNC_SERVICE_URL: str = os.getenv(
+        "SENTINEL_SYNC_SERVICE_URL", "https://sentinel-sync.fly.dev"
+    )
+
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./sentinel.db")
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
