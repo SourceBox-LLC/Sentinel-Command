@@ -401,6 +401,19 @@ if [ -z "$DOWNLOAD_URL" ]; then
     fi
 
     # ── Rust toolchain via rustup ──────────────────────────────────
+    # A previous run's rustup install lives on disk regardless of
+    # whether *this* shell's PATH has picked it up — `curl | bash`
+    # spins up a fresh non-interactive bash that never sources
+    # ~/.bashrc / ~/.profile (that only happens for interactive
+    # shells), so cargo can be fully installed and still invisible to
+    # `command -v` here. Source cargo's own env file first (if
+    # present) so an already-installed toolchain is actually detected
+    # instead of triggering a redundant "not found" + reinstall
+    # prompt on every single run.
+    if [ -f "$HOME/.cargo/env" ]; then
+        # shellcheck disable=SC1091
+        . "$HOME/.cargo/env"
+    fi
     # If cargo is already on PATH we use whatever version the user has;
     # otherwise we install stable via the official rustup one-liner
     # (non-interactive with -y).  After install we source cargo's env
