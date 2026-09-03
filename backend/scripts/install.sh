@@ -456,6 +456,78 @@ if [ -z "$DOWNLOAD_URL" ]; then
         git clone --quiet "https://github.com/${REPO}.git" "$CLONE_DIR"
     fi
 
+    # ── Web dashboard (embedded into the binary) ───────────────────
+    # The Rust binary embeds the browser dashboard from `web-dist/`
+    # via rust-embed, and `build.rs` writes a "Web UI not built"
+    # placeholder page whenever that directory has no real build. So
+    # skipping this step yields a binary that streams fine and serves
+    # /api/*, but whose dashboard is a stub — useless for a Local-mode
+    # install, where the browser UI *is* the product. release.yml runs
+    # these same two commands (Node 20) before `cargo build`, so doing
+    # it here is what makes a from-source install equivalent to a
+    # release one.
+    NODE_OK=false
+    if check_cmd node && check_cmd npm; then
+        NODE_MAJOR=$(node -v 2>/dev/null | sed 's/^v//' | cut -d. -f1 || true)
+        # Vite 5 + the TypeScript build need Node 18+.
+        case "$NODE_MAJOR" in
+            ''|*[!0-9]*)
+                echo -e "  ${DIM}Could not read Node version — treating as unusable.${NC}" ;;
+            *)
+                if [ "$NODE_MAJOR" -ge 18 ]; then
+                    NODE_OK=true
+                else
+                    echo -e "  ${DIM}Node $(node -v 2>/dev/null) is too old for the web build (need 18+).${NC}"
+                fi ;;
+        esac
+    fi
+
+    if [ "$NODE_OK" = false ]; then
+        echo ""
+        echo -e "  ${BOLD}Node.js 18+ not found.${NC}"
+        echo -e "  ${DIM}Needed to build the browser dashboard that gets embedded into${NC}"
+        echo -e "  ${DIM}the binary. Without it the node still runs, streams, and serves${NC}"
+        echo -e "  ${DIM}/api/*, but the dashboard shows a 'Web UI not built' stub.${NC}"
+        if [ "$PLATFORM" = "linux" ] && check_cmd apt-get; then
+            if prompt_yes "Install Node.js 20 via NodeSource?"; then
+                # NodeSource rather than plain `apt install nodejs`:
+                # distro packages run years behind (Ubuntu 22.04 ships
+                # Node 12), and 20 is what release.yml builds with.
+                echo -e "  ${DIM}Running: NodeSource setup_20.x, then apt-get install nodejs${NC}"
+                if curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - >/dev/null 2>&1 \
+                   && sudo apt-get install -y nodejs; then
+                    NODE_OK=true
+                    echo -e "  Node:      ${GREEN}$(node -v 2>/dev/null) (installed)${NC}"
+                else
+                    echo -e "  ${YELLOW}Node install failed — continuing without the dashboard.${NC}"
+                fi
+            fi
+        elif [ "$PLATFORM" = "macos" ]; then
+            echo -e "  ${DIM}Install: ${CYAN}brew install node${NC}"
+        fi
+    fi
+
+    if [ "$NODE_OK" = true ]; then
+        echo -e "${DIM}Building web dashboard (~2-5 min on Raspberry Pi 4)...${NC}"
+        # `npm ci` matches CI and honours package-lock.json exactly;
+        # fall back to `npm install` when the lockfile is out of sync
+        # with package.json (stale clone, local edit).
+        if (cd "$CLONE_DIR/web" && npm ci --silent >/dev/null 2>&1) \
+           || (cd "$CLONE_DIR/web" && npm install --silent); then
+            if (cd "$CLONE_DIR/web" && npm run build); then
+                echo -e "  Dashboard: ${GREEN}built${NC}"
+            else
+                echo -e "  ${YELLOW}Web build failed — the dashboard will show the stub page.${NC}"
+            fi
+        else
+            echo -e "  ${YELLOW}npm install failed — the dashboard will show the stub page.${NC}"
+        fi
+    else
+        echo -e "  ${YELLOW}Skipping dashboard build — the browser UI will show a${NC}"
+        echo -e "  ${YELLOW}'Web UI not built' page. Re-run this installer once Node.js${NC}"
+        echo -e "  ${YELLOW}18+ is available to add it.${NC}"
+    fi
+
     # Build time on a Pi 4 is ~10-15 min — the `quiet` flag hides
     # cargo's per-crate progress but we print a heads-up so operators
     # don't think the terminal hung.
