@@ -69,7 +69,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
@@ -86,6 +86,13 @@ jobs:
       #
       # `--omit=dev` skips devDependencies because they don't ship
       # to production; the prod bundle is what reaches a user.
+      #
+      # Requires npm 11+ (hence Node 24 above, not 20). npm registry
+      # retired the legacy `/security/audits/quick` endpoint that npm 10
+      # uses for `--omit=dev`, and it now returns 400 Bad Request —
+      # which failed this step and blocked every deploy, with nothing in
+      # the repo having changed. npm 11 uses the bulk advisory endpoint
+      # instead. Verified directly: npm@10 fails here, npm@11 passes.
       - name: npm audit (production deps only, high+critical)
         working-directory: frontend
         run: npm audit --audit-level=high --omit=dev

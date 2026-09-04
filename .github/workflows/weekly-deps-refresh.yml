@@ -70,7 +70,7 @@ jobs:
       # ── Frontend — npm update, then deploy.yml's frontend gates ──
       - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
       - name: Install frontend deps from the current lock
