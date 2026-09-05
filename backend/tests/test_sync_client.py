@@ -234,6 +234,113 @@ async def test_push_sends_rows_and_advances_cursor(monkeypatch, db):
     assert cursor is not None
 
 
+async def test_payload_carries_raw_columns_so_a_restore_can_rebuild_the_row(monkeypatch, db):
+    """The property the whole mirror depends on: what lands in the cloud
+    must be enough to reconstruct the local row.
+
+    Regression against the original design, which reused each model's
+    to_dict(). That silently dropped 11 of Camera's 21 columns — the
+    recording-policy fields nested under a "recording_policy" key
+    instead of being flat, and the codec columns disappeared entirely —
+    so a restore would have looked like it worked while quietly losing
+    configuration.
+    """
+    _grant_sync_entitlement(db)
+    cam = _make_camera(db)
+    cam.continuous_24_7 = True
+    cam.scheduled_start = "22:00"
+    cam.video_codec = "avc1.42e01e"
+    db.add(cam)
+    db.commit()
+
+    calls: list = []
+    _mock_http(monkeypatch, calls)
+    await sync_client.push_pending_changes(db)
+
+    data = [c for c in calls if c[1]["table"] == "cameras"][0][1]["rows"][0]["data"]
+
+    # Every column present and flat — not nested under a display key.
+    column_names = {c.name for c in Camera.__table__.columns}
+    assert column_names <= set(data), f"missing columns: {sorted(column_names - set(data))}"
+    assert data["continuous_24_7"] is True
+    assert data["scheduled_start"] == "22:00"
+    assert data["video_codec"] == "avc1.42e01e"
+    assert "recording_policy" not in data, "display-shaped nesting must not reappear"
+
+
+async def test_payload_is_json_serialisable(monkeypatch, db):
+    # Datetimes have no JSON representation; if one ever reaches the
+    # wire unconverted the whole sync cycle dies on encode.
+    import json
+
+    _grant_sync_entitlement(db)
+    _make_camera(db)
+    calls: list = []
+    _mock_http(monkeypatch, calls)
+    await sync_client.push_pending_changes(db)
+
+    for _url, body in calls:
+        json.dumps(body)  # must not raise
+    data = [c for c in calls if c[1]["table"] == "cameras"][0][1]["rows"][0]["data"]
+    assert isinstance(data["created_at"], str), "datetime should serialise to ISO string"
+
+
+async def test_denylisted_columns_never_leave_the_install(monkeypatch, db):
+    """api_key_hash authenticates a node to this Command Center. It is
+    useless to a restore (a restored node re-registers for a fresh key)
+    and dangerous in a cloud mirror, so it must be absent even though
+    the payload is now raw columns rather than a curated to_dict()."""
+    _grant_sync_entitlement(db)
+    _make_camera(db)  # also creates a CameraNode with an api_key_hash
+    calls: list = []
+    _mock_http(monkeypatch, calls)
+    await sync_client.push_pending_changes(db)
+
+    node_data = [c for c in calls if c[1]["table"] == "camera_nodes"][0][1]["rows"][0]["data"]
+    assert "api_key_hash" not in node_data
+    # ...while the rest of the row still rides along, so a restore can
+    # rebuild everything except the credential.
+    assert node_data["node_id"] == "node-1"
+    assert "storage_used_bytes" in node_data
+
+
+async def test_incident_evidence_blob_is_excluded_without_loading_it(monkeypatch, db):
+    """IncidentEvidence.data is deferred() precisely so listing rows
+    doesn't pull tens of MB per row into RAM. The denylist check has to
+    happen before the attribute is read, or iterating columns would
+    re-create exactly the bulk-materialisation the deferral prevents."""
+    from sqlalchemy import inspect as sa_inspect
+
+    from app.models.models import Incident, IncidentEvidence
+
+    _grant_sync_entitlement(db)
+    incident = Incident(
+        org_id=settings.LOCAL_ORG_ID, title="t", summary="s", created_by="test"
+    )
+    db.add(incident)
+    db.commit()
+    db.refresh(incident)
+    ev = IncidentEvidence(
+        incident_id=incident.id, kind="snapshot", data=b"x" * 2048, data_mime="image/jpeg"
+    )
+    db.add(ev)
+    db.commit()
+
+    calls: list = []
+    _mock_http(monkeypatch, calls)
+    await sync_client.push_pending_changes(db)
+
+    ev_rows = [c for c in calls if c[1]["table"] == "incident_evidence"]
+    data = ev_rows[0][1]["rows"][0]["data"]
+    assert "data" not in data, "blob must never be synced"
+    assert data["data_mime"] == "image/jpeg", "metadata around the blob still syncs"
+
+    # The blob stayed unloaded: a fresh instance must still report
+    # `data` as an unloaded deferred attribute.
+    fresh = db.query(IncidentEvidence).filter_by(id=ev.id).first()
+    assert "data" in sa_inspect(fresh).unloaded
+
+
 async def test_second_push_with_no_new_rows_sends_nothing_for_that_table(monkeypatch, db):
     _grant_sync_entitlement(db)
     _make_camera(db)

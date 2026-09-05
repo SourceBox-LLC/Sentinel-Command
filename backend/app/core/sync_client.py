@@ -92,14 +92,56 @@ def _cursor_setting_key(table_name: str) -> str:
     return f"sentinel_sync_cursor_{table_name}"
 
 
+# Columns that must never leave this install, keyed by table name.
+#
+# This is the explicit half of a decision that used to be implicit.
+# The payload originally reused each model's `to_dict()`, on the
+# reasoning that anything its author hadn't chosen to expose over the
+# API couldn't leak into the cloud either. That held for secrecy — but
+# to_dict() is a *display* shape, and it silently made the mirror
+# unrestorable: Camera lost 11 of 21 columns (the whole recording
+# policy nests under "recording_policy"; video/audio codec vanish),
+# SentinelRun never carried tool_trace at all. A backup you can't
+# restore from isn't a backup, so the payload is now raw columns and
+# the exclusions are stated here instead of being a side effect.
+_COLUMN_DENYLIST: dict[str, set[str]] = {
+    # The hash that authenticates a node to THIS Command Center.
+    # Useless to a restore (a restored node re-registers and gets a
+    # fresh key) and actively dangerous in a cloud mirror.
+    "camera_nodes": {"api_key_hash"},
+    # Snapshot/clip bytes — tens of MB per row. Deliberately not
+    # synced (see this module's docstring); the metadata columns around
+    # it still are, so a restore knows evidence existed and what it
+    # was. Also note this column is deferred() on the model: the
+    # denylist check below happens BEFORE the attribute is read, which
+    # is what stops iterating columns from lazy-loading every blob.
+    "incident_evidence": {"data"},
+}
+
+
 def _row_payload(row) -> dict:
-    # Every synced model has a to_dict() already used by its API
-    # responses — reusing it means the sync payload can never
-    # accidentally include a column the model's own author didn't
-    # already decide was safe to expose (e.g. CameraNode.api_key_hash,
-    # IncidentEvidence.data, never appear in to_dict() and so never
-    # appear here either).
-    return row.to_dict()
+    """Serialise a row as its raw column values, minus anything denied.
+
+    Keys are column names, so the cloud copy round-trips back into the
+    same schema. Datetimes become ISO strings (JSON has no date type);
+    everything else in these tables is already a JSON scalar.
+    """
+    denied = _COLUMN_DENYLIST.get(row.__table__.name, frozenset())
+    payload: dict = {}
+    for column in row.__table__.columns:
+        if column.name in denied:
+            continue
+        value = getattr(row, column.name)
+        if isinstance(value, datetime):
+            value = value.isoformat()
+        elif isinstance(value, (bytes, bytearray, memoryview)):
+            # Nothing should reach this — blob columns are denied above
+            # — but a future model gaining one must not make the whole
+            # sync cycle die on a JSON encode error. Record the size so
+            # the omission is visible in the mirror rather than silent.
+            value = {"__omitted__": "binary", "bytes": len(value)}
+        payload[column.name] = value
+    return payload
 
 
 async def _push_table(client: httpx.AsyncClient, db: Session, spec: SyncTableSpec) -> None:
