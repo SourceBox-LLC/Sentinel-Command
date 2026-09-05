@@ -1,0 +1,29 @@
+Sentinel Command Center
+Copyright (C) 2026 SourceBox LLC
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at
+your option) any later version.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Affero
+General Public License for more details.
+
+The full text of the license is in the LICENSE file alongside this one.
+It lives there by itself, unmodified: GitHub (and most automated license
+scanners) identify a license by matching the file's whole contents, so
+appending project-specific notes to LICENSE makes the repository read as
+"Other / NOASSERTION" rather than AGPL-3.0. That is exactly what had
+happened here — LICENSE previously held only this notice and a URL
+pointing at the license text, which also fell short of AGPL's own
+requirement to distribute a copy of the license with the work.
+
+
+COMMERCIAL LICENSING
+
+AGPL-3.0 requires that derivative works are also licensed under AGPL-3.0
+and made available to users who interact with the software over a
+network. If you want to use this software in a proprietary product or
+service, contact SourceBox LLC for commercial licensing options.
