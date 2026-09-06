@@ -8,6 +8,12 @@ dependencies = [
     "fastapi>=0.141.1",
     "uvicorn>=0.52.1",
     "sqlalchemy>=2.0.51",
+    # Postgres driver for the hosted deployment. A runtime dependency,
+    # not a dev one: hosted Command Center runs on Postgres. Self-hosted
+    # installs still use SQLite via the stdlib driver and never open a
+    # Postgres connection, so this is dead weight there — a few MB of
+    # wheel, which is cheaper than maintaining two dependency sets.
+    "psycopg[binary]>=3.2.0",
     "pydantic>=2.13.4",
     "python-dotenv>=1.0.0",
     # Pinned >=0.0.31 for CVE-2026-53538/53539/53540 — three DoS

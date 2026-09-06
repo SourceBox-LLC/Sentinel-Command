@@ -105,23 +105,33 @@ def sync_schema(engine: Engine, metadata) -> list[str]:
         if not missing:
             continue
 
-        with engine.begin() as conn:
-            for column in missing:
-                ddl_fragment = _compile_column_ddl(column, dialect)
-                stmt = f'ALTER TABLE "{table.name}" ADD COLUMN {ddl_fragment}'
-                try:
+        for column in missing:
+            ddl_fragment = _compile_column_ddl(column, dialect)
+            stmt = f'ALTER TABLE "{table.name}" ADD COLUMN {ddl_fragment}'
+            # One transaction PER COLUMN, not one for the whole table.
+            #
+            # The "log it and keep going" behaviour below only actually
+            # works if a failure is isolated. On SQLite each statement
+            # stands alone, so a shared transaction was harmless. On
+            # Postgres a failed statement aborts the entire transaction,
+            # and every subsequent ADD COLUMN in the same block dies with
+            # InFailedSqlTransaction — so one bad column would silently
+            # take every later column on that table with it, which is the
+            # opposite of what this handler intends.
+            try:
+                with engine.begin() as conn:
                     conn.execute(text(stmt))
-                    changes.append(f"{table.name}.{column.name}")
-                    logger.info("migrations: added column %s.%s", table.name, column.name)
-                except Exception as exc:  # noqa: BLE001
-                    # Log and keep going — one broken column shouldn't block app start.
-                    logger.error(
-                        "migrations: failed to add %s.%s (%s): %s",
-                        table.name,
-                        column.name,
-                        stmt,
-                        exc,
-                    )
+                changes.append(f"{table.name}.{column.name}")
+                logger.info("migrations: added column %s.%s", table.name, column.name)
+            except Exception as exc:  # noqa: BLE001
+                # Log and keep going — one broken column shouldn't block app start.
+                logger.error(
+                    "migrations: failed to add %s.%s (%s): %s",
+                    table.name,
+                    column.name,
+                    stmt,
+                    exc,
+                )
 
     if changes:
         logger.info("migrations: applied %d column additions: %s", len(changes), ", ".join(changes))

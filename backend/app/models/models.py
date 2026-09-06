@@ -12,6 +12,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import deferred, relationship
 
@@ -62,7 +63,7 @@ class Camera(Base):
     # HTTP 402 + `plan_limit_hit` so the CameraNode can surface the
     # reason in its TUI. Flag is cleared on upgrade and on re-registration.
     # Default False so fresh installs and unaffected rows behave normally.
-    disabled_by_plan = Column(Boolean, nullable=False, default=False, server_default="0")
+    disabled_by_plan = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
     # Per-camera recording policy (v0.1.43+).  The heartbeat handler
     # computes this camera's target recording state per-tick from
@@ -76,8 +77,8 @@ class Camera(Base):
     # both more flexible (privacy in bedroom + always-on in garage)
     # and the granularity that matches how recording_state is keyed
     # at runtime.
-    continuous_24_7 = Column(Boolean, nullable=False, default=False, server_default="0")
-    scheduled_recording = Column(Boolean, nullable=False, default=False, server_default="0")
+    continuous_24_7 = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    scheduled_recording = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     # "HH:MM" 24-hour strings; nullable so a fresh row doesn't have to
     # commit to a window before the operator opens the toggle.  When
     # ``scheduled_recording`` is true and either field is null, the
