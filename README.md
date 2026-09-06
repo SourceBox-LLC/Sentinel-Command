@@ -35,6 +35,8 @@
 
 **Prefer to run it yourself?** Set `AUTH_PROVIDER=local` and Command Center runs fully self-hosted — a single fixed admin account, no Clerk account, no billing, every feature unlocked except the optional Sentinel AI agent (which has a real ongoing LLM cost and needs a separately licensed key). See [AGENTS.md › Build & Run](AGENTS.md#build--run) for the self-hosted quick start.
 
+Self-hosted installs can also opt into **cloud data-sync**: a one-way mirror of the local database to a SourceBox-hosted Postgres, so a dead disk doesn't take your incident history with it. Local SQLite stays the source of truth and the app works with no internet at all — the mirror is a backup, not a dependency. It's a separate entitlement on the same licence key as Sentinel AI, and recovery runs through [`backend/scripts/restore_from_cloud.py`](backend/scripts/restore_from_cloud.py) (procedure, and what it deliberately can't bring back, in [DISASTER_RECOVERY.md](docs/runbooks/DISASTER_RECOVERY.md#self-hosted-installs-restoring-from-the-cloud-mirror)).
+
 > **Looking for the part you actually install either way?** That's **[CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode)** — a small daemon that turns any USB or IP camera into a private, cloud-connected feed. It runs on your hardware and has its own setup guide.
 
 ### So why is this repo public?
