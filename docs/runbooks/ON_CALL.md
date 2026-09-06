@@ -57,9 +57,11 @@ specific issue ID (e.g. `OPENSENTRY-COMMAND-1`).
 - **Hotfix and roll forward.** If the failing code is in Python or
   JS, write a regression test in `backend/tests/` or
   `frontend/tests/` first, then fix, then push to master. CI deploys
-  via GitHub Actions; do **not** `fly deploy` directly — the deploy
-  workflow is documented in `MEMORY.md` and ensures the right env
-  variables are set.
+  via GitHub Actions; do **not** `fly deploy` directly — the pipeline
+  is `.github/workflows/deploy.yml` ("Test & Deploy"), which gates on
+  the backend suite, `npm audit`, and the frontend build before it
+  ships, and deploys with the secrets already configured on the Fly
+  app.
 - **Roll back.** If the deploy that introduced the bug is recent
   and the fix isn't obvious, `git revert <sha>` and push to master.
   Faster than chasing the root cause at 3am.
