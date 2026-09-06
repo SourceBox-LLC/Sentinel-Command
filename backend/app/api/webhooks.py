@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import UTC, datetime
 
@@ -95,9 +96,25 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
 
     try:
         wh = Webhook(settings.CLERK_WEBHOOK_SECRET)
-        event = wh.verify(payload, headers)
+        # Call verify() for its signature check ONLY, and parse the
+        # payload ourselves rather than using its return value. svix
+        # 1.x returned the decoded event from verify(); 2.x changed the
+        # signature to `-> None` and verifies with json_parse=False, so
+        # reading a return value here raised AttributeError on every
+        # webhook under 2.x — silently breaking Clerk billing/plan sync
+        # the moment anyone upgraded. Parsing here works identically on
+        # both majors, so this isn't pinned to either.
+        wh.verify(payload, headers)
+        event = json.loads(payload)
     except WebhookVerificationError:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid signature") from None
+    except (ValueError, TypeError):
+        # Signature was valid but the body isn't JSON. Can't act on it,
+        # and a 400 stops svix retrying something that will never parse.
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Malformed payload") from None
+
+    if not isinstance(event, dict):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Malformed payload")
 
     event_type = event.get("type")
     data = event.get("data", {})
@@ -666,9 +683,18 @@ async def resend_webhook(request: Request, db: Session = Depends(get_db)):
 
     try:
         wh = Webhook(settings.RESEND_WEBHOOK_SECRET)
-        event = wh.verify(payload, headers)
+        # Same as the Clerk handler above: verify() is called for the
+        # signature check only, and the payload is parsed here so this
+        # works on both svix 1.x and 2.x. See that handler for why.
+        wh.verify(payload, headers)
+        event = json.loads(payload)
     except WebhookVerificationError:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid signature") from None
+    except (ValueError, TypeError):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Malformed payload") from None
+
+    if not isinstance(event, dict):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Malformed payload")
 
     # Resend's event payload shape:
     #   {"type": "email.bounced", "data": {"email_id": "...", "to": ["..."], ...}, "created_at": "..."}
