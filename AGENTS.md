@@ -146,7 +146,12 @@ backend/
 │   ├── install.sh                # CameraNode installer for Linux/macOS (served by install.py).
 │   │                               # Windows installs via the MSI from the latest CameraNode
 │   │                               # GitHub release, not a script — see CameraNodeSetup docs.
-│   └── mcp-setup.sh / .ps1       # MCP client config helpers (Claude Code / Desktop / Cursor / Windsurf)
+│   ├── mcp-setup.sh / .ps1       # MCP client config helpers (Claude Code / Desktop / Cursor / Windsurf)
+│   └── restore_from_cloud.py     # Self-host recovery: pulls this install's data back down from
+│                                   # Sentinel-Sync-Service (the read half of core/sync_client.py).
+│                                   # Non-destructive by default; --list / --dry-run / --overwrite.
+│                                   # Procedure + what it can't restore (node API keys, evidence
+│                                   # blobs): docs/runbooks/DISASTER_RECOVERY.md
 ├── tests/                        # pytest — security, MCP scoping, motion, notifications, offline sweep,
 │                                 # billing/grace, ApiError envelope, drop_orphan_tables migration
 ├── start.py                      # Uvicorn entrypoint (0.0.0.0:8000, reload=True)
@@ -323,6 +328,27 @@ and the plan-enforcement engine work unmodified regardless of provider.
   same plan set and needs the same license check for the same reason.
   `resolve_org_plan()`'s self_host short-circuit is untouched — camera caps,
   viewer-hours, MCP access, everything else self-host unlocks is unaffected.
+- **Cloud data-sync tier**: a second, independent entitlement on the same
+  licence (`sync_enabled`, returned by License-Service alongside the AI
+  verdict), mirroring this install's data to `Sentinel-Sync-Service` (another
+  sibling repo). One-way: local SQLite stays the source of truth and the app
+  works with no internet at all. `core/sync_client.py` pushes changed rows
+  every 30 min (`_data_sync_loop` in `main.py`), tracking a per-table
+  high-water cursor in the same `Setting` KV table — again no new table.
+  - Payload is **raw column values**, not `to_dict()`. That distinction is
+    load-bearing: `to_dict()` is a display shape and using it made the mirror
+    unrestorable (Camera lost 11 of 21 columns, `SentinelRun` never carried
+    `tool_trace`). Exclusions are explicit in `_COLUMN_DENYLIST` —
+    `camera_nodes.api_key_hash` and `incident_evidence.data` — and are checked
+    *before* the attribute is read, because that blob column is `deferred()`
+    and reading it would defeat the deferral.
+  - Deletions propagate only for small identity tables (cameras, groups,
+    nodes) via a `known_ids` reconciliation. Log/event tables deliberately
+    never propagate deletes: local retention prunes them precisely because
+    local disk is finite, and the cloud copy is meant to outlive that.
+  - Recovery is `scripts/restore_from_cloud.py` — see
+    `docs/runbooks/DISASTER_RECOVERY.md` for the procedure and for what it
+    can't bring back (node API keys, evidence blobs, recordings).
 - **Frontend**: `frontend/src/auth/` is a facade — `VITE_AUTH_PROVIDER=clerk`
   (default) re-exports `@clerk/clerk-react`'s hooks/components directly;
   `VITE_AUTH_PROVIDER=local` selects `frontend/src/auth/local.jsx`'s

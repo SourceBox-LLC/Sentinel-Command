@@ -140,6 +140,72 @@ that, remove `/data/sentinel.db.pre-restore-<stamp>`.
 4. Start, verify, and **rotate the Clerk webhook endpoint** if the host
    changed so billing events resume syncing.
 
+---
+
+## Self-hosted installs: restoring from the cloud mirror
+
+Everything above is about **this** hosted deployment — one SQLite file
+on one Fly volume, backed up by `backup_db.sh`. A self-hosted operator
+has none of that: no Fly volume, no S3 bucket, no backup cron. Their
+recovery story is the **cloud data-sync tier**, and it's a different
+procedure.
+
+**Who this applies to:** `AUTH_PROVIDER=local` installs whose licence
+has the data-sync entitlement (`sync_enabled`). Without that
+entitlement nothing is mirrored, and there is nothing to restore from —
+their backup story is whatever they arranged themselves.
+
+**What is and isn't mirrored.** Cameras, nodes, incidents, motion
+events, notifications, and Sentinel AI config/runs, as raw column
+values. Deliberately **not** mirrored:
+
+- **Node API keys** (`camera_nodes.api_key_hash`). A restored node
+  cannot authenticate and **must re-register**, which mints a fresh key
+  anyway. The restore writes a deliberately non-hex placeholder so the
+  old credential can't appear to have survived.
+- **Incident evidence blobs** (snapshots/clips). The metadata rows
+  restore — you'll know evidence existed, what kind, and when — but the
+  bytes stayed local. If those matter, back them up separately.
+- **Recordings.** They never left the camera node.
+
+### Procedure
+
+```bash
+cd backend
+
+# 1. What's actually up there? Also the quickest way to confirm sync
+#    was working — do this BEFORE you need it, not during.
+uv run python scripts/restore_from_cloud.py --list
+
+# 2. See what would be written, without touching the database.
+uv run python scripts/restore_from_cloud.py --dry-run
+
+# 3. Restore. Creates the schema itself, so this works on a machine
+#    that has never started the app.
+uv run python scripts/restore_from_cloud.py
+```
+
+Then start the app and re-register each camera node to issue fresh API
+keys.
+
+### Things worth knowing before you run it
+
+- **It won't overwrite existing rows** unless you pass `--overwrite`.
+  Running it against a database that still has data is safe: rows whose
+  primary key already exists are skipped and counted, not replaced.
+- **A partial restore exits `2`** and prints each row it couldn't
+  write. A bad row is stepped over rather than aborting the run, so one
+  malformed record can't cost you the other 9,999 — but check the exit
+  code, because a partial restore that reads as success is how you find
+  out months later that data you believed was recovered never came back.
+- **RPO is one sync interval** (30 minutes, `SENTINEL_SYNC_INTERVAL_SECONDS`)
+  — worse than the hosted daily backup in staleness terms, better in
+  granularity. Anything written in the final half hour before the disk
+  died is gone.
+- Same rule as the rest of this runbook: **rehearse it.** Restore into a
+  scratch `DATABASE_URL` on a machine you don't care about and confirm
+  the row counts match `--list`.
+
 ### Acceptable data loss (RPO) / time to recover (RTO)
 
 - **RPO:** up to one backup interval (e.g. 24h on a daily schedule).
