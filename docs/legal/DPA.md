@@ -322,9 +322,17 @@ Organization.
 - **At rest (CameraNode).** AES-256-GCM with a key derived from a
   machine-id file on the host. Each blob uses a fresh random nonce
   and an authentication tag bound to the blob's identifying metadata.
-- **At rest (Command Center).** Postgres volumes are encrypted at
-  rest by the hosting provider (Fly.io). No video content is stored
-  on Command Center disks.
+- **At rest (Command Center).** A SQLite database on a persistent
+  volume encrypted at rest by the hosting provider (Fly.io). No video
+  content is stored on Command Center disks.
+- **At rest (cloud data-sync, self-hosted Customers only).** Customers
+  running their own Command Center may opt into mirroring its database
+  to a SourceBox-operated Postgres instance, also hosted on Fly.io and
+  encrypted at rest by the provider. Only Customers whose licence
+  carries the data-sync entitlement are mirrored; for everyone else no
+  such copy exists. Node API credentials and incident evidence media
+  are deliberately excluded from the mirror, and no video content is
+  stored there.
 
 ## Access control
 

@@ -58,13 +58,24 @@ terminate the affected Service per Section 4.4 of the
 
 ### Fly.io
 - **Service provided:** Application hosting, persistent volume
-  storage (holds the SourceBox SQLite database file), global edge
-  network, TLS termination.
+  storage (holds the SourceBox SQLite database file), a managed
+  Postgres instance backing the optional cloud data-sync tier, global
+  edge network, TLS termination.
 - **Personal Data processed:** All metadata SourceBox stores about
   Customer (account identity, audit logs, stream access logs, motion
   event metadata, settings rows). Fly.io does not see or process
   video content (live segments are RAM-only; recordings live on
   Customer's CameraNode hardware off Fly's network).
+
+  **Additionally, for self-hosted Customers who opt into cloud
+  data-sync:** a mirror of their own Command Center database —
+  cameras, nodes, incidents, motion events, notifications, and AI
+  configuration — is stored in the Postgres instance above. This
+  applies *only* to Customers whose licence carries the data-sync
+  entitlement; for every other self-hosted Customer, SourceBox holds
+  no copy of their data at all. Node API credentials and incident
+  evidence media (snapshots/clips) are deliberately excluded from the
+  mirror, and no video content is stored in it.
 - **Location of processing:** United States, with edge network in
   multiple regions.
 - **Cross-border transfers:** Yes (US-based; edge regions in EU,
@@ -171,6 +182,17 @@ diff this file in the repository for the full record.
   sub-processor that receives camera imagery (JPEG snapshots), and
   only for organizations that use the agent. Disclosed here, in the
   Privacy Policy §1/§4, and on `/security`.
+- **2026-09-05** — Broadened the Fly.io entry for the optional cloud
+  data-sync tier. No new sub-processor is engaged: Fly.io already
+  hosted the application, and now also hosts the Postgres instance
+  holding mirrored data. What changed is the *scope* of what a
+  self-hosted Customer entrusts to it — previously SourceBox held no
+  copy of a self-hosted install's data at all, and for Customers
+  without the data-sync entitlement that remains true. Node API
+  credentials and incident evidence media are excluded from the
+  mirror by design. Also corrected a long-standing factual error in
+  the DPA, which described Command Center's own storage as Postgres
+  when it has always been SQLite on a Fly volume.
 
 ---
 
