@@ -188,14 +188,17 @@ Two consequences worth internalising before you debug:
   databases, so if it is down all three are down — check it before
   assuming the problem is app-side. Their *data* is isolated (each role
   is non-superuser and reaches only its own database); their
-  *availability* is not. It is a **single node with no replica**.
+  *availability* is not. It is a **single node with no replica** — a
+  deliberate choice (2026-09-07), so do not go looking for a standby to
+  promote during an incident. There isn't one. Recovery is restart, or
+  restore from snapshot.
 
 **Cluster capacity, measured 2026-09-07** — so you can tell "tight" from
 "broken" at 3am:
 
 | | Value | Note |
 |---|---|---|
-| Node | `shared-cpu-1x:512MB`, 1 machine | no replica — `fly machine clone -a sentinel-postgres` adds one |
+| Node | `shared-cpu-1x:512MB`, 1 machine | no replica **by design** — no failover, no standby to promote |
 | Memory | ~157 MB of 458 MB (~34%) | healthy headroom |
 | `max_connections` | 300 | shared across all three services; not a near-term constraint |
 | Volume | 1 GB | |

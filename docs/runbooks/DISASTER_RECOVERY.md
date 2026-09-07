@@ -35,11 +35,22 @@ must exist and the restore must have been rehearsed.
 >   cost and a third of the operational surface — but it is a real
 >   regression in blast radius and should not be forgotten.
 >
->   **The cluster is a single node with no replica**
->   (`shared-cpu-1x:512MB`, one `pg_data` volume).
->   `fly machine clone -a sentinel-postgres` adds a standby and is the
->   single highest-value fix here; not done, and the right thing to do
->   before the first paying customer.
+>   **Single node, no replica — decided 2026-09-07.** The cluster runs
+>   one machine (`shared-cpu-1x:512MB`, one `pg_data` volume) and a
+>   standby was considered and declined. The reasoning: a replica buys
+>   *uptime*, not durability, and durability is already covered by
+>   snapshots plus the portable dumps, with the restore path rehearsed
+>   and passing. At current scale the cost and operational surface of a
+>   second node is not worth the uptime it would buy.
+>
+>   What that means when it bites: a node failure is **downtime for all
+>   three services** until Fly restarts the machine, or — in a genuine
+>   host/volume loss — until someone restores from a snapshot. There is
+>   no automatic failover and nothing to promote. Budget for a recovery
+>   measured in minutes, not seconds.
+>
+>   `fly machine clone -a sentinel-postgres` is how you'd add a standby
+>   if the trade ever stops making sense.
 > - `backup_db.sh` / `restore_db.sh` are `pg_dump` / `pg_restore` now.
 >   The managed cluster's own snapshots became the *primary* backup.
 > - The pre-migration SQLite file is still at `/data/sentinel.db` (and
