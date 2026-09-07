@@ -89,7 +89,25 @@ jobs:
       # citing the upstream issue and the date we plan to revisit.
       - name: Dependency scan (pip-audit)
         working-directory: backend
-        run: uv run pip-audit --strict
+        run: |
+          # pip-audit queries the PyPI JSON API per-package to resolve
+          # hashes; a single transient "Connection reset by peer" during
+          # the TLS handshake (PyPI rate-limit / edge blip) aborts the
+          # whole scan with no retry. Wrap it in a bounded backoff so a
+          # flaky PyPI response doesn't fail CI on a clean dep tree.
+          # --strict is preserved on every attempt, so a genuine CVE
+          # still fails the job.
+          for attempt in 1 2 3; do
+            echo "::group::pip-audit attempt ${attempt}/3"
+            if uv run pip-audit --strict; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "::warning::pip-audit attempt ${attempt} failed; backing off before retry."
+            [ "$attempt" -lt 3 ] && sleep $((attempt * 15))
+          done
+          exit 1
 
       # TEST_DATABASE_URL is empty for the sqlite leg, and conftest.py
       # falls back to in-memory SQLite when it's unset — so the two

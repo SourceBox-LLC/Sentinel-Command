@@ -62,7 +62,20 @@ jobs:
         run: uv run ruff check
       - name: Backend dependency scan (pip-audit --strict)
         working-directory: backend
-        run: uv run pip-audit --strict
+        run: |
+          # Same PyPI-transient-resilience wrapper as deploy.yml's
+          # pip-audit step — keep the two gates identical.
+          for attempt in 1 2 3; do
+            echo "::group::pip-audit attempt ${attempt}/3"
+            if uv run pip-audit --strict; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "::warning::pip-audit attempt ${attempt} failed; backing off before retry."
+            [ "$attempt" -lt 3 ] && sleep $((attempt * 15))
+          done
+          exit 1
       - name: Backend tests
         working-directory: backend
         run: uv run pytest -q
