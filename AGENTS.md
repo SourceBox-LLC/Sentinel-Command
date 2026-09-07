@@ -52,7 +52,10 @@ Backend config is loaded from environment variables (see `backend/.env.example`)
 
 **Optional:**
 - `CLERK_WEBHOOK_SECRET` — Svix signature for Clerk subscription + organizationMembership webhooks
-- `DATABASE_URL` — defaults to `sqlite:///./sentinel.db`. Production uses `sqlite:////data/sentinel.db` on a Fly volume — single-machine deploy, NullPool, WAL, busy_timeout=5000 (see `app/core/database.py`).
+- `DATABASE_URL` — defaults to `sqlite:///./sentinel.db`. **One codebase, two engines**, selected by this URL's scheme (see `app/core/database.py`, which branches on it):
+  - **Hosted production runs Postgres** (`postgresql+psycopg://…`, on the shared `sentinel-sync-db` cluster). Set as a Fly *secret*, not in `fly.toml`, because it carries a password. Default QueuePool with `pool_pre_ping=True` — `NullPool` would mean a fresh TCP+auth round trip per request now that the database is across a network. Note the `+psycopg` driver suffix: `fly postgres attach` emits a bare `postgres://` URL, which SQLAlchemy would route to psycopg2 (not installed).
+  - **Self-hosted runs SQLite** — NullPool, WAL, `busy_timeout=30000`, `check_same_thread=False`. These are pysqlite-only: the PRAGMA handler is registered *conditionally* and the connect args are applied only for SQLite, because `PRAGMA` is a syntax error on Postgres and psycopg rejects those kwargs.
+  - Anything touching schema or SQL must work on **both**. `backend/tests/test_dialect_portability.py` pins the places they genuinely differ, and CI runs the whole suite against each (`TEST_DATABASE_URL` selects the engine; unset = in-memory SQLite). The traps that already bit: a Boolean `server_default` must be `text("false")` and not `"0"` (Postgres rejects a bare integer default on a boolean), and each `ADD COLUMN` in `sync_schema` needs its own transaction (on Postgres one failure aborts the transaction and silently takes every later column with it).
 - `FRONTEND_URL` — extra CORS origin (must have scheme, no trailing slash)
 - `REDIS_URL` — slowapi rate-limiter shared storage. Without it, per-process in-memory counters (single-VM safe; multi-VM round-robins around the limit). Currently in production via Upstash on Fly.
 - `SEGMENT_CACHE_MAX_PER_CAMERA` — segments cached in memory per camera (default **60**, ~60s — CameraNode emits 1-second segments)

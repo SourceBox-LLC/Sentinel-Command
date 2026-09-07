@@ -9,14 +9,26 @@ primary_region = "sjc"
 
 [env]
   FRONTEND_URL = "https://app.sentinel-command.com"
-  DATABASE_URL = "sqlite:////data/sentinel.db"
+  # DATABASE_URL is deliberately NOT here any more. It points at Postgres
+  # now, which makes it a credential, so it lives in `fly secrets` —
+  # `fly.toml` is committed to a public repository.
+  #
+  # Self-hosted installs are unaffected: they get the SQLite default from
+  # app/core/config.py and the data layer branches on the URL scheme.
+  #
   # Segment-cache ceiling MUST stay well under [[vm]].memory_mb below —
   # above physical RAM, the kernel OOM-killer fires (killing every
   # org's streams at once) long before the cache's own eviction can.
-  # 384 MiB on the 1 GiB machine leaves ~600 MiB for Python + SQLite
+  # 384 MiB on the 1 GiB machine leaves ~600 MiB for Python
   # (~25 concurrent live cameras). Scale this and memory_mb TOGETHER.
+  # The database no longer shares this machine's RAM for page cache,
+  # so there is a little more headroom here than there used to be.
   SEGMENT_CACHE_MAX_TOTAL_BYTES = "402653184"
 
+# Still required after the Postgres migration — /data holds HLS segment
+# working files and the local backup directory. It is no longer where
+# the database lives, which also means health_probes' disk check now
+# measures segment storage rather than database growth.
 [[mounts]]
   source = "sentinel_data"
   destination = "/data"
@@ -26,12 +38,16 @@ primary_region = "sjc"
   # .github/workflows/deploy.yml) which doesn't honour this strategy
   # — it goes straight to the in-place machine API.  This block
   # only matters if someone runs plain `fly deploy` manually.
-  # `immediate` is the closest match for our single-machine +
-  # single-volume topology: rolling tries to provision a parallel
-  # machine and errors on the volume's single attachment slot.
-  # The path to zero-downtime deploys is migrating off
-  # SQLite-on-a-single-volume (Postgres or LiteFS).
-  strategy = "immediate"
+  #
+  # `immediate` was forced by SQLite-on-a-single-volume: rolling tries
+  # to provision a parallel machine and errored on the volume's single
+  # attachment slot. With the database on Postgres that constraint is
+  # gone, so this now uses the default rolling strategy.
+  #
+  # Note the volume above still pins us to one machine for HLS segment
+  # state, so a deploy is still a brief restart. Genuine zero-downtime
+  # needs a second machine — which is now *possible* where it wasn't
+  # before, rather than something this line alone delivers.
 
 [http_service]
   internal_port = 8000

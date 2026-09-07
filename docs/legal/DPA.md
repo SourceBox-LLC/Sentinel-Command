@@ -322,17 +322,22 @@ Organization.
 - **At rest (CameraNode).** AES-256-GCM with a key derived from a
   machine-id file on the host. Each blob uses a fresh random nonce
   and an authentication tag bound to the blob's identifying metadata.
-- **At rest (Command Center).** A SQLite database on a persistent
-  volume encrypted at rest by the hosting provider (Fly.io). No video
-  content is stored on Command Center disks.
+- **At rest (Command Center).** A managed Postgres database, encrypted
+  at rest by the hosting provider (Fly.io). No video content is stored
+  on Command Center disks.
 - **At rest (cloud data-sync, self-hosted Customers only).** Customers
   running their own Command Center may opt into mirroring its database
-  to a SourceBox-operated Postgres instance, also hosted on Fly.io and
-  encrypted at rest by the provider. Only Customers whose licence
-  carries the data-sync entitlement are mirrored; for everyone else no
-  such copy exists. Node API credentials and incident evidence media
-  are deliberately excluded from the mirror, and no video content is
-  stored there.
+  to a SourceBox-operated Postgres database on the same provider,
+  encrypted at rest by them. It is a **separate database** from the
+  hosted Command Center's own, on shared cluster infrastructure. Only
+  Customers whose licence carries the data-sync entitlement are
+  mirrored; for everyone else no such copy exists. Node API credentials
+  and incident evidence media are deliberately excluded from the
+  mirror, and no video content is stored there.
+
+  Note that a self-hosted Customer's *own* install stores its data in
+  SQLite on hardware they control — SourceBox is not a processor for
+  that copy at all.
 
 ## Access control
 
@@ -349,7 +354,8 @@ Organization.
 - The CameraNode continues recording locally during Command Center
   outages; live streaming pauses until connectivity returns.
 - Database backups are managed by the hosting provider with daily
-  snapshots retained per their standard schedule.
+  snapshots retained per their standard schedule, supplemented by
+  SourceBox's own daily portable database dumps.
 
 ## Monitoring and incident response
 

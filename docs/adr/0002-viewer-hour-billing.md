@@ -43,7 +43,7 @@ Source of truth: `backend/app/core/plans.py::PLAN_LIMITS`.
 ### How it's enforced
 
 - **Counter:** Every successful `GET /api/cameras/{id}/segment/{filename}` calls `record_viewer_second(org_id)`, which increments an in-memory `dict[(org_id, "YYYY-MM"), int]`. One segment ≈ 1 second of video, so the counter is a viewer-second tally.
-- **Flush:** A 60-second background task (`_viewer_usage_flush_loop` in `backend/app/main.py`) snapshots the dict, clears it, then UPSERTs each entry into `OrgMonthlyUsage`. One DB write per minute per *active* org. The hot serve path never touches SQLite.
+- **Flush:** A 60-second background task (`_viewer_usage_flush_loop` in `backend/app/main.py`) snapshots the dict, clears it, then UPSERTs each entry into `OrgMonthlyUsage`. One DB write per minute per *active* org. The hot serve path never touches the database.
 - **Cap check:** Before serving a segment, `get_hls_segment` calls `_warm_cached_viewer_seconds(org_id)` which returns the cached DB total + pending in-memory delta (O(1) after first call per org per process). If `used_seconds >= max_hours * 3600`, return HTTP 429 with `Retry-After: 3600` and an upgrade-prompt message body.
 - **Plan resolution for the cap:** Uses `effective_plan_for_caps(db, org_id)`, not `user.plan` from the JWT — see `0001-sync-schema-vs-alembic.md` precedent for "DB-resolved truth beats stale token claims."
 

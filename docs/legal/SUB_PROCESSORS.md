@@ -57,10 +57,11 @@ terminate the affected Service per Section 4.4 of the
   separately so customers know where card data physically lives.
 
 ### Fly.io
-- **Service provided:** Application hosting, persistent volume
-  storage (holds the SourceBox SQLite database file), a managed
-  Postgres instance backing the optional cloud data-sync tier, global
-  edge network, TLS termination.
+- **Service provided:** Application hosting, a managed Postgres
+  cluster (holding the hosted Command Center database, the licence
+  database, and the optional cloud data-sync tier — separate databases
+  on shared infrastructure), persistent volume storage for live video
+  segment working files, global edge network, TLS termination.
 - **Personal Data processed:** All metadata SourceBox stores about
   Customer (account identity, audit logs, stream access logs, motion
   event metadata, settings rows). Fly.io does not see or process
@@ -70,7 +71,8 @@ terminate the affected Service per Section 4.4 of the
   **Additionally, for self-hosted Customers who opt into cloud
   data-sync:** a mirror of their own Command Center database —
   cameras, nodes, incidents, motion events, notifications, and AI
-  configuration — is stored in the Postgres instance above. This
+  configuration — is stored in the Postgres cluster above, in a database
+  separate from the hosted Command Center's own. This
   applies *only* to Customers whose licence carries the data-sync
   entitlement; for every other self-hosted Customer, SourceBox holds
   no copy of their data at all. Node API credentials and incident
@@ -182,6 +184,16 @@ diff this file in the repository for the full record.
   sub-processor that receives camera imagery (JPEG snapshots), and
   only for organizations that use the agent. Disclosed here, in the
   Privacy Policy §1/§4, and on `/security`.
+- **2026-09-07** — The hosted Command Center database migrated from
+  SQLite on a Fly volume to the same managed Postgres cluster that
+  already backed the data-sync tier; the licence database moved with
+  it. **No new sub-processor, no new category of data, and no change to
+  what is collected or who can see it** — the same data, held by the
+  same provider, in a different storage engine within that provider.
+  Recorded here because the Fly.io entry names what its storage holds.
+  Note this makes the DPA's "at rest" description accurate again, this
+  time because the system genuinely is Postgres rather than because the
+  wording was corrected (see the 2026-09-05 entry below).
 - **2026-09-05** — Broadened the Fly.io entry for the optional cloud
   data-sync tier. No new sub-processor is engaged: Fly.io already
   hosted the application, and now also hosts the Postgres instance
