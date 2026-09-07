@@ -50,7 +50,6 @@ RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 log() { printf '[backup_db] %s\n' "$*"; }
 die() { printf '[backup_db] ERROR: %s\n' "$*" >&2; exit 1; }
 
-command -v pg_dump >/dev/null 2>&1 || die "pg_dump not found on PATH"
 [ -n "${DATABASE_URL:-}" ] || die "DATABASE_URL is not set"
 
 # SQLAlchemy's driver suffix is meaningless to libpq: it parses
@@ -60,10 +59,16 @@ command -v pg_dump >/dev/null 2>&1 || die "pg_dump not found on PATH"
 PG_URL="${DATABASE_URL/postgresql+psycopg:\/\//postgresql://}"
 PG_URL="${PG_URL/postgres+psycopg:\/\//postgresql://}"
 
+# Checked BEFORE the pg_dump lookup on purpose: the likeliest person to
+# run this in the wrong context is a self-hosted operator on SQLite, and
+# "this is a Postgres-only script" tells them what's wrong. "pg_dump not
+# found" would just send them off installing a client they don't need.
 case "$PG_URL" in
   postgresql://*|postgres://*) ;;
-  *) die "DATABASE_URL is not a Postgres URL (got: ${PG_URL%%://*}://...)" ;;
+  *) die "DATABASE_URL is not a Postgres URL (got \"${PG_URL%%://*}://...\"). This script is for the hosted Postgres deployment; a self-hosted SQLite install has no equivalent backup job — see docs/runbooks/DISASTER_RECOVERY.md." ;;
 esac
+
+command -v pg_dump >/dev/null 2>&1 || die "pg_dump not found on PATH"
 
 # pg_dump refuses outright when the server is a NEWER major than the
 # client ("aborting because of server version mismatch") — it cannot know

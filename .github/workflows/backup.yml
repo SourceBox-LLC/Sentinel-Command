@@ -54,7 +54,7 @@ jobs:
       - name: Pull newest dump off the machine
         if: env.BACKUP_KEY != ''
         run: |
-          LATEST=$(flyctl ssh console -a sentinel-command -C "sh -c 'ls -1t /data/backups/*.dump | head -1'" | tr -d '\r' | tail -1)
+          LATEST=$(flyctl ssh console -a sentinel-command -C "sh -c 'ls -1t /data/backups/sentinel-*.dump | head -1'" | tr -d '\r' | tail -1)
           echo "newest dump: $LATEST"
           test -n "$LATEST"
           flyctl ssh sftp get "$LATEST" ./backup.dump -a sentinel-command

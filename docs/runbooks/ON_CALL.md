@@ -257,10 +257,17 @@ self-hosted section applies to them, not this scenario.
 - **Inspect the database directly** (psql ships in the image):
   ```
   fly ssh console -a sentinel-command \
-    -C "sh -c 'psql \"\${DATABASE_URL/postgresql+psycopg:\/\//postgresql://}\" -c \"select count(*) from pg_stat_activity\"'"
+    -C "bash -c 'psql \"\${DATABASE_URL/+psycopg/}\" -tAc \"select count(*) from pg_stat_activity\"'"
   ```
-  The substitution strips SQLAlchemy's `+psycopg` driver suffix, which
-  libpq does not understand.
+  Two things this line is doing deliberately, both verified against the
+  live machine:
+  - It strips SQLAlchemy's `+psycopg` driver suffix, which libpq does
+    not understand (it reads the whole thing as the scheme and errors
+    with "invalid URI").
+  - It runs under **`bash -c`, not `sh -c`**. `${VAR/a/b}` is a
+    bash-ism and the image's `/bin/sh` is dash, which fails it with
+    `Bad substitution`. If you'd rather stay in `sh`, use
+    `psql "$(echo $DATABASE_URL | sed s/+psycopg//)"` instead.
 - **Viewer-usage flush wedged:** restart the app. Root-cause via the
   app exception trail in Sentry.
 
