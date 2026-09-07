@@ -9,7 +9,7 @@ This is the runbook `ON_CALL.md` deliberately doesn't cover: not "the
 app is slow" but **"the data is gone."** Everything customer-facing —
 accounts, cameras, nodes, incidents, MCP keys, audit logs, and the
 `Setting(org_plan)` row that links an org to its paid plan — lives in
-the **`sentinel_command` database on the managed `sentinel-sync-db`
+the **`sentinel_command` database on the managed `sentinel-command-db`
 Postgres cluster**. Recovery is **restore from a backup**, so the backup
 must exist and the restore must have been rehearsed.
 
@@ -17,24 +17,32 @@ must exist and the restore must have been rehearsed.
 > database was a single SQLite file on the `sentinel_data` Fly volume,
 > and this runbook was written around that. What changed:
 >
-> - The database is `sentinel_command` on the `sentinel-sync-db` cluster
->   (shared with Sync-Service and License-Service — separate databases,
->   one cluster). `DATABASE_URL` is now a **Fly secret**, not a
+> - The database is `sentinel_command` on **its own dedicated cluster**,
+>   `sentinel-command-db`. `DATABASE_URL` is now a **Fly secret**, not a
 >   `fly.toml` env value, because it carries a password.
+>   (It briefly shared a cluster with the other two services on
+>   2026-09-07; that was split the same day — see below.)
 > - The `sentinel_data` volume still exists and still holds HLS segment
 >   working files and `/data/backups`. It no longer holds the database,
 >   so **losing the volume is no longer losing the data.**
 >
->   ⚠️ That is a durability win and an **availability regression**, and
->   the second half is easy to miss. Before, Command Center and License
->   Service each ran SQLite on their own volume: a failure took down one
->   service. Now all three services — Command Center, License Service,
->   and Sync-Service — depend on a **single-node** Postgres cluster
->   (`shared-cpu-1x:256MB`, one `pg_data` volume, **no replica**). The
->   database can no longer be lost with a machine, but it is now a
->   shared single point of failure whose loss takes down everything at
->   once. Adding a replica (`fly machine clone` on the cluster app) is
->   the fix; it has not been done.
+>   ⚠️ **Failure domain, stated precisely.** Moving off SQLite made the
+>   database survive losing an app machine, but it also introduced a
+>   dependency on a separate Postgres app. For a few hours on
+>   2026-09-07 all three services shared one cluster, which made that a
+>   *three-service* single point of failure — strictly worse than the
+>   SQLite arrangement it replaced, where each service failed alone.
+>
+>   That was fixed the same day by giving each service its own cluster
+>   (`sentinel-command-db`, `sentinel-license-db`, `sentinel-sync-db`).
+>   A database failure now takes down one service, matching the old
+>   blast radius while keeping the durability gain.
+>
+>   **Each cluster is still a single node with no replica**
+>   (`shared-cpu-1x:512MB`, one `pg_data` volume). So Command Center
+>   still has a database SPOF — it is just Command Center's own.
+>   `fly machine clone -a sentinel-command-db` adds a standby; not
+>   done, and the right thing to do before the first paying customer.
 > - `backup_db.sh` / `restore_db.sh` are `pg_dump` / `pg_restore` now.
 >   The managed cluster's own snapshots became the *primary* backup.
 > - The pre-migration SQLite file is still at `/data/sentinel.db` (and
@@ -53,42 +61,43 @@ must exist and the restore must have been rehearsed.
 > off-platform copy — see the warning under "Backups" below. This is
 > less severe than it was (cluster snapshots now cover the loss the
 > volume-local copies never could) but it is still a real gap.
+>
+> ⚠️ **New clusters take time to accumulate snapshots.**
+> `sentinel-command-db` was created 2026-09-07, so its snapshot history
+> starts then — the pre-split snapshots on `sentinel-sync-db` cover a
+> database that no longer exists there. Until roughly 2026-09-12 the
+> only recovery points for Command Center are the `pg_dump` files in
+> `/data/backups` and the pre-split dumps saved to
+> `~/sentinel-db-rollback/` on the operator's machine.
 
-> 🔓 **Open finding (2026-09-07): every service role on this cluster is
-> a Postgres SUPERUSER.** This is `fly postgres attach`'s default, not
-> something we configured, and it predates this migration —
-> `sentinel_sync` was already a superuser before Command Center and
-> License Service joined the cluster. Verified directly: the
-> `sentinel_license` credential can connect to the `sentinel_command`
-> database, read its rows, and create and drop tables in it; the
-> `sentinel_command` credential can likewise reach `sentinel_sync`,
-> which holds self-hosted customers' mirrored data.
+> 🔒 **Resolved (2026-09-07): cross-service database access.**
+> `fly postgres attach` creates every role as a Postgres **SUPERUSER**.
+> While all three services shared one cluster that meant any single
+> leaked `DATABASE_URL` was full read/write on all three databases —
+> verified at the time: the `sentinel_license` credential could read
+> and write `sentinel_command`, and `sentinel_command` could reach
+> `sentinel_sync`, which holds self-hosted customers' mirrored data.
 >
-> **What this means in practice.** Any one leaked `DATABASE_URL` is
-> full read/write on all three databases, so "separate databases" is a
-> blast-radius and operational boundary, not a security control. The
-> tenancy boundary customers actually depend on — per-org scoping, and
-> per-licence scoping for the mirror — is enforced in the application
-> layer and is unaffected. Treat every service's `DATABASE_URL` as a
-> cluster-wide admin credential when deciding who may see it.
+> Splitting each service onto its own cluster fixed it, and the fix was
+> verified rather than assumed — all four cross-service connection
+> attempts are now refused, while each service still reaches its own
+> database. The old `sentinel_command` and `sentinel_license` roles and
+> databases were dropped from `sentinel-sync-db`, which now hosts only
+> `sentinel_sync`.
 >
-> **Fixing it is not a one-liner**, which is why it is written down
-> rather than already done. The databases are owned by `postgres` and
-> the `public` schema by `pg_database_owner`, so simply running
-> `ALTER ROLE … NOSUPERUSER` would strip each app's ability to create
-> its own tables and break `ensure_schema` on the next boot. The
-> sequence would be, per database, and rehearsed on a scratch cluster
-> first:
->
-> ```sql
-> ALTER DATABASE sentinel_command OWNER TO sentinel_command;
-> REVOKE CONNECT ON DATABASE sentinel_command FROM PUBLIC;
-> ALTER ROLE sentinel_command NOSUPERUSER;
-> ```
->
-> Then redeploy and confirm the app still creates a missing column on
-> boot. Note `fly postgres attach` will re-create future roles as
-> superusers again, so this needs redoing for any service added later.
+> **What remains:** each service's role is still a superuser *on its own
+> cluster*. That is a much smaller concern — it is that service's own
+> data, and the app needs schema-creation rights on boot anyway — but it
+> does mean `DATABASE_URL` is an admin credential for that database, not
+> a scoped one. Treat it accordingly. Tightening it further is possible
+> but is not a one-liner: the database is owned by `postgres` and the
+> `public` schema by `pg_database_owner`, so a bare `ALTER ROLE …
+> NOSUPERUSER` would strip the app's ability to create its own tables
+> and break `ensure_schema` on the next boot. The sequence would be
+> `ALTER DATABASE … OWNER TO …; REVOKE CONNECT … FROM PUBLIC;
+> ALTER ROLE … NOSUPERUSER;`, rehearsed on a scratch cluster first.
+> Note `fly postgres attach` recreates roles as superusers, so any
+> future attach needs the same treatment.
 
 ---
 
@@ -107,9 +116,9 @@ There are **two independent layers**, and it matters which one you reach
 for:
 
 1. **Managed cluster snapshots — the primary.** Fly takes these on the
-   `sentinel-sync-db` cluster automatically. They are the fastest path
+   `sentinel-command-db` cluster automatically. They are the fastest path
    back and the one that covers "the cluster is gone". Check them with
-   `fly volumes list -a sentinel-sync-db` and
+   `fly volumes list -a sentinel-command-db` and
    `fly volumes snapshots list <volume-id>`.
 2. **`backend/scripts/backup_db.sh` — the portable secondary.** Runs
    `pg_dump --format=custom` (compressed; restorable *selectively* with
