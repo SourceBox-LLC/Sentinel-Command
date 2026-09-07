@@ -170,7 +170,7 @@ error overlay.
 event.
 
 **Important context.** Since 2026-09-07 the hosted database is
-**Postgres on the managed `sentinel-command-db` cluster** — a separate Fly
+**Postgres on the managed `sentinel-postgres` cluster** — a separate Fly
 app from `sentinel-command`, so there are now **two things to check**,
 and "the app is up" no longer implies the database is. `DATABASE_URL` is
 a Fly *secret* (it carries a password); it is not in `fly.toml`.
@@ -183,27 +183,28 @@ Two consequences worth internalising before you debug:
 - **Database latency is now network latency.** Expect ~20–30 ms where
   local SQLite was ~2 ms. That is normal, not a regression; alarm on
   the trend, not the absolute number.
-- **The cluster is Command Center's alone.** Since 2026-09-07 each
-  service has its own Postgres cluster, so a database failure here does
-  not touch License Service or Sync-Service (and vice versa). It is
-  still a **single node with no replica**, so it remains a SPOF for
-  *this* service.
+- **The cluster is shared by three services.** `sentinel-postgres`
+  hosts Command Center, License Service and Sync-Service as separate
+  databases, so if it is down all three are down — check it before
+  assuming the problem is app-side. Their *data* is isolated (each role
+  is non-superuser and reaches only its own database); their
+  *availability* is not. It is a **single node with no replica**.
 
 **Cluster capacity, measured 2026-09-07** — so you can tell "tight" from
 "broken" at 3am:
 
 | | Value | Note |
 |---|---|---|
-| Node | `shared-cpu-1x:512MB`, 1 machine | no replica — `fly machine clone -a sentinel-command-db` adds one |
+| Node | `shared-cpu-1x:512MB`, 1 machine | no replica — `fly machine clone -a sentinel-postgres` adds one |
 | Memory | ~157 MB of 458 MB (~34%) | healthy headroom |
-| `max_connections` | 300 | not a near-term constraint |
+| `max_connections` | 300 | shared across all three services; not a near-term constraint |
 | Volume | 1 GB | |
-| Snapshots | daily, 5-day retention | history starts 2026-09-07 (new cluster) |
+| Snapshots | daily, 5-day retention | history starts 2026-09-07 |
 
 **Postgres has a fixed memory floor of ~155 MB regardless of how much
 data it holds.** That is worth knowing before you diagnose: a 256 MB
 node sits at ~75% used while completely idle, which looks alarming and
-isn't. All three clusters were moved to 512 MB for this reason. If
+isn't. The cluster runs 512 MB for this reason. If
 memory is genuinely climbing, compare against that ~155 MB baseline
 rather than against zero.
 
@@ -217,7 +218,7 @@ self-hosted section applies to them, not this scenario.
 **First checks.**
 1. `fly status -a sentinel-command` — is the app machine up and healthy?
    Check the "events" timeline for recent restarts.
-2. **`fly status -a sentinel-command-db`** — is the *database* up? This is
+2. **`fly status -a sentinel-postgres`** — is the *database* up? This is
    the check that did not exist before the migration.
 3. `curl https://sentinel-command.com/api/health/detailed` —
    look at:
@@ -228,7 +229,7 @@ self-hosted section applies to them, not this scenario.
 4. `fly logs -a sentinel-command` — search for `OperationalError`,
    `connection refused`, `too many connections`, `no space left`, or
    `[DiskCheck]`.
-5. `fly logs -a sentinel-command-db` — the database's own side of the story.
+5. `fly logs -a sentinel-postgres` — the database's own side of the story.
 
 **Likely causes.**
 
@@ -244,7 +245,7 @@ self-hosted section applies to them, not this scenario.
   disk-check loop's `OPERATOR ALERT` fired. Now caused by HLS segments
   and accumulated `/data/backups` dumps, **not** database growth.
 - **Database storage full on the cluster.** A separate disk from the
-  app's. `fly volumes list -a sentinel-command-db`. Most common growth
+  app's. `fly volumes list -a sentinel-postgres`. Most common growth
   driver is still an org with high motion-event volume (every event is
   a row in `MotionEvent` until the daily cleanup loop runs).
 - **Viewer-usage flush wedged.** If
@@ -273,8 +274,8 @@ self-hosted section applies to them, not this scenario.
   ```
 - **Database disk full:** extend the *cluster's* volume:
   ```
-  fly volumes list -a sentinel-command-db
-  fly volumes extend <volume_id> --size <new_GB> -a sentinel-command-db
+  fly volumes list -a sentinel-postgres
+  fly volumes extend <volume_id> --size <new_GB> -a sentinel-postgres
   ```
 - **Connection errors / exhaustion:** restart the app machine to drop
   its pool (`fly machine restart <id> -a sentinel-command`). If the
