@@ -328,9 +328,10 @@ Organization.
 - **At rest (cloud data-sync, self-hosted Customers only).** Customers
   running their own Command Center may opt into mirroring its database
   to a SourceBox-operated Postgres database on the same provider,
-  encrypted at rest by them. It runs on its own database cluster,
-  separate from the one holding the hosted Command Center's data, so
-  credentials for one cannot reach the other. The tenancy boundary
+  encrypted at rest by them. It is a separate database from the one
+  holding the hosted Command Center's data, with database-level access
+  controls so credentials for one cannot reach the other. The tenancy
+  boundary
   between individual customers is enforced in the application layer
   (per-organization scoping, and per-licence scoping for the mirror).
   Only

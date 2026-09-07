@@ -177,7 +177,7 @@ jobs:
       # We run a single Fly Machine with a single persistent volume
       # (`sentinel_data` at /data).  Since 2026-09-07 that volume holds
       # only HLS segment working files and /data/backups — the database
-      # is Postgres on the sentinel-command-db cluster — but the volume is
+      # is Postgres on the sentinel-postgres cluster — but the volume is
       # still single-attachment, so the deploy topology below is
       # unchanged.  `fly deploy`
       # for this topology is non-deterministic: sometimes it sees the

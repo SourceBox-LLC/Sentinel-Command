@@ -57,10 +57,10 @@ terminate the affected Service per Section 4.4 of the
   separately so customers know where card data physically lives.
 
 ### Fly.io
-- **Service provided:** Application hosting, managed Postgres — a
-  **separate cluster per service** (the hosted Command Center database,
-  the licence database, and the optional cloud data-sync tier, all
-  operated by SourceBox), persistent volume storage for live video
+- **Service provided:** Application hosting, a managed Postgres cluster
+  holding a **separate database per service** (the hosted Command Center
+  database, the licence database, and the optional cloud data-sync tier,
+  all operated by SourceBox), persistent volume storage for live video
   segment working files, global edge network, TLS termination.
 - **Personal Data processed:** All metadata SourceBox stores about
   Customer (account identity, audit logs, stream access logs, motion
@@ -71,7 +71,7 @@ terminate the affected Service per Section 4.4 of the
   **Additionally, for self-hosted Customers who opt into cloud
   data-sync:** a mirror of their own Command Center database —
   cameras, nodes, incidents, motion events, notifications, and AI
-  configuration — is stored in its own Postgres cluster, separate from
+  configuration — is stored in its own database, access-isolated from
   the one holding the hosted Command Center's data. This
   applies *only* to Customers whose licence carries the data-sync
   entitlement; for every other self-hosted Customer, SourceBox holds
@@ -186,8 +186,8 @@ diff this file in the repository for the full record.
   Privacy Policy §1/§4, and on `/security`.
 - **2026-09-07** — The hosted Command Center database migrated from
   SQLite on a Fly volume to managed Postgres, and the licence database
-  moved with it. Each service was given its own dedicated cluster the
-  same day, so no service's credentials can reach another's data. **No new sub-processor, no new category of data, and no change to
+  moved with it. Database roles are access-isolated so no service's
+  credentials can read another service's data. **No new sub-processor, no new category of data, and no change to
   what is collected or who can see it** — the same data, held by the
   same provider, in a different storage engine within that provider.
   Recorded here because the Fly.io entry names what its storage holds.

@@ -49,7 +49,7 @@ jobs:
 
       # Visibility only — never fails the job. But it must not fail
       # SILENTLY either: the database now lives on a DIFFERENT Fly app
-      # (sentinel-command-db) than this one, and an app-scoped FLY_API_TOKEN
+      # (sentinel-postgres) than this one, and an app-scoped FLY_API_TOKEN
       # cannot see another app — it returns `Could not find App`, which
       # with a bare `|| true` would look identical to "no snapshots".
       # Verified: a deploy token scoped to sentinel-command can ssh into
@@ -57,11 +57,11 @@ jobs:
       # So say which of the two happened.
       - name: List cluster snapshots (visibility)
         run: |
-          if out=$(flyctl volumes list -a sentinel-command-db 2>&1); then
+          if out=$(flyctl volumes list -a sentinel-postgres 2>&1); then
             echo "$out"
           else
             echo "$out"
-            echo "::warning::Could not read sentinel-command-db volumes. If this says" \
+            echo "::warning::Could not read sentinel-postgres volumes. If this says" \
               "'Could not find App', FLY_API_TOKEN is scoped to sentinel-command only" \
               "and cannot see the database app — the backup itself still ran, but" \
               "cluster snapshots are NOT being checked here. Use an org-scoped token" \

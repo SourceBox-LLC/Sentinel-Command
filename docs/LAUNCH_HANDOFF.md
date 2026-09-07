@@ -248,7 +248,7 @@ accidentally.
 > procedure and the new drill log entry.
 
 **State now.** The hosted database is **Postgres**, in the
-`sentinel_command` database on the managed `sentinel-command-db` cluster
+`sentinel_command` database on the managed `sentinel-postgres` cluster
 (shared with Sync-Service and License-Service — separate databases).
 `DATABASE_URL` is a **Fly secret**, not a `fly.toml` env value, because
 it carries a password. The `sentinel_data` volume still exists but now
@@ -263,8 +263,8 @@ tests both.
 **What you need to do.**
 1. Verify the cluster's snapshot schedule:
    ```
-   fly volumes list -a sentinel-command-db
-   fly volumes snapshots list <volume_id> -a sentinel-command-db
+   fly volumes list -a sentinel-postgres
+   fly volumes snapshots list <volume_id> -a sentinel-postgres
    ```
    You should see daily snapshots going back 5+ days.
 2. **Test a restore.** ✅ *Done 2026-09-07 — see the drill log in
