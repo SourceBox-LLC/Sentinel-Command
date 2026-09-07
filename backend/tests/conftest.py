@@ -1,8 +1,19 @@
 """
 Shared test fixtures for Sentinel backend tests.
 
-Sets up an in-memory SQLite database and a FastAPI test client
-with Clerk auth bypassed (mocked).
+Runs against a FastAPI test client with Clerk auth bypassed (mocked),
+and — by default — an in-memory SQLite database.
+
+The suite is dialect-parametrised on purpose. Hosted Command Center runs
+Postgres while self-hosted runs SQLite from the same codebase, so both
+have to stay green: testing only one means shipping the other unverified.
+Set TEST_DATABASE_URL to point the whole suite at Postgres, e.g.
+
+    TEST_DATABASE_URL=postgresql+psycopg://user:pass@localhost:5432/db \\
+        uv run pytest
+
+CI runs it both ways. The SQLite default keeps a bare `uv run pytest`
+working with no database to set up.
 """
 
 import os
@@ -12,8 +23,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
 # Must set env vars BEFORE importing app modules so config.py picks them up.
-# Use in-memory DB so main.py startup code doesn't touch any real files.
-os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+# The default in-memory DB means main.py's startup code touches no real files.
+os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL") or "sqlite:///:memory:"
 os.environ.setdefault("CLERK_SECRET_KEY", "sk_test_fake")
 os.environ.setdefault("CLERK_PUBLISHABLE_KEY", "pk_test_fake")
 

@@ -16,6 +16,40 @@ jobs:
   test:
     name: Backend tests
     runs-on: ubuntu-latest
+    # One codebase, two databases: hosted Command Center runs Postgres,
+    # self-hosted runs SQLite. Testing only one of them means shipping
+    # the other unverified, so the suite runs against both and a failure
+    # in either blocks the deploy.
+    #
+    # fail-fast is off deliberately — when a dialect-specific bug lands,
+    # seeing which engine broke (and whether the other survived) is the
+    # whole diagnostic.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dialect: sqlite
+            test_database_url: ""
+          - dialect: postgres
+            test_database_url: postgresql+psycopg://sentinel:sentinel@localhost:5432/sentinel_test
+    services:
+      # Always started, used only by the postgres leg. GitHub has no
+      # per-matrix-entry `services`, and an idle container costs a few
+      # seconds of startup — cheaper than splitting this into two jobs
+      # that would then duplicate every step below.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sentinel
+          POSTGRES_PASSWORD: sentinel
+          POSTGRES_DB: sentinel_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v7
 
@@ -57,8 +91,13 @@ jobs:
         working-directory: backend
         run: uv run pip-audit --strict
 
-      - name: Run tests
+      # TEST_DATABASE_URL is empty for the sqlite leg, and conftest.py
+      # falls back to in-memory SQLite when it's unset — so the two
+      # matrix entries share one command.
+      - name: Run tests (${{ matrix.dialect }})
         working-directory: backend
+        env:
+          TEST_DATABASE_URL: ${{ matrix.test_database_url }}
         run: uv run pytest -v
 
   frontend:
