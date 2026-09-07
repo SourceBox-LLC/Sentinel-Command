@@ -24,6 +24,17 @@ must exist and the restore must have been rehearsed.
 > - The `sentinel_data` volume still exists and still holds HLS segment
 >   working files and `/data/backups`. It no longer holds the database,
 >   so **losing the volume is no longer losing the data.**
+>
+>   ⚠️ That is a durability win and an **availability regression**, and
+>   the second half is easy to miss. Before, Command Center and License
+>   Service each ran SQLite on their own volume: a failure took down one
+>   service. Now all three services — Command Center, License Service,
+>   and Sync-Service — depend on a **single-node** Postgres cluster
+>   (`shared-cpu-1x:256MB`, one `pg_data` volume, **no replica**). The
+>   database can no longer be lost with a machine, but it is now a
+>   shared single point of failure whose loss takes down everything at
+>   once. Adding a replica (`fly machine clone` on the cluster app) is
+>   the fix; it has not been done.
 > - `backup_db.sh` / `restore_db.sh` are `pg_dump` / `pg_restore` now.
 >   The managed cluster's own snapshots became the *primary* backup.
 > - The pre-migration SQLite file is still at `/data/sentinel.db` (and
@@ -115,12 +126,23 @@ for:
 | `BACKUP_RETENTION_DAYS` | `14` | local prune window |
 | `BACKUP_S3_BUCKET` | _(unset)_ | off-platform target, e.g. `s3://bucket/cc` (needs `aws` CLI + creds) |
 
-> ⚠️ **There is still no off-platform copy.** `BACKUP_ENCRYPTION_KEY` is
-> unset and `BACKUP_S3_BUCKET` is unset, so the portable dumps live only
-> on the Fly volume. Set one of them. This is no longer the
-> single-point-of-failure it was — cluster snapshots now cover
-> cluster-level loss, which the old volume-local SQLite copies never
-> did — but a Fly *account* loss would still take everything.
+> ⚠️ **Right now, every copy of the database is inside Fly.** Verified
+> 2026-09-07, and worth stating bluntly because the two-layer structure
+> above can read as more redundancy than actually exists:
+>
+> | Copy | Where it lives | Status |
+> |---|---|---|
+> | Cluster snapshots | Fly | ✅ exist — 4 daily, **5-day retention** |
+> | Portable `pg_dump` | Fly volume (`/data/backups`) | ✅ exist |
+> | Encrypted GH artifact | GitHub | ❌ **not enabled** — `BACKUP_ENCRYPTION_KEY` unset |
+> | S3 | elsewhere | ❌ not configured — `BACKUP_S3_BUCKET` unset |
+>
+> So the recovery envelope today is **~5 days, entirely dependent on
+> Fly**. Snapshots protect against cluster loss and the dumps against a
+> bad migration, but a Fly account suspension or billing lapse takes
+> every copy at once, and anything older than the snapshot window is
+> already gone. Setting `BACKUP_ENCRYPTION_KEY` is the single cheapest
+> fix — the workflow is already written and gated on it.
 
 **Two gotchas the scripts handle for you, worth knowing before you run
 `pg_dump` by hand:**

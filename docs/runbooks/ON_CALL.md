@@ -183,6 +183,25 @@ Two consequences worth internalising before you debug:
 - **Database latency is now network latency.** Expect ~20–30 ms where
   local SQLite was ~2 ms. That is normal, not a regression; alarm on
   the trend, not the absolute number.
+- **The cluster is a single point of failure for three services.** One
+  node, no replica — if it is down, Command Center, License Service and
+  Sync-Service are all down together. Check it before assuming the
+  problem is app-side.
+
+**Cluster capacity, measured 2026-09-07** — so you can tell "tight" from
+"broken" at 3am:
+
+| | Value | Note |
+|---|---|---|
+| Node | `shared-cpu-1x:256MB`, 1 machine | no replica |
+| Memory | 207 MB total, ~166 MB used | **~80% used with only ~25 MB of data** — the thing most likely to bite first as data grows |
+| `max_connections` | 300 | 17 in use; not a near-term constraint |
+| `shared_buffers` | 25 MB | small, but the whole dataset still fits |
+| Volume | 1 GB, 10% used | fine |
+| Snapshots | daily, **5-day retention** | see DISASTER_RECOVERY |
+
+If the database is slow rather than down, memory is the first thing to
+look at, not connections.
 
 Self-hosted installs still run SQLite — if the report is from a
 self-hoster, the old WAL/locking advice in the DISASTER_RECOVERY
