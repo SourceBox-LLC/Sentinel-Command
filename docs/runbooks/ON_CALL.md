@@ -166,53 +166,95 @@ error overlay.
 **Symptoms.** `/api/health/detailed` shows
 `checks.database.status == "error"`, `latency_ms > 1000`, or
 `checks.disk.status == "critical"`. Sentry firing `OperationalError`,
-`SqliteError`, or our own `[DiskCheck] OPERATOR ALERT` event.
+`psycopg.OperationalError`, or our own `[DiskCheck] OPERATOR ALERT`
+event.
 
-**Important context.** We use **SQLite on a Fly volume**, NOT Fly's
-managed Postgres. There is no separate database app to check. The
-DB lives at `/data/sentinel.db` on the same machine as the
-FastAPI process. WAL mode + NullPool + busy_timeout=5000 (see
-`backend/app/core/database.py`).
+**Important context.** Since 2026-09-07 the hosted database is
+**Postgres on the managed `sentinel-sync-db` cluster** — a separate Fly
+app from `sentinel-command`, so there are now **two things to check**,
+and "the app is up" no longer implies the database is. `DATABASE_URL` is
+a Fly *secret* (it carries a password); it is not in `fly.toml`.
+
+Two consequences worth internalising before you debug:
+
+- **`/data` no longer holds the database.** `checks.disk` now measures
+  HLS segment working files and `/data/backups` only. A full disk is no
+  longer a database emergency — it's a streaming one.
+- **Database latency is now network latency.** Expect ~20–30 ms where
+  local SQLite was ~2 ms. That is normal, not a regression; alarm on
+  the trend, not the absolute number.
+- **The cluster is a single point of failure for three services.** One
+  node, no replica — if it is down, Command Center, License Service and
+  Sync-Service are all down together. Check it before assuming the
+  problem is app-side.
+
+**Cluster capacity, measured 2026-09-07** — so you can tell "tight" from
+"broken" at 3am:
+
+| | Value | Note |
+|---|---|---|
+| Node | `shared-cpu-1x:256MB`, 1 machine | no replica |
+| Memory | 207 MB total, ~166 MB used | **~80% used with only ~25 MB of data** — the thing most likely to bite first as data grows |
+| `max_connections` | 300 | 17 in use; not a near-term constraint |
+| `shared_buffers` | 25 MB | small, but the whole dataset still fits |
+| Volume | 1 GB, 10% used | fine |
+| Snapshots | daily, **5-day retention** | see DISASTER_RECOVERY |
+
+If the database is slow rather than down, memory is the first thing to
+look at, not connections.
+
+Self-hosted installs still run SQLite — if the report is from a
+self-hoster, the old WAL/locking advice in the DISASTER_RECOVERY
+self-hosted section applies to them, not this scenario.
 
 **First checks.**
-1. `fly status -a sentinel-command` — is the machine itself up
-   and healthy? Check the "events" timeline for recent restarts.
-2. `curl https://sentinel-command.com/api/health/detailed` —
+1. `fly status -a sentinel-command` — is the app machine up and healthy?
+   Check the "events" timeline for recent restarts.
+2. **`fly status -a sentinel-sync-db`** — is the *database* up? This is
+   the check that did not exist before the migration.
+3. `curl https://sentinel-command.com/api/health/detailed` —
    look at:
    - `checks.database.status` and `latency_ms`
-   - `checks.disk.percent_used` and `checks.disk.status`
+   - `checks.disk.percent_used` and `checks.disk.status` (segments now,
+     not the DB)
    - `checks.viewer_usage.pending_writes` (high = flush loop wedged)
-3. `fly logs -a sentinel-command` — search for `SqliteError`,
-   `database is locked`, `no space left`, or `[DiskCheck]`.
-4. `fly ssh console -a sentinel-command` then
-   `df -h /data` to see actual volume usage.
+4. `fly logs -a sentinel-command` — search for `OperationalError`,
+   `connection refused`, `too many connections`, `no space left`, or
+   `[DiskCheck]`.
+5. `fly logs -a sentinel-sync-db` — the database's own side of the story.
 
 **Likely causes.**
 
-- **Disk full on `/data`.** Logs show `no space left on device` or
-  the disk-check loop's `OPERATOR ALERT` Sentry event fired.
-  Recordings + audit logs + email outbox all share this volume.
-  Most common growth driver: an org with high motion-event volume
-  (every event is a row in `MotionEvent` until the daily cleanup
-  loop runs).
-- **WAL file got huge.** SQLite's WAL grows during writes and
-  collapses on read checkpoints. A long-running read transaction
-  can prevent checkpointing → WAL grows unbounded → disk fills
-  faster than expected.
-- **`database is locked` errors.** Should be rare with WAL +
-  busy_timeout, but a slow-running transaction (e.g. a 10K-row
-  delete in `run_log_cleanup`) can briefly block writers.
+- **Cluster down, restarting, or unreachable.** App logs show
+  `connection refused` / `could not connect`. Check the cluster app's
+  status and events first; `pool_pre_ping=True` means a *recycled* idle
+  connection reconnects transparently, so persistent errors mean the
+  cluster itself, not a stale pool.
+- **Connection exhaustion.** `too many connections` — the cluster has a
+  per-instance `max_connections`, and every app machine holds a
+  QueuePool. Rare at one machine; the thing to watch if we scale out.
+- **Disk full on `/data`.** Logs show `no space left on device` or the
+  disk-check loop's `OPERATOR ALERT` fired. Now caused by HLS segments
+  and accumulated `/data/backups` dumps, **not** database growth.
+- **Database storage full on the cluster.** A separate disk from the
+  app's. `fly volumes list -a sentinel-sync-db`. Most common growth
+  driver is still an org with high motion-event volume (every event is
+  a row in `MotionEvent` until the daily cleanup loop runs).
 - **Viewer-usage flush wedged.** If
-  `checks.viewer_usage.pending_writes` is climbing, the 60s flush
-  loop is failing. Could be a SQLite lock or an app-level
-  exception.
+  `checks.viewer_usage.pending_writes` is climbing, the 60s flush loop
+  is failing — now most likely a connection error or an app-level
+  exception rather than a lock.
 
 **Fix paths.**
 
-- **Disk full:**
+- **App disk full (`/data`):**
   ```
   # Extend the volume (downtime: machine restart while resize completes)
   fly volumes extend <volume_id> --size <new_GB> -a sentinel-command
+  ```
+  Prune old dumps first — that may be all it needs:
+  ```
+  fly ssh console -a sentinel-command -C "sh -c 'ls -lt /data/backups | head'"
   ```
   Then trigger early log cleanup if needed:
   ```
@@ -222,25 +264,42 @@ FastAPI process. WAL mode + NullPool + busy_timeout=5000 (see
         db = SessionLocal(); \
         print(run_log_cleanup(db))'"
   ```
-- **WAL bloat:** force a checkpoint:
+- **Database disk full:** extend the *cluster's* volume:
+  ```
+  fly volumes list -a sentinel-sync-db
+  fly volumes extend <volume_id> --size <new_GB> -a sentinel-sync-db
+  ```
+- **Connection errors / exhaustion:** restart the app machine to drop
+  its pool (`fly machine restart <id> -a sentinel-command`). If the
+  cluster is the problem, restart it instead — but note that is a
+  **shared** cluster: Sync-Service and License-Service go down with it.
+- **Inspect the database directly** (psql ships in the image):
   ```
   fly ssh console -a sentinel-command \
-    -C "sqlite3 /data/sentinel.db 'PRAGMA wal_checkpoint(TRUNCATE);'"
+    -C "bash -c 'psql \"\${DATABASE_URL/+psycopg/}\" -tAc \"select count(*) from pg_stat_activity\"'"
   ```
-- **`database is locked`:** restart the app machine to clear any
-  stuck readers. `fly machine restart <id> -a sentinel-command`.
-- **Viewer-usage flush wedged:** restart the app. Root-cause via
-  the app exception trail in Sentry.
+  Two things this line is doing deliberately, both verified against the
+  live machine:
+  - It strips SQLAlchemy's `+psycopg` driver suffix, which libpq does
+    not understand (it reads the whole thing as the scheme and errors
+    with "invalid URI").
+  - It runs under **`bash -c`, not `sh -c`**. `${VAR/a/b}` is a
+    bash-ism and the image's `/bin/sh` is dash, which fails it with
+    `Bad substitution`. If you'd rather stay in `sh`, use
+    `psql "$(echo $DATABASE_URL | sed s/+psycopg//)"` instead.
+- **Viewer-usage flush wedged:** restart the app. Root-cause via the
+  app exception trail in Sentry.
 
 **When to escalate.**
 
-- After a restart the app comes back up but the disk fills
-  again within hours — there's a runaway write somewhere (motion
-  spam, broken background loop). Read recent commits + Sentry
-  for clues before another restart.
-- The volume is at its plan max (Fly volumes don't auto-extend
-  past plan limits). Need a paid plan upgrade or migration to
-  larger storage.
+- After a restart the app comes back up but disk fills again within
+  hours — there's a runaway write somewhere (motion spam, broken
+  background loop). Read recent commits + Sentry before another restart.
+- Either volume is at its plan max (Fly volumes don't auto-extend past
+  plan limits). Need a plan upgrade or larger storage.
+- **The cluster is unhealthy, not just the app.** That is a
+  three-service outage, and the recovery path is
+  `DISASTER_RECOVERY.md` → "If the cluster is gone", not a restart loop.
 
 ---
 
@@ -360,11 +419,18 @@ exceptions from `app.core.email_worker`.
 3. Resend dashboard — check the "Emails" tab for recent attempts.
    Are they marked sent / bounced / blocked? Resend's dashboard
    shows the SMTP-level reason.
-4. SSH and query the outbox directly:
+4. SSH and query the outbox directly. Going through the app's own
+   session avoids having to hand-massage `DATABASE_URL` for `psql`
+   (libpq rejects SQLAlchemy's `+psycopg` suffix):
    ```
    fly ssh console -a sentinel-command \
-     -C "sqlite3 /data/sentinel.db \
-       'SELECT status, COUNT(*) FROM email_outbox GROUP BY status;'"
+     -C "/app/.venv/bin/python -c \"
+from app.core.database import SessionLocal
+from sqlalchemy import text
+db = SessionLocal()
+for row in db.execute(text('SELECT status, COUNT(*) FROM email_outbox GROUP BY status')):
+    print(row)
+db.close()\""
    ```
 
 **Likely causes.**

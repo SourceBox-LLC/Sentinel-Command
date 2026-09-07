@@ -25,15 +25,34 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 WORKDIR /app
 
 # Install system dependencies.
-#   curl    — health checks / debugging.
-#   sqlite3 — REQUIRED by scripts/backup_db.sh + restore_db.sh (online
-#             .backup + integrity_check) and by the ON_CALL runbook's
-#             manual recovery commands (PRAGMA wal_checkpoint etc.).
-#             Without it, the scheduled backup workflow and every
-#             documented recovery path fail on the live machine.
+#   curl               — health checks / debugging.
+#   postgresql-client  — REQUIRED by scripts/backup_db.sh + restore_db.sh
+#                        (pg_dump/pg_restore/psql) and by the ON_CALL
+#                        runbook's manual recovery commands. Without it
+#                        the scheduled backup workflow and every
+#                        documented recovery path fail on the live
+#                        machine.
+#
+# Version 18 specifically, from PGDG rather than Debian: pg_dump REFUSES
+# to dump a server whose major version is newer than its own ("aborting
+# because of server version mismatch"), and bookworm ships client 15
+# against our 18.x server. Verified directly — client 15 fails on this
+# exact server. Bump this pin whenever the cluster's major version moves.
+#
+# The sqlite3 CLI was here until 2026-09 for the SQLite-era backup
+# scripts. The hosted database is Postgres now and nothing in this image
+# reads a SQLite file; the Python sqlite3 module (stdlib, no apt package)
+# is untouched, so a self-hosted SQLite run of this codebase still works.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    sqlite3 \
+    curl ca-certificates gnupg \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+         -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+         > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+         postgresql-client-18 \
+    && apt-get purge -y gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency files and install Python packages

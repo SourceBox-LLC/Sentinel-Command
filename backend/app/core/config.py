@@ -91,8 +91,11 @@ class Config:
     # tail of less-active ones.
     #
     # Default 384 MiB, sized for the PRODUCTION VM: fly.toml runs a
-    # 1 GiB machine, and the Python/uvicorn/SQLAlchemy baseline plus
-    # SQLite page cache needs the rest.  The previous 2 GiB default was
+    # 1 GiB machine, and the Python/uvicorn/SQLAlchemy baseline needs
+    # the rest.  (Until 2026-09-07 a SQLite page cache shared this RAM
+    # too; the database is on its own Postgres cluster now, so there is
+    # a little more headroom than this default assumes.)  The previous
+    # 2 GiB default was
     # sized for a 4 GiB box that doesn't exist — being ABOVE physical
     # RAM meant the kernel OOM-killer (taking down every org's streams
     # at once) would always fire long before this eviction could.  At
@@ -176,7 +179,7 @@ class Config:
     EMAIL_FROM_NAME: str = os.getenv("EMAIL_FROM_NAME", "Sentinel by SourceBox")
     EMAIL_ENABLED: bool = os.getenv("EMAIL_ENABLED", "false").lower() == "true"
     # Worker tunables.  5s tick keeps median time-to-deliver under 10s
-    # without hammering SQLite; 20-row batch keeps a single tick under
+    # without hammering the database; 20-row batch keeps a single tick under
     # Resend's default rate limit (10 req/sec on new accounts).
     EMAIL_WORKER_INTERVAL_SECONDS: int = int(
         os.getenv("EMAIL_WORKER_INTERVAL_SECONDS", "5")

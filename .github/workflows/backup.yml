@@ -1,25 +1,33 @@
 name: Scheduled DB Backup
 
-# Daily consistent SQLite backup of the production database.
+# Daily portable dump of the production Postgres database.
+#
+# WHERE BACKUPS ACTUALLY COME FROM
+#   The managed cluster's own snapshots are the PRIMARY backup and are
+#   not this workflow's job. This workflow produces the thing snapshots
+#   can't: a portable pg_dump that restores onto any Postgres anywhere,
+#   so a Fly account/region loss can't take the backups down with the
+#   primary. A missing BACKUP_ENCRYPTION_KEY therefore no longer means
+#   "no backup" — only "no off-platform copy".
 #
 # What it does:
-#   1. Runs backend/scripts/backup_db.sh ON the Fly machine (WAL
-#      checkpoint -> sqlite3 .backup -> integrity_check -> gzip ->
-#      prune). Local copies land in /data/backups on the volume.
-#   2. If the BACKUP_ENCRYPTION_KEY repo secret is set: pulls the
-#      newest backup off the machine, encrypts it with AES-256
-#      (openssl, PBKDF2), and stores it as a GitHub Actions artifact
-#      (30-day retention) — an OFF-PLATFORM copy that survives a Fly
-#      volume/account loss. The artifact is ciphertext only; the repo
-#      is public, so an unencrypted DB must NEVER be uploaded — that is
-#      why this step is gated on the key existing.
-#   3. Prints the Fly volume snapshot list for visibility.
+#   1. Runs backend/scripts/backup_db.sh ON the Fly machine (pg_dump
+#      custom format -> pg_restore --list verification -> prune). The
+#      machine already holds DATABASE_URL, so the credential stays in
+#      Fly and is never copied into GitHub. Dumps land in /data/backups.
+#   2. If the BACKUP_ENCRYPTION_KEY repo secret is set: pulls the newest
+#      dump off the machine, encrypts it with AES-256 (openssl, PBKDF2),
+#      and stores it as a GitHub Actions artifact (30-day retention).
+#      The artifact is ciphertext only; the repo is public, so an
+#      unencrypted DB must NEVER be uploaded — that is why this step is
+#      gated on the key existing.
+#   3. Prints the cluster's own snapshot list for visibility.
 #
-# Restore: see docs/runbooks/DISASTER_RECOVERY.md (includes the
-# decrypt one-liner for the artifact copies).
+# Restore: see docs/runbooks/DISASTER_RECOVERY.md (includes the decrypt
+# one-liner and backend/scripts/restore_db.sh).
 #
-# Upgrade path: for point-in-time replication move to Litestream +
-# object storage; this workflow is the minimum rehearsable safety net.
+# (Before 2026-09 this backed up a SQLite file. The database moved to
+# Postgres; the workflow's shape is deliberately unchanged.)
 
 on:
   schedule:
@@ -35,46 +43,65 @@ jobs:
     steps:
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
-      - name: Run consistent backup on the machine
+      - name: Run pg_dump on the machine
         run: |
           flyctl ssh console -a sentinel-command -C "bash /app/scripts/backup_db.sh"
 
-      - name: List volume snapshots (visibility)
+      # Visibility only — never fails the job. But it must not fail
+      # SILENTLY either: the database now lives on a DIFFERENT Fly app
+      # (sentinel-sync-db) than this one, and an app-scoped FLY_API_TOKEN
+      # cannot see another app — it returns `Could not find App`, which
+      # with a bare `|| true` would look identical to "no snapshots".
+      # Verified: a deploy token scoped to sentinel-command can ssh into
+      # sentinel-command but cannot list sentinel-sync-db's volumes.
+      # So say which of the two happened.
+      - name: List cluster snapshots (visibility)
         run: |
-          flyctl volumes list -a sentinel-command || true
+          if out=$(flyctl volumes list -a sentinel-sync-db 2>&1); then
+            echo "$out"
+          else
+            echo "$out"
+            echo "::warning::Could not read sentinel-sync-db volumes. If this says" \
+              "'Could not find App', FLY_API_TOKEN is scoped to sentinel-command only" \
+              "and cannot see the database app — the backup itself still ran, but" \
+              "cluster snapshots are NOT being checked here. Use an org-scoped token" \
+              "to restore this visibility."
+          fi
 
-      - name: Pull newest backup off the machine
+      - name: Pull newest dump off the machine
         if: env.BACKUP_KEY != ''
         run: |
-          LATEST=$(flyctl ssh console -a sentinel-command -C "sh -c 'ls -1t /data/backups/*.db.gz | head -1'" | tr -d '\r' | tail -1)
-          echo "newest backup: $LATEST"
+          LATEST=$(flyctl ssh console -a sentinel-command -C "sh -c 'ls -1t /data/backups/sentinel-*.dump | head -1'" | tr -d '\r' | tail -1)
+          echo "newest dump: $LATEST"
           test -n "$LATEST"
-          flyctl ssh sftp get "$LATEST" ./backup.db.gz -a sentinel-command
-          ls -lh backup.db.gz
+          flyctl ssh sftp get "$LATEST" ./backup.dump -a sentinel-command
+          ls -lh backup.dump
 
       - name: Encrypt for off-platform storage
         if: env.BACKUP_KEY != ''
         run: |
           # AES-256-CBC + PBKDF2. Decrypt with:
           #   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
-          #     -in backup.db.gz.enc -out backup.db.gz -pass pass:<key>
+          #     -in backup.dump.enc -out backup.dump -pass pass:<key>
+          # then restore with backend/scripts/restore_db.sh.
           openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
-            -in backup.db.gz -out backup.db.gz.enc -pass env:BACKUP_KEY
-          rm backup.db.gz
-          ls -lh backup.db.gz.enc
+            -in backup.dump -out backup.dump.enc -pass env:BACKUP_KEY
+          rm backup.dump
+          ls -lh backup.dump.enc
 
-      - name: Store encrypted backup as artifact (30-day retention)
+      - name: Store encrypted dump as artifact (30-day retention)
         if: env.BACKUP_KEY != ''
         uses: actions/upload-artifact@v4
         with:
           name: db-backup-${{ github.run_id }}
-          path: backup.db.gz.enc
+          path: backup.dump.enc
           retention-days: 30
           if-no-files-found: error
 
       - name: Off-platform copy skipped (no BACKUP_ENCRYPTION_KEY)
         if: env.BACKUP_KEY == ''
         run: |
-          echo "::warning::BACKUP_ENCRYPTION_KEY repo secret is not set — backup exists" \
-            "on the Fly volume only (protects against app-level data loss, NOT volume" \
-            "loss). Set the secret to enable encrypted off-platform artifact copies."
+          echo "::warning::BACKUP_ENCRYPTION_KEY repo secret is not set — the portable" \
+            "dump exists on the Fly volume only. Managed cluster snapshots still cover" \
+            "cluster-level loss, but there is no off-platform copy. Set the secret to" \
+            "enable encrypted artifact copies."

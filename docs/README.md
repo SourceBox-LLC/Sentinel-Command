@@ -21,7 +21,7 @@ sections, command-oriented, not narrative.
 
 - [ON_CALL.md](runbooks/ON_CALL.md) — ten scenarios (A–J) covering
   Sentry alerts, customer-reported camera/stream outages,
-  SQLite-on-Fly-volume DB issues, multi-customer incidents, suspected
+  Postgres/database issues, multi-customer incidents, suspected
   breaches, deletion requests, Resend email transport failures, CI
   deploy failures, and pre-deploy sanity checks. Has an append-only
   incident log section to populate as we respond to real ones.
