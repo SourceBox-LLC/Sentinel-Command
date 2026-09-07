@@ -43,6 +43,42 @@ must exist and the restore must have been rehearsed.
 > less severe than it was (cluster snapshots now cover the loss the
 > volume-local copies never could) but it is still a real gap.
 
+> 🔓 **Open finding (2026-09-07): every service role on this cluster is
+> a Postgres SUPERUSER.** This is `fly postgres attach`'s default, not
+> something we configured, and it predates this migration —
+> `sentinel_sync` was already a superuser before Command Center and
+> License Service joined the cluster. Verified directly: the
+> `sentinel_license` credential can connect to the `sentinel_command`
+> database, read its rows, and create and drop tables in it; the
+> `sentinel_command` credential can likewise reach `sentinel_sync`,
+> which holds self-hosted customers' mirrored data.
+>
+> **What this means in practice.** Any one leaked `DATABASE_URL` is
+> full read/write on all three databases, so "separate databases" is a
+> blast-radius and operational boundary, not a security control. The
+> tenancy boundary customers actually depend on — per-org scoping, and
+> per-licence scoping for the mirror — is enforced in the application
+> layer and is unaffected. Treat every service's `DATABASE_URL` as a
+> cluster-wide admin credential when deciding who may see it.
+>
+> **Fixing it is not a one-liner**, which is why it is written down
+> rather than already done. The databases are owned by `postgres` and
+> the `public` schema by `pg_database_owner`, so simply running
+> `ALTER ROLE … NOSUPERUSER` would strip each app's ability to create
+> its own tables and break `ensure_schema` on the next boot. The
+> sequence would be, per database, and rehearsed on a scratch cluster
+> first:
+>
+> ```sql
+> ALTER DATABASE sentinel_command OWNER TO sentinel_command;
+> REVOKE CONNECT ON DATABASE sentinel_command FROM PUBLIC;
+> ALTER ROLE sentinel_command NOSUPERUSER;
+> ```
+>
+> Then redeploy and confirm the app still creates a missing column on
+> boot. Note `fly postgres attach` will re-create future roles as
+> superusers again, so this needs redoing for any service added later.
+
 ---
 
 ## The one thing to do before launch

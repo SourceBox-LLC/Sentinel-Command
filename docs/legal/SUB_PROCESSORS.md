@@ -60,8 +60,9 @@ terminate the affected Service per Section 4.4 of the
 - **Service provided:** Application hosting, a managed Postgres
   cluster (holding the hosted Command Center database, the licence
   database, and the optional cloud data-sync tier — separate databases
-  on shared infrastructure), persistent volume storage for live video
-  segment working files, global edge network, TLS termination.
+  on shared infrastructure, all operated by SourceBox), persistent
+  volume storage for live video segment working files, global edge
+  network, TLS termination.
 - **Personal Data processed:** All metadata SourceBox stores about
   Customer (account identity, audit logs, stream access logs, motion
   event metadata, settings rows). Fly.io does not see or process

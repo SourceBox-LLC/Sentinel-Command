@@ -328,8 +328,13 @@ Organization.
 - **At rest (cloud data-sync, self-hosted Customers only).** Customers
   running their own Command Center may opt into mirroring its database
   to a SourceBox-operated Postgres database on the same provider,
-  encrypted at rest by them. It is a **separate database** from the
-  hosted Command Center's own, on shared cluster infrastructure. Only
+  encrypted at rest by them. It is a separate database from the hosted
+  Command Center's own, though both run on shared cluster
+  infrastructure operated by SourceBox — the separation is an
+  operational boundary, not an additional security control, and the
+  tenancy boundary customers rely on is enforced in the application
+  layer (per-organization scoping, and per-licence scoping for the
+  mirror). Only
   Customers whose licence carries the data-sync entitlement are
   mirrored; for everyone else no such copy exists. Node API credentials
   and incident evidence media are deliberately excluded from the
