@@ -57,7 +57,24 @@ if _is_sqlite:
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.execute("PRAGMA busy_timeout=5000")
+        # 30_000 ms, matching connect_args' timeout=30 above. These two
+        # MUST agree: pysqlite sets its busy timeout from the connect
+        # arg, then this PRAGMA runs immediately after and overrides it,
+        # so the PRAGMA is what actually takes effect. They disagreed
+        # until 2026-09-07 (connect said 30s, PRAGMA said 5s, 5s won).
+        #
+        # 30s rather than fail-fast because of who actually contends.
+        # The hot path — push_segment at 1200/min — performs NO writes;
+        # it does auth reads and puts segments in the RAM cache, and WAL
+        # never blocks readers behind the writer. The writers are the
+        # background loops (log cleanup's bulk deletes, offline sweep,
+        # viewer-usage flush). Writer-vs-writer there is exactly the case
+        # where waiting beats erroring: a short timeout turns a heartbeat
+        # or motion-event insert into a "database is locked" failure and
+        # a permanently lost row, while cleanup holds the write lock.
+        #
+        # Self-hosted only since the hosted deployment moved to Postgres.
+        cursor.execute("PRAGMA busy_timeout=30000")
         # NORMAL is the standard WAL pairing: an fsync per checkpoint
         # instead of per COMMIT.  Default FULL was fsyncing every commit —
         # heartbeats (every 30s x every node), motion events, access logs —

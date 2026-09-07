@@ -143,3 +143,49 @@ def test_func_date_stringifies_identically_on_both_engines():
         f"func.date() stringified to {str(d)!r} on {engine.dialect.name}; "
         "the by_day API buckets depend on this being a bare ISO date"
     )
+
+
+def test_sqlite_busy_timeout_agrees_with_connect_args():
+    """The connect arg and the PRAGMA must not disagree.
+
+    pysqlite sets its busy timeout from ``connect_args={"timeout": 30}``,
+    and then the connect-time PRAGMA runs immediately after and
+    overrides it. So the PRAGMA is what actually takes effect, and a
+    mismatch is invisible: the connect arg looks authoritative in the
+    source and does nothing.
+
+    They disagreed from the start until 2026-09-07 — connect said 30 s,
+    PRAGMA said 5 s, 5 s won — which is exactly the silent-drift this
+    pins shut. SQLite is self-hosted-only now, so nothing in CI's
+    Postgres leg would catch a regression here either.
+    """
+    if engine.dialect.name != "sqlite":
+        pytest.skip("SQLite-only PRAGMA contract")
+
+    connect_timeout_s = engine.dialect.create_connect_args(engine.url)[1].get("timeout")
+
+    with engine.connect() as conn:
+        busy_timeout_ms = conn.execute(text("PRAGMA busy_timeout")).scalar()
+        journal_mode = conn.execute(text("PRAGMA journal_mode")).scalar()
+
+    # In-memory test DBs deliberately omit the connect-arg timeout; the
+    # PRAGMA still applies and is what production behaviour rests on.
+    if connect_timeout_s is not None:
+        assert busy_timeout_ms == connect_timeout_s * 1000, (
+            f"connect_args timeout={connect_timeout_s}s but PRAGMA busy_timeout="
+            f"{busy_timeout_ms}ms — the PRAGMA silently wins, so these must agree"
+        )
+
+    assert busy_timeout_ms == 30000, (
+        f"busy_timeout is {busy_timeout_ms}ms; expected 30000. A short timeout turns "
+        "writer-vs-writer contention between the background loops into lost rows "
+        "rather than slow ones — see app/core/database.py for why 30s."
+    )
+    # WAL needs a real file: an in-memory database reports "memory" and
+    # cannot be put into WAL at all, so only assert it where it applies.
+    # Production (self-hosted) is always file-backed.
+    if ":memory:" not in str(engine.url):
+        assert journal_mode.lower() == "wal", (
+            f"journal_mode is {journal_mode!r}; WAL is what lets readers run "
+            "concurrently with the background writers"
+        )
