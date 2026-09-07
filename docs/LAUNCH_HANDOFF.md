@@ -240,7 +240,8 @@ accidentally.
 > (empty pre-launch DB, no data lost), leftover `opensentry.db` + orphaned
 > `opensentry_data` volume removed, `/api/health/detailed` = database ok,
 > and a manual backup run **succeeded**. Remaining optional: set
-> `BACKUP_ENCRYPTION_KEY` for encrypted off-platform artifact copies.
+> `BACKUP_ENCRYPTION_KEY` — **closed 2026-09-07: declined.** Backups are
+> Fly-only by decision; see DISASTER_RECOVERY.md.
 
 > **2026-09-07 — migrated to Postgres; drill re-run and PASSED.** The
 > paragraph below described SQLite-on-a-volume, which is no longer how
@@ -397,7 +398,8 @@ a page.
 [X] Backup restore tested (item 7) — Fly snapshot restore VERIFIED 2026-07-06;
     the opensentry.db/sentinel.db mismatch found during the drill was FIXED same
     day (DATABASE_URL secret repointed to sentinel.db, app healthy, backup job now
-    succeeds). Optional: set BACKUP_ENCRYPTION_KEY for off-platform copies.
+    succeeds). BACKUP_ENCRYPTION_KEY deliberately left unset — Fly-only
+    backups is an accepted decision, not an outstanding task.
 [ ] DPA + sub-processors PDF on file with lawyer signoff (item 6)
 [ ] Status page live and pointed at /api/health/ready (item 3)
 [X] Sentry alerts confirmed firing in production env (item 5)        — done 2026-05-03

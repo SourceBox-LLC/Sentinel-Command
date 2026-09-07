@@ -54,10 +54,15 @@ must exist and the restore must have been rehearsed.
 > `fly.toml`, so check `fly secrets list` before believing the config
 > file.**
 >
-> Still open: `BACKUP_ENCRYPTION_KEY` is not set, so there is no
-> off-platform copy — see the warning under "Backups" below. This is
-> less severe than it was (cluster snapshots now cover the loss the
-> volume-local copies never could) but it is still a real gap.
+> **Decided 2026-09-07: backups live only on Fly.** The operator
+> accepted this explicitly. `BACKUP_ENCRYPTION_KEY` and
+> `BACKUP_S3_BUCKET` are intentionally unset, so there is no
+> off-platform copy and that is not a gap to be closed. The reasoning
+> is that cluster snapshots plus the portable dumps cover the failure
+> modes that actually happen (bad migration, accidental delete, cluster
+> loss), and the residual — losing the Fly account itself — is accepted.
+> Both code paths remain in place, so reversing the decision is a single
+> repo secret and no code change.
 >
 > ⚠️ **The cluster is new, so snapshot history is short.**
 > `sentinel-postgres` was created 2026-09-07; its snapshot history
@@ -137,23 +142,24 @@ for:
 | `BACKUP_RETENTION_DAYS` | `14` | local prune window |
 | `BACKUP_S3_BUCKET` | _(unset)_ | off-platform target, e.g. `s3://bucket/cc` (needs `aws` CLI + creds) |
 
-> ⚠️ **Right now, every copy of the database is inside Fly.** Verified
-> 2026-09-07, and worth stating bluntly because the two-layer structure
-> above can read as more redundancy than actually exists:
+> **Every copy of the database is inside Fly — by choice.** Verified
+> 2026-09-07 and accepted by the operator the same day, so read this as
+> the deliberate position rather than an outstanding risk:
 >
 > | Copy | Where it lives | Status |
 > |---|---|---|
-> | Cluster snapshots | Fly | ✅ exist — 4 daily, **5-day retention** |
-> | Portable `pg_dump` | Fly volume (`/data/backups`) | ✅ exist |
-> | Encrypted GH artifact | GitHub | ❌ **not enabled** — `BACKUP_ENCRYPTION_KEY` unset |
-> | S3 | elsewhere | ❌ not configured — `BACKUP_S3_BUCKET` unset |
+> | Cluster snapshots | Fly | ✅ primary — daily, **5-day retention** |
+> | Portable `pg_dump` | Fly volume (`/data/backups`) | ✅ secondary, 14-day prune |
+> | Encrypted GH artifact | GitHub | ⬜ off by choice (`BACKUP_ENCRYPTION_KEY` unset) |
+> | S3 | elsewhere | ⬜ off by choice (`BACKUP_S3_BUCKET` unset) |
 >
-> So the recovery envelope today is **~5 days, entirely dependent on
-> Fly**. Snapshots protect against cluster loss and the dumps against a
-> bad migration, but a Fly account suspension or billing lapse takes
-> every copy at once, and anything older than the snapshot window is
-> already gone. Setting `BACKUP_ENCRYPTION_KEY` is the single cheapest
-> fix — the workflow is already written and gated on it.
+> **What this buys and what it costs.** Recovery from a bad migration,
+> an accidental delete, or cluster loss is covered. The recovery window
+> is about **5 days** — anything older than the snapshot retention is
+> gone. A Fly account suspension or billing lapse would take every copy
+> simultaneously; that is the accepted risk. Keep the Fly account's
+> billing current and its login secured, because that account is now
+> the single thing standing between you and total data loss.
 
 **Two gotchas the scripts handle for you, worth knowing before you run
 `pg_dump` by hand:**
@@ -189,9 +195,11 @@ A scheduled GitHub Action runs daily (09:17 UTC, plus manual
      -in backup.dump.enc -out backup.dump -pass pass:<key>
    ```
 
-   Generate + set the key once: `openssl rand -hex 32` → repo secret
-   `BACKUP_ENCRYPTION_KEY` → **store the same key in your password
-   manager** (an encrypted backup with a lost key is no backup).
+   This path is **off by decision** (2026-09-07) — see the note near the
+   top. If it is ever turned back on: `openssl rand -hex 32` → repo
+   secret `BACKUP_ENCRYPTION_KEY` → **store the same key in your
+   password manager**, because an encrypted backup with a lost key is
+   no backup.
 3. Prints the cluster's snapshot list for visibility.
 
 `BACKUP_S3_BUCKET` on the Fly app remains the alternative/additional
@@ -385,6 +393,26 @@ the half that a snapshot restore can't prove.
    "last rehearsed" is always visible.
 
 ### Rehearsal log
+
+- **2026-09-07 (later) — Post-consolidation drill on `sentinel-postgres`.
+  PASS, both services, no findings.** The earlier drill that day covered
+  a topology that no longer exists, so it was re-run against the current
+  single cluster. Followed the documented path end to end rather than
+  shortcutting it: ran `backup_db.sh` on the production machine, pulled
+  the dump off with `fly ssh sftp get` (the same step the workflow uses,
+  so that step is now exercised too), and restored with the real
+  `restore_db.sh` into a throwaway `postgres:18-alpine` container —
+  deliberately not the origin cluster.
+  Command Center restored to **20 tables, 83 indexes, 3 FK constraints,
+  19 sequences**, the migrated `user_notification_state` row intact, and
+  all three `cameras` Boolean columns still carrying `default false`.
+  License Service restored to 2 tables with both licences and 3
+  check-ins, `sync_enabled` still a real boolean.
+  **Extra check beyond the runbook's steps:** ran the application's own
+  `sync_schema` / `sync_indexes` against the restored database — it
+  reported **no columns and no indexes to add**, which is a stronger
+  signal than row counts that the restored schema is complete and
+  current, not merely populated.
 
 - **2026-09-07 — First post-Postgres drill, both services. PASS (with a
   finding).** Ran the real `backup_db.sh` against production
