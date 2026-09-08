@@ -693,3 +693,30 @@ export async function dispatchSentinelManualRun(getToken, { prompt, cameraId } =
     }),
   })
 }
+
+// ── Sentinel agent keys ───────────────────────────────────────────
+// Per-org credentials for running the Sentinel agent on your own
+// hardware. Distinct from MCP keys (osc_) and integration keys (osi_):
+// these are osa_ and authenticate a service acting autonomously for
+// one org, scoped by its database row rather than by a header.
+//
+// createSentinelAgentKey returns the plaintext key EXACTLY ONCE, and
+// can 402 with err.code === "plan_required" | "license_required"
+// (parseErrorBody surfaces detail.error as .code) — the caller should
+// branch on that to show the upgrade path rather than a raw error.
+export async function getSentinelAgentKeys(getToken) {
+  return fetchWithAuth("/api/sentinel/agent-keys", getToken)
+}
+
+export async function createSentinelAgentKey(getToken, { name } = {}) {
+  return fetchWithAuth("/api/sentinel/agent-keys", getToken, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  })
+}
+
+export async function revokeSentinelAgentKey(getToken, keyId) {
+  return fetchWithAuth(`/api/sentinel/agent-keys/${keyId}`, getToken, {
+    method: "DELETE",
+  })
+}

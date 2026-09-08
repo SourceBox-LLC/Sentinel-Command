@@ -48,6 +48,13 @@ const EVENT_GROUPS = [
     ],
   },
   {
+    label: "Sentinel agent key audit",
+    events: [
+      ["sentinel_agent_key_created", "Sentinel agent key created"],
+      ["sentinel_agent_key_revoked", "Sentinel agent key revoked"],
+    ],
+  },
+  {
     label: "Camera + recording",
     events: [
       ["camera_recording_policy_updated", "Recording policy updated"],

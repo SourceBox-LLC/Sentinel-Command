@@ -1376,3 +1376,27 @@ class SentinelAgentKey(Base):
     # timestamp, purely for consistency with the key model already in
     # this codebase.
     revoked = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+
+    def to_dict(self):
+        """Safe representation for the management API.
+
+        **Never include key_hash.** It is the SHA-256 of a credential that
+        grants access to an org's cameras through the MCP tool surface;
+        handing it to the browser would put an offline-crackable digest in
+        front of anyone who can read a network tab. `key_last4` exists so
+        an operator can match a row to the value in their agent's env
+        without the real thing ever leaving the server.
+
+        `org_id` is omitted deliberately, matching McpApiKey.to_dict():
+        the caller IS the org, so it is redundant — and not emitting it
+        means a future listing bug can't leak it.
+        """
+        return {
+            "id": self.id,
+            "name": self.name,
+            "key_last4": self.key_last4,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_by": self.created_by,
+            "last_used_at": self.last_used_at.isoformat() if self.last_used_at else None,
+            "revoked": self.revoked,
+        }
