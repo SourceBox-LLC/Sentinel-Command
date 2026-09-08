@@ -61,6 +61,7 @@ from app.models.models import (
     MotionEvent,
     Notification,
     OrgMonthlyUsage,
+    SentinelAgentKey,
     SentinelConfig,
     SentinelRun,
     Setting,
@@ -105,6 +106,11 @@ ORG_SCOPED_MODELS = [
     # have no inbound FKs, so a plain bulk Query.delete() is correct.
     SentinelConfig,
     SentinelRun,
+    # Per-org credentials for a customer-hosted agent. Deleting these
+    # with the org is not just tidiness: a surviving key would still
+    # authenticate after the org is gone, and its `org_id` is a
+    # customer identifier in its own right.
+    SentinelAgentKey,
 ]
 
 # Models with cascading children that need session.delete() per row

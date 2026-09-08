@@ -43,6 +43,7 @@ from app.models.models import (
     Incident,
     IncidentEvidence,
     McpApiKey,
+    SentinelAgentKey,
     StreamAccessLog,
 )
 
@@ -383,8 +384,29 @@ def _resolve_org(headers: dict | None) -> tuple[str, Session]:
     if agent_key and hmac.compare_digest(raw_key, agent_key):
         return _resolve_via_agent_key(headers, agent_key)
 
-    # ── Path 1: per-org osc_* key (existing behaviour) ──────────────
+    # ── Path 1b: per-org SCOPED agent key (customer-hosted agent) ───
+    # Distinct from the shared key above: that one is SourceBox's own
+    # multi-tenant agent and may act for any eligible org. This one is
+    # bound to exactly one org by its database row, which is what makes
+    # it safe to give to a customer running the agent themselves.
+    # Delegates to the same resolver so plan eligibility, licence state
+    # and per-org rate limits are enforced identically — the only
+    # difference is where the org comes from.
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    _scoped_db = SessionLocal()
+    try:
+        scoped = (
+            _scoped_db.query(SentinelAgentKey)
+            .filter_by(key_hash=key_hash, revoked=False)
+            .first()
+        )
+        scoped_org = scoped.org_id if scoped else None
+    finally:
+        _scoped_db.close()
+    if scoped_org:
+        return _resolve_via_agent_key(headers, raw_key, forced_org=scoped_org)
+
+    # ── Path 1: per-org osc_* key (existing behaviour) ──────────────
 
     db = SessionLocal()
     try:
@@ -462,7 +484,9 @@ def _resolve_org(headers: dict | None) -> tuple[str, Session]:
         raise ToolError("Authentication error") from None
 
 
-def _resolve_via_agent_key(headers: dict, _agent_key: str) -> tuple[str, Session]:
+def _resolve_via_agent_key(
+    headers: dict, _agent_key: str, forced_org: str | None = None
+) -> tuple[str, Session]:
     """Auth path for the multi-tenant Sentinel agent.
 
     The bearer token has already been verified against
@@ -481,7 +505,20 @@ def _resolve_via_agent_key(headers: dict, _agent_key: str) -> tuple[str, Session
        tool call came from the agent (and which org it was for).
     """
     override_org = headers.get("x-agent-org-override", "").strip()
-    if not override_org:
+
+    if forced_org is not None:
+        # Scoped per-org agent key: the org is whatever the key row says,
+        # never what the caller asked for. The header is still permitted
+        # — the agent sends it unconditionally for every run — but only
+        # when it AGREES. Silently ignoring a mismatched override would
+        # be worse than rejecting: the agent would believe it was acting
+        # for one org while actually acting for another.
+        if override_org and override_org != forced_org:
+            raise ToolError(
+                "Unauthorized: scoped agent key cannot act for another org"
+            )
+        override_org = forced_org
+    elif not override_org:
         raise ToolError(
             "Unauthorized: agent key requires X-Agent-Org-Override header"
         )
