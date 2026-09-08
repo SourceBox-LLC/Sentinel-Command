@@ -55,6 +55,7 @@ from app.models.models import (
     MotionEvent,
     Notification,
     OrgMonthlyUsage,
+    SentinelAgentKey,
     SentinelConfig,
     SentinelRun,
     Setting,
@@ -137,6 +138,14 @@ def fully_seeded_org(db):
             camera_id="cam_seed",
             tool_call_count=2,
             outcome="no_action",
+        ))
+        # Per-org agent credential. key_hash is unique across the table,
+        # so it must vary by org or seeding both orgs collides.
+        db.add(SentinelAgentKey(
+            org_id=org_id,
+            key_hash=f"hash_seed_{org_id}",
+            key_last4="seed",
+            name=f"agent key for {org_id}",
         ))
 
         # Cascade parents.  Incident → IncidentEvidence; CameraNode → Camera.

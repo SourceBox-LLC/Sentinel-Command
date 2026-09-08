@@ -1328,3 +1328,51 @@ class SentinelRun(Base):
         return self.outcome in ("incident", "no_action", "error")
 
 
+
+
+class SentinelAgentKey(Base):
+    """A per-org credential for a customer-hosted Sentinel agent.
+
+    Exists because ``SENTINEL_AGENT_KEY`` / ``SENTINEL_AGENT_MCP_KEY``
+    are SHARED, multi-tenant secrets. Their holder can list pending runs
+    across every org and, via ``X-Agent-Org-Override``, drive MCP tools
+    as any Sentinel-enabled org — which means viewing any customer's
+    cameras. That is correct for the first-party agent SourceBox runs,
+    and completely unacceptable to hand to a customer who wants to run
+    the agent themselves.
+
+    A row here is the scoped alternative: it binds a key to exactly one
+    org, and the auth layer derives ``org_id`` FROM THE ROW rather than
+    from anything the caller sends. That is the same shape as
+    ``CameraNode.api_key_hash`` — hash the presented key, look up the
+    row, trust the row — and it is what makes
+    "cloud Command Center + self-hosted agent" safe.
+
+    Deliberately a separate table from ``McpApiKey``: these authenticate
+    a *service* acting autonomously for an org, not a human's tool
+    access, and conflating them would make it impossible to revoke one
+    kind without the other.
+    """
+
+    __tablename__ = "sentinel_agent_keys"
+
+    id = Column(Integer, primary_key=True)
+    org_id = Column(String(100), nullable=False, index=True)
+
+    # SHA-256 of the presented key. Unique so a collision surfaces as an
+    # integrity error rather than silently authenticating the wrong org.
+    key_hash = Column(String(128), nullable=False, unique=True, index=True)
+
+    # Display only — lets an admin recognise a key in the UI without
+    # storing anything that helps an attacker reconstruct it.
+    key_last4 = Column(String(8), nullable=True)
+
+    name = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(tz=UTC).replace(tzinfo=None))
+    created_by = Column(String(100), nullable=True)
+    last_used_at = Column(DateTime, nullable=True)
+
+    # Mirrors McpApiKey.revoked rather than a nullable revoked_at
+    # timestamp, purely for consistency with the key model already in
+    # this codebase.
+    revoked = Column(Boolean, nullable=False, default=False, server_default=text("false"))

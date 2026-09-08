@@ -912,3 +912,117 @@ class TestGlobalDispatchGate:
         monkeypatch.setattr(settings, "SENTINEL_DISPATCH_ENABLED", False)
         with pytest.raises(ValueError, match="dispatch_globally_disabled"):
             dispatch_manual_run(db, org_id="org_kill", prompt="check cam")
+
+
+# ── Scoped per-org agent keys ────────────────────────────────────────
+
+
+class TestScopedSentinelAgentKeys:
+    """A customer running the agent themselves gets a key bound to ONE
+    org.
+
+    The shared ``SENTINEL_AGENT_KEY`` cannot be handed out: it drains
+    every org's queue and, on the MCP side, can act as any org via
+    ``X-Agent-Org-Override`` — i.e. view any customer's cameras. These
+    tests pin the properties that make the scoped alternative safe, and
+    each one fails loudly if the org filter is ever dropped.
+    """
+
+    SHARED_KEY = "shared_first_party_agent_key"
+    SCOPED_PLAINTEXT = "scoped_key_for_org_a_only"
+
+    @pytest.fixture
+    def scoped_client(self, monkeypatch, db):
+        import hashlib
+
+        from app.models.models import SentinelAgentKey
+
+        monkeypatch.setattr(settings, "SENTINEL_AGENT_KEY", self.SHARED_KEY)
+        db.add(
+            SentinelAgentKey(
+                org_id="org_a",
+                key_hash=hashlib.sha256(self.SCOPED_PLAINTEXT.encode()).hexdigest(),
+                key_last4="only",
+                name="org_a self-hosted agent",
+                revoked=False,
+            )
+        )
+        db.commit()
+        return TestClient(app)
+
+    def _scoped(self):
+        return {"X-Sentinel-Agent-Key": self.SCOPED_PLAINTEXT}
+
+    def _shared(self):
+        return {"X-Sentinel-Agent-Key": self.SHARED_KEY}
+
+    def test_scoped_key_sees_only_its_own_org(self, scoped_client, db):
+        """The whole point. A scoped agent must not receive another
+        org's pending runs — that would leak org ids and incident
+        context, and silently, because the agent would just process
+        whatever it was handed."""
+        _make_run(db, org_id="org_a", run_id="mine", outcome="pending")
+        _make_run(db, org_id="org_b", run_id="theirs", outcome="pending")
+
+        r = scoped_client.get("/api/sentinel/runs/pending", headers=self._scoped())
+        assert r.status_code == 200
+        ids = {run["id"] for run in r.json()["runs"]}
+        assert ids == {"mine"}, f"scoped key leaked another org's runs: {ids}"
+
+    def test_shared_key_still_sees_every_org(self, scoped_client, db):
+        """The first-party agent must keep working unchanged — scoping
+        is additive, not a replacement."""
+        _make_run(db, org_id="org_a", run_id="mine", outcome="pending")
+        _make_run(db, org_id="org_b", run_id="theirs", outcome="pending")
+
+        r = scoped_client.get("/api/sentinel/runs/pending", headers=self._shared())
+        assert r.status_code == 200
+        ids = {run["id"] for run in r.json()["runs"]}
+        assert ids == {"mine", "theirs"}
+
+    def test_scoped_key_cannot_start_another_orgs_run(self, scoped_client, db):
+        _make_run(db, org_id="org_b", run_id="theirs", outcome="pending")
+        r = scoped_client.post(
+            "/api/sentinel/runs/theirs/start", headers=self._scoped()
+        )
+        # 404 not 403 — a scoped caller shouldn't be able to probe which
+        # run ids exist in other orgs.
+        assert r.status_code == 404
+
+    def test_scoped_key_cannot_complete_another_orgs_run(self, scoped_client, db):
+        """Sharper than the read case: /complete writes an incident, so
+        this would be a write into another customer's data."""
+        _make_run(db, org_id="org_b", run_id="theirs", outcome="running")
+        r = scoped_client.post(
+            "/api/sentinel/runs/theirs/complete",
+            headers=self._scoped(),
+            # A VALID outcome on purpose: body validation runs before the
+            # run lookup, so an invalid one would 400 and never exercise
+            # the org check this test exists for.
+            json={"outcome": "no_action", "summary": "x"},
+        )
+        assert r.status_code == 404
+
+    def test_scoped_key_can_drive_its_own_run(self, scoped_client, db):
+        """Guard against over-correcting: the scoped key must still work
+        for the org it belongs to."""
+        _make_run(db, org_id="org_a", run_id="mine", outcome="pending")
+        r = scoped_client.post("/api/sentinel/runs/mine/start", headers=self._scoped())
+        assert r.status_code == 200, r.text
+
+    def test_revoked_key_is_rejected(self, scoped_client, db):
+        from app.models.models import SentinelAgentKey
+
+        row = db.query(SentinelAgentKey).filter_by(org_id="org_a").first()
+        row.revoked = True
+        db.commit()
+
+        r = scoped_client.get("/api/sentinel/runs/pending", headers=self._scoped())
+        assert r.status_code == 401
+
+    def test_unknown_key_is_rejected(self, scoped_client):
+        r = scoped_client.get(
+            "/api/sentinel/runs/pending",
+            headers={"X-Sentinel-Agent-Key": "not-a-real-key"},
+        )
+        assert r.status_code == 401

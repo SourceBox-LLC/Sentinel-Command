@@ -27,8 +27,10 @@ Pattern notes:
     (matches email-prefs at notifications.py:1110).
 """
 
+import hashlib
 import hmac
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Optional
 
@@ -48,7 +50,13 @@ from app.core.sentinel_dispatch import (
     dispatch_manual_run,
     runs_used_this_month,
 )
-from app.models.models import Incident, SentinelConfig, SentinelRun, Setting
+from app.models.models import (
+    Incident,
+    SentinelAgentKey,
+    SentinelConfig,
+    SentinelRun,
+    Setting,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sentinel", tags=["sentinel"])
@@ -137,9 +145,27 @@ def _validate_hhmm(value: str, field_name: str) -> None:
 # ── Service-to-service auth (Sentinel agent → Command Center) ───────
 # Agent posts run completions back via this header.  Defined BEFORE
 # any route uses it via Depends() so module-load order works out.
+
+@dataclass(frozen=True)
+class AgentPrincipal:
+    """Who an authenticated agent request is acting as.
+
+    ``org_id is None`` means the first-party multi-tenant agent, which
+    is allowed to see and act across every org. A scoped principal
+    carries exactly one org and must never be able to widen that.
+    Endpoints branch on ``scoped`` rather than on ``org_id is None`` so
+    the intent is explicit at each call site.
+    """
+
+    org_id: Optional[str]
+    scoped: bool
+    key_id: Optional[int]
+
+
 async def require_sentinel_agent(
     x_sentinel_agent_key: Optional[str] = Header(None, alias="X-Sentinel-Agent-Key"),
-) -> None:
+    db: Session = Depends(get_db),
+) -> "AgentPrincipal":
     """Verify the inbound request carries the shared SENTINEL_AGENT_KEY
     secret.  Used only for service-to-service callbacks from the
     Sentinel agent into Command Center (run-completion + pending-run
@@ -167,11 +193,45 @@ async def require_sentinel_agent(
     # with any byte >0x7F in the header produced an unhandled 500 on
     # all three agent endpoints instead of a clean 401.  latin-1 can
     # encode every such header value back losslessly.
-    if not x_sentinel_agent_key or not hmac.compare_digest(
-        x_sentinel_agent_key.encode("latin-1", "replace"),
-        settings.SENTINEL_AGENT_KEY.encode("utf-8"),
-    ):
+    if not x_sentinel_agent_key:
         raise HTTPException(401, "invalid agent key")
+
+    presented = x_sentinel_agent_key.encode("latin-1", "replace")
+
+    # 1. The first-party shared key: SourceBox's own multi-tenant agent.
+    #    Org-agnostic by design — it drains every org's queue.
+    if hmac.compare_digest(presented, settings.SENTINEL_AGENT_KEY.encode("utf-8")):
+        return AgentPrincipal(org_id=None, scoped=False, key_id=None)
+
+    # 2. A per-org scoped key belonging to a customer-hosted agent.
+    #    org_id comes FROM THE ROW — never from a header the caller
+    #    controls. That is the entire point of this path: the holder of
+    #    a scoped key must not be able to name an org it doesn't own.
+    key_hash = hashlib.sha256(presented).hexdigest()
+    row = (
+        db.query(SentinelAgentKey)
+        .filter(
+            SentinelAgentKey.key_hash == key_hash,
+            SentinelAgentKey.revoked.is_(False),
+        )
+        .first()
+    )
+    if row is None:
+        # Same message and status as a bad shared key: don't tell an
+        # attacker which of the two key types they got wrong.
+        raise HTTPException(401, "invalid agent key")
+
+    # Best-effort last-seen. Never let this fail the request — an agent
+    # being unable to work because a bookkeeping write failed would be a
+    # worse outcome than a slightly stale timestamp.
+    try:
+        row.last_used_at = datetime.now(tz=UTC).replace(tzinfo=None)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.warning("sentinel: could not stamp last_used_at for agent key %s", row.id)
+
+    return AgentPrincipal(org_id=row.org_id, scoped=True, key_id=row.id)
 
 
 # ── GET /api/sentinel/config ────────────────────────────────────────
@@ -380,10 +440,11 @@ async def list_runs(
 # REGISTERED BEFORE /runs/{run_id} so the literal "pending" path
 # wins over the parameterised one (FastAPI matches in registration
 # order; otherwise GET /runs/pending would 404 with run_id=pending).
-@router.get("/runs/pending", dependencies=[Depends(require_sentinel_agent)])
+@router.get("/runs/pending")
 async def list_pending_runs(
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
+    agent: AgentPrincipal = Depends(require_sentinel_agent),
 ):
     """Polling endpoint for the Sentinel agent to discover work.
 
@@ -394,13 +455,17 @@ async def list_pending_runs(
     Slice 3 may swap this for a webhook delivery model — both flows
     are agent-side concerns; the run record contract stays the same.
     """
-    rows = (
-        db.query(SentinelRun)
-        .filter(SentinelRun.outcome == "pending")
-        .order_by(SentinelRun.triggered_at.asc())
-        .limit(limit)
-        .all()
-    )
+    q = db.query(SentinelRun).filter(SentinelRun.outcome == "pending")
+
+    # A scoped key sees ONLY its own org's queue. Without this filter a
+    # customer running their own agent would receive other customers'
+    # pending runs — including their org ids and incident context — and
+    # the leak would be silent, because the agent would simply process
+    # what it was handed.
+    if agent.scoped:
+        q = q.filter(SentinelRun.org_id == agent.org_id)
+
+    rows = q.order_by(SentinelRun.triggered_at.asc()).limit(limit).all()
     return {
         "runs": [
             {
@@ -528,11 +593,12 @@ class RunCompleteBody(BaseModel):
 _VALID_TERMINAL_OUTCOMES = {"incident", "no_action", "error"}
 
 
-@router.post("/runs/{run_id}/complete", dependencies=[Depends(require_sentinel_agent)])
+@router.post("/runs/{run_id}/complete")
 async def post_run_complete(
     run_id: str,
     body: RunCompleteBody,
     db: Session = Depends(get_db),
+    agent: AgentPrincipal = Depends(require_sentinel_agent),
 ):
     """Agent → Command Center callback to mark a pending/running run
     as completed.
@@ -565,6 +631,13 @@ async def post_run_complete(
 
     row = db.query(SentinelRun).filter_by(id=run_id).first()
     if row is None:
+        raise HTTPException(404, "run not found")
+    # A scoped key may only touch its own org's runs. Without this a
+    # customer-hosted agent could start or complete another customer's
+    # run — and /complete writes an incident, so that is a write into
+    # someone else's data, not just a read. 404 rather than 403 so a
+    # scoped caller cannot probe which run ids exist.
+    if agent.scoped and row.org_id != agent.org_id:
         raise HTTPException(404, "run not found")
 
     if row.is_terminal:
@@ -618,10 +691,11 @@ async def post_run_complete(
 
 
 # ── POST /api/sentinel/runs/{id}/start (agent → CC) ─────────────────
-@router.post("/runs/{run_id}/start", dependencies=[Depends(require_sentinel_agent)])
+@router.post("/runs/{run_id}/start")
 async def post_run_start(
     run_id: str,
     db: Session = Depends(get_db),
+    agent: AgentPrincipal = Depends(require_sentinel_agent),
 ):
     """Agent claims a pending run and transitions it to running.
     Optional — the agent may skip this and jump straight to /complete
@@ -629,6 +703,13 @@ async def post_run_start(
     """
     row = db.query(SentinelRun).filter_by(id=run_id).first()
     if row is None:
+        raise HTTPException(404, "run not found")
+    # A scoped key may only touch its own org's runs. Without this a
+    # customer-hosted agent could start or complete another customer's
+    # run — and /complete writes an incident, so that is a write into
+    # someone else's data, not just a read. 404 rather than 403 so a
+    # scoped caller cannot probe which run ids exist.
+    if agent.scoped and row.org_id != agent.org_id:
         raise HTTPException(404, "run not found")
     if row.outcome != "pending":
         # Already past pending — accept idempotently, but tell the
