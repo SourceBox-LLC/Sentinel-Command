@@ -66,6 +66,14 @@ _NOTIFICATION_KIND_TO_SETTING: dict[str, tuple[str, bool]] = {
     # or neither).
     "mcp_key_created": ("mcp_key_audit_notifications", True),
     "mcp_key_revoked": ("mcp_key_audit_notifications", True),
+    # Sentinel agent key lifecycle — same reasoning as the MCP keys
+    # above, but a separate toggle because the blast radius differs: an
+    # agent key authenticates an autonomous service that watches this
+    # org's cameras, so an admin may well want these even if they've
+    # muted routine MCP key churn.  Inbox only; there is deliberately
+    # no email template (matching integration keys).
+    "sentinel_agent_key_created": ("sentinel_agent_key_audit_notifications", True),
+    "sentinel_agent_key_revoked": ("sentinel_agent_key_audit_notifications", True),
     # CameraNode-side disk warning.  Customer hardware running their
     # own CameraNode has filled past the threshold — recordings will
     # fail when it caps out.  Customer-actionable (clean up files,

@@ -30,19 +30,22 @@ Pattern notes:
 import hashlib
 import hmac
 import logging
+import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.audit import write_audit
-from app.core.auth import AuthUser, require_admin, require_view
+from app.core.audit import audit_label, write_audit
+from app.core.auth import AuthUser, require_active_billing, require_admin, require_view
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.license_client import sentinel_blocked_by_license
+from app.core.limiter import limiter
 from app.core.plans import effective_plan_for_caps, get_plan_display_name
 from app.core.sentinel_dispatch import (
     SENTINEL_PLANS,
@@ -177,16 +180,13 @@ async def require_sentinel_agent(
     update runs that already exist (it can't fabricate a run for a
     different org).
 
-    Hard-rejects every request when the key isn't configured (empty
-    string), which is the desired behaviour in environments where
-    the agent isn't deployed.
+    An unset SENTINEL_AGENT_KEY disables only the shared first-party
+    path — it must NOT disable scoped per-org keys.  A self-hosted
+    Command Center never sets that env var (there is no first-party
+    agent to authenticate) and yet is exactly the deployment that wants
+    to issue scoped keys for its own agent.  Rejecting up front here
+    made the whole scoped path unreachable on those installs.
     """
-    if not settings.SENTINEL_AGENT_KEY:
-        raise HTTPException(401, "agent auth not configured")
-    # Constant-time compare so a timing side-channel can't reveal
-    # prefix matches against the configured secret.  Empty header
-    # short-circuits before the compare.
-    #
     # Compare BYTES, not str: ``hmac.compare_digest(str, str)`` raises
     # TypeError when either side contains non-ASCII, and Starlette
     # decodes header values as latin-1 — so an unauthenticated probe
@@ -199,8 +199,13 @@ async def require_sentinel_agent(
     presented = x_sentinel_agent_key.encode("latin-1", "replace")
 
     # 1. The first-party shared key: SourceBox's own multi-tenant agent.
-    #    Org-agnostic by design — it drains every org's queue.
-    if hmac.compare_digest(presented, settings.SENTINEL_AGENT_KEY.encode("utf-8")):
+    #    Org-agnostic by design — it drains every org's queue.  Guarded
+    #    on the setting being non-empty so an unset key can never match
+    #    an empty-ish header; constant-time compare so a timing
+    #    side-channel can't reveal prefix matches against the secret.
+    if settings.SENTINEL_AGENT_KEY and hmac.compare_digest(
+        presented, settings.SENTINEL_AGENT_KEY.encode("utf-8")
+    ):
         return AgentPrincipal(org_id=None, scoped=False, key_id=None)
 
     # 2. A per-org scoped key belonging to a customer-hosted agent.
@@ -731,3 +736,226 @@ async def post_run_start(
 
 # /runs/pending lives above (registered BEFORE /runs/{run_id} due to
 # FastAPI's in-order route matching).
+
+
+# ── Agent key management (issuance) ─────────────────────────────────
+#
+# Mints the per-org credential a customer needs to run the Sentinel
+# agent on their own hardware.  The shared SENTINEL_AGENT_KEY cannot be
+# handed out: it drains every org's queue and can act as any org via
+# X-Agent-Org-Override.  A key minted here is bound to one org by its
+# database row, and both auth paths derive org_id from that row.
+
+AGENT_KEY_PREFIX = "osa_"
+
+
+def _generate_agent_key() -> str:
+    """``osa_`` + 32 hex chars, matching osc_ (MCP) and osi_ (integration).
+
+    **ASCII is load-bearing, not incidental.** The two auth paths hash
+    different byte encodings of the same string: this module hashes
+    ``latin-1`` bytes (see require_sentinel_agent — Starlette decodes
+    headers as latin-1), while app/mcp/server.py hashes UTF-8. Those
+    agree only while the key is ASCII. token_hex is [0-9a-f], so it is
+    safe; swapping in a "friendlier" alphabet with any non-ASCII
+    character would mint keys that authenticate on one path and 401 on
+    the other, which is a miserable bug to diagnose.
+    """
+    return AGENT_KEY_PREFIX + secrets.token_hex(16)
+
+
+class AgentKeyCreateBody(BaseModel):
+    name: str = Field("Self-hosted agent", max_length=100)
+
+
+@router.post("/agent-keys")
+@limiter.limit("10/hour")
+async def create_agent_key(
+    request: Request,
+    body: AgentKeyCreateBody,
+    user: AuthUser = Depends(require_active_billing),
+    db: Session = Depends(get_db),
+):
+    """Mint a per-org agent key.  Returns the plaintext exactly once.
+
+    ``require_active_billing`` rather than ``require_admin``: this
+    provisions a credential that spends money (every run the agent
+    completes burns a monthly-cap slot and real LLM cost), which is
+    precisely the "past-due orgs can read but not provision" case that
+    dependency exists for.  Revocation deliberately stays on plain
+    ``require_admin`` — see below.
+    """
+    # Plan/licence gate, same as patch_config and post_manual_run.  This
+    # is a UX gate, not the security boundary: app/mcp/server.py
+    # re-checks plan and licence on every tool call, because a plan can
+    # change long after a key is minted.  Failing here means a free org
+    # finds out now, with an upgrade CTA, instead of at 3am via an
+    # opaque 401 from an agent they already configured.
+    has_access, denial_detail = _resolve_sentinel_access(db, user.org_id)
+    if not has_access:
+        raise HTTPException(status_code=402, detail=denial_detail)
+
+    # key_hash is UNIQUE. A 128-bit collision is not going to happen,
+    # but an unhandled IntegrityError here would be a 500 with a dirty
+    # session, so absorb it and try once more rather than leaving the
+    # only failure path in this endpoint uncovered.
+    for attempt in (1, 2):
+        raw_key = _generate_agent_key()
+        row = SentinelAgentKey(
+            org_id=user.org_id,
+            key_hash=hashlib.sha256(raw_key.encode()).hexdigest(),
+            key_last4=raw_key[-4:],
+            name=body.name,
+            # The user id, NOT audit_label(user): this column is
+            # String(100) and an email can overflow it. The human-
+            # readable actor is durable in the audit row instead.
+            created_by=user.user_id,
+        )
+        db.add(row)
+        try:
+            db.commit()
+            break
+        except IntegrityError:
+            db.rollback()
+            if attempt == 2:
+                raise
+    db.refresh(row)
+
+    write_audit(
+        db,
+        org_id=user.org_id,
+        event="sentinel_agent_key_created",
+        user_id=user.user_id,
+        username=audit_label(user),
+        details={"key_id": row.id, "name": body.name, "key_last4": row.key_last4},
+        request=request,
+    )
+
+    # Security-audit signal to admins.  Names the actor so a recipient
+    # who IS the actor recognises their own action rather than
+    # suspecting a compromise.
+    try:
+        from app.api.notifications import create_notification
+        actor = audit_label(user) or user.user_id or "unknown user"
+        create_notification(
+            org_id=user.org_id,
+            kind="sentinel_agent_key_created",
+            title=f"New Sentinel agent key created: {body.name}",
+            body=(
+                f"{actor} just created a Sentinel agent key "
+                f"\"{body.name}\".  Anyone holding it can run the Sentinel "
+                f"agent against this organization's cameras.  If this was "
+                f"you, no action needed.  If not, revoke it from the MCP "
+                f"settings page immediately."
+            ),
+            severity="warning",
+            audience="admin",
+            link="/mcp",
+            meta={
+                "key_id": row.id,
+                "key_name": body.name,
+                "actor_user_id": user.user_id,
+            },
+            db=db,
+        )
+    except Exception:
+        # The audit row is already committed; losing the inbox notice is
+        # annoying, not a security regression.  Never fail the mint.
+        logger.exception(
+            "[SentinelAgentKeys] notification emit failed for key_id=%s", row.id,
+        )
+
+    return {
+        "id": row.id,
+        "name": row.name,
+        # Only time this value exists outside the caller's machine.
+        "key": raw_key,
+        "key_last4": row.key_last4,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "warning": "Save this key now. You won't be able to see it again.",
+    }
+
+
+@router.get("/agent-keys")
+async def list_agent_keys(
+    user: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """List this org's live agent keys.
+
+    Deliberately NOT plan-gated, unlike minting: an org that downgrades
+    must still be able to see and revoke credentials it already issued.
+    Gating this would strand live keys with no UI to kill them.
+    """
+    rows = (
+        db.query(SentinelAgentKey)
+        .filter_by(org_id=user.org_id, revoked=False)
+        .order_by(SentinelAgentKey.created_at.desc())
+        .all()
+    )
+    return [r.to_dict() for r in rows]
+
+
+@router.delete("/agent-keys/{key_id}")
+@limiter.limit("30/hour")
+async def revoke_agent_key(
+    key_id: int,
+    request: Request,
+    user: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Revoke an agent key.  Takes effect immediately.
+
+    ``org_id`` in the filter below is the security control, not a
+    convenience — without it any admin could revoke any org's key.  404
+    rather than 403 on a miss so a caller cannot probe which key ids
+    exist elsewhere.
+
+    Soft revoke, matching McpApiKey: keeps ``last_used_at`` as the
+    forensic answer to "when did this leaked credential last act?", and
+    keeps the unique ``key_hash`` permanently burned.
+    """
+    row = (
+        db.query(SentinelAgentKey)
+        .filter_by(id=key_id, org_id=user.org_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(404, "agent key not found")
+
+    row.revoked = True
+    db.commit()
+
+    write_audit(
+        db,
+        org_id=user.org_id,
+        event="sentinel_agent_key_revoked",
+        user_id=user.user_id,
+        username=audit_label(user),
+        details={"key_id": row.id, "name": row.name},
+        request=request,
+    )
+
+    try:
+        from app.api.notifications import create_notification
+        actor = audit_label(user) or user.user_id or "unknown user"
+        create_notification(
+            org_id=user.org_id,
+            kind="sentinel_agent_key_revoked",
+            title=f"Sentinel agent key revoked: {row.name}",
+            body=(
+                f"{actor} revoked the Sentinel agent key \"{row.name}\".  "
+                f"Any agent still using it will start failing immediately."
+            ),
+            severity="info",
+            audience="admin",
+            link="/admin/audit-log",
+            meta={"key_id": row.id, "key_name": row.name, "actor_user_id": user.user_id},
+            db=db,
+        )
+    except Exception:
+        logger.exception(
+            "[SentinelAgentKeys] revoke notification failed for key_id=%s", row.id,
+        )
+
+    return {"success": True, "revoked": key_id}

@@ -5,6 +5,7 @@ import {
   getMcpKeys, createMcpKey, revokeMcpKey,
   getMcpActivity, getMcpSessions, getMcpStats,
   getMcpToolCatalog,
+  getSentinelAgentKeys, createSentinelAgentKey, revokeSentinelAgentKey,
 } from "../services/api"
 import { useToasts } from "../hooks/useToasts.jsx"
 import { usePlanInfo } from "../hooks/usePlanInfo.jsx"
@@ -91,6 +92,19 @@ function McpPage() {
   const [copied, setCopied] = useState(null)
   const [revoking, setRevoking] = useState(null)
   const [showUpgrade, setShowUpgrade] = useState(false)
+
+  // Sentinel agent keys (collapsible) — DELIBERATELY separate state
+  // from the MCP key flow above.  Sharing `createdKey`/`creating` would
+  // let minting one kind clobber the other's show-once banner, leaving
+  // a live credential whose secret was never displayed.  That failure
+  // is silent and unrecoverable.
+  const [showAgentKeys, setShowAgentKeys] = useState(false)
+  const [agentKeys, setAgentKeys] = useState([])
+  const [agentKeysLoading, setAgentKeysLoading] = useState(false)
+  const [newAgentKeyName, setNewAgentKeyName] = useState("")
+  const [createdAgentKey, setCreatedAgentKey] = useState(null)
+  const [creatingAgentKey, setCreatingAgentKey] = useState(false)
+  const [revokingAgentKey, setRevokingAgentKey] = useState(null)
 
   // Per-key tool scoping — "all" | "readonly" | "custom"
   const [scopeMode, setScopeMode] = useState("all")
@@ -276,6 +290,83 @@ function McpPage() {
       console.error("Failed to load MCP keys:", err)
     } finally {
       setKeysLoading(false)
+    }
+  }
+
+  // ── Sentinel agent keys ────────────────────────────────────────
+  const loadAgentKeys = async () => {
+    setAgentKeysLoading(true)
+    try {
+      const token = await getToken()
+      const data = await getSentinelAgentKeys(() => Promise.resolve(token))
+      setAgentKeys(data)
+    } catch (err) {
+      console.error("Failed to load Sentinel agent keys:", err)
+    } finally {
+      setAgentKeysLoading(false)
+    }
+  }
+
+  const handleCreateAgentKey = async () => {
+    // Re-entrancy guard, same reason as handleCreate above: this input
+    // creates on Enter, and two fast presses fired two POSTs where the
+    // second response overwrote the first's one-time secret — leaving a
+    // live key nobody ever saw.
+    if (creatingAgentKey) return
+    if (!newAgentKeyName.trim()) {
+      showToast("Give the key a name so you can recognise it later", "error")
+      return
+    }
+    setCreatingAgentKey(true)
+    try {
+      const token = await getToken()
+      const data = await createSentinelAgentKey(() => Promise.resolve(token), {
+        name: newAgentKeyName.trim(),
+      })
+      setCreatedAgentKey(data)
+      setNewAgentKeyName("")
+      await loadAgentKeys()
+      showToast("Sentinel agent key created", "success")
+    } catch (err) {
+      // 402 carries a machine-readable reason; show the upgrade path
+      // rather than a raw error string.
+      if (err.code === "plan_required") {
+        setShowUpgrade(true)
+      } else if (err.code === "license_required") {
+        showToast("Sentinel needs a paid self-host license", "error")
+      } else {
+        showToast(err.message || "Failed to create agent key", "error")
+      }
+    } finally {
+      setCreatingAgentKey(false)
+    }
+  }
+
+  const handleRevokeAgentKey = async (key) => {
+    if (
+      !window.confirm(
+        `Revoke "${key.name}"?\n\n` +
+          "The agent using this key stops working immediately — every " +
+          "request it makes will fail.\n\n" +
+          "Any run already in progress will be left stranded until the " +
+          "server sweeps it (~20 minutes), and it has already used one of " +
+          "this month's runs.\n\n" +
+          "To bring the agent back you'll need to generate a new key and " +
+          "update BOTH environment variables on it."
+      )
+    ) {
+      return
+    }
+    setRevokingAgentKey(key.id)
+    try {
+      const token = await getToken()
+      await revokeSentinelAgentKey(() => Promise.resolve(token), key.id)
+      await loadAgentKeys()
+      showToast("Agent key revoked", "success")
+    } catch (err) {
+      showToast(err.message || "Failed to revoke key", "error")
+    } finally {
+      setRevokingAgentKey(null)
     }
   }
 
@@ -866,6 +957,139 @@ function McpPage() {
                 </div>
               ) : (
                 <p className="text-muted mcp-no-keys">No API keys yet. Generate one above to get started.</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Sentinel Agent Keys */}
+        <div className="mcp-collapse-section">
+          <button
+            className={`mcp-collapse-toggle ${showAgentKeys ? "open" : ""}`}
+            onClick={() => {
+              setShowAgentKeys(!showAgentKeys)
+              if (!showAgentKeys && agentKeys.length === 0) loadAgentKeys()
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+            Sentinel Agent Keys
+            <svg className="mcp-collapse-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          {showAgentKeys && (
+            <div className="mcp-collapse-body">
+              <p className="text-muted">
+                Run the Sentinel AI agent on your own hardware instead of ours.
+                These keys start with <code>osa_</code> and are scoped to{" "}
+                <strong>this organization only</strong> — an agent using one can
+                never see another customer&apos;s cameras. Not interchangeable
+                with the <code>osc_</code> keys above.
+              </p>
+
+              {createdAgentKey && (
+                <div className="mcp-key-created">
+                  <div className="mcp-key-created-header">
+                    <span className="mcp-key-created-icon">🔑</span>
+                    <strong>Key created — save it now!</strong>
+                  </div>
+                  <p className="mcp-key-warning">
+                    This is the only time you&apos;ll see this key. Copy it before closing.
+                  </p>
+                  <div className="mcp-key-display">
+                    <code>{createdAgentKey.key}</code>
+                    <button
+                      className="btn btn-small btn-secondary"
+                      onClick={() => copyToClipboard(createdAgentKey.key, "agent-key")}
+                    >
+                      {copied === "agent-key" ? "Copied!" : "Copy Key"}
+                    </button>
+                  </div>
+                  <p className="mcp-key-warning">
+                    Set it as <strong>both</strong> variables on your agent — the
+                    same key authenticates the run queue and the camera tools:
+                  </p>
+                  <div className="mcp-key-display">
+                    <code>
+                      SENTINEL_AGENT_KEY={createdAgentKey.key}
+                      <br />
+                      OPENSENTRY_MCP_AGENT_KEY={createdAgentKey.key}
+                    </code>
+                    <button
+                      className="btn btn-small btn-secondary"
+                      onClick={() =>
+                        copyToClipboard(
+                          `SENTINEL_AGENT_KEY=${createdAgentKey.key}\nOPENSENTRY_MCP_AGENT_KEY=${createdAgentKey.key}`,
+                          "agent-env"
+                        )
+                      }
+                    >
+                      {copied === "agent-env" ? "Copied!" : "Copy Both"}
+                    </button>
+                  </div>
+                  <button
+                    className="btn btn-small btn-secondary mcp-key-dismiss"
+                    onClick={() => setCreatedAgentKey(null)}
+                  >
+                    I&apos;ve saved it
+                  </button>
+                </div>
+              )}
+
+              <div className="mcp-key-create">
+                <input
+                  type="text"
+                  className="mcp-key-input"
+                  placeholder="Key name (e.g. 'Garage NUC agent')"
+                  value={newAgentKeyName}
+                  onChange={(e) => setNewAgentKeyName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleCreateAgentKey()}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={handleCreateAgentKey}
+                  disabled={creatingAgentKey || !newAgentKeyName.trim()}
+                >
+                  {creatingAgentKey ? "Generating..." : "Generate Key"}
+                </button>
+              </div>
+
+              {agentKeysLoading ? (
+                <div className="loading-spinner" />
+              ) : agentKeys.length > 0 ? (
+                <div className="mcp-keys-list">
+                  {agentKeys.map((k) => (
+                    <div key={k.id} className="mcp-key-item">
+                      <div className="mcp-key-info">
+                        <div className="mcp-key-name-row">
+                          <strong>{k.name}</strong>
+                          {k.key_last4 && (
+                            <code className="text-muted">••••{k.key_last4}</code>
+                          )}
+                        </div>
+                        <span className="text-muted">
+                          Created {new Date(k.created_at).toLocaleDateString()}
+                          {k.last_used_at
+                            ? ` · Last used ${new Date(k.last_used_at).toLocaleDateString()}`
+                            : " · Never used"}
+                        </span>
+                      </div>
+                      <button
+                        className="btn btn-small btn-danger"
+                        onClick={() => handleRevokeAgentKey(k)}
+                        disabled={revokingAgentKey === k.id}
+                      >
+                        {revokingAgentKey === k.id ? "Revoking..." : "Revoke"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-muted mcp-no-keys">
+                  No agent keys yet. Generate one to run the Sentinel agent on your own hardware.
+                </p>
               )}
             </div>
           )}

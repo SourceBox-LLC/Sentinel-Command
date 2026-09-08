@@ -1026,3 +1026,243 @@ class TestScopedSentinelAgentKeys:
             headers={"X-Sentinel-Agent-Key": "not-a-real-key"},
         )
         assert r.status_code == 401
+
+
+# ── Agent key issuance ───────────────────────────────────────────────
+
+
+class TestSentinelAgentKeyIssuance:
+    """Minting, listing and revoking per-org agent keys.
+
+    These are the credentials a customer running the Sentinel agent on
+    their own hardware pastes into it. The shared SENTINEL_AGENT_KEY
+    cannot be handed out — it drains every org's queue and can act as
+    any org — so everything here exists to make the scoped alternative
+    safe to hand over.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _eligible_plan(self, db):
+        """Minting is plan-gated. `effective_plan_for_caps` falls back to
+        free without a Setting row, so every test that mints needs an
+        eligible plan pinned — the same thing the config tests above do.
+        Tests that specifically exercise the gate downgrade from here."""
+        _set_org_plan(db, "org_test123", "pro")
+
+    def _mint(self, admin_client, name="Self-hosted agent"):
+        r = admin_client.post("/api/sentinel/agent-keys", json={"name": name})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def _seed_other_org_key(self, db, key_hash="other_org_hash"):
+        from app.models.models import SentinelAgentKey
+
+        row = SentinelAgentKey(
+            org_id="org_other",
+            key_hash=key_hash,
+            key_last4="9999",
+            name="another org's agent",
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row
+
+    # ── The leak-shaped tests ────────────────────────────────────────
+
+    def test_list_never_returns_the_hash_or_the_key(self, admin_client):
+        """Highest-value test here. key_hash is the SHA-256 of a
+        credential granting camera access through MCP; a to_dict that
+        returned __dict__ would put an offline-crackable digest in
+        front of anyone who can read a network tab."""
+        self._mint(admin_client)
+        r = admin_client.get("/api/sentinel/agent-keys")
+        assert r.status_code == 200
+        assert r.json(), "expected at least one key"
+        for item in r.json():
+            assert "key_hash" not in item, f"key_hash leaked: {item}"
+            assert "key" not in item, f"plaintext key leaked: {item}"
+
+    def test_list_is_org_scoped(self, admin_client, db):
+        self._seed_other_org_key(db)
+        mine = self._mint(admin_client)
+        r = admin_client.get("/api/sentinel/agent-keys")
+        ids = [k["id"] for k in r.json()]
+        assert ids == [mine["id"]], f"list leaked another org's keys: {r.json()}"
+
+    def test_cannot_revoke_another_orgs_key(self, admin_client, db):
+        """The 404 alone is not enough — an implementation that flips
+        `revoked` and *then* checks the org would still 404 while
+        having already killed someone else's credential. So assert the
+        row is untouched too."""
+        from app.models.models import SentinelAgentKey
+
+        other = self._seed_other_org_key(db)
+        r = admin_client.delete(f"/api/sentinel/agent-keys/{other.id}")
+        assert r.status_code == 404
+
+        db.expire_all()
+        still = db.query(SentinelAgentKey).filter_by(id=other.id).first()
+        assert still.revoked is False, "revoked another org's key despite the 404"
+
+    # ── Round-trip: mint here, authenticate over there ───────────────
+
+    def test_minted_key_authenticates_and_is_org_scoped(self, admin_client, db):
+        """Catches a mint/consume divergence. The two auth paths hash
+        different byte encodings (latin-1 here, utf-8 in mcp/server.py)
+        and nothing else pins that a key minted by this endpoint is
+        actually accepted by them."""
+        minted = self._mint(admin_client)
+        _make_run(db, org_id="org_test123", run_id="mine", outcome="pending")
+        _make_run(db, org_id="org_b", run_id="theirs", outcome="pending")
+
+        client = TestClient(app)
+        r = client.get(
+            "/api/sentinel/runs/pending",
+            headers={"X-Sentinel-Agent-Key": minted["key"]},
+        )
+        assert r.status_code == 200, r.text
+        assert {run["id"] for run in r.json()["runs"]} == {"mine"}
+
+    def test_scoped_key_works_when_the_shared_key_is_unset(
+        self, admin_client, db, monkeypatch
+    ):
+        """Regression: require_sentinel_agent used to reject everything
+        up front when SENTINEL_AGENT_KEY was empty, which made the
+        scoped path unreachable. A self-hosted Command Center never sets
+        that env var — there is no first-party agent to authenticate —
+        and is precisely the install that needs scoped keys."""
+        monkeypatch.setattr(settings, "SENTINEL_AGENT_KEY", "")
+        minted = self._mint(admin_client)
+        _make_run(db, org_id="org_test123", run_id="mine", outcome="pending")
+
+        r = TestClient(app).get(
+            "/api/sentinel/runs/pending",
+            headers={"X-Sentinel-Agent-Key": minted["key"]},
+        )
+        assert r.status_code == 200, r.text
+        assert {run["id"] for run in r.json()["runs"]} == {"mine"}
+
+    def test_empty_header_rejected_when_shared_key_unset(
+        self, admin_client, monkeypatch
+    ):
+        """The flip side: relaxing the up-front guard must not let an
+        empty/absent credential through by matching an empty setting."""
+        monkeypatch.setattr(settings, "SENTINEL_AGENT_KEY", "")
+        client = TestClient(app)
+        assert client.get("/api/sentinel/runs/pending").status_code == 401
+        assert client.get(
+            "/api/sentinel/runs/pending", headers={"X-Sentinel-Agent-Key": ""}
+        ).status_code == 401
+
+    def test_revoked_key_no_longer_authenticates(self, admin_client, db):
+        minted = self._mint(admin_client)
+        _make_run(db, org_id="org_test123", run_id="mine", outcome="pending")
+        client = TestClient(app)
+        headers = {"X-Sentinel-Agent-Key": minted["key"]}
+        assert client.get("/api/sentinel/runs/pending", headers=headers).status_code == 200
+
+        admin_client.delete(f"/api/sentinel/agent-keys/{minted['id']}")
+        assert client.get("/api/sentinel/runs/pending", headers=headers).status_code == 401
+
+    # ── Mint mechanics ───────────────────────────────────────────────
+
+    def test_mint_returns_prefixed_key_once_with_warning(self, admin_client):
+        data = self._mint(admin_client, name="Garage NUC")
+        assert data["key"].startswith("osa_"), data["key"][:8]
+        assert len(data["key"]) == 36, len(data["key"])
+        assert "warning" in data
+        assert data["name"] == "Garage NUC"
+
+    def test_mint_stores_only_the_hash(self, admin_client, db):
+        import hashlib
+
+        from app.models.models import SentinelAgentKey
+
+        data = self._mint(admin_client)
+        row = db.query(SentinelAgentKey).filter_by(id=data["id"]).first()
+        assert row.key_hash == hashlib.sha256(data["key"].encode()).hexdigest()
+        # The raw value must not survive anywhere on the row.
+        for col in ("name", "key_last4", "created_by"):
+            assert getattr(row, col) != data["key"]
+
+    def test_mint_populates_last4_and_created_by(self, admin_client, db):
+        """Both columns are written by nothing else in the codebase —
+        without this a refactor drops them and nothing notices."""
+        from app.models.models import SentinelAgentKey
+
+        data = self._mint(admin_client)
+        row = db.query(SentinelAgentKey).filter_by(id=data["id"]).first()
+        assert row.key_last4 == data["key"][-4:]
+        assert row.created_by == "user_test123"
+
+    # ── Revocation semantics ─────────────────────────────────────────
+
+    def test_revoke_is_soft_and_excludes_from_list(self, admin_client, db):
+        from app.models.models import SentinelAgentKey
+
+        data = self._mint(admin_client)
+        before = db.query(SentinelAgentKey).filter_by(id=data["id"]).first()
+        original_hash = before.key_hash
+
+        r = admin_client.delete(f"/api/sentinel/agent-keys/{data['id']}")
+        assert r.status_code == 200
+        assert r.json()["revoked"] == data["id"]
+
+        db.expire_all()
+        row = db.query(SentinelAgentKey).filter_by(id=data["id"]).first()
+        assert row is not None, "revoke should be soft, not a delete"
+        assert row.revoked is True
+        # Hash stays burned so the value can never be resurrected.
+        assert row.key_hash == original_hash
+        assert admin_client.get("/api/sentinel/agent-keys").json() == []
+
+    def test_revoke_nonexistent_returns_404(self, admin_client):
+        assert admin_client.delete("/api/sentinel/agent-keys/999999").status_code == 404
+
+    # ── Plan gating ──────────────────────────────────────────────────
+
+    def test_mint_blocked_for_ineligible_plan(self, admin_client, db):
+        _set_org_plan(db, "org_test123", "free_org")
+        r = admin_client.post("/api/sentinel/agent-keys", json={"name": "x"})
+        assert r.status_code == 402
+        assert r.json()["detail"]["error"] == "plan_required"
+
+    def test_list_and_revoke_survive_a_downgrade(self, admin_client, db):
+        """Deliberately NOT plan-gated. Gating reads/revocation would
+        strand live credentials with no way to kill them — this pins
+        that decision against a well-meaning "gate everything" change."""
+        data = self._mint(admin_client)
+        _set_org_plan(db, "org_test123", "free_org")
+
+        listed = admin_client.get("/api/sentinel/agent-keys")
+        assert listed.status_code == 200
+        assert [k["id"] for k in listed.json()] == [data["id"]]
+        assert admin_client.delete(f"/api/sentinel/agent-keys/{data['id']}").status_code == 200
+
+    # ── Side effects ─────────────────────────────────────────────────
+
+    def test_mint_writes_an_audit_row(self, admin_client, db):
+        from app.models.models import AuditLog
+
+        data = self._mint(admin_client, name="Audited")
+        row = (
+            db.query(AuditLog)
+            .filter_by(org_id="org_test123", event="sentinel_agent_key_created")
+            .first()
+        )
+        assert row is not None
+        assert str(data["id"]) in (row.details or "")
+
+    def test_notification_failure_does_not_fail_the_mint(self, admin_client, db, monkeypatch):
+        """The audit row is already committed by then; losing the inbox
+        notice must never cost the caller their key."""
+        from app.api import notifications
+        from app.models.models import SentinelAgentKey
+
+        def boom(*a, **kw):
+            raise RuntimeError("notification backend down")
+
+        monkeypatch.setattr(notifications, "create_notification", boom)
+        data = self._mint(admin_client)
+        assert db.query(SentinelAgentKey).filter_by(id=data["id"]).first() is not None
