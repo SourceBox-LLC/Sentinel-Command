@@ -146,7 +146,7 @@ class Config:
     # drifts).  It went stale at 0.1.26 while releases reached 0.1.73,
     # which on a cold boot mis-reported every node >=0.1.26 as current.
     MIN_SUPPORTED_NODE_VERSION: str = os.getenv("MIN_SUPPORTED_NODE_VERSION", "0.1.0")
-    LATEST_NODE_VERSION: str = os.getenv("LATEST_NODE_VERSION", "0.1.73")
+    LATEST_NODE_VERSION: str = os.getenv("LATEST_NODE_VERSION", "0.1.76")
 
     # ── Email notifications (Resend) ─────────────────────────────────
     # Resend transactional email integration for operator-critical
