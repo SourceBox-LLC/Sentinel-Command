@@ -3,7 +3,7 @@ import logging
 
 from ollama import AsyncClient
 
-from app.config import Settings
+from app.sentinel_agent.config import Settings
 
 logger = logging.getLogger(__name__)
 

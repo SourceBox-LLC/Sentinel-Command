@@ -1,16 +1,15 @@
 name: Test & Deploy
 
-# This repo holds two independently-deployed services: Command Center
-# (this workflow → the `sentinel-command` Fly app) and the Sentinel AI
-# agent (.github/workflows/agent.yml → the `sourcebox-sentinel` Fly app).
-# The paths-ignore below is what keeps them independent — without it, an
-# agent-only change would rebuild and redeploy Command Center.
+# One workflow, one app, one image. Command Center and the Sentinel AI
+# agent both ship from here: the image carries both, and fly.toml's
+# [processes] block runs them as two process groups on separate machines.
+# There is no separate agent workflow or agent app any more.
 #
 # Path filtering is applied to `push` ONLY, never to `pull_request`, and
 # that asymmetry is load-bearing. `master` requires these status checks:
 #
 #   Backend tests (sqlite) · Backend tests (postgres) ·
-#   Frontend audit + build · Agent checks
+#   Frontend audit + build
 #
 # GitHub reports NO status for a workflow that a path filter skipped —
 # not "skipped", nothing at all — so a required check on a path-filtered
@@ -26,8 +25,6 @@ on:
     branches:
       - master
     paths-ignore:
-      - 'agent/**'
-      - '.github/workflows/agent.yml'
       - 'docs/**'
       - '**/*.md'
   # Manual re-deploy. Needed because Dependabot auto-merges land on
@@ -306,19 +303,36 @@ jobs:
           echo "Captured image: $IMAGE"
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
-      - name: Update machine in place
+      - name: Release the prebuilt image to both process groups
         run: |
           set -e
-          # We currently run exactly one machine.  If we ever scale to
-          # multiple machines (or migrate to LiteFS / Postgres so we
-          # don't need a single volume), this script needs to loop.
-          MACHINE=$(flyctl machines list -a sentinel-command --json | jq -r '.[0].id')
-          if [ -z "$MACHINE" ] || [ "$MACHINE" = "null" ]; then
-            echo "::error::No machines found for sentinel-command"
-            exit 1
-          fi
-          echo "Updating machine $MACHINE to $IMAGE"
-          flyctl machine update "$MACHINE" --image "$IMAGE" --yes -a sentinel-command
+          # Was: `flyctl machine update` on `machines list | .[0].id`.
+          # That took the FIRST machine and updated only it, which the
+          # step's own comment flagged as needing a loop once we ran more
+          # than one. Two things now break it outright:
+          #
+          #   1. There are two process groups (app, agent), so ".[0]" is
+          #      a coin flip over which one gets the new image.
+          #   2. `machine update` can only touch machines that already
+          #      EXIST. It has no way to create the agent machine for a
+          #      newly-declared process group, so the group would simply
+          #      never come up.
+          #
+          # `flyctl deploy --image` keeps our own build-and-push (and its
+          # layer cache) while letting Fly reconcile fly.toml's
+          # [processes] against reality — creating what's missing and
+          # updating what isn't.
+          #
+          # `--strategy immediate` because the `app` group still mounts a
+          # single-attachment volume: rolling tries to stand up a parallel
+          # machine and errors on the attachment slot. The agent group has
+          # no volume, but strategy is app-wide.
+          echo "Releasing $IMAGE to sentinel-command"
+          flyctl deploy --image "$IMAGE" --strategy immediate --yes -a sentinel-command
+
+          echo "--- process groups after release ---"
+          flyctl machines list -a sentinel-command --json \
+            | jq -r '.[] | "  \(.config.metadata.fly_process_group // "?")  \(.id)  \(.state)"'
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           # Image tag comes from the `image` step (the export step

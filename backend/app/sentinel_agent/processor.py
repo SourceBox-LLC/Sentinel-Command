@@ -38,11 +38,11 @@ import asyncio
 import logging
 from typing import Any
 
-from app.agent import Agent
-from app.config import Settings
-from app.llm import LLMProvider
-from app.mcp_client import MCPClientManager
-from app.sentinel_client import SentinelClient
+from app.sentinel_agent.agent import Agent
+from app.sentinel_agent.config import Settings
+from app.sentinel_agent.llm import LLMProvider
+from app.sentinel_agent.mcp_client import MCPClientManager
+from app.sentinel_agent.sentinel_client import SentinelClient
 
 logger = logging.getLogger(__name__)
 
@@ -353,7 +353,7 @@ async def process_with_timeout(
             ),
             timeout=timeout_seconds,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         stranded_id = in_flight.get("run_id")
         logger.warning(
             "processor: hit %.0fs wall-clock timeout (stranded run=%s)",

@@ -13,7 +13,6 @@ tools. Trigger-specific text is concatenated on top.
 
 from __future__ import annotations
 
-
 _BASE_PROMPT = """\
 You are SourceBox Sentinel — an autonomous security agent monitoring a
 specific SourceBox Sentry organization. Think of yourself as a digital
