@@ -21,6 +21,11 @@ on:
       - '.github/workflows/agent.yml'
       - 'docs/**'
       - '**/*.md'
+  # Manual re-deploy. Needed because Dependabot auto-merges land on
+  # master WITHOUT triggering this workflow — see the GITHUB_TOKEN note
+  # in dependabot-auto-merge.yml. Without a manual trigger the only way
+  # to ship those commits is to push an unrelated one on top.
+  workflow_dispatch: {}
   # Also validate PRs (incl. Dependabot bumps) BEFORE merge. The deploy
   # job below is gated to push-only, so a PR runs tests/audits/build but
   # never deploys. This is what makes auto-merging dependency PRs safe —

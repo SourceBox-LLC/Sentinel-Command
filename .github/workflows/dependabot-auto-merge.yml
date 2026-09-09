@@ -4,15 +4,35 @@ name: Dependabot auto-merge
 # "Test & Deploy" PR checks pass. MAJOR version bumps are left for a
 # human to review and merge (they're where breaking changes live).
 #
-# REQUIRES three repo settings (GitHub Actions cannot set these — do it
-# once in the repo Settings, or auto-merge won't actually gate on CI):
+# TWO KNOWN GAPS — both verified on 2026-09-09, both still open. Read
+# these before trusting this workflow to keep production current.
+#
+# GAP 1: nothing actually gates the merge on CI.
+#   `master` has NO required status checks (`required_status_checks:
+#   contexts: []`), so `gh pr merge --auto` does not wait for anything —
+#   a patch/minor PR merges as soon as this workflow approves it, while
+#   its tests are still running.
+#   The obvious fix (require "Backend tests" / "Frontend audit + build")
+#   is NOT safe as-is: deploy.yml and agent.yml are path-filtered, and a
+#   path-skipped workflow reports no status at all, so a required check
+#   would hang every PR that misses its paths. Doing this properly needs
+#   an always-runs gate job that reports those check names.
+#
+# GAP 2: an auto-merged PR does not deploy.
+#   GitHub does not trigger `on: push` workflows for pushes made with
+#   GITHUB_TOKEN. So when this workflow merges a PR, master moves but
+#   Test & Deploy never runs, and the bump sits undeployed until some
+#   human pushes on top of it. Observed directly: four frontend bumps
+#   (#268, #270, #271, #272) merged at 10:02-10:04 and produced zero
+#   push-event runs. (CodeQL still ran — it is GitHub "default setup",
+#   event type `dynamic`, which bypasses this rule. Don't let CodeQL's
+#   green checkmark convince you a deploy happened.)
+#   Real fix: merge with a PAT instead of GITHUB_TOKEN. Interim:
+#   deploy.yml now has a `workflow_dispatch` trigger.
+#
+# REQUIRES two repo settings (GitHub Actions cannot set these):
 #   1. Settings → General → Pull Requests → enable "Allow auto-merge".
-#   2. Branch protection on `master` requiring these status checks:
-#      "Backend tests" and "Frontend audit + build". This is what makes
-#      `--auto` WAIT for the dependency PR's tests instead of merging
-#      immediately. Without it, a patch/minor PR could merge before CI
-#      finishes.
-#   3. Settings → Actions → General → enable "Allow GitHub Actions to
+#   2. Settings → Actions → General → enable "Allow GitHub Actions to
 #      create and approve pull requests" (needed for the approve step).
 #
 # This is GitHub's documented pattern: dependabot/fetch-metadata to read
