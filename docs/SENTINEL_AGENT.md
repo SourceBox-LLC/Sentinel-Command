@@ -12,7 +12,7 @@ notification fires              ┌─ POST /wakeup  (HMAC-signed)
                                          POST /api/sentinel/runs/{id}/start
                                          run agent loop (LLM ↔ MCP tools)
                                          POST /api/sentinel/runs/{id}/complete
-                                       return 200 — machine idles → auto-stops
+                                       return 200 — machine stays warm (see fly.toml)
 ```
 
 ## Architecture
