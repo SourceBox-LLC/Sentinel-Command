@@ -28,15 +28,38 @@ import json
 import logging
 from typing import Any
 
-import litellm
-
 from app.sentinel_agent.config import Settings
 
 logger = logging.getLogger(__name__)
 
-# LiteLLM chats to stdout about provider quirks on import and on first
-# call; the agent's logs are read during incidents and this is noise.
-litellm.suppress_debug_info = True
+_litellm = None
+
+
+def _get_litellm():
+    """Import LiteLLM on first use, not at module import.
+
+    This is not micro-optimisation — importing it at module scope broke
+    the wakeup path outright. LiteLLM pulls boto3, tokenizers, openai and
+    ~20 more; on a cold shared-cpu-1x that pushed the agent from ~7s to
+    ~16s between process start and uvicorn listening. Fly's proxy gives
+    up waiting for the port after ~8.5s, so the machine it had just
+    auto-started was declared unreachable and Command Center's webhook
+    came back RemoteDisconnected. Observed exactly that on 2026-09-09
+    before this change.
+
+    Deferring it means the server binds immediately and answers /wakeup,
+    and the import is paid inside the drain instead — where it competes
+    with a 270 s budget and an LLM round-trip, and is noise.
+    """
+    global _litellm
+    if _litellm is None:
+        import litellm
+
+        # LiteLLM chats to stdout about provider quirks; the agent's logs
+        # are read during incidents and this is noise.
+        litellm.suppress_debug_info = True
+        _litellm = litellm
+    return _litellm
 
 # Marker left on a message whose frames were pruned, so the pruning pass
 # is idempotent and a re-prune doesn't stack notices.
@@ -79,7 +102,7 @@ class LLMProvider:
             kwargs["api_base"] = self.api_base
 
         response = await asyncio.wait_for(
-            litellm.acompletion(**kwargs),
+            _get_litellm().acompletion(**kwargs),
             timeout=self.timeout_seconds,
         )
         return response.choices[0].message
