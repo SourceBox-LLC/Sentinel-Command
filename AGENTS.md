@@ -4,6 +4,28 @@ Sentinel Command Center — cloud dashboard for managing and viewing security ca
 
 > **Brand-history note for grep-discoverability:** the product has carried three names — `OpenSentry` (early), `SourceBox Sentry` (mid), and `Sentinel by SourceBox` (current, from May 2026 onward). The `Sentinel AI` name is reserved specifically for the AI-agent feature. Both GitHub repos were renamed in May 2026: Command Center `OpenSentry-Command` → `Sentinel-Command`, and CameraNode `opensentry-cloud-node` → `Sentinel-CameraNode` (note the deliberate "CameraNode" — the repo name now describes the artifact more literally, while the binary, install paths, and product UI keep saying "CameraNode"). GitHub auto-redirects the old URLs, so any hardcoded reference in a release artifact / cached doc / external bookmark continues to resolve. Identifiers preserved verbatim across the entire rebrand (do **not** rename these without a migration plan): the binary name `sourcebox-sentry-cameranode`, the env-var prefix `SOURCEBOX_SENTRY_*`, the Windows install path `C:\ProgramData\SourceBoxSentry\`, the AES key-derivation domain string `opensentry-cameranode-machine-id-v2` (see CameraNode `database.rs::KEY_DOMAIN_V2`), and the production hostname `sentinel-command.com` (tied to the Fly app, decoupled from the repo rename).
 
+## Repository layout — two services, one repo
+
+This repo holds **two independently-deployed services**. They share a repo so they move under one review and one CI; they do **not** ship together.
+
+| | Command Center | Sentinel AI agent |
+| ------ | -------------- | ----------------- |
+| Code | `backend/` + `frontend/` | `agent/` |
+| Fly app | `sentinel-command` | `sourcebox-sentinel` |
+| Build | root `Dockerfile` / `fly.toml` | `agent/Dockerfile` / `agent/fly.toml` |
+| Workflow | `.github/workflows/deploy.yml` | `.github/workflows/agent.yml` |
+| Deploy token | `FLY_API_TOKEN` | `FLY_API_TOKEN_AGENT` |
+
+Three rules follow from this, and breaking any of them breaks a deploy:
+
+1. **Two dependency sets, never merged.** `backend/` and `agent/` each own a `pyproject.toml` + `uv.lock` and resolve independently. They *cannot* be combined: Command Center locks `mcp` 1.28.1 (via `fastmcp`), the agent locks 2.2.0 — different majors. Dependabot watches both separately.
+2. **CI is path-filtered.** `deploy.yml` carries `paths-ignore: agent/**`; `agent.yml` carries `paths: agent/**`. Without these, an agent-only change would rebuild and redeploy Command Center. **If you ever add required status checks to `master`, read the CAUTION comment at the top of `deploy.yml` first** — a path-skipped workflow reports nothing, so a required check would hang every PR that doesn't touch its paths.
+3. **Both packages are named `app`.** `backend/app` and `agent/app` collide on import. Never put `agent/` on `sys.path` in backend tests — load agent modules by file path instead, as `backend/tests/test_agent_contract.py` does.
+
+The agent stays a separate deployment on purpose: its runs hold an LLM connection for up to 270s (`kill_timeout = 300` in `agent/fly.toml`) and must not compete with HLS segment serving on Command Center's 1 GB machine. It is also what makes self-hosting the agent (per-org `osa_` keys, `AGENT_MODE=poll`) possible.
+
+The agent's own docs live in `agent/README.md`. It previously lived in the `SourceBox-Sentinel` repo, moved here 2026-09-09 with its history intact.
+
 ## Build & Run
 
 **Prerequisites:** Python ≥ 3.12 (enforced by `backend/pyproject.toml`), Node 18+, `uv` for Python dependency management.

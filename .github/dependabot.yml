@@ -33,6 +33,29 @@ updates:
       - "dependencies"
       - "frontend"
 
+  # Sentinel AI agent — Python (uv), its own lockfile.
+  #
+  # A SEPARATE entry from /backend on purpose: the two projects resolve
+  # independently and cannot be merged into one dependency set (Command
+  # Center locks mcp 1.28.1 via fastmcp, the agent locks 2.2.0 — different
+  # majors). Bumping them together would force one of them onto the
+  # other's pins.
+  #
+  # This is also the thing that would have caught the agent's three
+  # breakages in two days: unwatched dependencies in a repo nobody
+  # rebuilt between June and September.
+  - package-ecosystem: "uv"
+    directory: "/agent"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(deps)"
+    labels:
+      - "dependencies"
+      - "agent"
+
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"

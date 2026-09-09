@@ -1,0 +1,15 @@
+# Dependencies moved to pyproject.toml + uv.lock (2026-09-08).
+#
+# This file is kept only so an old `pip install -r requirements.txt`
+# doesn't silently install nothing. It is NOT the source of truth and is
+# not what the Docker image installs — see the Dockerfile, which runs
+# `uv sync --frozen`.
+#
+# The reason for the move: this repo had no lockfile, so every build
+# resolved fresh from PyPI. That produced three problems in two days —
+# two boot crashes (mcp 2.x, Starlette removing on_startup) and a pin
+# that silently held the service on a Starlette line with 7 advisories.
+#
+# For a pinned set matching what ships:
+#   uv export --frozen --no-dev -o requirements.lock
+-e .
