@@ -95,18 +95,31 @@ primary_region = "sjc"
 # publicly: it is reachable at http://sentinel-command.flycast:8080 over
 # 6PN, which is where SENTINEL_AGENT_WEBHOOK_URL points.
 #
-# This service is what makes scale-to-zero work at all. Fly auto-starts a
-# stopped machine on a connection to one of its SERVICES; a bare 6PN
-# connection to a stopped machine just fails. So the wakeup webhook both
-# starts the machine and delivers the work.
-#
 # Requires a private IPv6 on the app: `fly ips allocate-v6 --private`.
+#
+# NOT scaled to zero, despite that being this worker's obvious shape, and
+# despite it being how the agent ran as its own app. Fly's proxy waits
+# only ~8s for a machine it auto-started to bind its port, and this
+# process cannot reliably beat that: Python plus the MCP SDK plus Sentry
+# took ~7s before LiteLLM and ~10s after — so an auto-started machine got
+# declared unreachable and Command Center's wakeup came back
+# RemoteDisconnected. Measured, twice, on 2026-09-09.
+#
+# The 7s figure means this was always marginal and happened to fit; the
+# LiteLLM move only exposed it. Deferring litellm's import cut boot from
+# 16s to 10s, which was necessary but not sufficient, and trimming
+# further imports would be tuning against a proxy limit we do not
+# control and cannot test except in production.
+#
+# So the agent stays warm. One shared-cpu-1x/512MB machine is ~$2/month,
+# which is noise against the LLM spend of a single run, and it removes
+# cold starts from the wakeup path entirely rather than racing them.
 [[services]]
   internal_port = 8080
   protocol = "tcp"
-  auto_stop_machines = "stop"
+  auto_stop_machines = "off"
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
   processes = ["agent"]
 
   [[services.ports]]
