@@ -326,9 +326,15 @@ app = FastAPI(
     lifespan=lifespan,
     # FastAPI's auto docs live at /api-docs (the React docs page was removed
     # and now lives on sentinel-command.com).
-    docs_url="/api-docs",
-    redoc_url="/api-redoc",
-    openapi_url="/api/openapi.json",
+    #
+    # OFF in production, ON locally — see settings.API_DOCS_ENABLED. These
+    # were public, serving the full schema (85 routes, 20 models) to
+    # anyone. Passing None to FastAPI is what actually unregisters the
+    # routes; leaving the paths set and relying on the SPA catch-all to
+    # shadow them would not, because the API routes are matched first.
+    docs_url="/api-docs" if settings.API_DOCS_ENABLED else None,
+    redoc_url="/api-redoc" if settings.API_DOCS_ENABLED else None,
+    openapi_url="/api/openapi.json" if settings.API_DOCS_ENABLED else None,
 )
 
 app.state.limiter = limiter

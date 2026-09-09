@@ -331,3 +331,52 @@ def test_tenant_aware_key_handles_v2_compact_claim():
     req = MagicMock()
     req.headers = {"Authorization": f"Bearer {token}"}
     assert tenant_aware_key(req) == "org:org_v2_shape"
+
+
+# ── API schema exposure ──────────────────────────────────────────────
+
+
+def test_api_docs_default_to_off_in_production():
+    """FastAPI's docs must not be public on a deployed instance.
+
+    They were: /api-docs, /api-redoc and /api/openapi.json all returned
+    200 in production, serving 85 routes and 20 request/response schemas
+    to anyone who asked. Not a vulnerability on its own — every
+    sensitive route still 401s, which was verified separately — but a
+    free map of the attack surface, including the webhook, MCP, admin
+    and agent-key endpoints.
+
+    The default is derived from FLY_APP_NAME rather than hard-coded, so
+    that neither environment needs configuring. This pins that
+    derivation: getting it backwards would silently republish the schema
+    on the next deploy, and nothing else would notice.
+    """
+    import importlib
+    import os
+
+    from app.core import config as config_module
+
+    def _reload_with(env: dict) -> bool:
+        saved = {k: os.environ.get(k) for k in ("FLY_APP_NAME", "API_DOCS_ENABLED")}
+        try:
+            for k in saved:
+                os.environ.pop(k, None)
+            os.environ.update(env)
+            return importlib.reload(config_module).settings.API_DOCS_ENABLED
+        finally:
+            for k, v in saved.items():
+                os.environ.pop(k, None)
+                if v is not None:
+                    os.environ[k] = v
+            importlib.reload(config_module)
+
+    # On Fly (production) → off, with no configuration required.
+    assert _reload_with({"FLY_APP_NAME": "sentinel-command"}) is False
+
+    # Local dev → on, also with no configuration required.
+    assert _reload_with({}) is True
+
+    # Explicit override wins in both directions, so a deploy can be
+    # debugged without editing code.
+    assert _reload_with({"FLY_APP_NAME": "x", "API_DOCS_ENABLED": "true"}) is True
+    assert _reload_with({"API_DOCS_ENABLED": "false"}) is False
