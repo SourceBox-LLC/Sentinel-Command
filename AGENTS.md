@@ -13,7 +13,7 @@ Command Center and the Sentinel AI agent ship from **one repo, one image, one de
 | Code | `backend/app/` + `frontend/` | `backend/app/sentinel_agent/` |
 | Process group | `app` | `agent` |
 | Command | `uvicorn app.main:app` | `python -m app.sentinel_agent` |
-| Machine | 1 GB, always-on, owns the volume | 512 MB, scales to zero, no volume |
+| Machine | 1 GB, always-on, owns the volume | 512 MB, always-on, no volume |
 
 Both are the `sentinel-command` Fly app, built from the root `Dockerfile` and deployed by `.github/workflows/deploy.yml`. There is no separate agent app, agent image, agent workflow, or agent lockfile.
 
@@ -23,6 +23,8 @@ Four rules follow, and breaking any of them breaks a deploy:
 2. **`[[mounts]]` must stay scoped to `processes = ["app"]`.** Unscoped, it applies to every group and the agent machine fails to boot fighting for the volume's single attachment slot.
 3. **`[processes]` overrides the Dockerfile `CMD`.** The `app` command in `fly.toml` must stay in sync with that `CMD`.
 4. **CI path filtering is asymmetric.** `push` is filtered (docs and Markdown only); `pull_request` is **never** filtered. `master` requires `Backend tests (sqlite)`, `Backend tests (postgres)` and `Frontend audit + build`, and GitHub reports *no status at all* for a workflow a path filter skipped — so a filtered PR trigger would hang every PR that missed it, presenting as a stuck check rather than a config error.
+
+The agent machine is kept **warm** (`min_machines_running = 1`) rather than scaled to zero. Fly's proxy waits only ~8s for an auto-started machine to bind its port, and this process needs ~10s (Python + the MCP SDK + Sentry + a deferred LiteLLM import) — so an auto-started machine was declared unreachable and the wakeup came back `RemoteDisconnected`. It was ~7s before LiteLLM, i.e. always marginal. ~$2/month buys the problem away; see the comment on `[[services]]` in `fly.toml`.
 
 The agent is a separate **process group** rather than a thread in the web app because a run holds base64 frames for up to 270s, and the segment cache is already budgeted 384 MiB of the web machine's 1 GiB. Sharing one machine is how the OOM killer takes every org's streams down at once. Being a separate *app* was never what bought that isolation.
 
