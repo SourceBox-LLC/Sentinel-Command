@@ -1,0 +1,30 @@
+[project]
+name = "sourcebox-sentinel"
+version = "0.1.0"
+description = "Serverless AI security agent for Sentinel Command Center — wakes on webhook or polls, drives the MCP tool surface, and files incidents."
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.12"
+dependencies = [
+    # Floor is a SECURITY floor: 0.x carries 7 advisories
+    # (PYSEC-2026-161, -248, -249, -2280, -2281) and every fix landed in
+    # 1.x. A `<1` ceiling briefly used here held the service on that
+    # vulnerable line — strictly worse than the crash it prevented. The
+    # app uses the lifespan protocol, so 1.x needs no code change.
+    "starlette>=1.3.1,<2",
+    "uvicorn[standard]>=0.32.0",
+    "ollama>=0.5.0",
+    # Ceiling is deliberate: 2.2.0 renamed streamablehttp_client ->
+    # streamable_http_client and crash-looped the app on boot, because
+    # the import is at module scope. app/mcp_client.py accepts either
+    # name, so 2.x works; this bound is about not crossing a major
+    # unintentionally on a rebuild that has nothing to do with MCP.
+    "mcp>=1.6.0,<3",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "httpx>=0.27.0",
+    "sentry-sdk>=2.0.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]

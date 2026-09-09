@@ -1,0 +1,46 @@
+app = "sourcebox-sentinel"
+primary_region = "ord"
+
+# Command Center's wakeup client times out at 5s — so the HTTP
+# connection that started a drain closes long before the work
+# finishes, and Fly's idle auto-stop then SIGINTs a machine mid-run.
+# The default kill_timeout (5s) SIGKILLed it before the in-flight run
+# could complete or clean up — stranding the run on CC (20-min
+# reaper) and re-paying the LLM cost on the re-fired wakeup.  300s is
+# Fly's MAXIMUM; the drain wall-clock (processor.process_with_timeout)
+# is pinned at 270s — under this grace — so the agent's own timeout
+# cleanup always runs before SIGKILL can land.
+kill_timeout = 300
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Auto-stop is the whole point — Sentinel only spins up when
+  # Command Center fires a wakeup webhook.  Idle window defaults to
+  # ~30s after the last connection closes; that gives us headroom for
+  # a couple of back-to-back wakeups without re-paying cold start cost.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[env]
+  # Public defaults.  Secrets (OLLAMA_API_KEY, OPENSENTRY_MCP_AGENT_KEY,
+  # SENTINEL_AGENT_KEY) are set via `fly secrets set`.
+  OLLAMA_HOST = "https://ollama.com"
+  # Vision-capable + tool-calling. The agent has to see camera snapshots
+  # (view_camera returns JPEG bytes) — text-only models 400 on those.
+  OLLAMA_MODEL = "qwen3.5:cloud"
+
+  # Command Center (the master of pending runs).
+  # NOTE: opensentry_mcp_url is derived from this ({base}/mcp), so a wrong
+  # value here breaks the agent's tools as well as its run fetch. Was
+  # `opensentry-command.fly.dev` (dead post-rename) until 2026-09-07.
+  OPENSENTRY_API_BASE = "https://sentinel-command.fly.dev"
+
+  # HMAC verification ON by default — never run with this off in
+  # production.  Local dev sets this to "false" via `.env` to allow
+  # `curl -X POST localhost:8080/` to drain pending runs without
+  # signing the request.
+  WEBHOOK_VERIFY_SIGNATURE = "true"

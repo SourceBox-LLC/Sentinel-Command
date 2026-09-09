@@ -1,0 +1,89 @@
+name: Deploy to Fly.io
+
+# Mirrors the SourceBox Sentry Command Center workflow's contract: a
+# successful push to `master` lints, sanity-checks, then deploys to
+# Fly.  Sentinel doesn't carry a persistent volume (auto-stop machine,
+# stateless across wakeups) so we can use plain `flyctl deploy`
+# instead of the two-step build → machine-update dance Command Center
+# needs.
+#
+# Required secrets:
+#   FLY_API_TOKEN — a Fly deploy token scoped to `sourcebox-sentinel`.
+#                   Generate with: `flyctl tokens create deploy
+#                   --app sourcebox-sentinel`.
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:  # manual re-deploy from the Actions UI
+
+jobs:
+  sanity:
+    name: Syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # Plain `python -m py_compile` over every .py under app/ catches
+      # syntax errors without needing the runtime env (no OLLAMA_API_KEY
+      # or other required env vars to satisfy Pydantic Settings).  It
+      # won't catch import-time errors (missing deps), but the Docker
+      # build in the deploy step will — and that's a more accurate
+      # gate anyway since it runs the actual prod environment.
+      - name: Compile-check every Python file
+        run: python -m compileall -q app
+
+      # Dependency advisories. This IS a gate, unlike CameraNode's
+      # equivalent, because the tree is clean today and there is no
+      # in-flight migration blocking it.
+      #
+      # It exists because this repo has no lockfile — the Dockerfile runs
+      # `pip install -r requirements.txt`, so every build resolves fresh
+      # from PyPI. That already caused two production crashes in one day
+      # (mcp 2.x renaming a symbol, Starlette removing on_startup), and a
+      # third problem this check would have caught earlier: a `<1` pin
+      # added to stop the second crash silently held the service on a
+      # Starlette line carrying 7 advisories.
+      #
+      # Until the repo moves to a lockfile, this step is the only thing
+      # standing between a rebuild and a vulnerable dependency.
+      - name: Security advisories (pip-audit)
+        run: |
+          python -m pip install --quiet pip-audit uv
+          # Audit the LOCKFILE, not the version ranges — the lockfile is
+          # what actually ships. Exporting it keeps this honest: a range
+          # can look clean while the resolved version is vulnerable.
+          uv export --frozen --no-dev --no-hashes -o /tmp/locked.txt
+          pip-audit -r /tmp/locked.txt --strict
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: sanity
+    # Serialize deploys so two pushes in quick succession don't race
+    # each other on Fly's machine update.  `cancel-in-progress: true`
+    # means a newer push supersedes an in-flight one.
+    concurrency:
+      group: deploy
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # `flyctl deploy --remote-only` builds the image on Fly's
+      # remote builder and pushes it directly into the app's Fly
+      # registry namespace, then updates the (single) machine in
+      # place.  No persistent volume on this app, so the simple path
+      # works — unlike Command Center, which has to do
+      # build-and-push + machine-update separately because of the
+      # opensentry_data volume's single-attachment constraint.
+      - name: flyctl deploy
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
