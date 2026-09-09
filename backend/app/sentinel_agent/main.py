@@ -37,22 +37,22 @@ Auto-stop interaction:
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
 import hashlib
 import hmac
 import json
 import logging
 import time
+from contextlib import asynccontextmanager
 
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from app.config import Settings
-from app.llm import LLMProvider
-from app.processor import process_with_timeout
-from app.sentinel_client import SentinelClient
+from app.sentinel_agent.config import Settings
+from app.sentinel_agent.llm import LLMProvider
+from app.sentinel_agent.processor import process_with_timeout
+from app.sentinel_agent.sentinel_client import SentinelClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

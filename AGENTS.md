@@ -4,27 +4,29 @@ Sentinel Command Center — cloud dashboard for managing and viewing security ca
 
 > **Brand-history note for grep-discoverability:** the product has carried three names — `OpenSentry` (early), `SourceBox Sentry` (mid), and `Sentinel by SourceBox` (current, from May 2026 onward). The `Sentinel AI` name is reserved specifically for the AI-agent feature. Both GitHub repos were renamed in May 2026: Command Center `OpenSentry-Command` → `Sentinel-Command`, and CameraNode `opensentry-cloud-node` → `Sentinel-CameraNode` (note the deliberate "CameraNode" — the repo name now describes the artifact more literally, while the binary, install paths, and product UI keep saying "CameraNode"). GitHub auto-redirects the old URLs, so any hardcoded reference in a release artifact / cached doc / external bookmark continues to resolve. Identifiers preserved verbatim across the entire rebrand (do **not** rename these without a migration plan): the binary name `sourcebox-sentry-cameranode`, the env-var prefix `SOURCEBOX_SENTRY_*`, the Windows install path `C:\ProgramData\SourceBoxSentry\`, the AES key-derivation domain string `opensentry-cameranode-machine-id-v2` (see CameraNode `database.rs::KEY_DOMAIN_V2`), and the production hostname `sentinel-command.com` (tied to the Fly app, decoupled from the repo rename).
 
-## Repository layout — two services, one repo
+## Repository layout — one app, two process groups
 
-This repo holds **two independently-deployed services**. They share a repo so they move under one review and one CI; they do **not** ship together.
+Command Center and the Sentinel AI agent ship from **one repo, one image, one deploy**. They run as two Fly *process groups* on separate machines, not as two apps.
 
 | | Command Center | Sentinel AI agent |
 | ------ | -------------- | ----------------- |
-| Code | `backend/` + `frontend/` | `agent/` |
-| Fly app | `sentinel-command` | `sourcebox-sentinel` |
-| Build | root `Dockerfile` / `fly.toml` | `agent/Dockerfile` / `agent/fly.toml` |
-| Workflow | `.github/workflows/deploy.yml` | `.github/workflows/agent.yml` |
-| Deploy token | `FLY_API_TOKEN` | `FLY_API_TOKEN_AGENT` |
+| Code | `backend/app/` + `frontend/` | `backend/app/sentinel_agent/` |
+| Process group | `app` | `agent` |
+| Command | `uvicorn app.main:app` | `python -m app.sentinel_agent` |
+| Machine | 1 GB, always-on, owns the volume | 512 MB, scales to zero, no volume |
 
-Three rules follow from this, and breaking any of them breaks a deploy:
+Both are the `sentinel-command` Fly app, built from the root `Dockerfile` and deployed by `.github/workflows/deploy.yml`. There is no separate agent app, agent image, agent workflow, or agent lockfile.
 
-1. **Two dependency sets, never merged.** `backend/` and `agent/` each own a `pyproject.toml` + `uv.lock` and resolve independently. They *cannot* be combined: Command Center locks `mcp` 1.28.1 (via `fastmcp`), the agent locks 2.2.0 — different majors. Dependabot watches both separately.
-2. **CI path filtering is asymmetric, and that is deliberate.** `push` is filtered (`deploy.yml` ignores `agent/**`; `agent.yml` only matches `agent/**`), so a change to one service never redeploys the other. `pull_request` is **never** filtered. `master` requires four status checks — `Backend tests (sqlite)`, `Backend tests (postgres)`, `Frontend audit + build`, `Agent checks` — and GitHub reports *no status at all* for a workflow a path filter skipped, so a filtered PR trigger would hang every PR that missed it, presenting as a stuck check rather than a config error. Adding `paths:` to a `pull_request` trigger in this repo will break merging.
-3. **Both packages are named `app`.** `backend/app` and `agent/app` collide on import. Never put `agent/` on `sys.path` in backend tests — load agent modules by file path instead, as `backend/tests/test_agent_contract.py` does.
+Four rules follow, and breaking any of them breaks a deploy:
 
-The agent stays a separate deployment on purpose: its runs hold an LLM connection for up to 270s (`kill_timeout = 300` in `agent/fly.toml`) and must not compete with HLS segment serving on Command Center's 1 GB machine. It is also what makes self-hosting the agent (per-org `osa_` keys, `AGENT_MODE=poll`) possible.
+1. **One dependency set.** Fly gives one image per app — process groups differ only by command — so `backend/pyproject.toml` covers both. This works because the agent's declared ranges all admit what Command Center resolves. Note `mcp`: the agent declares `>=1.6.0,<3` and the project resolves 1.28.1 via `fastmcp`; `app/sentinel_agent/mcp_client.py` imports the streamable-HTTP client under **both** the 1.x and 2.x symbol names, so the SDK rename is a non-issue. Verified against a live `/mcp` session — all 23 tools discovered on 1.28.1.
+2. **`[[mounts]]` must stay scoped to `processes = ["app"]`.** Unscoped, it applies to every group and the agent machine fails to boot fighting for the volume's single attachment slot.
+3. **`[processes]` overrides the Dockerfile `CMD`.** The `app` command in `fly.toml` must stay in sync with that `CMD`.
+4. **CI path filtering is asymmetric.** `push` is filtered (docs and Markdown only); `pull_request` is **never** filtered. `master` requires `Backend tests (sqlite)`, `Backend tests (postgres)` and `Frontend audit + build`, and GitHub reports *no status at all* for a workflow a path filter skipped — so a filtered PR trigger would hang every PR that missed it, presenting as a stuck check rather than a config error.
 
-The agent's own docs live in `agent/README.md`. It previously lived in the `SourceBox-Sentinel` repo, moved here 2026-09-09 with its history intact.
+The agent is a separate **process group** rather than a thread in the web app because a run holds base64 frames for up to 270s, and the segment cache is already budgeted 384 MiB of the web machine's 1 GiB. Sharing one machine is how the OOM killer takes every org's streams down at once. Being a separate *app* was never what bought that isolation.
+
+Self-hosting still works the same way: `python -m app.sentinel_agent` runs standalone with `AGENT_MODE=poll` and a per-org `osa_` key, needing no inbound connectivity. Agent docs are in `docs/SENTINEL_AGENT.md`. The code came from the `SourceBox-Sentinel` repo (archived 2026-09-09).
 
 ## Build & Run
 
@@ -92,7 +94,7 @@ Backend config is loaded from environment variables (see `backend/.env.example`)
 **Sentinel AI agent (the gated agent feature):**
 - `SENTINEL_AGENT_KEY` — shared secret for the run-queue API (`X-Sentinel-Agent-Key`) and the HMAC on outbound `/wakeup` webhooks. Must match the agent's own `SENTINEL_AGENT_KEY`. ⚠️ **Multi-tenant** — its holder can drain every org's queue. Never give it to a customer; issue a scoped `osa_` key from **MCP → Sentinel Agent Keys** instead. Leaving it unset disables only the first-party agent path — scoped keys keep working, which is what a self-hosted Command Center wants.
 - `SENTINEL_AGENT_MCP_KEY` — the agent's bearer for the MCP tool surface. Distinct from the above on the first-party deployment; a scoped `osa_` key authenticates both.
-- `SENTINEL_AGENT_WEBHOOK_URL` — where Command Center fires the wakeup (`https://sourcebox-sentinel.fly.dev/wakeup`). Unset means no webhook is sent; a self-hosted agent instead polls, so this is only needed for the push topology.
+- `SENTINEL_AGENT_WEBHOOK_URL` — where Command Center fires the wakeup. Now an **internal** address: `http://sentinel-command.flycast:8080/wakeup`, the `agent` process group of this same app over 6PN. Hitting a Fly *service* is what auto-starts the stopped agent machine — a bare 6PN connection to a stopped machine just fails — so the webhook both wakes the worker and delivers the work. Unset means no webhook is sent; a self-hosted agent instead polls, so this is only needed for the push topology.
 - `SENTINEL_DISPATCH_ENABLED` — kill switch for creating new runs. Turn it off to stop dispatch without touching plans or licences.
 - `SENTINEL_GLOBAL_MONTHLY_RUN_CAP` — a fleet-wide ceiling on runs per month, on top of the per-plan caps. Backstop against a runaway loop billing you across every org at once.
 - `SENTINEL_LICENSE_SERVICE_URL` / `SENTINEL_SYNC_SERVICE_URL` — the sibling services. See `docs/runbooks/DISASTER_RECOVERY.md` for how they fit together.

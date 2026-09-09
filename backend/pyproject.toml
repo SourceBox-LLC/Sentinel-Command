@@ -34,6 +34,22 @@ dependencies = [
     "websockets>=16.1.1",
     "fastmcp>=3.4.7",
     "sentry-sdk[fastapi]>=2.68.0",
+    # ── Sentinel AI agent (app/sentinel_agent/) ──────────────────────
+    # The agent runs from this same image as the `agent` process group
+    # (see [processes] in fly.toml), so it resolves against this one
+    # dependency set rather than its own.
+    #
+    # Only `ollama` is genuinely new. Everything else the agent needs —
+    # mcp, starlette, pydantic-settings, httpx, uvicorn, sentry-sdk — is
+    # already here, directly or via fastapi/fastmcp, and the agent's
+    # declared ranges all admit the versions this project resolves.
+    #
+    # Notably `mcp`: the agent used to lock 2.2.0 while this project
+    # resolves 1.28.1 via fastmcp. That is not a conflict — the agent
+    # declares >=1.6.0,<3, and app/sentinel_agent/mcp_client.py imports
+    # the streamable-http client under BOTH the 1.x and 2.x symbol names
+    # (they were renamed), so it works either way.
+    "ollama>=0.5.0",
     # IANA timezone database for Python's stdlib `zoneinfo`.
     # Required on Windows (where the OS doesn't ship the database) and
     # on slim Linux containers (alpine + python:slim) where /usr/share/

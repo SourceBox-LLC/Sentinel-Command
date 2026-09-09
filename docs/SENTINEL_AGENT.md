@@ -136,7 +136,7 @@ fly deploy
 Confirm:
 
 ```bash
-curl https://sourcebox-sentinel.fly.dev/health
+fly ssh console -a sentinel-command -s --process-group agent -C "curl -s localhost:8080/health"
 ```
 
 ### CI/CD (GitHub Actions)
@@ -146,7 +146,7 @@ enable on a fresh checkout:
 
 ```bash
 # Generate a deploy-scoped Fly token for this app:
-flyctl tokens create deploy --app sourcebox-sentinel
+# Deploys come from Command Center's own workflow now — no separate token.
 
 # Add it to the GitHub repo as a secret named FLY_API_TOKEN
 # (Settings → Secrets and variables → Actions → New repository secret)
@@ -163,7 +163,7 @@ On the Command Center side, set the matching pair of secrets:
 ```bash
 fly secrets set SENTINEL_AGENT_KEY=<same value as agent>
 fly secrets set SENTINEL_AGENT_MCP_KEY=<same value as agent>
-fly secrets set SENTINEL_AGENT_WEBHOOK_URL=https://sourcebox-sentinel.fly.dev/wakeup
+fly secrets set SENTINEL_AGENT_WEBHOOK_URL=http://sentinel-command.flycast:8080/wakeup -a sentinel-command
 fly deploy
 ```
 

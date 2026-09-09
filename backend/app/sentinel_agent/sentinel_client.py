@@ -58,7 +58,7 @@ class SentinelClient:
             headers=self._headers,
         )
 
-    async def __aenter__(self) -> "SentinelClient":
+    async def __aenter__(self) -> SentinelClient:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:

@@ -27,14 +27,13 @@ Design choices that matter:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Any
 
-from app.llm import LLMProvider
-from app.mcp_client import MCPClientManager
-from app.prompts import initial_user_message, system_prompt_for_trigger
+from app.sentinel_agent.llm import LLMProvider
+from app.sentinel_agent.mcp_client import MCPClientManager
+from app.sentinel_agent.prompts import initial_user_message, system_prompt_for_trigger
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +89,7 @@ class Agent:
         for iteration in range(self.max_iterations):
             try:
                 response_msg = await self.llm.chat(messages, tools=tools)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "agent: LLM call timed out at iter %d (%.0fs)",
                     iteration, self.llm.timeout_seconds,

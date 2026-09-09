@@ -23,10 +23,7 @@ source it is supposed to be pinning, which is the bug, not the test.
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -34,33 +31,13 @@ import pytest
 from pydantic import ValidationError
 
 from app.api.sentinel import _VALID_TERMINAL_OUTCOMES, RunCompleteBody
+from app.sentinel_agent.sentinel_client import SentinelClient
 
-# ── Load the agent's client without colliding on the package name ────
-#
-# Both projects have a top-level package called `app`, so putting agent/
-# on sys.path would make `import app` ambiguous and break every other
-# test in this suite. Loading the module by file path under its own name
-# sidesteps that entirely. It works because sentinel_client.py imports
-# only stdlib + httpx — no intra-package imports to resolve. If that ever
-# stops being true, this import fails loudly rather than testing a stub.
-_AGENT_CLIENT_PATH = (
-    Path(__file__).resolve().parents[2] / "agent" / "app" / "sentinel_client.py"
-)
-
-
-def _load_agent_client():
-    spec = importlib.util.spec_from_file_location(
-        "agent_sentinel_client", _AGENT_CLIENT_PATH
-    )
-    assert spec and spec.loader, f"cannot load agent client from {_AGENT_CLIENT_PATH}"
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["agent_sentinel_client"] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-agent_sentinel_client = _load_agent_client()
-SentinelClient = agent_sentinel_client.SentinelClient
+# Both sides are now one package, so this is a plain import. It used to
+# be an importlib load-by-path: the agent lived in its own project whose
+# top-level package was also called `app`, and putting it on sys.path
+# would have made `import app` ambiguous for every other test here. That
+# collision is gone with the agent under app/sentinel_agent/.
 
 
 async def _capture_complete_body(**kwargs: Any) -> dict:

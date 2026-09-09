@@ -5,13 +5,20 @@ from contextlib import AsyncExitStack
 
 from mcp import ClientSession
 from mcp.client.sse import sse_client
+
 # The MCP SDK renamed this symbol (streamablehttp_client ->
-# streamable_http_client). requirements.txt pins `mcp>=1.6.0` with no
-# upper bound, so a rebuild silently picks up whichever the current
-# release uses — and this import is at module scope, so getting it wrong
-# is a hard crash on boot, not a degraded feature. Accept both names so a
-# rebuild is not a coin flip. Verified 2026-09-07 against the version a
-# fresh build resolves to.
+# streamable_http_client). This import is at module scope, so getting it
+# wrong is a hard crash on boot, not a degraded feature — accept both
+# names.
+#
+# This shim is now load-bearing for more than rebuild safety: it is what
+# lets the agent share Command Center's single dependency set. The agent
+# declares `mcp>=1.6.0,<3` while the project resolves 1.28.1 via fastmcp,
+# and Fly gives one image per app (process groups differ only by
+# command), so there is no option to run a different version here.
+#
+# Verified 2026-09-09 against mcp 1.28.1, which happens to export BOTH
+# names; a live /mcp session discovered all 23 tools.
 try:
     from mcp.client.streamable_http import streamablehttp_client
 except ImportError:  # newer SDK
@@ -152,7 +159,7 @@ class MCPClientManager:
                     image_parts.append(content.data)
             text = "\n".join(text_parts) if text_parts else "OK (no output)"
             return {"text": text, "images": image_parts}
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "Tool call timed out after %.0fs: %s",
                 self.tool_timeout_seconds, tool_name,
