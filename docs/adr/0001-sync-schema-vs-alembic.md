@@ -72,7 +72,7 @@ The companion function `sanitize_existing_codecs()` is a one-shot **data** migra
 - Tests run against the same code path as production (`Base.metadata.create_all` + `sync_schema`), so a column being missing in one place but not another is impossible.
 
 **Negative:**
-- **Renames, type changes, and drops still need hand-rolled migrations.** We have one in flight: the `webhook_endpoints` table (orphaned by commit `d4dd2db`'s outbound-webhook revert) doesn't go away just because the model went away. We add an explicit `drop_orphan_tables()` sweep when we need it; that's the same effort as one Alembic revision.
+- **Renames, type changes, and drops still need hand-rolled migrations.** `sync_schema` only ever adds; a dropped model leaves its table behind. This bit once — `webhook_endpoints`, orphaned by commit `d4dd2db`'s outbound-webhook revert — and was resolved as a side effect of the 2026-09-07 Postgres migration, which rebuilt the schema from `Base.metadata` and so simply never recreated a table with no model. Verified: the live database has 21 tables and all of them are modelled. That escape hatch is not repeatable, though. The next orphan needs an explicit `drop_orphan_tables()` sweep, which is the same effort as one Alembic revision.
 - No down migration. If a deploy ships a bad column we have to roll the deploy itself, not the migration.
 - No native indexes or unique constraints via the sweep. Adding one of those means writing the SQL by hand.
 
