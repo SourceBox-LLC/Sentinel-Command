@@ -1,9 +1,25 @@
 name: Test & Deploy
 
+# This repo holds two independently-deployed services: Command Center
+# (this workflow → the `sentinel-command` Fly app) and the Sentinel AI
+# agent (.github/workflows/agent.yml → the `sourcebox-sentinel` Fly app).
+# The paths-ignore below is what keeps them independent — without it, an
+# agent-only change would rebuild and redeploy Command Center.
+#
+# CAUTION if you ever add required status checks to `master`: a workflow
+# skipped by a path filter reports NOTHING, so a required "Backend tests"
+# check would leave every agent-only PR hanging forever. Today the branch
+# has no required checks, which is what makes these filters safe. If you
+# add them, they need a companion always-runs job that reports the same
+# check name — not a path filter.
 on:
   push:
     branches:
       - master
+    paths-ignore:
+      - 'agent/**'
+      - 'docs/**'
+      - '**/*.md'
   # Also validate PRs (incl. Dependabot bumps) BEFORE merge. The deploy
   # job below is gated to push-only, so a PR runs tests/audits/build but
   # never deploys. This is what makes auto-merging dependency PRs safe —
@@ -11,6 +27,10 @@ on:
   pull_request:
     branches:
       - master
+    paths-ignore:
+      - 'agent/**'
+      - 'docs/**'
+      - '**/*.md'
 
 jobs:
   test:
