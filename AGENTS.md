@@ -67,6 +67,17 @@ Backend config is loaded from environment variables (see `backend/.env.example`)
 - `INACTIVE_CAMERA_CLEANUP_HOURS` — free caches for cameras offline this long (default 24)
 - `LOG_RETENTION_DAYS` — stream + MCP + audit + motion + notification + email log retention (default 90; per-tier override via plan slug — Free 30 / Pro 90 / Pro Plus 365)
 - `OFFLINE_SWEEP_INTERVAL_SECONDS` — how often to mark stale rows offline (default 30)
+**Sentinel AI agent (the gated agent feature):**
+- `SENTINEL_AGENT_KEY` — shared secret for the run-queue API (`X-Sentinel-Agent-Key`) and the HMAC on outbound `/wakeup` webhooks. Must match the agent's own `SENTINEL_AGENT_KEY`. ⚠️ **Multi-tenant** — its holder can drain every org's queue. Never give it to a customer; issue a scoped `osa_` key from **MCP → Sentinel Agent Keys** instead. Leaving it unset disables only the first-party agent path — scoped keys keep working, which is what a self-hosted Command Center wants.
+- `SENTINEL_AGENT_MCP_KEY` — the agent's bearer for the MCP tool surface. Distinct from the above on the first-party deployment; a scoped `osa_` key authenticates both.
+- `SENTINEL_AGENT_WEBHOOK_URL` — where Command Center fires the wakeup (`https://sourcebox-sentinel.fly.dev/wakeup`). Unset means no webhook is sent; a self-hosted agent instead polls, so this is only needed for the push topology.
+- `SENTINEL_DISPATCH_ENABLED` — kill switch for creating new runs. Turn it off to stop dispatch without touching plans or licences.
+- `SENTINEL_GLOBAL_MONTHLY_RUN_CAP` — a fleet-wide ceiling on runs per month, on top of the per-plan caps. Backstop against a runaway loop billing you across every org at once.
+- `SENTINEL_LICENSE_SERVICE_URL` / `SENTINEL_SYNC_SERVICE_URL` — the sibling services. See `docs/runbooks/DISASTER_RECOVERY.md` for how they fit together.
+
+**Node versions:**
+- `MIN_SUPPORTED_NODE_VERSION` — CameraNodes below this are refused. `LATEST_NODE_VERSION` (above) is the cold-boot fallback for the "update available" check.
+
 - `SENTRY_DSN` — error tracking. In production this is managed by the Fly Sentry extension (`fly ext sentry create -a sentinel-command`) which provisions a sponsored Team plan and auto-injects the secret; you rarely set this by hand. `app/core/sentry.py::init_sentry()` is a no-op when the DSN is absent, so local dev needs no extra config. Dashboard: `fly ext sentry dashboard -a sentinel-command`.
 
 **Email (Resend, optional):**
