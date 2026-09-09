@@ -17,8 +17,32 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # ── LLM (Ollama Cloud) ───────────────────────────────────────────
-    ollama_api_key: str
+    # ── LLM (via LiteLLM) ────────────────────────────────────────────
+    # LLM_MODEL is a LiteLLM model string and is the ONLY setting needed
+    # to change provider:
+    #
+    #   ollama_chat/qwen3.5:cloud        Ollama Cloud (today's default)
+    #   anthropic/claude-sonnet-5        bring-your-own-key
+    #   openai/gpt-5.1
+    #   openai/sentinel-1                a future SourceBox model behind
+    #                                    an OpenAI-compatible endpoint
+    #
+    # Leave it unset and the OLLAMA_* settings below are used instead —
+    # which is what keeps every existing deployment working untouched.
+    #
+    # Whatever you point this at MUST support tool calling and image
+    # input. The agent loop is built on both: it fans out tool calls and
+    # feeds camera frames back in. A text-only model does not degrade
+    # here, it fails every run.
+    llm_model: str = ""
+    llm_api_key: str = ""
+    llm_api_base: str = ""
+
+    # ── LLM (Ollama Cloud) — the default provider ────────────────────
+    # No longer required: a deployment can configure LLM_* instead. The
+    # validator below still refuses to boot with no credential at all,
+    # which is what this field's missing-by-default used to enforce.
+    ollama_api_key: str = ""
     ollama_host: str = "https://ollama.com"
     # Vision-capable + tool-calling.  qwen3.5:cloud has 256K context,
     # which matters for the multi-turn tool-use loop where the
@@ -146,6 +170,54 @@ class Settings(BaseSettings):
     # default is "forbid", which would 500 on every wakeup the moment
     # someone left an old setting around.
     model_config = {"env_file": ".env", "extra": "ignore"}
+
+    # ── Resolved LLM settings ────────────────────────────────────────
+    # Explicit LLM_* wins; otherwise fall back to the OLLAMA_* trio so an
+    # existing deployment keeps working with no env changes at all. This
+    # is the whole backward-compatibility story for the LiteLLM move.
+
+    @property
+    def resolved_llm_model(self) -> str:
+        if self.llm_model:
+            return self.llm_model
+        # `ollama_chat/` (not `ollama/`) — the chat endpoint is the one
+        # that supports tool calling, which the agent loop requires.
+        return f"ollama_chat/{self.ollama_model}"
+
+    @property
+    def resolved_llm_api_key(self) -> str:
+        return self.llm_api_key or self.ollama_api_key
+
+    @property
+    def resolved_llm_api_base(self) -> str:
+        if self.llm_api_base:
+            return self.llm_api_base
+        # Only meaningful for the Ollama fallback; a hosted provider
+        # resolves its own endpoint from the model string.
+        return self.ollama_host if not self.llm_model else ""
+
+    @model_validator(mode="after")
+    def _require_an_llm_credential(self):
+        """Fail at boot, not mid-run, when no credential is configured.
+
+        `ollama_api_key` used to be a required field, so a missing key
+        was a startup ValidationError. Making it optional (so LLM_* can
+        be used instead) would otherwise have turned that into a run
+        that fetches work, calls the model, and errors — burning a
+        wakeup and stranding the run.
+
+        Skipped when api_base points somewhere local: a self-hosted
+        Ollama on the same box legitimately needs no key.
+        """
+        if self.resolved_llm_api_key:
+            return self
+        base = self.resolved_llm_api_base
+        if any(h in base for h in ("localhost", "127.0.0.1", "host.docker.internal")):
+            return self
+        raise ValueError(
+            "No LLM credential configured — set LLM_API_KEY (or "
+            "OLLAMA_API_KEY). The agent cannot run without one."
+        )
 
     @model_validator(mode="after")
     def _default_mcp_key_to_agent_key(self):
