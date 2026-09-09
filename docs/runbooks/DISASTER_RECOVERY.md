@@ -281,6 +281,39 @@ somewhere the original roles don't exist.
    volume now only holds HLS segment working files and `/data/backups`,
    so it starts empty without data loss.
 
+⚠️ **Losing the cluster loses all three services, not just this one.**
+Everything above restores `sentinel_command`. `sentinel_license` and
+`sentinel_sync` live on the same cluster and go down with it, and this
+runbook used to say nothing about them.
+
+| Database | Portable dump | Where it lives | Restore |
+|---|---|---|---|
+| `sentinel_command` | ✅ daily, `/data/backups` | Command Center's volume | `restore_db.sh` above |
+| `sentinel_license` | ✅ daily, `/data/backups` | License Service's volume | that repo's `restore_db.sh` |
+| `sentinel_sync` | ❌ none — snapshots only | — | snapshot restore (below) |
+
+**Why Sync has no dump job, deliberately.** The other two write their
+dump to a Fly volume. `sentinel-sync` has no volume, and it runs **two
+machines** — Fly volumes are single-attach, so giving it one would pin
+it to a single machine. That trades away real redundancy to gain a
+second copy of data the cluster snapshot already holds. Not worth it;
+don't "fix" this in a later pass without re-reading this paragraph.
+
+**Restoring `sentinel_sync` therefore means a snapshot restore**, which
+is cluster-level and brings back all three databases at once:
+
+```bash
+fly volumes list -a sentinel-postgres
+fly volumes snapshots list <volume-id> -a sentinel-postgres
+# Create a new volume from the snapshot, attach it to a fresh
+# Postgres app, then repoint each service's DATABASE_URL secret.
+```
+
+Sync is also the least painful of the three to lose: it is a **mirror**.
+The self-hosted customer's own database is the source of truth, so a
+lost `sentinel_sync` costs them their cloud copy, not their data, and
+refills as their installs push again.
+
 ### If only the machine/volume is gone
 
 The database is unaffected. Recreate the volume and deploy; the app
