@@ -12,7 +12,7 @@ single shared MCP secret (``OPENSENTRY_MCP_AGENT_KEY``) and tells
 the MCP server which org each tool call is on behalf of.
 """
 
-from pydantic import field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -80,7 +80,25 @@ class Settings(BaseSettings):
     # The override header is still sent and is accepted as long as it
     # names the key's own org.
     opensentry_mcp_url: str = ""  # derived from opensentry_api_base if blank
-    opensentry_mcp_agent_key: str = ""
+    # Reads OPENSENTRY_MCP_AGENT_KEY first, then Command Center's own
+    # SENTINEL_AGENT_MCP_KEY. The second alias exists because the agent
+    # now runs as a process group of the sentinel-command app and shares
+    # its environment — without it the hosted agent would need a
+    # duplicate copy of a secret that is already right there, under a
+    # different name.
+    #
+    # This matters more than tidiness: the first-party deployment uses
+    # two genuinely DIFFERENT shared secrets (run-queue vs MCP), so the
+    # self-hosted fallback below would quietly hand the MCP surface the
+    # wrong key — an agent that fetches work and then fails every tool
+    # call, which is exactly the failure that fallback was written to
+    # prevent for self-hosters.
+    opensentry_mcp_agent_key: str = Field(
+        "",
+        validation_alias=AliasChoices(
+            "OPENSENTRY_MCP_AGENT_KEY", "SENTINEL_AGENT_MCP_KEY"
+        ),
+    )
 
     # ── Webhook signature behaviour ──────────────────────────────────
     # When False, /wakeup skips HMAC verification — useful for local
