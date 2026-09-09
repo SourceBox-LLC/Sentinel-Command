@@ -17,9 +17,15 @@ import HelpTooltip from "../components/HelpTooltip.jsx"
 // toast and plan tick — re-invoked Intl.supportedValuesOf and re-diffed
 // the whole dropdown.  The zone list cannot change without a browser
 // update, so compute it exactly once.
+// "UTC" is prepended because Intl.supportedValuesOf("timeZone") does NOT
+// include it — the 418-entry IANA list has Etc/* but no bare "UTC". The
+// backend defaults a new org to exactly "UTC", so <select value="UTC">
+// matched no option and the browser silently fell back to rendering the
+// FIRST one: every new org saw its timezone as "Africa/Abidjan" while
+// the stored value was UTC.
 const TIMEZONE_OPTIONS =
   typeof Intl !== "undefined" && Intl.supportedValuesOf
-    ? Intl.supportedValuesOf("timeZone")
+    ? ["UTC", ...Intl.supportedValuesOf("timeZone").filter((z) => z !== "UTC")]
     : [
         "UTC",
         "America/Los_Angeles",
@@ -962,6 +968,51 @@ function SettingsPage() {
                 disabled={notificationsSaving}
                 aria-label="Toggle motion detection notifications"
                 aria-pressed={notifications.motion_notifications}
+              >
+                <span className="toggle-knob" />
+              </button>
+            </label>
+
+            {/* These two round out the set the backend has always
+                returned from GET /api/settings and accepted on POST
+                /api/settings/notifications. Only the motion toggle was
+                ever rendered, so an operator drowning in camera- or
+                node-transition bell notifications had no way to turn
+                them off from the UI — the setting existed, the control
+                did not. */}
+            <label className="toggle-row">
+              <div className="toggle-info">
+                <span className="toggle-label">Camera online / offline</span>
+                <span className="toggle-desc">
+                  Alert when a camera stops heartbeating for 90s — and when it comes back
+                </span>
+              </div>
+              <button
+                type="button"
+                className={`toggle-switch ${notifications.camera_transition_notifications ? "active" : ""}`}
+                onClick={() => handleNotificationToggle("camera_transition_notifications")}
+                disabled={notificationsSaving}
+                aria-label="Toggle camera online/offline notifications"
+                aria-pressed={notifications.camera_transition_notifications}
+              >
+                <span className="toggle-knob" />
+              </button>
+            </label>
+
+            <label className="toggle-row">
+              <div className="toggle-info">
+                <span className="toggle-label">CameraNode online / offline</span>
+                <span className="toggle-desc">
+                  Alert when a whole node loses uplink — every camera on it goes dark at once
+                </span>
+              </div>
+              <button
+                type="button"
+                className={`toggle-switch ${notifications.node_transition_notifications ? "active" : ""}`}
+                onClick={() => handleNotificationToggle("node_transition_notifications")}
+                disabled={notificationsSaving}
+                aria-label="Toggle CameraNode online/offline notifications"
+                aria-pressed={notifications.node_transition_notifications}
               >
                 <span className="toggle-knob" />
               </button>

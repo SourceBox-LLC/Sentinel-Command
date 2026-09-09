@@ -256,8 +256,14 @@ function DashboardPage() {
         c.status === "error")
     ).length
     const total = cameraList.length
-    const systemOk = total > 0
-    return { active, total, systemOk }
+    // Three states, not two. `total === 0` is a BRAND-NEW install that
+    // has not added a camera yet — reporting "Offline" in amber told
+    // every first-time operator something was broken when nothing was,
+    // at exactly the moment they are deciding whether to trust this.
+    // "Offline" now means what it says: cameras exist and none is up.
+    const systemOk = total > 0 && active > 0
+    const systemEmpty = total === 0
+    return { active, total, systemOk, systemEmpty }
   }
 
   if (!organization) {
@@ -351,8 +357,12 @@ function DashboardPage() {
         </div>
         <div className="stat-card">
           <div className="stat-label">System Status</div>
-          <div className={`stat-value ${stats.systemOk ? "green" : "amber"}`}>
-            {stats.systemOk ? "Ready" : "Offline"}
+          <div
+            className={`stat-value ${
+              stats.systemEmpty ? "" : stats.systemOk ? "green" : "amber"
+            }`}
+          >
+            {stats.systemEmpty ? "No cameras yet" : stats.systemOk ? "Ready" : "Offline"}
           </div>
         </div>
       </div>

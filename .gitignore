@@ -10,7 +10,16 @@ wheels/
 .venv
 
 # Environment files
+# Only bare `.env` was ignored, which missed every variant Vite and
+# python-dotenv actually tell you to use. `.env.local` is the file Vite's
+# own docs designate for secrets ("never commit this"), and AGENTS.md
+# instructs operators to create env files for the self-hosted setup — so
+# the one file most likely to hold a live APP_SECRET_KEY or admin
+# password hash was the one git would have happily committed.
 .env
+.env.*
+!.env.example
+!.env.*.example
 
 # IDE
 .idea/

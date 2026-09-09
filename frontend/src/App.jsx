@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect } from "react"
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom"
-import { useAuth, useClerk, useOrganization, CreateOrganization } from "./auth/index.jsx"
+import { useAuth, useClerk, useOrganization, CreateOrganization, IS_LOCAL_AUTH } from "./auth/index.jsx"
 import Layout from "./components/Layout.jsx"
 import LoadingSpinner from "./components/LoadingSpinner.jsx"
 import ErrorBoundary from "./components/ErrorBoundary.jsx"
@@ -94,8 +94,17 @@ const STANDALONE_SITE = "https://sentinel-command.com"
 
 function RedirectToStandalone() {
   useEffect(() => {
+    // NEVER bounce a self-hosted install to our marketing site. An
+    // operator running Sentinel on their own box and visiting
+    // http://their-host/ was being sent to sentinel-command.com, so the
+    // root of their OWN deployment was unusable — a bad first
+    // impression at exactly the moment trust is being established.
+    if (IS_LOCAL_AUTH) return
     window.location.replace(STANDALONE_SITE)
   }, [])
+
+  // Self-hosted: send them where they actually wanted to go.
+  if (IS_LOCAL_AUTH) return <Navigate to="/dashboard" replace />
   return (
     <div className="loading-container">
       <LoadingSpinner />
