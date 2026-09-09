@@ -148,6 +148,26 @@ class Config:
     MIN_SUPPORTED_NODE_VERSION: str = os.getenv("MIN_SUPPORTED_NODE_VERSION", "0.1.0")
     LATEST_NODE_VERSION: str = os.getenv("LATEST_NODE_VERSION", "0.1.76")
 
+    # ── API schema exposure ──────────────────────────────────────────
+    # FastAPI's /api-docs, /api-redoc and /api/openapi.json were served
+    # publicly in production, handing anyone the complete API surface:
+    # 85 routes, 20 request/response schemas, and the shape of every
+    # admin, webhook, MCP and agent-key endpoint.  That is not a
+    # vulnerability on its own — every sensitive route still requires
+    # auth, verified — but it is a free map of the attack surface, which
+    # is a poor default for a security product.
+    #
+    # Default is derived rather than hard-coded so neither environment
+    # needs configuring: FLY_APP_NAME is injected by Fly on every
+    # machine, so "running on Fly" means production and docs default
+    # OFF, while a local `uvicorn` run has no such variable and keeps
+    # them ON.  Set API_DOCS_ENABLED explicitly to override either way —
+    # e.g. to turn them on temporarily while debugging a deploy.
+    API_DOCS_ENABLED: bool = os.getenv(
+        "API_DOCS_ENABLED",
+        "false" if os.getenv("FLY_APP_NAME") else "true",
+    ).lower() in ("1", "true", "yes")
+
     # ── Email notifications (Resend) ─────────────────────────────────
     # Resend transactional email integration for operator-critical
     # notifications (camera offline, node offline, disk critical, new
