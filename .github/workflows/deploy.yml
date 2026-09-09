@@ -18,6 +18,7 @@ on:
       - master
     paths-ignore:
       - 'agent/**'
+      - '.github/workflows/agent.yml'
       - 'docs/**'
       - '**/*.md'
   # Also validate PRs (incl. Dependabot bumps) BEFORE merge. The deploy
@@ -29,6 +30,7 @@ on:
       - master
     paths-ignore:
       - 'agent/**'
+      - '.github/workflows/agent.yml'
       - 'docs/**'
       - '**/*.md'
 
