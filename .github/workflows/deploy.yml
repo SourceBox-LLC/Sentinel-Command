@@ -327,8 +327,14 @@ jobs:
           # single-attachment volume: rolling tries to stand up a parallel
           # machine and errors on the attachment slot. The agent group has
           # no volume, but strategy is app-wide.
+          # --ha=false because Fly provisions TWO machines by default for
+          # a newly-declared process group. For `agent` that is actively
+          # wrong: two workers drain the same run queue, and POST /start
+          # is idempotent rather than exclusive, so both would claim the
+          # same run and we would pay for the LLM call twice. The first
+          # deploy of the agent group did exactly this.
           echo "Releasing $IMAGE to sentinel-command"
-          flyctl deploy --image "$IMAGE" --strategy immediate --yes -a sentinel-command
+          flyctl deploy --image "$IMAGE" --strategy immediate --ha=false --yes -a sentinel-command
 
           echo "--- process groups after release ---"
           flyctl machines list -a sentinel-command --json \
