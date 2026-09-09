@@ -128,7 +128,11 @@ class MCPClientManager:
     async def call_tool(self, tool_name: str, arguments: dict) -> dict:
         """Execute a tool and return {text: str, images: list[str]}.
 
-        images are raw base64 strings (no data URI prefix) for Ollama.
+        images are raw base64 strings (no data URI prefix). Kept
+        provider-neutral on purpose: llm.image_message() applies whatever
+        wrapping the configured model wants (currently a `data:` URI in
+        an OpenAI-style image_url part), so switching providers never
+        reaches back into the MCP layer.
         """
         if tool_name not in self._tools:
             return {

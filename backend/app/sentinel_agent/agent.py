@@ -31,7 +31,15 @@ import json
 import logging
 from typing import Any
 
-from app.sentinel_agent.llm import LLMProvider
+from app.sentinel_agent.llm import (
+    LLMProvider,
+    assistant_message,
+    has_images,
+    image_message,
+    prune_images,
+    tool_call_arguments,
+    tool_result_message,
+)
 from app.sentinel_agent.mcp_client import MCPClientManager
 from app.sentinel_agent.prompts import initial_user_message, system_prompt_for_trigger
 
@@ -110,7 +118,7 @@ class Agent:
                     incident_id, severity, f"LLM call failed: {exc}", tool_trace,
                 )
 
-            messages.append(response_msg)
+            messages.append(assistant_message(response_msg))
 
             # Terminal: model responded without calling a tool.
             if not response_msg.tool_calls:
@@ -144,11 +152,12 @@ class Agent:
             # any of it yet).
             batch_start = len(messages)
             for tc in response_msg.tool_calls:
-                args = (
-                    tc.function.arguments
-                    if isinstance(tc.function.arguments, dict)
-                    else {}
-                )
+                # OpenAI-shaped providers hand arguments back as a JSON
+                # string, Ollama as a dict; the helper normalises both and
+                # degrades to {} on malformed JSON rather than killing the
+                # run — the tool then fails its own validation with a
+                # message the model can react to.
+                args = tool_call_arguments(tc)
                 logger.info("agent: tool %s(%s)", tc.function.name, args)
 
                 result = await self.mcp.call_tool(tc.function.name, args)
@@ -184,17 +193,15 @@ class Agent:
                         incident_id = parsed_id
 
                 # Feed the tool result back to the LLM.
-                messages.append({
-                    "role": "tool",
-                    "tool_name": tc.function.name,
-                    "content": result.get("text", ""),
-                })
+                messages.append(
+                    tool_result_message(tc, result.get("text", ""))
+                )
                 if result.get("images"):
-                    messages.append({
-                        "role": "user",
-                        "content": f"[Visual output from {tc.function.name}]",
-                        "images": result["images"],
-                    })
+                    # Separate user message: an OpenAI-shaped `tool`
+                    # message cannot carry an image at all.
+                    messages.append(
+                        image_message(tc.function.name, result["images"])
+                    )
 
             # Image pruning: every base64 frame appended above is
             # otherwise RE-SENT on every subsequent LLM call — O(N²)
@@ -208,13 +215,9 @@ class Agent:
             # and pruning to "newest only" here would make the model
             # assess cameras whose frames it never saw.
             for stale in messages[:batch_start]:
-                if not (isinstance(stale, dict) and stale.get("images")):
+                if not has_images(stale):
                     continue
-                stale.pop("images", None)
-                stale["content"] = (
-                    f"{stale.get('content', '')} [frames pruned — superseded "
-                    "by newer visual output]"
-                )
+                prune_images(stale)
 
         # Iteration budget exhausted.
         return _truncated_result(
