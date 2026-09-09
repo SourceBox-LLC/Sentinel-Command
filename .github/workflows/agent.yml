@@ -5,11 +5,15 @@ name: Agent
 # own lockfile. It shares this repo so the two move under one review and
 # one CI, not so they ship together.
 #
-# `paths` is the other half of the split: this runs only for agent
-# changes, and .github/workflows/deploy.yml carries the matching
-# paths-ignore so a Command Center change doesn't redeploy the agent.
-# See the CAUTION about required status checks in that file before
-# adding any.
+# `paths` on the PUSH trigger is the other half of the split: a push
+# deploys the agent only for agent changes, and deploy.yml carries the
+# matching paths-ignore so a Command Center change doesn't redeploy the
+# agent.
+#
+# The pull_request trigger is deliberately NOT filtered — "Agent checks"
+# is a required status check on master, and GitHub reports no status for
+# a path-skipped workflow, which would hang every non-agent PR. See the
+# longer explanation at the top of deploy.yml.
 #
 # Required secret:
 #   FLY_API_TOKEN_AGENT — a deploy token scoped to `sourcebox-sentinel`.
@@ -27,12 +31,16 @@ on:
       - '.github/workflows/agent.yml'
   # Validate agent PRs (incl. Dependabot bumps against agent/) before
   # merge. The deploy job is push-only, so a PR checks but never ships.
+  #
+  # DELIBERATELY UNFILTERED, unlike the push trigger above: "Agent checks"
+  # is a required status check on master, and a workflow skipped by a path
+  # filter reports no status at all — so a filtered PR trigger would hang
+  # every PR that doesn't touch agent/. Cheap to always run (compile +
+  # audit, well under a minute); the filter that matters is on push, where
+  # it stops an unrelated change from redeploying the agent.
   pull_request:
     branches:
       - master
-    paths:
-      - 'agent/**'
-      - '.github/workflows/agent.yml'
   workflow_dispatch:  # manual re-deploy from the Actions UI
 
 defaults:

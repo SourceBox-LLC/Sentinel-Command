@@ -6,12 +6,21 @@ name: Test & Deploy
 # The paths-ignore below is what keeps them independent — without it, an
 # agent-only change would rebuild and redeploy Command Center.
 #
-# CAUTION if you ever add required status checks to `master`: a workflow
-# skipped by a path filter reports NOTHING, so a required "Backend tests"
-# check would leave every agent-only PR hanging forever. Today the branch
-# has no required checks, which is what makes these filters safe. If you
-# add them, they need a companion always-runs job that reports the same
-# check name — not a path filter.
+# Path filtering is applied to `push` ONLY, never to `pull_request`, and
+# that asymmetry is load-bearing. `master` requires these status checks:
+#
+#   Backend tests (sqlite) · Backend tests (postgres) ·
+#   Frontend audit + build · Agent checks
+#
+# GitHub reports NO status for a workflow that a path filter skipped —
+# not "skipped", nothing at all — so a required check on a path-filtered
+# PR trigger blocks the PR forever. Hence: PRs always run everything,
+# pushes stay filtered. Deploys are the thing filtering exists to avoid,
+# and they only happen on push.
+#
+# If you add a path filter to the pull_request trigger below, you will
+# hang every PR that misses it, and the failure looks like a stuck check
+# rather than a config error.
 on:
   push:
     branches:
@@ -26,22 +35,33 @@ on:
   # in dependabot-auto-merge.yml. Without a manual trigger the only way
   # to ship those commits is to push an unrelated one on top.
   workflow_dispatch: {}
-  # Also validate PRs (incl. Dependabot bumps) BEFORE merge. The deploy
-  # job below is gated to push-only, so a PR runs tests/audits/build but
+  # Validate PRs (incl. Dependabot bumps) BEFORE merge. The deploy job
+  # below is gated to push-only, so a PR runs tests/audits/build but
   # never deploys. This is what makes auto-merging dependency PRs safe —
   # see .github/workflows/dependabot-auto-merge.yml.
+  #
+  # DELIBERATELY UNFILTERED, unlike the push trigger above. These jobs are
+  # required status checks on master, and GitHub reports NO status for a
+  # workflow skipped by a path filter — so a filtered PR trigger would
+  # leave every docs-only or agent-only PR waiting forever on a check
+  # that is never going to arrive.
+  #
+  # The cost is a few wasted CI-minutes on PRs that touch nothing this
+  # workflow builds. The thing path filtering actually exists to prevent
+  # is redundant *deploys*, and deploys only happen on push, where the
+  # filter is still in force.
   pull_request:
     branches:
       - master
-    paths-ignore:
-      - 'agent/**'
-      - '.github/workflows/agent.yml'
-      - 'docs/**'
-      - '**/*.md'
 
 jobs:
   test:
-    name: Backend tests
+    # Explicit name so the branch-protection check name is STABLE.
+    # Without it GitHub derives the name from the whole matrix entry —
+    # "Backend tests (postgres, postgresql+psycopg://sentinel:sentinel@
+    # localhost:5432/sentinel_test)" — and editing that URL would rename
+    # the check, silently detaching it from branch protection.
+    name: Backend tests (${{ matrix.dialect }})
     runs-on: ubuntu-latest
     # One codebase, two databases: hosted Command Center runs Postgres,
     # self-hosted runs SQLite. Testing only one of them means shipping
