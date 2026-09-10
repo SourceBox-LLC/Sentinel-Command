@@ -5,6 +5,7 @@ import { getStreamLogs, getStreamStats, getCameras, getMcpLogs, getMcpLogStats, 
 import { useToasts } from "../hooks/useToasts.jsx"
 import { usePlanInfo } from "../hooks/usePlanInfo.jsx"
 import OrgAuditLogPanel from "../components/OrgAuditLogPanel.jsx"
+import MotionEventsPanel from "../components/MotionEventsPanel.jsx"
 import AdminKpiStrip from "../components/AdminKpiStrip.jsx"
 import AdminTabs from "../components/AdminTabs.jsx"
 import { BarList, DailyActivityChart } from "../components/AdminCharts.jsx"
@@ -604,6 +605,8 @@ function AdminPage() {
       </>)}
 
       {activeTab === "audit" && <OrgAuditLogPanel />}
+
+      {activeTab === "motion" && <MotionEventsPanel />}
 
       {activeTab === "mcp" && (<>
       <div className="audit-section">

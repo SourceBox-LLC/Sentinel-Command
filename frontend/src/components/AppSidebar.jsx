@@ -137,13 +137,20 @@ function AppSidebar({ open, onClose }) {
 
   let usageUsed = 0
   let usageLimit = 0
+  let usageUnlimited = false
   let usagePct = 0
   let usageState = "ok"
   if (showUsage) {
     usageUsed = planInfo.usage.viewer_hours_used || 0
     usageLimit = planInfo.usage.viewer_hours_limit
-    usagePct = usageLimit > 0 ? Math.min(100, (usageUsed / usageLimit) * 100) : 0
-    usageState = usagePct >= 100 ? "full" : usagePct >= 80 ? "warn" : "ok"
+    // self_host encodes "unlimited" as the sentinel 999999 (see
+    // plans.py), the same way cameras/nodes use 999 — and those already
+    // render as ∞ a few lines below. Viewer-hours did not, so a
+    // self-hosted sidebar read "0.0 / 999999h" while the Settings page
+    // said "Unlimited" for the same plan.
+    usageUnlimited = usageLimit >= 999999
+    usagePct = !usageUnlimited && usageLimit > 0 ? Math.min(100, (usageUsed / usageLimit) * 100) : 0
+    usageState = usageUnlimited ? "ok" : usagePct >= 100 ? "full" : usagePct >= 80 ? "warn" : "ok"
   }
 
   return (
@@ -199,7 +206,7 @@ function AppSidebar({ open, onClose }) {
             <div className="usage-panel-count">
               <strong>{usageUsed.toFixed(1)}</strong>
               <span className="usage-panel-slash">/</span>
-              <span>{usageLimit}h</span>
+              <span>{usageUnlimited ? "∞" : `${usageLimit}h`}</span>
             </div>
           </div>
           <div className="usage-panel-bar">

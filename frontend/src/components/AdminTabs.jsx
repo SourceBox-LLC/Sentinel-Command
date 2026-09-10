@@ -1,5 +1,5 @@
-// Tab strip for the Admin dashboard's three log surfaces (Stream
-// Access / Organization Audit / MCP Activity). Cuts the page from
+// Tab strip for the Admin dashboard's log surfaces (Stream Access /
+// Organization Audit / MCP Activity / Motion). Cuts the page from
 // "five sections stacked vertically" down to "one section at a time"
 // and lets us put a red badge on the MCP tab when there are errors
 // the admin should look at.
@@ -8,6 +8,7 @@ const TAB_DEFS = [
   { id: "stream", label: "Stream Access", icon: "📺", accent: "green" },
   { id: "audit", label: "Organization Audit", icon: "📋", accent: "amber" },
   { id: "mcp", label: "MCP Activity", icon: "🤖", accent: "purple" },
+  { id: "motion", label: "Motion", icon: "🎞️", accent: "blue" },
 ]
 
 function AdminTabs({ activeTab, onTabChange, streamCount, mcpCount, mcpErrors = 0 }) {
