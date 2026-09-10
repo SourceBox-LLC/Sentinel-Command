@@ -1,10 +1,14 @@
 # Command Center docs
 
-Supplementary documentation for Sentinel Command Center — the SaaS we operate at https://sourceboxsentry.com. The top-level `README.md` is the engineer-facing setup + reference for anyone reading or running the source locally (for audit or fixes); `AGENTS.md` is the developer / LLM-facing architecture reference. End users sign up at the live app; they don't deploy Command Center themselves. The docs in this tree cover the things that don't fit cleanly in either of those two files — operator launch checklist, ADRs, runbooks, and legal templates.
+Supplementary documentation for Sentinel Command Center — the SaaS we operate at <https://sentinel-command.com>. The top-level `README.md` is the engineer-facing setup + reference for anyone reading or running the source locally (for audit or fixes); `AGENTS.md` is the developer / LLM-facing architecture reference. End users sign up at the live app; they don't deploy Command Center themselves. The docs in this tree cover the things that don't fit cleanly in either of those two files — operator launch checklist, ADRs, runbooks, and legal templates.
 
 ## [LAUNCH_HANDOFF.md](LAUNCH_HANDOFF.md) — what you need to do before paying customers
 
 Twelve user-only items (Clerk prod keys, backup restore test, lawyer signoff, status page vendor, etc.) that every code-side launch blocker has been closed against. Start here if you're driving toward launch.
+
+## [SENTINEL_AGENT.md](SENTINEL_AGENT.md) — the AI agent
+
+How the Sentinel AI agent works, how to run one yourself, and every environment variable it reads. It lives in this repo at `backend/app/sentinel_agent/` and deploys as the `agent` process group of the `sentinel-command` Fly app — not, as older references may suggest, a separate repository or app.
 
 ## Architecture Decision Records (`docs/adr/`)
 
@@ -45,6 +49,6 @@ Working drafts of customer-facing legal documents. Each is marked `DRAFT — NOT
 ## Writing new docs
 
 - **ADR** — when you make a decision that was hard to make, or that someone else will almost certainly re-argue. Write it *while the tradeoffs are fresh*, not six months later.
-- **Runbook** — when you catch yourself pasting the same sequence of commands into more than one support thread. Cheap to write, saves time forever. (None yet — add `docs/runbooks/` if/when one shows up.)
+- **Runbook** — when you catch yourself pasting the same sequence of commands into more than one support thread. Cheap to write, saves time forever. Two exist (`ON_CALL.md`, `DISASTER_RECOVERY.md`); add to those before starting a third file.
 - **Legal templates** — `docs/legal/` is for drafts that capture engineering truth; the lawyer-reviewed binding version lives elsewhere (a signed PDF in your records system). Update the draft *whenever* the underlying processing changes (new sub-processor, new data category, new retention window) so the lawyer review stays small.
 - **README / AGENTS** — these two are the primary docs and get updated in-place with every feature. Don't fork them into `docs/`.

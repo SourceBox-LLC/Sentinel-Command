@@ -293,11 +293,23 @@ runbook used to say nothing about them.
 | `sentinel_sync` | ❌ none — snapshots only | — | snapshot restore (below) |
 
 **Why Sync has no dump job, deliberately.** The other two write their
-dump to a Fly volume. `sentinel-sync` has no volume, and it runs **two
-machines** — Fly volumes are single-attach, so giving it one would pin
-it to a single machine. That trades away real redundancy to gain a
-second copy of data the cluster snapshot already holds. Not worth it;
-don't "fix" this in a later pass without re-reading this paragraph.
+dump to a Fly volume. `sentinel-sync` has none, and giving it one would
+pin it to a single machine, because Fly volumes are single-attach.
+
+The original reasoning here was that Sync ran **two machines**, so a
+volume would cost real redundancy. That is no longer the fact pattern —
+it was scaled to one machine on 2026-09-09 and now scales to zero
+between its 30-minute pushes, so there is no redundancy left to trade
+away. The conclusion survives the reason changing, on stronger grounds:
+
+`sentinel_sync` holds a **mirror**, not a source of truth. Every row in
+it was pushed from a self-hosted operator's local SQLite, which remains
+authoritative, and `push_pending_changes` only advances its cursors on
+confirmed success. Losing this database entirely costs one sync cycle;
+the operators re-push. A dump job would be a second copy of data the
+cluster snapshot already holds, of data that is itself already a copy.
+
+Don't "fix" this in a later pass without re-reading this paragraph.
 
 **Restoring `sentinel_sync` therefore means a snapshot restore**, which
 is cluster-level and brings back all three databases at once:
