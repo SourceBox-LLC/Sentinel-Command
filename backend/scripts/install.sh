@@ -149,7 +149,7 @@ case "$OS" in
         echo "For Windows, download the MSI installer from the latest release:"
         echo "  https://github.com/SourceBox-LLC/Sentinel-CameraNode/releases/latest"
         echo ""
-        echo "(Run the MSI, then 'sourcebox-sentry-cloudnode setup' from an admin PowerShell.)"
+        echo "(Run the MSI, then 'sourcebox-sentry-cameranode setup' from an admin PowerShell.)"
         exit 1
         ;;
 esac
@@ -372,22 +372,31 @@ if [ -n "$DOWNLOAD_URL" ]; then
             echo -e "${DIM}No SHA256SUMS for this release — skipping checksum verification.${NC}"
         fi
 
-        # Detect archive type and extract. The archived binary is still
-        # named sourcebox-sentry-cloudnode (Cargo.toml's package/binary
-        # name is intentionally never renamed post-launch, see that
-        # file's own comment — it would orphan existing systemd units /
-        # Windows services / install paths). We install it locally under
-        # the current sourcebox-sentry-cameranode name, so every archive
-        # branch below needs an explicit rename after extraction.
+        # Detect archive type and extract.
+        #
+        # The Cargo package/binary was renamed sourcebox-sentry-cloudnode
+        # -> sourcebox-sentry-cameranode on 2026-09-09, so NEW archives
+        # already carry the right name. Releases cut before that date
+        # still contain the old one, and this script always pulls the
+        # LATEST release — which is a pre-rename build until the next one
+        # ships. So the rename below is now a COMPATIBILITY SHIM, not a
+        # workaround: it fires for old archives and no-ops for new ones.
+        #
+        # Delete it once the oldest release anyone might install from is
+        # post-rename. Until then, removing it breaks installs silently —
+        # extraction succeeds and the binary is simply absent under the
+        # name every later step expects.
         case "$DOWNLOAD_URL" in
             *.tar.gz|*.tgz)
                 tar -xzf "$TMPFILE" -C "$INSTALL_DIR"
-                mv -f "$INSTALL_DIR/sourcebox-sentry-cloudnode" "$INSTALL_DIR/sourcebox-sentry-cameranode"
+                [ -f "$INSTALL_DIR/sourcebox-sentry-cloudnode" ] \
+                    && mv -f "$INSTALL_DIR/sourcebox-sentry-cloudnode" "$INSTALL_DIR/sourcebox-sentry-cameranode"
                 ;;
             *.zip)
                 if check_cmd unzip; then
                     unzip -qo "$TMPFILE" -d "$INSTALL_DIR"
-                    mv -f "$INSTALL_DIR/sourcebox-sentry-cloudnode.exe" "$INSTALL_DIR/sourcebox-sentry-cameranode.exe" 2>/dev/null || true
+                    [ -f "$INSTALL_DIR/sourcebox-sentry-cloudnode.exe" ] \
+                        && mv -f "$INSTALL_DIR/sourcebox-sentry-cloudnode.exe" "$INSTALL_DIR/sourcebox-sentry-cameranode.exe" 2>/dev/null || true
                 else
                     echo -e "${RED}Error: unzip is required to extract this release.${NC}"
                     rm -f "$TMPFILE"
@@ -658,12 +667,11 @@ if [ -z "$DOWNLOAD_URL" ]; then
     echo -e "${DIM}Building (~10-15 min on Raspberry Pi 4)...${NC}"
     (cd "$CLONE_DIR" && cargo build --release --quiet)
 
-    # cargo builds the binary under its Cargo.toml package name
-    # (sourcebox-sentry-cloudnode, deliberately never renamed — see the
-    # extraction step above for why); we install it locally as
-    # sourcebox-sentry-cameranode to match every other reference in
-    # this script.
-    cp "$CLONE_DIR/target/release/sourcebox-sentry-cloudnode" "$INSTALL_DIR/sourcebox-sentry-cameranode"
+    # A source build produces sourcebox-sentry-cameranode directly since
+    # the 2026-09-09 package rename — no copy-and-rename dance needed.
+    # (The release-archive path above still shims the old name, because
+    # published releases predate the rename.)
+    cp "$CLONE_DIR/target/release/sourcebox-sentry-cameranode" "$INSTALL_DIR/sourcebox-sentry-cameranode"
     chmod +x "$INSTALL_DIR/sourcebox-sentry-cameranode"
 
     echo -e "${GREEN}Build complete.${NC}"

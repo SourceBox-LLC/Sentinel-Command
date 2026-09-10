@@ -37,7 +37,7 @@ READ
 - watch_camera            multi-frame burst (2-10 frames over a window)
 - get_stream_url          authenticated HLS playback URL
 - list_camera_groups      org's camera groups
-- list_nodes              CloudNode hardware status
+- list_nodes              CameraNode hardware status
 - get_node                one node's detail
 - get_camera_recording_policy
 - get_stream_logs         viewer audit

@@ -63,10 +63,7 @@ npm run dev                   # http://localhost:5173
 ```bash
 cd Sentinel-CameraNode
 cargo build --release
-# Binary name is `cloudnode`, not `cameranode`: the Cargo package name
-# predates the CloudNode -> CameraNode rename and is deliberately kept,
-# since changing it would orphan existing systemd units and installs.
-./target/release/sourcebox-sentry-cloudnode setup
+./target/release/sourcebox-sentry-cameranode setup
 ```
 
 See the [CameraNode README](https://github.com/SourceBox-LLC/Sentinel-CameraNode) for full setup instructions.
