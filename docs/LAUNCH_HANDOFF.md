@@ -113,9 +113,10 @@ the answer for those.
    support is a separate channel at `support@sentinel-command.com`.)
 5. Smoke test: kill a CameraNode for >90s, watch the test admin's inbox
    for the offline email, click the unsubscribe link, verify the
-   toggle flipped off in `/settings`. See plan file
-   `~/.claude/plans/gentle-coalescing-teacup.md` for the full motion
-   smoke test sequence.
+   toggle flipped off in `/settings`. Then repeat for motion: trigger a
+   camera, confirm the first-motion email arrives, and confirm a second
+   trigger inside the cooldown window produces a digest rather than a
+   second email.
 
 **Code is safe to keep deployed indefinitely** with `EMAIL_ENABLED=false`
 (the default). The worker still runs but the transport short-circuits
