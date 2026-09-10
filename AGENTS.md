@@ -4,6 +4,23 @@ Sentinel Command Center — cloud dashboard for managing and viewing security ca
 
 > **Brand-history note for grep-discoverability:** the product has carried three names — `OpenSentry` (early), `SourceBox Sentry` (mid), and `Sentinel by SourceBox` (current, from May 2026 onward). The `Sentinel AI` name is reserved specifically for the AI-agent feature. Both GitHub repos were renamed in May 2026: Command Center `OpenSentry-Command` → `Sentinel-Command`, and CameraNode `opensentry-cloud-node` → `Sentinel-CameraNode` (note the deliberate "CameraNode" — the repo name now describes the artifact more literally, while the binary, install paths, and product UI keep saying "CameraNode"). GitHub auto-redirects the old URLs, so any hardcoded reference in a release artifact / cached doc / external bookmark continues to resolve. Identifiers preserved verbatim across the entire rebrand (do **not** rename these without a migration plan): the binary name `sourcebox-sentry-cameranode`, the env-var prefix `SOURCEBOX_SENTRY_*`, the Windows install path `C:\ProgramData\SourceBoxSentry\`, the AES key-derivation domain string `opensentry-cameranode-machine-id-v2` (see CameraNode `database.rs::KEY_DOMAIN_V2`), and the production hostname `sentinel-command.com` (tied to the Fly app, decoupled from the repo rename).
 
+## Contents
+
+Long reference — jump rather than scroll.
+
+| | |
+| --- | --- |
+| [Repository layout](#repository-layout--one-app-two-process-groups) — one app, two process groups | [Authentication](#authentication) — six credential types |
+| [Build & Run](#build--run) | [Data Models](#data-models) |
+| [Configuration](#configuration) | [API Routes](#api-routes) |
+| [Project Structure](#project-structure) | [MCP Server](#mcp-server) — tools, scope middleware |
+| [Architecture](#architecture) — request flow, video pipeline | [Plan Enforcement](#plan-enforcement) |
+| [CORS](#cors) · [Rate Limiting](#rate-limiting) | [Background Loops](#background-loops) |
+| [Webhook Handling](#webhook-handling) | [Key Patterns](#key-patterns) |
+| [Setup Scripts](#setup-scripts) · [Key Dependencies](#key-dependencies) | [Development Notes](#development-notes) |
+
+Wider than this file: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) covers how Command Center relates to the other services. The AI agent has its own reference at [docs/SENTINEL_AGENT.md](docs/SENTINEL_AGENT.md).
+
 ## Repository layout — one app, two process groups
 
 Command Center and the Sentinel AI agent ship from **one repo, one image, one deploy**. They run as two Fly *process groups* on separate machines, not as two apps.
@@ -24,9 +41,7 @@ Four rules follow, and breaking any of them breaks a deploy:
 3. **`[processes]` overrides the Dockerfile `CMD`.** The `app` command in `fly.toml` must stay in sync with that `CMD`.
 4. **CI path filtering is asymmetric.** `push` is filtered (docs and Markdown only); `pull_request` is **never** filtered. `master` requires `Backend tests (sqlite)`, `Backend tests (postgres)` and `Frontend audit + build`, and GitHub reports *no status at all* for a workflow a path filter skipped — so a filtered PR trigger would hang every PR that missed it, presenting as a stuck check rather than a config error.
 
-The agent machine is kept **warm** (`min_machines_running = 1`) rather than scaled to zero. Fly's proxy waits only ~8s for an auto-started machine to bind its port, and this process needs ~10s (Python + the MCP SDK + Sentry + a deferred LiteLLM import) — so an auto-started machine was declared unreachable and the wakeup came back `RemoteDisconnected`. It was ~7s before LiteLLM, i.e. always marginal. ~$2/month buys the problem away; see the comment on `[[services]]` in `fly.toml`.
-
-The agent is a separate **process group** rather than a thread in the web app because a run holds base64 frames for up to 270s, and the segment cache is already budgeted 384 MiB of the web machine's 1 GiB. Sharing one machine is how the OOM killer takes every org's streams down at once. Being a separate *app* was never what bought that isolation.
+The agent runs as a separate **process group** — its own machine, kept warm rather than scaled to zero. Both choices are deliberate and both have non-obvious reasons: memory contention with the segment cache, and a boot time that loses a race with Fly's proxy. Neither is restated here; see [docs/SENTINEL_AGENT.md](docs/SENTINEL_AGENT.md) for the agent's side and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#deployed-services-flyio) for how it compares to the services that *do* sleep.
 
 Self-hosting still works the same way: `python -m app.sentinel_agent` runs standalone with `AGENT_MODE=poll` and a per-org `osa_` key, needing no inbound connectivity. Agent docs are in `docs/SENTINEL_AGENT.md`. The code came from the `SourceBox-Sentinel` repo (archived 2026-09-09).
 

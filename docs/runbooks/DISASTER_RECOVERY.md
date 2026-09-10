@@ -13,6 +13,20 @@ the **`sentinel_command` database on the managed `sentinel-postgres`
 Postgres cluster**. Recovery is **restore from a backup**, so the backup
 must exist and the restore must have been rehearsed.
 
+## Start here — which situation is this?
+
+| Situation | Go to |
+| --------- | ----- |
+| The hosted database is lost, corrupted, or wrong | [Restore procedure](#restore-procedure) |
+| A machine or volume is gone | [Restore procedure](#restore-procedure) |
+| A **self-hosted** customer lost their local database | [Restoring from the cloud mirror](#self-hosted-installs-restoring-from-the-cloud-mirror) |
+| You need to know whether a backup even exists | [Backups: how they're produced](#backups-how-theyre-produced) |
+| Nothing is broken — you're preparing | [The one thing to do before launch](#the-one-thing-to-do-before-launch) · [Rehearsal drill](#rehearsal-drill-do-this-before-launch-then-quarterly) |
+| The service is broken but the **data is fine** | [ON_CALL.md](ON_CALL.md) — not this file |
+
+**Before you restore anything:** a restore is destructive and a wrong one compounds the damage. Read the whole [Restore procedure](#restore-procedure) section before running its first command.
+
+
 > 🔀 **Migrated to Postgres (2026-09-07).** Until this date the hosted
 > database was a single SQLite file on the `sentinel_data` Fly volume,
 > and this runbook was written around that. What changed:

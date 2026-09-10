@@ -32,7 +32,17 @@ Four apps. Command Center runs **two process groups from one image** — Fly giv
 | `sentinel-sync` | `app` | 256 MB | **scales to zero** | One-way mirror receiver |
 | `sentinel-postgres` | `app` | 512 MB | always | One cluster, three databases |
 
-**Why two of these scale to zero and two don't.** Fly's proxy waits ~8s for an auto-started machine to bind its port. License (~4s) and Sync (~3s) clear that comfortably, and a missed call is free for both — a failed licence check-in falls into a 72-hour grace window, a failed sync push just retries next cycle. The agent needs ~10s and cannot make it, so it stays warm; see `SENTINEL_AGENT.md`. Command Center's web tier serves live video and never sleeps.
+**Why two of these scale to zero and two don't.** This is a cross-service comparison, so it lives here rather than in any one service's docs.
+
+Fly's proxy waits **~8s** for an auto-started machine to bind its port. That single number decides it:
+
+| Service | Boot | Verdict |
+| ------- | ---- | ------- |
+| `sentinel-sync` | ~3s | clears it |
+| `sentinel-license` | ~4s | clears it |
+| `sentinel-command` / `agent` | ~10s | **misses it** — stays warm |
+
+Boot time alone isn't sufficient; a missed call also has to be cheap. It is for both sleepers — a failed licence check-in falls into a grace window measured in days, and a failed sync push simply retries next cycle with the operator's local database still authoritative. Command Center's web tier serves live video and never sleeps.
 
 ## The signal path — camera to browser
 
@@ -43,9 +53,9 @@ This is the part most often assumed to work differently. There is **no object st
 3. **Command Center** stores bytes in `_segment_cache[camera_id][filename]`, evicting oldest past `SEGMENT_CACHE_MAX_PER_CAMERA`.
 4. **CameraNode pushes the playlist** separately: `POST /api/cameras/{id}/playlist`.
 5. **Command Center rewrites** the playlist's segment filenames to relative `segment/<file>` proxy URLs, so the browser learns nothing about the node's own addressing.
-6. **Browser** plays it as ordinary HLS. A camera whose heartbeat gap exceeds 90s flips to `offline` via the sweep loop.
+6. **Browser** plays it as ordinary HLS. A camera that stops heartbeating flips to `offline` via the sweep loop.
 
-The memory ceiling matters: `SEGMENT_CACHE_MAX_TOTAL_BYTES` is 384 MiB of the web machine's 1 GiB. Raise one without the other and the kernel OOM-killer takes every org's streams down at once, well before the cache's own eviction can help.
+The cache is bounded, and its ceiling is **coupled to the machine's memory** — raise one without the other and the kernel OOM-killer takes every org's streams down at once, well before the cache's own eviction can help. Both numbers, and why they move together, are in the `[env]` comment in `fly.toml`.
 
 ## The AI agent
 
@@ -54,7 +64,7 @@ Command Center owns the queue; the agent is a worker draining it. That single de
 - **Push** (hosted default) — CC fires an HMAC-signed wakeup at `http://sentinel-command.flycast:8080/wakeup`, internal over 6PN.
 - **Poll** — the agent asks CC for pending runs on an interval. No inbound connectivity, so it works behind NAT. Same shape CameraNode uses.
 
-A run: claim via `POST /runs/{id}/start` → investigate through MCP tools → report via `POST /runs/{id}/complete` with `incident`, `no_action`, or `error`. Bounded at every layer, with a 270s wall clock under Fly's 300s `kill_timeout`, and a CC-side reaper for runs that strand.
+A run: claim via `POST /runs/{id}/start` → investigate through MCP tools → report via `POST /runs/{id}/complete` with `incident`, `no_action`, or `error`. Bounded at every layer — per-call, per-tool, iteration count, and wall clock — with a CC-side reaper for runs that strand anyway.
 
 The model is a config string (`LLM_MODEL`, via LiteLLM). **Changing it on the hosted deployment moves customer camera imagery to a different processor** — see `legal/SUB_PROCESSORS.md` before you do.
 
@@ -73,7 +83,7 @@ There is no single "API key". Every class of caller has its own credential, scop
 | Integration key | Home Assistant | Org-wide camera read |
 | `osa_` agent key | Sentinel AI agent | Per-org, issued in the dashboard |
 
-The MCP surface is **23 tools, 16 read / 7 write**. A `readonly` key is intersected with the read set in middleware, so scope is enforced before a tool runs rather than inside each one.
+A `readonly` MCP key is intersected with the read-tool set **in middleware**, so scope is enforced before a tool runs rather than inside each one. Tool inventory and the read/write split: `../AGENTS.md` → MCP Server.
 
 ## Data
 
