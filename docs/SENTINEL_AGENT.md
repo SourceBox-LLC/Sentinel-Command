@@ -20,21 +20,23 @@ notification fires                    ┌─ POST /wakeup  (HMAC-signed)
 ## Architecture
 
 - **LLM**: any provider, via [LiteLLM](https://docs.litellm.ai/). `LLM_MODEL` is the only setting that changes — `ollama_chat/qwen3.5:cloud` today, `anthropic/claude-sonnet-5` for a bring-your-own-key deployment, or an OpenAI-compatible endpoint for a custom model. **Must support tool calling *and* image input**: the agent fans out tool calls and feeds camera frames back in, so a text-only model does not degrade, it fails every run.
-- **Tools**: Command Center's MCP server (23 tools — list/view/watch cameras, create/finalize incidents, attach evidence) over streamable HTTP.
+- **Tools**: Command Center's MCP server — cameras, incidents, evidence — over streamable HTTP. Inventory in `../AGENTS.md` → MCP Server.
 - **Server**: Starlette + uvicorn. No auth on its own state — every accepted request is HMAC-verified against the shared `SENTINEL_AGENT_KEY`.
 - **Master of pending work**: Command Center's `sentinel_runs` table. The agent persists nothing; every wakeup re-fetches what's pending.
 
 ### Why a separate process group, not a thread
 
-A run holds base64 camera frames for up to 270s, and the web machine's segment cache is already budgeted 384 MiB of its 1 GiB (`SEGMENT_CACHE_MAX_TOTAL_BYTES` in `fly.toml`). Sharing one machine is how the OOM killer takes every org's live streams down at once. Being a separate *app* was never what bought that isolation — a separate process group is.
+A run holds base64 camera frames for the length of its wall-clock budget, and the web machine's segment cache is already budgeted most of that machine's memory (see the `[env]` comment in `fly.toml`). Sharing one machine is how the OOM killer takes every org's live streams down at once.
+
+Being a separate *app* was never what bought that isolation — a separate process group is.
 
 ### Why the machine stays warm
 
 `min_machines_running = 1`, deliberately, even though this worker's shape screams scale-to-zero.
 
-Fly's proxy waits ~8s for an auto-started machine to bind its port, and this process needs ~10s (Python + the MCP SDK + Sentry + a deferred LiteLLM import). An auto-started machine was declared unreachable and Command Center's wakeup came back `RemoteDisconnected` — on **every** wakeup, since it had scaled to zero. It was ~7s before LiteLLM, i.e. always marginal.
+This process takes ~10s to bind its port (Python + the MCP SDK + Sentry + a deferred LiteLLM import), which is longer than Fly's proxy waits for a machine it auto-started. Every wakeup against a stopped machine came back `RemoteDisconnected`. It was ~7s before LiteLLM — always marginal, and the migration only exposed it.
 
-~$2/month removes cold starts from the wakeup path instead of racing them. See the comment on `[[services]]` in `fly.toml`.
+Keeping one small machine warm costs about $2/month and removes cold starts from the wakeup path instead of racing them. The proxy's actual budget, and how the sibling services compare against it, are in [ARCHITECTURE.md](ARCHITECTURE.md#deployed-services-flyio); the deployment reasoning is in the `[[services]]` comment in `fly.toml`.
 
 ## Push or poll
 
