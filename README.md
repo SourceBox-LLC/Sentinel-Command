@@ -8,7 +8,7 @@
     <br />
     <a href="https://sentinel-command.com"><strong>► Try the live app</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://sentinel-command.com/docs">Documentation</a>
+    <a href="https://app.sentinel-command.com/docs">Documentation</a>
     &nbsp;·&nbsp;
     <a href="https://github.com/SourceBox-LLC/Sentinel-CameraNode">CameraNode</a>
   </p>
@@ -93,7 +93,7 @@ CameraNode captures and encodes video on your network, then pushes it **outbound
 
 | If you want to… | Go to |
 |-----------------|-------|
-| **Use Sentinel** — set up cameras, recording, notifications, integrations | The in-app [Documentation](https://sentinel-command.com/docs) |
+| **Use Sentinel** — set up cameras, recording, notifications, integrations | The in-app [Documentation](https://app.sentinel-command.com/docs) |
 | **See how the whole system fits together** — every repo, every deployed service, the paths between them | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Understand the code** — architecture, API, data models, configuration | [AGENTS.md](AGENTS.md) |
 | **Operate it** — decision records, runbooks, legal templates | [docs/](docs/) |

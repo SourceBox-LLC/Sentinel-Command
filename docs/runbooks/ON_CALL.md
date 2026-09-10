@@ -39,8 +39,8 @@ That last row matters: this runbook is for "the service is broken." If the *data
 
 | Tool / link | Why |
 |---|---|
-| https://sentinel-command.com/api/health | Liveness — is the process up? |
-| https://sentinel-command.com/api/health/detailed | DB ping latency, cache + queue depths |
+| https://app.sentinel-command.com/api/health | Liveness — is the process up? |
+| https://app.sentinel-command.com/api/health/detailed | DB ping latency, cache + queue depths |
 | `fly logs -a sentinel-command` | Application stderr/stdout |
 | `fly status -a sentinel-command` | Machine health + last deploy |
 | `fly ssh console -a sentinel-command` | Shell into the live machine |
@@ -243,7 +243,7 @@ self-hosted section applies to them, not this scenario.
    Check the "events" timeline for recent restarts.
 2. **`fly status -a sentinel-postgres`** — is the *database* up? This is
    the check that did not exist before the migration.
-3. `curl https://sentinel-command.com/api/health/detailed` —
+3. `curl https://app.sentinel-command.com/api/health/detailed` —
    look at:
    - `checks.database.status` and `latency_ms`
    - `checks.disk.percent_used` and `checks.disk.status` (segments now,

@@ -268,7 +268,7 @@ bash /app/scripts/restore_db.sh /data/backups/sentinel-<stamp>.dump
 # 4. Start the app and verify BEFORE deleting the pre-restore dump.
 exit
 fly machine start <machine-id> -a sentinel-command
-curl -fsS https://sentinel-command.com/api/health/ready
+curl -fsS https://app.sentinel-command.com/api/health/ready
 ```
 
 Then sanity-check in the dashboard: an org loads, cameras list, a known

@@ -47,7 +47,7 @@ charges don't post, the dev-mode badge shows in the UI, and the
      -a sentinel-command
    ```
 4. Verify the Clerk webhook endpoint
-   `https://sentinel-command.com/api/webhooks/clerk` is
+   `https://app.sentinel-command.com/api/webhooks/clerk` is
    registered in the production Clerk app and signing secret is set
    (`CLERK_WEBHOOK_SECRET`). Test by upgrading a test org and
    confirming the `Setting(org_plan="pro")` row shows up.
@@ -96,7 +96,7 @@ the answer for those.
    the pre-rename brand and is *not* a verified sending domain — setting
    `EMAIL_FROM_ADDRESS` to it would have failed every send.
 3. Configure a webhook in Resend → endpoint
-   `https://sentinel-command.com/api/webhooks/resend`. Copy the
+   `https://app.sentinel-command.com/api/webhooks/resend`. Copy the
    signing secret (starts with `whsec_`).
 4. Set the four Fly secrets:
    ```

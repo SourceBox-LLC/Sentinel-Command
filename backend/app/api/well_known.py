@@ -73,10 +73,24 @@ def _build_security_txt() -> str:
         datetime.now(tz=UTC) + timedelta(days=_EXPIRY_DAYS)
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # The security policy page now lives on the standalone website
-    # (sentinel-command.com), not this app's frontend.  The Policy: URL
-    # must point there so researchers land on the actual disclosure page.
-    policy_url = "https://sentinel-command.com/security#vulnerability-disclosure"
+    # Policy: MUST resolve.  This is machine-read (RFC 9116) by scanners
+    # and by researchers deciding whether they are covered by safe
+    # harbour before they touch anything — a 404 here means no published
+    # scope and no published authorisation.
+    #
+    # It pointed at https://sentinel-command.com/security#vulnerability-disclosure
+    # on the assumption the page had moved to the standalone site. It had
+    # not: that URL, and every plausible variant of it, returns 404
+    # (checked 2026-09-09). SECURITY.md in this repository is the only
+    # place the full policy — scope, timelines, safe harbour — actually
+    # exists, so it is what we point at.
+    #
+    # If the standalone site ever publishes the page, move this back and
+    # update the matching assertion in tests/test_security_txt.py.
+    policy_url = (
+        "https://github.com/SourceBox-LLC/Sentinel-Command"
+        "/blob/master/SECURITY.md"
+    )
 
     # Order follows RFC 9116 §2.5 examples for readability.  Comments
     # at the top help human readers; scanners ignore them.  Contact
