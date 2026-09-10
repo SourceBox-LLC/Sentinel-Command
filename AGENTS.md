@@ -223,62 +223,47 @@ docs/                             # Supplementary docs that don't belong in READ
 
 frontend/
 ├── tests/                        # vitest + @testing-library/react + happy-dom
-│   ├── setup.js                  # @testing-library/jest-dom matchers + cleanup
+│   ├── setup.js                  # jest-dom matchers + cleanup
 │   ├── sanity.test.js            # runner + DOM + matcher wiring smoke
+│   ├── auth/local.test.jsx       # self-hosted login + background token refresh
 │   ├── services/api.test.js      # fetchWithAuth shape contract (4 wire shapes)
-│   ├── components/               # DocsDiagrams, UpgradeModal, EmptyState
-│   └── pages/DocsPage.test.jsx   # split structural smoke (every section id renders)
+│   ├── components/               # IncidentReportModal, UpgradeModal, OrgAuditLogPanel,
+│   │                             # InstallCameraNodeCard, CameraRecordingControls, HelpTooltip
+│   └── pages/                    # IncidentsPage, SettingsPage (camera groups), SignInPage (local)
 └── src/
     ├── pages/
-    │   ├── LandingPage.jsx           # Public landing page
-    │   ├── DashboardPage.jsx         # Camera grid with status cards + controls
-    │   ├── SettingsPage.jsx          # Nodes, groups, recording, danger zone
-    │   ├── McpPage.jsx               # MCP keys (scope picker) + activity (live SSE)
-    │   ├── IncidentsPage.jsx         # AI- and human-filed incident reports + create flow
-    │   ├── AdminPage.jsx             # Stream logs, MCP activity, audit trail
-    │   ├── PricingPage.jsx           # Public pricing tiers
-    │   ├── SecurityPage.jsx          # Public privacy + security claims page (/security)
-    │   ├── SentinelPage.jsx          # Sentinel agent dashboard — config (triggers,
-    │   │                              #   schedule, cooldown, scope), run history,
-    │   │                              #   manual "Run now"
-    │   ├── LegalPage.jsx             # /legal/:page — Terms, Privacy, etc.
-    │   ├── DocsPage.jsx              # /docs — slim composition shell that renders 19 sections
-    │   ├── docs/                     # one file per <section> on /docs (extracted from the
-    │   │                             # 1,747-line monolith); shared state lives in
-    │   │                             # docs/context.jsx (DocsProvider + OsTabs + useDocs)
+    │   ├── DashboardPage.jsx        # Camera grid with status cards + controls
+    │   ├── SettingsPage.jsx         # Nodes, groups, recording, notifications, danger zone
+    │   ├── McpPage.jsx              # MCP keys (scope picker) + activity (live SSE), AND the
+    │   │                            #   Sentinel agent surface: config, run history, manual
+    │   │                            #   "Run now", per-org `osa_` agent keys
+    │   ├── IncidentsPage.jsx        # AI- and human-filed incident reports + create flow
+    │   ├── AdminPage.jsx            # Stream logs, org audit, MCP activity, motion history
+    │   ├── IntegrationsPage.jsx     # Home Assistant integration keys
+    │   ├── PricingPage.jsx          # Plan tiers + upgrade
     │   ├── SignInPage.jsx / SignUpPage.jsx
-    │   └── TestHlsPage.jsx           # Admin-only HLS debug view
-    ├── components/
-    │   ├── HlsPlayer.jsx             # HLS.js player with Clerk JWT xhrSetup
-    │   ├── CameraCard.jsx            # Live thumbnail + status + actions
-    │   ├── IncidentReportModal.jsx   # Markdown + evidence viewer
+    │   └── TestHlsPage.jsx          # Admin-only HLS debug view
+    ├── components/                  # 27 files; the ones worth knowing:
+    │   ├── HlsPlayer.jsx            # hls.js player with Clerk JWT xhrSetup
+    │   ├── CameraCard.jsx           # Live thumbnail + status + actions
+    │   ├── AppSidebar.jsx           # Nav + plan badge + viewer-hours usage panel
+    │   ├── MotionEventsPanel.jsx    # Motion history (Admin → Motion tab)
+    │   ├── OrgAuditLogPanel.jsx     # Org audit trail (Admin → Organization Audit)
+    │   ├── IncidentReportModal.jsx  # Markdown + evidence viewer
     │   ├── NotificationBell.jsx     # Unread badge + inbox popover (SSE-fed)
-    │   ├── AddNodeModal.jsx          # Node creation flow (shows one-time API key)
+    │   ├── AddNodeModal.jsx         # Node creation flow (shows one-time API key)
     │   ├── KeyRotationModal.jsx     # Rotate node API key
-    │   ├── UpgradeModal.jsx          # Paywall prompt (plan gating)
-    │   ├── HeartbeatBanner.jsx       # "Waiting for first heartbeat" banner shown
-    │   │                             # after node creation; polls /api/nodes/{id}
-    │   │                             # until it sees a last_seen, persists its
-    │   │                             # dismissed state in localStorage
-    │   ├── WelcomeHero.jsx           # Dashboard empty-state hero — exports
-    │   │                             # AdminWelcomeHero (3-step "set up your first
-    │   │                             # camera" checklist) and MemberWelcomeHero
-    │   │                             # (capability-focused welcome for non-admins)
-    │   ├── Layout.jsx / PublicLayout.jsx
-    │   ├── LandingNav.jsx / LandingFooter.jsx
-    │   ├── ToastContainer.jsx / LoadingSpinner.jsx
-    │   ├── DocsDiagrams.jsx         # 8 inline-SVG diagrams embedded on /docs
-    │   │                             # (System Architecture / HLS Pipeline / Motion FSM /
-    │   │                             # Config Precedence / Incident Lifecycle / MCP Workflow /
-    │   │                             # Security Model rings / Dashboard IA tree)
-    │   └── EmptyState.jsx
+    │   ├── UpgradeModal.jsx         # Paywall prompt (plan gating)
+    │   ├── HeartbeatBanner.jsx      # "Waiting for first heartbeat" after node creation
+    │   └── WelcomeHero.jsx          # Dashboard empty-state hero (admin + member variants)
+    ├── auth/                        # Clerk / local-auth provider switch (VITE_AUTH_PROVIDER)
     ├── hooks/
-    │   ├── useNotifications.jsx      # SSE inbox + unread count
-    │   ├── useMotionAlerts.jsx       # Motion SSE + toast fan-out
-    │   ├── usePlanInfo.jsx           # Plan info + node quotas
-    │   ├── useSharedToken.jsx        # Shared Clerk token provider (HLS + fetch)
+    │   ├── useNotifications.jsx     # SSE inbox + unread count
+    │   ├── useMotionAlerts.jsx      # Motion SSE + toast fan-out
+    │   ├── usePlanInfo.jsx          # Plan info + node quotas
+    │   ├── useSharedToken.jsx       # Shared token provider (HLS + fetch)
     │   └── useToasts.jsx
-    └── services/api.js               # Typed client for every backend endpoint
+    └── services/api.js              # Typed client for every backend endpoint
 ```
 
 ## Architecture
