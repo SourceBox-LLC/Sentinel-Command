@@ -85,7 +85,7 @@ CameraNode captures and encodes video on your network, then pushes it **outbound
 | **Command Center** *(this repo)* | The hosted dashboard, API, and live-video hub | [Live app ›](https://sentinel-command.com) |
 | **CameraNode** | The camera daemon you install on your own hardware | [Repo ›](https://github.com/SourceBox-LLC/Sentinel-CameraNode) |
 | **Home Assistant integration** | Your Sentinel cameras inside Home Assistant | [Repo ›](https://github.com/SourceBox-LLC/Sentinel-HomeAssistant) |
-| **Sentinel AI agent** | Serverless agent that investigates motion & incidents | [Repo ›](https://github.com/SourceBox-LLC/SourceBox-Sentinel) |
+| **Sentinel AI agent** | AI agent that investigates motion & incidents | [Docs ›](docs/SENTINEL_AGENT.md) · in this repo at `backend/app/sentinel_agent/` |
 
 ---
 
@@ -94,6 +94,7 @@ CameraNode captures and encodes video on your network, then pushes it **outbound
 | If you want to… | Go to |
 |-----------------|-------|
 | **Use Sentinel** — set up cameras, recording, notifications, integrations | The in-app [Documentation](https://sentinel-command.com/docs) |
+| **See how the whole system fits together** — every repo, every deployed service, the paths between them | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Understand the code** — architecture, API, data models, configuration | [AGENTS.md](AGENTS.md) |
 | **Operate it** — decision records, runbooks, legal templates | [docs/](docs/) |
 | **Audit or run the source locally** for review | [AGENTS.md › Build & Run](AGENTS.md) |

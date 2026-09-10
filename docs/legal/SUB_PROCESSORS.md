@@ -147,9 +147,26 @@ terminate the affected Service per Section 4.4 of the
 - **Notes:** Engaged **only** when an organization runs the Sentinel
   agent (a paid-tier feature with a per-organization on/off toggle in
   Settings). Organizations that never enable or trigger Sentinel send
-  no imagery to Ollama. The agent runs as a separate SourceBox-operated
-  service; an AGPL-3.0 fork that does not deploy the agent does not
-  engage Ollama as a sub-processor.
+  no imagery to Ollama. The agent is a process group of the
+  `sentinel-command` app rather than a separate deployment, but it is
+  still the only component that sends imagery anywhere; an AGPL-3.0 fork
+  that never runs it does not engage Ollama as a sub-processor.
+- **⚠ This entry names the provider CURRENTLY configured, and that is
+  now a setting rather than a hardcoded client.** Since 2026-09-09 the
+  agent reaches its model through LiteLLM, so a single environment
+  variable (`LLM_MODEL`) selects the inference provider. The first-party
+  deployment is verified to resolve to `ollama_chat/qwen3.5:cloud` as of
+  this revision.
+
+  **Changing `LLM_MODEL` on the first-party deployment changes who
+  processes customer camera imagery, and therefore changes this list.**
+  It is a sub-processor change under the DPA, requiring an update here
+  and advance notice to customers — not a config tweak. Anyone editing
+  that variable in production should read this paragraph first.
+
+  Self-hosted operators who set their own `LLM_MODEL` are engaging that
+  provider as *their* sub-processor, not ours; see "If you fork and run
+  your own copy" below.
 
 ---
 
@@ -205,6 +222,23 @@ diff this file in the repository for the full record.
   mirror by design. Also corrected a long-standing factual error in
   the DPA, which described Command Center's own storage as Postgres
   when it has always been SQLite on a Fly volume.
+  - **2026-09-09** — The Sentinel agent moved from a separate
+    SourceBox-operated service into a process group of the
+    `sentinel-command` app, and its LLM client was replaced with
+    LiteLLM. **No new sub-processor and no change to what is sent, to
+    whom, or when** — the first-party deployment still resolves to
+    Ollama Cloud (`ollama_chat/qwen3.5:cloud`, verified against the
+    running configuration), and the agent remains the only component
+    that transmits camera imagery.
+
+    Recorded because it changes how a *future* change would happen: the
+    inference provider is now selected by an environment variable
+    (`LLM_MODEL`) rather than by a hardcoded client, so switching it in
+    production would silently move customer camera imagery to a
+    different processor. That is a sub-processor change under the DPA
+    and requires updating this list and notifying customers in advance.
+    The Ollama Cloud entry above carries the same warning at the point
+    of use.
 
 ---
 

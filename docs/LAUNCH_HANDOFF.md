@@ -90,8 +90,11 @@ the answer for those.
    above realistic volume for the operator-critical kinds).
 2. Verify a sending domain — Resend gives you 4 DNS records (SPF TXT,
    DKIM CNAMEs ×3, optional DMARC). 15-60 min for DNS to propagate.
-   Recommended subdomain: `notifications.sourceboxsentry.com` (keeps
-   marketing-email reputation isolated from transactional).
+   **This step is already done:** `sentinel-command.com` is verified,
+   with DKIM and SPF/Return-Path on `send.sentinel-command.com`. This
+   previously recommended `notifications.sourceboxsentry.com`, which is
+   the pre-rename brand and is *not* a verified sending domain — setting
+   `EMAIL_FROM_ADDRESS` to it would have failed every send.
 3. Configure a webhook in Resend → endpoint
    `https://sentinel-command.com/api/webhooks/resend`. Copy the
    signing secret (starts with `whsec_`).
