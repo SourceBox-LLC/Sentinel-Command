@@ -10,15 +10,24 @@ This list is sequenced by *order-of-operations*, not by importance.
 Tackle the dependencies first (auth, transports) so the later items
 (legal, support process) have something to point at.
 
-> **Last refreshed: 2026-05-05.** Items marked ✅ have shipped since
-> the original draft. Items marked 🟡 are partially done (code-side
-> ready, operator action remaining). Items still wide open are
-> unmarked. The original "closed by Claude on 2026-04-25" stamp at
-> the bottom no longer captures reality — significant code shipped
-> in the SaaS-readiness sweep, the email v1+v1.1 work, the multi-
-> tenant disk fix, the CI rewrite, branch protection, and the
-> 2026-05-04→2026-05-05 SaaS launch-checklist closeout (see audit
-> trail at the bottom).
+> **Last refreshed: 2026-09-09.** Items marked ✅ have shipped. Items
+> marked 🟡 are partially done. Unmarked items are open.
+>
+> **Five remain, and none of them is code:**
+>
+> | # | Item | Blocked on |
+> | - | ---- | ---------- |
+> | 1 | Clerk production keys | you — swap at the last minute before launch |
+> | 3 | Status page vendor | you — optional, recommended |
+> | 6 | Lawyer review of legal templates | counsel — DPA and SUB_PROCESSORS still say *DRAFT — NOT FOR EXECUTION* |
+> | 8 | Pi performance benchmark | hardware access |
+> | 11 | On-call rotation | you — a process, not a change |
+>
+> Item 12 (day-before go/no-go) is a checklist to *run*, not to close.
+>
+> Items 2, 4, 5, 7, 9 and 10 are closed. Four of those were closed
+> earlier and never marked, which made this list look considerably worse
+> than reality — the only genuine blocker is counsel.
 
 ---
 
@@ -162,10 +171,20 @@ There's no public status page yet.
 
 ---
 
-## 4. Domain / DNS
+## 4. Domain / DNS ✅ DONE
 
-**State now.** Live on `sentinel-command.com`. CORS is
+**State now.** Live and serving. `app.sentinel-command.com` (the app and
+API) holds a Fly-issued cert, valid to 2026-12-02; the apex
+`sentinel-command.com` (marketing site) is valid to 2026-12-07. CORS is
 hard-coded for that origin (`backend/app/main.py::cors_origins`).
+
+Note the split, because it has bitten the docs twice: **the API lives on
+`app.`, not the apex.** The apex has no `/api` and no `/docs`. Anything
+pointing an integration, webhook or health probe at the bare domain is
+wrong.
+
+The rest of this section is a **procedure for changing domains later**,
+not outstanding work.
 
 **To switch.**
 1. Buy a domain (e.g. `sentry.sourceboxlabs.com`).
@@ -231,7 +250,7 @@ accidentally.
 
 ---
 
-## 7. Backups and disaster recovery
+## 7. Backups and disaster recovery ✅ DONE
 
 > **2026-07-06 restore drill — VERIFIED; blocker found AND fixed.** A Fly
 > volume snapshot restored end-to-end into a throwaway volume:
@@ -326,28 +345,41 @@ cameras" than to lose a customer who tried it on a Pi 3.
 
 ---
 
-## 9. GitHub repo settings 🟡 (branch protection done; status-check + review enforcement deferred)
+## 9. GitHub repo settings ✅ DONE
 
-**State now (2026-05-04).** Branch protection on `master` is enabled
-with three rules:
+**State now (2026-09-09).** Branch protection on `master`:
 
-- `allow_force_pushes: false` — defends against `git push --force` muscle memory at 2am
-- `allow_deletions: false` — defends against `git push --delete origin master`
-- `required_linear_history: true` — no merge commits, keeps `git log` readable
+- `allow_force_pushes: false` · `allow_deletions: false` · `required_linear_history: true`
+- **Required status checks:** `Backend tests (sqlite)`, `Backend tests (postgres)`, `Frontend audit + build`
+- **Required PR reviews:** 1 approver, `dismiss_stale_reviews: true`
+- `enforce_admins: false` — the sole admin can override via the UI. Defense against fat-finger, not against deliberate action.
 
-`enforce_admins: false` — you (the only admin) can override via the
-GitHub UI if you genuinely need to fix something that requires
-force-push. Defense against fat-finger, not against deliberate action.
+This item previously read *"status-check + review enforcement deferred"*
+on the grounds that there was no PR flow and checks "only kick in during
+merges, so they're decorative in direct-push mode". Both premises are
+gone: all work now lands through PRs, and the checks gate them.
 
-**Deferred until you have a co-maintainer:**
-- Required PR reviews (1 approver). No PR flow exists today; we push
-  direct to `master` with CI as the safety net.
-- Required status checks for merge. These only kick in during merges,
-  so they're decorative in direct-push mode. Add when PR flow lands.
+`strict` (require branch up to date) is deliberately **off**. With it on,
+every Dependabot PR needs a rebase whenever master moves, which stalls
+auto-merge for no safety gain — the checks still run against the PR head.
 
-**Dependabot security updates:** already on (PR #8 was a Dependabot
-PR for Clerk CVE GHSA-w24r-5266-9c3c, handled 2026-04-30). Worth
-verifying the schedule annually.
+**Two things this does NOT fix, both live:**
+
+- **Dependabot auto-merge does not deploy.** GitHub doesn't fire
+  `on: push` workflows for commits pushed with `GITHUB_TOKEN`, so an
+  auto-merged bump lands on `master` without deploying, and CodeQL going
+  green on it hides that convincingly. Needs a PAT
+  (`DEPENDABOT_PAT`); `deploy.yml` has a `workflow_dispatch` trigger as
+  the interim lever. See the notes at the top of
+  `.github/workflows/dependabot-auto-merge.yml`.
+- **CI does not lint the frontend** — audit, test and build only, which
+  is why several eslint errors have sat unnoticed. The backend gates on
+  `ruff`.
+
+**Dependabot:** now configured on all four repos (Command Center,
+CameraNode, License, Sync). Only Command Center has an auto-merge
+workflow, deliberately — the other three deploy on push, so a
+`GITHUB_TOKEN` merge there would silently skip their deploy too.
 
 ---
 
