@@ -331,6 +331,24 @@ export async function getStreamLogs(getToken, params = {}) {
   return fetchWithAuth(`/api/audit/stream-logs?${queryString}`, getToken)
 }
 
+// Motion event history. The backend has served these since motion
+// ingestion shipped, but nothing in the SPA called them — the UI
+// surfaced motion ONLY as live SSE toasts, so "what triggered overnight?"
+// was unanswerable from the dashboard even though every event was
+// recorded. Returns {total, limit, offset, hours, events}.
+export async function getMotionEvents(getToken, params = {}) {
+  const queryString = new URLSearchParams(
+    Object.entries(params).filter(([_, v]) => v != null && v !== "")
+  ).toString()
+  return fetchWithAuth(`/api/motion/events?${queryString}`, getToken)
+}
+
+// Per-camera motion rollup for the same window: event_count, peak_score
+// and latest timestamp. Returns {hours, cameras: [...]}.
+export async function getMotionStats(getToken, hours = 24) {
+  return fetchWithAuth(`/api/motion/events/stats?hours=${hours}`, getToken)
+}
+
 // Organization audit log — write_audit() rows for member changes,
 // MCP key gen, settings changes, danger-zone actions, etc.
 // Returns {total, limit, offset, logs}.

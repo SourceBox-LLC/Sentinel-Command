@@ -5918,6 +5918,59 @@ body {
     color: var(--accent-purple);
 }
 
+.admin-tab-blue.active {
+    background: rgba(59, 130, 246, 0.12);
+    border-color: rgba(59, 130, 246, 0.4);
+    color: var(--accent-blue, #3b82f6);
+}
+
+/* ── Motion events panel ─────────────────────────────────────────── */
+/* Per-camera rollup above the table: answers "which camera saw the most
+   movement" before the operator has to read a single row. */
+.motion-stats-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.75rem;
+    margin: 1rem 0 1.25rem;
+}
+
+.motion-stat-card {
+    background: var(--bg-secondary, #16181d);
+    border: 1px solid var(--border, #2a2d35);
+    border-radius: 8px;
+    padding: 0.75rem 0.9rem;
+}
+
+.motion-stat-name {
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-secondary, #8b93a1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.motion-stat-count {
+    font-size: 1.5rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary, #fff);
+    line-height: 1.2;
+}
+
+.motion-stat-meta {
+    font-size: 0.72rem;
+    color: var(--text-secondary, #8b93a1);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Score is the one number an operator scans for, so it carries colour
+   rather than sitting as another grey figure in the row. */
+.motion-score-high { color: var(--accent-red, #ef4444); font-weight: 600; }
+.motion-score-mid { color: var(--accent-amber, #f59e0b); font-weight: 600; }
+.motion-score-low { color: var(--text-secondary, #8b93a1); }
+
 .admin-tab-icon {
     font-size: 1rem;
     opacity: 0.85;
