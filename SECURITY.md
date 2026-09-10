@@ -1,12 +1,10 @@
 # Security Policy
 
-SourceBox Sentry is a security-focused application and we take vulnerabilities seriously.
+Sentinel by SourceBox is a security-focused product and we take vulnerabilities seriously.
 
-The full policy — scope, response timelines, safe-harbour terms, and the standard machine-readable [`security.txt`](https://app.sentinel-command.com/.well-known/security.txt) — lives at:
+**This file is the policy.** Scope, response timelines, and safe-harbour terms are all below, and the machine-readable [`security.txt`](https://app.sentinel-command.com/.well-known/security.txt) points here.
 
-**https://sentinel-command.com/security#vulnerability-disclosure**
-
-This file is the GitHub-standard summary; the deployed page above is canonical when the two disagree.
+It previously deferred to a page at `sentinel-command.com/security` and called that page canonical. That page does not exist and never has — so the canonical policy was a 404, and `security.txt` sent researchers there. Corrected 2026-09-09. If a hosted policy page is published later, point `security.txt` at it and say so here.
 
 ## Reporting a vulnerability
 
@@ -24,7 +22,7 @@ Two channels, use whichever you prefer:
 
 - Description of the issue and its impact
 - Steps to reproduce (URLs, payloads, screenshots)
-- Version / commit you tested against — surfaced by `GET /api/health`
+- Version you tested against — `GET /api/health` returns it (e.g. `{"version": "2.1.2"}`)
 - Optional suggested fix or mitigation
 
 ### Response timeline
@@ -67,7 +65,7 @@ If you make a good-faith effort to comply with this policy:
 
 ## Bug bounty
 
-There is no monetary bug bounty today — SourceBox Sentry is pre-PMF. We're upfront about that so you can decide whether to invest the time. If we ever launch one, prior reporters will be at the front of the line.
+There is no monetary bug bounty today — Sentinel is pre-PMF. We're upfront about that so you can decide whether to invest the time. If we ever launch one, prior reporters will be at the front of the line.
 
 ## Security updates
 

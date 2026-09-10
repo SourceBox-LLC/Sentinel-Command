@@ -168,16 +168,29 @@ def test_security_txt_has_canonical_and_policy(unauthenticated_client):
     assert any(line.startswith("Policy:") for line in body.splitlines())
 
 
-def test_security_txt_policy_anchor_matches_security_page(unauthenticated_client):
-    """Pin the anchor — the security page on sentinel-command.com renders an
-    ``id="vulnerability-disclosure"`` section that this URL deep-links to.
-    A regression that renames the section would leave every scanner+researcher
-    landing on the page header instead of the policy text."""
+def test_security_txt_policy_points_at_a_document_that_exists(
+    unauthenticated_client,
+):
+    """Pin the Policy target to the document that actually holds the policy.
+
+    This previously asserted ``sentinel-command.com/security#vulnerability-
+    disclosure``, and its docstring claimed that page rendered an
+    ``id="vulnerability-disclosure"`` section. It never did — that URL and
+    every plausible variant returned 404 (checked 2026-09-09), so the test
+    was pinning a fiction while researchers following RFC 9116 found no
+    scope and no safe-harbour terms.
+
+    Asserting *presence* of a Policy line, as the test above does, is not
+    enough: a well-formed pointer at nothing still passes. This pins the
+    specific target so moving it is a deliberate act with a test to update.
+    """
     body = unauthenticated_client.get("/.well-known/security.txt").text
     policy_line = [
         line for line in body.splitlines() if line.startswith("Policy:")
     ][0]
-    assert "sentinel-command.com/security#vulnerability-disclosure" in policy_line
+    assert "github.com/SourceBox-LLC/Sentinel-Command/blob/master/SECURITY.md" in (
+        policy_line
+    )
 
 
 # ── Public + cacheable for scanners ────────────────────────────────
