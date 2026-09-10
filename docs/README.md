@@ -6,6 +6,10 @@ Supplementary documentation for Sentinel Command Center — the SaaS we operate 
 
 Twelve user-only items (Clerk prod keys, backup restore test, lawyer signoff, status page vendor, etc.) that every code-side launch blocker has been closed against. Start here if you're driving toward launch.
 
+## [ARCHITECTURE.md](ARCHITECTURE.md) — how the whole system fits together
+
+Start here if you're new. Every repository, every deployed service, and the paths between them — the signal path from camera to browser, the six credential types, where data lives, and how code ships. `README.md` is this repo's setup; `AGENTS.md` is Command Center's internals; ARCHITECTURE is the level above both.
+
 ## [SENTINEL_AGENT.md](SENTINEL_AGENT.md) — the AI agent
 
 How the Sentinel AI agent works, how to run one yourself, and every environment variable it reads. It lives in this repo at `backend/app/sentinel_agent/` and deploys as the `agent` process group of the `sentinel-command` Fly app — not, as older references may suggest, a separate repository or app.
