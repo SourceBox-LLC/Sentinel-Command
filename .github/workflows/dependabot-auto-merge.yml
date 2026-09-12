@@ -37,6 +37,16 @@ name: Dependabot auto-merge
 #
 # This is GitHub's documented pattern: dependabot/fetch-metadata to read
 # the semver update type, then `gh pr merge --auto`.
+#
+# WHY THE GUARD JOB EXISTS: `on: pull_request` fires for EVERY pull request
+# in the repo, not just Dependabot's. The weekly-deps-refresh workflow
+# opens PR #60 (deps/weekly-refresh) as github-actions[bot] and force-pushes
+# to it weekly — each push is a pull_request:synchronize that re-triggers
+# this workflow. When github.actor != dependabot[bot] the auto-merge job is
+# skipped, and a run where ALL jobs are skipped concludes `failure` (not
+# `skipped`) on pull_request events. The skip-non-dependabot guard job
+# runs and succeeds for those PRs so the run goes green instead of red.
+# (CI failure run #282 / id 34121128132 was exactly this false positive.)
 
 on: pull_request
 
@@ -45,6 +55,13 @@ permissions:
   pull-requests: write
 
 jobs:
+  # Guard: succeed immediately for non-Dependabot PRs so the run is green.
+  skip-non-dependabot:
+    runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]'
+    steps:
+      - run: echo "Not a Dependabot PR — skipping auto-merge."
+
   auto-merge:
     runs-on: ubuntu-latest
     # Only act on Dependabot's own PRs.
