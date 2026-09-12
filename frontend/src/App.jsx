@@ -18,6 +18,7 @@ const McpPage = lazy(() => import("./pages/McpPage.jsx"))
 const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage.jsx"))
 const IncidentsPage = lazy(() => import("./pages/IncidentsPage.jsx"))
 const PricingPage = lazy(() => import("./pages/PricingPage.jsx"))
+const NotFoundPage = lazy(() => import("./pages/NotFoundPage.jsx"))
 
 function RequireOrg({ children }) {
   const { organization, isLoaded } = useOrganization()
@@ -227,6 +228,12 @@ function App() {
             }
           />
         </Route>
+
+        {/* Catch-all. Without this React Router renders nothing for an
+            unmatched path, and the backend serves index.html for every
+            unknown URL — so the result was a blank page returning HTTP
+            200: no error, no hint, nothing to report. */}
+        <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Suspense>
       <CookieNotice />
