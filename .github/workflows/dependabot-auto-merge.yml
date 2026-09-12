@@ -4,21 +4,39 @@ name: Dependabot auto-merge
 # "Test & Deploy" PR checks pass. MAJOR version bumps are left for a
 # human to review and merge (they're where breaking changes live).
 #
-# TWO KNOWN GAPS — both verified on 2026-09-09, both still open. Read
-# these before trusting this workflow to keep production current.
+# THE PATCH/MINOR PATH HAD NEVER ONCE SUCCEEDED before 2026-09-11.
+# Every single run that reached it failed, six for six:
 #
-# GAP 1: nothing actually gates the merge on CI.
-#   `master` has NO required status checks (`required_status_checks:
-#   contexts: []`), so `gh pr merge --auto` does not wait for anything —
-#   a patch/minor PR merges as soon as this workflow approves it, while
-#   its tests are still running.
-#   The obvious fix (require "Backend tests" / "Frontend audit + build")
-#   is NOT safe as-is: deploy.yml and agent.yml are path-filtered, and a
-#   path-skipped workflow reports no status at all, so a required check
-#   would hang every PR that misses its paths. Doing this properly needs
-#   an always-runs gate job that reports those check names.
+#   resend 2.43.0, @types/react-dom 19.2.5, ruff 0.16.4,
+#   user-event 14.6.4, @types/react 19.2.18, deps/weekly-refresh
 #
-# GAP 2: an auto-merged PR does not deploy.
+# all with the same error from `gh pr merge --auto`:
+#
+#   GraphQL: Pull request is in unstable status
+#   (enablePullRequestAutoMerge)
+#
+# WHY: GitHub only lets you *queue* auto-merge on a PR that is actually
+# blocked from merging. `mergeStateStatus` of `blocked` or `behind` is
+# queueable; `clean` (nothing left to wait for) and `unstable` (a
+# non-required check is failing or pending) are both rejected, because
+# in those states there is nothing for the queue to wait on.
+#
+# Until 2026-09-11 `master` had NO required status checks
+# (`required_status_checks: contexts: []`), so a Dependabot PR whose
+# tests were still running was `unstable`, never `blocked` — the one
+# state this workflow cannot handle. Nothing was gating the merge and
+# nothing could queue it either. It failed every week in silence.
+#
+# Now that "Backend tests (sqlite)", "Backend tests (postgres)" and
+# "Frontend audit + build" ARE required, a PR with pending tests is
+# `blocked` and `--auto` works as intended. The `||` fallback below
+# covers the remaining two states: when the PR is already `clean` or
+# `unstable` there is nothing to wait for, so merge it now. That
+# fallback does not bypass anything — branch protection still refuses a
+# merge whose required checks have not passed, which is exactly the
+# gate we want enforcing this rather than a reimplementation of it.
+#
+# STILL OPEN — an auto-merged PR does not deploy.
 #   GitHub does not trigger `on: push` workflows for pushes made with
 #   GITHUB_TOKEN. So when this workflow merges a PR, master moves but
 #   Test & Deploy never runs, and the bump sits undeployed until some
@@ -30,6 +48,12 @@ name: Dependabot auto-merge
 #   Real fix: merge with a PAT instead of GITHUB_TOKEN. Interim:
 #   deploy.yml now has a `workflow_dispatch` trigger.
 #
+# NOT A BUG, in case you go looking: on a non-Dependabot PR the
+# `auto-merge` job is skipped and the whole run concludes `skipped`,
+# which reports as a neutral check, not a red one. Verified on #289 and
+# #291. A guard job to "fix" that red check is not needed because there
+# is no red check.
+#
 # REQUIRES two repo settings (GitHub Actions cannot set these):
 #   1. Settings → General → Pull Requests → enable "Allow auto-merge".
 #   2. Settings → Actions → General → enable "Allow GitHub Actions to
@@ -38,21 +62,6 @@ name: Dependabot auto-merge
 # This is GitHub's documented pattern: dependabot/fetch-metadata to read
 # the semver update type, then `gh pr merge --auto`.
 
-#
-# WHY THE GUARD JOB EXISTS: `on: pull_request` fires for EVERY pull request
-# in this repo, not just Dependabot's. When `github.actor` is anything else
-# the auto-merge job is skipped — and a run where ALL jobs are skipped
-# concludes **`failure`**, not `skipped`, on pull_request events. So every
-# human PR painted a red `auto-merge` check that meant nothing.
-#
-# Observed directly on the resend bump (#247): `auto-merge fail 8s` while
-# Backend tests (sqlite), Backend tests (postgres) and Frontend audit +
-# build were all green. A red check that is always wrong is worse than no
-# check — it trains you to ignore the column.
-#
-# The guard below runs and succeeds for non-Dependabot PRs, so the run goes
-# green instead of red.
-
 on: pull_request
 
 permissions:
@@ -60,13 +69,6 @@ permissions:
   pull-requests: write
 
 jobs:
-  # Succeed immediately for non-Dependabot PRs so the run isn't a false red.
-  skip-non-dependabot:
-    runs-on: ubuntu-latest
-    if: github.actor != 'dependabot[bot]'
-    steps:
-      - run: echo "Not a Dependabot PR — nothing to auto-merge."
-
   auto-merge:
     runs-on: ubuntu-latest
     # Only act on Dependabot's own PRs.
@@ -76,15 +78,23 @@ jobs:
         id: meta
         uses: dependabot/fetch-metadata@v3
 
-      # Patch + minor: approve and enable auto-merge. GitHub then merges
-      # automatically once required status checks (see setting #2) pass.
+      # Patch + minor: approve, then queue auto-merge so GitHub merges
+      # once the required status checks pass.
       - name: Approve + enable auto-merge (patch & minor)
         if: >-
           steps.meta.outputs.update-type == 'version-update:semver-patch' ||
           steps.meta.outputs.update-type == 'version-update:semver-minor'
         run: |
           gh pr review --approve "$PR_URL"
-          gh pr merge --auto --squash "$PR_URL"
+
+          # `--auto` is rejected unless the PR is blocked/behind (see the
+          # header comment). If it is already clean or unstable there is
+          # nothing to wait for, so merge directly — branch protection
+          # still enforces the required checks.
+          if ! gh pr merge --auto --squash "$PR_URL"; then
+            echo "::notice::Could not queue auto-merge (PR not in a waiting state) — merging directly."
+            gh pr merge --squash "$PR_URL"
+          fi
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
