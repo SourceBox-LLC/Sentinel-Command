@@ -90,6 +90,25 @@ export default [
       "react-hooks/purity": "warn",
       "react-hooks/refs": "warn",
       "react-hooks/preserve-manual-memoization": "warn",
+      // Same family, same reasoning — these two were missed when the
+      // list above was written, and they were the only thing keeping
+      // `npm run lint` at a non-zero exit:
+      //
+      // - `immutability` fires 12 times on the shape
+      //   `useEffect(() => { loadThings() }, [...])` where `loadThings`
+      //   is a `const` arrow function declared further down the
+      //   component. It is correct at runtime — effects run after
+      //   render, by which point the binding is initialized — so this
+      //   is the compiler saying it cannot track the value, not a live
+      //   bug. The fix is to hoist each loader above its effect (or
+      //   wrap in useCallback), which is a real change to six files and
+      //   belongs with the next edit to each.
+      // - `use-memo` fires once, on a non-inline first argument.
+      //
+      // Kept at `warn` rather than disabled: the diagnostic stays in
+      // the CI log, and lint can now be enforcing for everything else.
+      "react-hooks/immutability": "warn",
+      "react-hooks/use-memo": "warn",
     },
   },
 

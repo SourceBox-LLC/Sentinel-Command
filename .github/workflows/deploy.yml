@@ -180,6 +180,22 @@ jobs:
         working-directory: frontend
         run: npm audit --audit-level=high --omit=dev
 
+      # ESLint. This step did not exist until 2026-09-11, which made
+      # `eslint.config.js` decorative: the config was added specifically
+      # to fix `npm run lint` silently erroring with "couldn't find a
+      # config", and then nothing ever ran it. Thirteen errors
+      # accumulated in master unnoticed, and the eslint 9 -> 10 bump was
+      # reviewed by running the linter by hand because CI could not say
+      # anything about it.
+      #
+      # eslint exits non-zero on errors only, so the ~34 deliberate
+      # `warn`-level findings (React Compiler advisories, unused-vars)
+      # stay visible in the log without blocking a deploy. That split is
+      # the whole point — see the rule notes in eslint.config.js.
+      - name: Lint (eslint)
+        working-directory: frontend
+        run: npm run lint
+
       # Vitest component tests — run BEFORE the build so a regression
       # caught by tests doesn't get the chance to ship via a successful
       # build.  We have ~50 tests today (HelpTooltip, InstallCameraNodeCard,
