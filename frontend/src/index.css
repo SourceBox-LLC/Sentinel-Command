@@ -1006,6 +1006,49 @@ body {
 }
 
 /* Empty state */
+/* 404 page — see pages/NotFoundPage.jsx. Unmatched paths used to render
+   nothing at all, so this exists to make a wrong URL say so. */
+.notfound-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 60vh;
+    padding: 2rem;
+    text-align: center;
+    gap: 0.5rem;
+}
+
+.notfound-code {
+    font-size: 4rem;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary, #8b93a1);
+    opacity: 0.5;
+}
+
+.notfound-container h1 {
+    margin: 0.25rem 0 0;
+    font-size: 1.4rem;
+}
+
+.notfound-container p {
+    color: var(--text-secondary, #8b93a1);
+    max-width: 48ch;
+    margin: 0 0 1rem;
+}
+
+.notfound-cta {
+    display: inline-block;
+    padding: 0.55rem 1.1rem;
+    border-radius: 6px;
+    background: var(--accent-green, #22c55e);
+    color: #06210f;
+    font-weight: 600;
+    text-decoration: none;
+}
+
 .empty-state {
     display: flex;
     flex-direction: column;
