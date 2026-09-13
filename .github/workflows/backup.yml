@@ -34,6 +34,18 @@ on:
     - cron: "17 9 * * *" # daily 09:17 UTC (off the top-of-hour GH congestion)
   workflow_dispatch:
 
+# Least-privilege token. Without this block a job gets whatever the
+# repository's default GITHUB_TOKEN scope is, which is broader than
+# anything here needs — CodeQL's actions/missing-workflow-permissions
+# flagged every job in this file. Nothing here writes through the API:
+# no `gh` calls, no git push, no package publish. Artifact upload does
+# not need a contents scope either (it uses the runtime token).
+#
+# A job that genuinely needs more should declare it at the JOB level
+# rather than widening this.
+permissions:
+  contents: read
+
 jobs:
   backup:
     runs-on: ubuntu-latest
