@@ -91,11 +91,36 @@ primary_region = "sjc"
     method = "GET"
     path = "/api/health"
 
-# Internal-only service for the agent process group. Not exposed
-# publicly: it is reachable at http://sentinel-command.flycast:8080 over
-# 6PN, which is where SENTINEL_AGENT_WEBHOOK_URL points.
+# Service for the agent process group. Command Center reaches it at
+# http://sentinel-command.flycast:8080 over 6PN, which is where
+# SENTINEL_AGENT_WEBHOOK_URL points, and that requires a private IPv6 on
+# the app: `fly ips allocate-v6 --private`.
 #
-# Requires a private IPv6 on the app: `fly ips allocate-v6 --private`.
+# THIS IS ALSO REACHABLE FROM THE PUBLIC INTERNET, in cleartext. An
+# earlier version of this comment claimed "not exposed publicly"; that
+# was wrong, and verified wrong on 2026-09-12:
+#
+#   $ curl http://sentinel-command.fly.dev:8080/health
+#   HTTP 200  {"status":"ok"}        # no TLS available on this port
+#
+# Fly's rule is that "if you have public IP addresses assigned to your
+# app, then services in fly.toml are exposed to the public internet" —
+# and this app needs public IPs for the web tier. The two process groups
+# share one app, so the agent's service cannot be made private while the
+# web service is public.
+#
+# The obvious fix does NOT work: at least one [[services.ports]] entry is
+# required per [[services]] section, and without one the service is
+# unreachable over Flycast too, which would break every wakeup. Making
+# this private-only means moving the agent to its own app with no public
+# IPs — a real change, not a config tweak.
+#
+# What actually protects it today is the authentication, which was
+# probed on the live service: POST /wakeup rejects a bad HMAC with 401,
+# bodies carry a timestamp checked against a ±5 min window so captured
+# requests cannot be replayed, and the unauthenticated dev trigger on
+# POST / is disabled whenever WEBHOOK_VERIFY_SIGNATURE is set (it
+# defaults to True, which is what production runs).
 #
 # NOT scaled to zero, despite that being this worker's obvious shape, and
 # despite it being how the agent ran as its own app. Fly's proxy waits
@@ -125,6 +150,36 @@ primary_region = "sjc"
   [[services.ports]]
     port = 8080
 
+  # The agent ran with NO health check at all until 2026-09-12, which made
+  # it the least observed machine in the system despite being the one
+  # deliberately kept running 24/7. `fly machines list` showed CHECKS
+  # empty for this group while the app group showed 1/1. The entry point's
+  # own docstring already claimed "/health is what Fly's checks and any
+  # external monitor hit" — it wasn't.
+  #
+  # Note what this does and does not buy. A failing check removes the
+  # machine from the load balancer; it does NOT restart it (that is the
+  # [[restart]] policy's job). So this makes a wedged agent *visible* and
+  # makes wakeups fail fast rather than hang on a process that accepts TCP
+  # and does nothing. It is not self-healing.
+  #
+  # Safe to run against this process because the agent is async all the
+  # way down — the LLM call is `await litellm.acompletion(...)` and the MCP
+  # client is an async session, so nothing blocks the event loop during an
+  # investigation and /health keeps answering while a run is in flight. A
+  # blocking LLM call here would have made this check *cause* wakeup
+  # failures during the agent's most important work.
+  #
+  # grace_period covers cold boot, measured at ~10s once litellm's import
+  # was deferred, with headroom.
+  [[services.http_checks]]
+    grace_period = "30s"
+    interval = "15s"
+    timeout = "5s"
+    method = "get"
+    path = "/health"
+    protocol = "http"
+
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
@@ -133,8 +188,14 @@ primary_region = "sjc"
 
 # The agent needs less than the web tier: no segment cache, no SPA, one
 # run at a time. 512 MiB comfortably holds the Python process plus the
-# base64 frames of a single investigation, and it only bills while a run
-# is actually in flight.
+# base64 frames of a single investigation.
+#
+# It bills continuously, not per run — this machine is the one kept warm
+# on purpose (auto_stop_machines = "off", min_machines_running = 1, see
+# the service block above). An earlier version of this comment said it
+# "only bills while a run is actually in flight", which contradicted the
+# always-warm decision argued twenty lines above it in this same file.
+# The ~$2/month figure in that argument is the real number.
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
