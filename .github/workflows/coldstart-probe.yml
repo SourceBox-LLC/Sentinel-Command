@@ -1,0 +1,94 @@
+name: Cold-start probe
+
+# sentinel-license and sentinel-sync scale to zero, so every request that
+# finds them stopped pays a cold start. Fly's proxy waits only ~8s for an
+# auto-started machine to bind its port, and on 2026-09-12 these measured
+# 6.39s and 5.95s — about a second and a half of headroom.
+#
+# That margin is the whole reason this workflow exists. The agent sat at
+# ~7s, adding LiteLLM pushed it to ~10s, and wakeups started coming back
+# RemoteDisconnected; the agent had to be taken off scale-to-zero
+# entirely. The number was never tracked, so the regression was found by
+# a user-visible failure rather than by a graph.
+#
+# The failure mode is quiet: Fly gives up and the caller sees a 502. For
+# licence check-ins that mostly lands in the grace window, so it can
+# degrade for a long time without anyone noticing.
+#
+# DELIBERATELY DOES NOT STOP ANYTHING. An earlier sketch stopped the
+# machine first to guarantee a cold measurement; that makes a monitor
+# capable of causing the outage it watches for. Instead it reads machine
+# state and only measures when the machine is ALREADY stopped, which is
+# these services' normal resting state. A warm machine is skipped rather
+# than reported, because a warm number here would be meaningless and
+# would quietly dilute the thing being watched.
+
+on:
+  schedule:
+    # 04:23 UTC daily — a quiet hour, well after the 09:17/09:47 backup
+    # jobs, and off the top of the hour to dodge GitHub's cron congestion.
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Measure cold start
+    runs-on: ubuntu-latest
+    strategy:
+      # Never parallel: both probes share one Fly API token and one
+      # Postgres cluster, and a simultaneous wake of both muddies each
+      # other's timing.
+      max-parallel: 1
+      # Keep going if one app is unreachable — the other number is still
+      # worth having.
+      fail-fast: false
+      matrix:
+        include:
+          - app: sentinel-license
+            url: https://sentinel-license.fly.dev/health
+          - app: sentinel-sync
+            url: https://sentinel-sync.fly.dev/health
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Probe ${{ matrix.app }}
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          APP: ${{ matrix.app }}
+          URL: ${{ matrix.url }}
+          # Fly's proxy gives up at ~8s. Warn with room to act rather
+          # than at the cliff: 6.5s was roughly the measured value, so
+          # 7s means "this moved" and not "this is already broken".
+          WARN_SECONDS: "7.0"
+        run: |
+          set -uo pipefail
+
+          STATES=$(flyctl machines list -a "$APP" --json | jq -r '.[].state')
+          echo "machine state(s): $(echo "$STATES" | tr '\n' ' ')"
+
+          if echo "$STATES" | grep -qv '^stopped$'; then
+            echo "::notice title=$APP::Not fully stopped — skipping, a warm probe measures nothing."
+            exit 0
+          fi
+
+          # -o /dev/null so a large body doesn't inflate the timing, and
+          # %{time_total} rather than `time` so the number is the request
+          # itself and not the shell's view of curl's lifetime.
+          read -r CODE SECS < <(curl -s -o /dev/null -m 45 \
+            -w '%{http_code} %{time_total}' "$URL")
+          echo "HTTP $CODE in ${SECS}s (cold)"
+
+          if [ "$CODE" != "200" ]; then
+            echo "::error title=$APP cold start failed::HTTP $CODE after ${SECS}s — Fly's proxy most likely gave up waiting for the port."
+            exit 1
+          fi
+
+          # awk, not bash: these are fractional seconds and [ ] is integer-only.
+          if awk "BEGIN{exit !($SECS > $WARN_SECONDS)}"; then
+            echo "::warning title=$APP cold start is drifting::${SECS}s against a ~8s proxy limit (warn above ${WARN_SECONDS}s). Something was added to the boot path; trim it before it starts returning 502s."
+          fi
+
+          echo "### $APP cold start: ${SECS}s" >> "$GITHUB_STEP_SUMMARY"
