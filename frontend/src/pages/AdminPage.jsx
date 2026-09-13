@@ -303,7 +303,6 @@ function AdminPage() {
       if (reader) reader.cancel().catch(() => {})
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [organization?.id, hasAdminFeature])
 
   const handleMcpFilterChange = (key, value) => {

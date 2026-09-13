@@ -133,6 +133,5 @@ export function useMotionAlerts(cameras) {
       abortRef.current?.abort()
     }
     // orgId: tear down + reconnect the stream under the new org's token.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getToken, showToast, orgId])
 }

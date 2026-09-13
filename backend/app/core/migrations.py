@@ -1,4 +1,19 @@
-"""Lightweight schema sync for SQLite + one-shot migration helpers.
+"""Lightweight schema sync + one-shot migration helpers.
+
+THIS MANAGES THE PRODUCTION POSTGRES SCHEMA, not just SQLite. The header
+used to say "for SQLite", and every caveat below is still written in
+SQLite terms, which reads as though this were self-host-only machinery.
+It is not: ``app/main.py`` calls ``sync_schema(engine, Base.metadata)``
+unconditionally on every boot, against whatever engine is configured —
+Postgres on Fly, SQLite for a self-hosted install. There is no Alembic
+in this repo, so this module plus ``create_all`` IS the schema
+management for production.
+
+Two of the SQLite caveats below read differently on Postgres: adding a
+NOT NULL column without a default fails there too, but an ADD COLUMN
+with a non-volatile default is metadata-only and fast (PG11+), where
+SQLite rewrites. The "renames, type changes and drops need a real
+migration" caveat applies equally to both.
 
 Two kinds of function live here:
 
