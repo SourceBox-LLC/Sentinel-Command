@@ -306,6 +306,19 @@ jobs:
           # cross-referencing the image to the source revision when
           # debugging.
           tags: registry.fly.io/sentinel-command:deployment-${{ github.sha }}
+          # Clerk's publishable key. `VITE_*` is baked in at BUILD time, so
+          # this cannot be a Fly secret — see the ARG in the Dockerfile.
+          # Empty until a CLERK_PUBLISHABLE_KEY repo secret exists, and the
+          # Dockerfile falls back to the committed .env.production when it
+          # is empty, so this line changes nothing on its own. Setting the
+          # secret is what flips production from the test key to the live
+          # one; no code change needed at that point.
+          # Note the name has NO `VITE_` prefix, on purpose — see the long
+          # comment on the ARG in the Dockerfile. A VITE_-prefixed build arg
+          # lands in the build environment and overrides .env.production
+          # with an empty value, shipping a bundle with no Clerk key.
+          build-args: |
+            CLERK_PUBLISHABLE_KEY=${{ secrets.CLERK_PUBLISHABLE_KEY }}
           # GitHub Actions cache for layers — ~30s saved on warm
           # builds vs. cold.  scope=deploy keeps it isolated from
           # any future workflows that might also use buildx.
