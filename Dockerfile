@@ -20,6 +20,57 @@ RUN npm ci
 # Copy frontend source and build
 COPY frontend ./
 
+# Clerk's publishable key, overridable at build time.
+#
+# WHY THIS EXISTS: `VITE_*` variables are read by Vite at BUILD time and
+# baked into the bundle, so they cannot be changed with `fly secrets set`
+# — a secret would appear to apply and change nothing. Until this ARG, the
+# only key the production build could use was the one committed in
+# frontend/.env.production, which is a `pk_test_` key. Verified in the
+# live bundle on 2026-09-12: the only real key literal served to users was
+# `pk_test_` (55 chars).
+#
+# Note that `.gitignore` already says `.env.*` should not be committed;
+# `.env.production` predates that rule and stayed tracked, which is how a
+# test key ended up as the production default.
+#
+# HOW TO GO LIVE: set a CLERK_PUBLISHABLE_KEY repo secret to the
+# `pk_live_...` value. deploy.yml passes it through as this build arg, it
+# lands in .env.production.local, and Vite prefers that over
+# .env.production (precedence: .env.[mode].local > .env.[mode] > .env).
+# Then frontend/.env.production can be deleted.
+#
+# Deliberately defaults to empty and writes nothing when unset, so a build
+# with no secret behaves exactly as before rather than shipping a bundle
+# with no key at all — which would break sign-in instead of merely keeping
+# it in test mode.
+# THE ARG IS DELIBERATELY NOT CALLED `VITE_CLERK_PUBLISHABLE_KEY`.
+#
+# A Dockerfile `ARG` becomes a build-time environment variable for every
+# later RUN in the stage, and Vite reads `VITE_*` from the process
+# environment with HIGHER precedence than any .env file. So a
+# `ARG VITE_CLERK_PUBLISHABLE_KEY=""` would put an empty VITE_ variable in
+# `npm run build`'s environment and silently override the real key in
+# .env.production — producing a bundle with an empty publishable key, which
+# makes auth/index.jsx throw "Missing VITE_CLERK_PUBLISHABLE_KEY" at
+# runtime and renders a blank page.
+#
+# That is not hypothetical; it is what the first version of this block did.
+# Caught by building both stages and grepping the bundle:
+#
+#   ARG VITE_CLERK_… (empty)  -> index-CuMgJ-I8.js, no key literal
+#   no ARG at all             -> index-R6eCH0Wp.js, pk_test_anVzdC1r…
+#
+# Naming it without the prefix keeps it invisible to Vite's env lookup, so
+# the only way it can affect the build is the file written below.
+ARG CLERK_PUBLISHABLE_KEY=""
+RUN if [ -n "$CLERK_PUBLISHABLE_KEY" ]; then \
+      printf 'VITE_CLERK_PUBLISHABLE_KEY=%s\n' "$CLERK_PUBLISHABLE_KEY" > .env.production.local; \
+      echo "Clerk key: build-arg override in effect"; \
+    else \
+      echo "Clerk key: no build arg set — falling back to committed .env.production"; \
+    fi
+
 # Build React app (outputs to /frontend/dist/)
 RUN npm run build
 
