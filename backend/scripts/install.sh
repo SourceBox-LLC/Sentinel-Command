@@ -374,29 +374,21 @@ if [ -n "$DOWNLOAD_URL" ]; then
 
         # Detect archive type and extract.
         #
-        # The Cargo package/binary was renamed sourcebox-sentry-cloudnode
-        # -> sourcebox-sentry-cameranode on 2026-09-09, so NEW archives
-        # already carry the right name. Releases cut before that date
-        # still contain the old one, and this script always pulls the
-        # LATEST release — which is a pre-rename build until the next one
-        # ships. So the rename below is now a COMPATIBILITY SHIM, not a
-        # workaround: it fires for old archives and no-ops for new ones.
-        #
-        # Delete it once the oldest release anyone might install from is
-        # post-rename. Until then, removing it breaks installs silently —
-        # extraction succeeds and the binary is simply absent under the
-        # name every later step expects.
+        # A rename shim used to live here: the binary was
+        # sourcebox-sentry-cloudnode until 2026-09-09, and this block
+        # renamed it after extraction so the later steps could find it.
+        # Its own deletion condition was "once the oldest release anyone
+        # might install from is post-rename", and that is now true —
+        # this script only ever reads releases/latest (no version
+        # pinning), and every asset on v0.1.77 onward already ships as
+        # sourcebox-sentry-cameranode. The shim could only no-op.
         case "$DOWNLOAD_URL" in
             *.tar.gz|*.tgz)
                 tar -xzf "$TMPFILE" -C "$INSTALL_DIR"
-                [ -f "$INSTALL_DIR/sourcebox-sentry-cloudnode" ] \
-                    && mv -f "$INSTALL_DIR/sourcebox-sentry-cloudnode" "$INSTALL_DIR/sourcebox-sentry-cameranode"
                 ;;
             *.zip)
                 if check_cmd unzip; then
                     unzip -qo "$TMPFILE" -d "$INSTALL_DIR"
-                    [ -f "$INSTALL_DIR/sourcebox-sentry-cloudnode.exe" ] \
-                        && mv -f "$INSTALL_DIR/sourcebox-sentry-cloudnode.exe" "$INSTALL_DIR/sourcebox-sentry-cameranode.exe" 2>/dev/null || true
                 else
                     echo -e "${RED}Error: unzip is required to extract this release.${NC}"
                     rm -f "$TMPFILE"

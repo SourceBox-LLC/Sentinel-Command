@@ -1,7 +1,13 @@
 # ============================================================
 # Stage 1: Build Frontend (React/Vite)
 # ============================================================
-FROM node:20-alpine AS frontend-builder
+# Node 24 to match deploy.yml's `node-version: "24"`. These were 20 here
+# and 24 in CI, which meant the frontend build CI proves green was not the
+# frontend build that ships. vite 8 wants node ^20.19.0 || >=22.12.0, so
+# the old `node:20` tag satisfied it only by resolving to a late 20.x — a
+# floating tag holding a requirement that has already moved once. Keep
+# this number and deploy.yml's in step.
+FROM node:24-alpine AS frontend-builder
 
 WORKDIR /frontend
 
