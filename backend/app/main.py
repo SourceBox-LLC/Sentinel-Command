@@ -73,10 +73,58 @@ init_sentry(
     traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
 )
 
+# Schema bring-up. Both calls stay SYNCHRONOUS and stay HERE, deliberately —
+# see the note below before moving them.
+#
+# THE BOOT BUDGET: nothing is listening on the port while this runs. Measured
+# 2026-09-13: uvicorn runs lifespan startup BEFORE it binds, so a connection
+# is refused for the whole of startup — and module import, where this code
+# lives, is earlier still. Fly's http check for the `app` group allows a 30s
+# grace_period, and on the single-machine `immediate` deploy strategy
+# exceeding it fails the only machine with nothing serving.
+#
+# WHY NOT BACKGROUND THEM like sync_indexes below: indexes only make queries
+# faster, so building them late is invisible. These two make queries
+# *possible*. Backgrounding create_all means the first request on a fresh
+# database hits missing tables, and backgrounding sync_schema means every
+# query touching a newly added column errors until it lands — trading a
+# noisy deploy failure for a silent data-error storm, which is worse.
+#
+# WHY NOT MOVE THEM INTO lifespan: measured, it changes nothing. The port is
+# unbound during lifespan startup too. The thing that makes sync_indexes safe
+# is not its location, it is that it is fire-and-forget in a worker thread.
+#
+# So the lever that is actually available is visibility: time them, and say
+# so loudly when they start eating the budget, because the failure they
+# produce (machine never becomes healthy) looks nothing like its cause.
+_ddl_started = time.perf_counter()
 Base.metadata.create_all(bind=engine)
+_create_all_seconds = time.perf_counter() - _ddl_started
+
 # Patch in any columns that were added to existing models after the table was first
 # created. See app/core/migrations.py for the "why" — this is our stand-in for Alembic.
-sync_schema(engine, Base.metadata)
+_sync_started = time.perf_counter()
+_schema_changes = sync_schema(engine, Base.metadata)
+_sync_schema_seconds = time.perf_counter() - _sync_started
+_ddl_seconds = _create_all_seconds + _sync_schema_seconds
+
+# 10s of a 30s grace, with Python imports and Sentry init still to pay for.
+_DDL_BUDGET_WARN_SECONDS = 10.0
+if _ddl_seconds >= _DDL_BUDGET_WARN_SECONDS:
+    logging.getLogger(__name__).warning(
+        "Schema bring-up took %.1fs (create_all %.1fs, sync_schema %.1fs, "
+        "changes: %s). Nothing is listening on the port until this finishes "
+        "and Fly's health grace is 30s — a slower migration than this will "
+        "fail the deploy rather than run late.",
+        _ddl_seconds, _create_all_seconds, _sync_schema_seconds,
+        ", ".join(_schema_changes) or "none",
+    )
+else:
+    logging.getLogger(__name__).info(
+        "Schema bring-up %.2fs (create_all %.2fs, sync_schema %.2fs, changes: %s)",
+        _ddl_seconds, _create_all_seconds, _sync_schema_seconds,
+        ", ".join(_schema_changes) or "none",
+    )
 # Indexes declared on models AFTER their table first shipped never get
 # created by create_all (it skips existing tables entirely) — several
 # hot-path composites were missing in prod because of this.  See
