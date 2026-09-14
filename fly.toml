@@ -32,8 +32,17 @@ primary_region = "sjc"
 #
 #   app   — the web tier. Owns the volume and the HLS segment cache,
 #           always-on (min_machines_running = 1 below).
-#   agent — the Sentinel AI worker. No volume, scales to zero, woken by
+#   agent — the Sentinel AI worker. No volume, ALSO always-on, woken by
 #           the HMAC-signed wakeup webhook over .flycast.
+#
+#           This said "scales to zero" until 2026-09-14 and had been wrong
+#           since the LiteLLM move: the service block below sets
+#           auto_stop_machines = "off" with min_machines_running = 1, and
+#           the machine has been `started` continuously. The reasoning for
+#           keeping it warm — Fly's proxy gives an auto-started machine
+#           only ~8s to bind, and this process needed ~10s — is argued at
+#           length beside that block. Scaling to zero is the shape this
+#           worker *wants*; it is not the shape it has.
 #
 # The agent is a separate PROCESS GROUP rather than a thread inside the
 # web app on purpose: a run holds base64 frames for up to 270s, and the
