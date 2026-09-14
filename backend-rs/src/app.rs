@@ -23,6 +23,9 @@ pub struct AppState {
     /// Reused rather than built per request so connections to the Python
     /// upstream stay pooled.
     pub http: reqwest::Client,
+    /// Resolved once at startup: which credential scheme this deployment
+    /// runs, and the JWKS cache behind it.
+    pub auth: Arc<crate::auth::Authenticator>,
     pub started_at: Instant,
 }
 

@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use sqlx::postgres::PgPoolOptions;
 
+use sentinel_command::auth::Authenticator;
 use sentinel_command::config::Config;
 use sentinel_command::{build_router, AppState, VERSION};
 
@@ -42,10 +43,13 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()?;
+
     let state = AppState {
-        http: reqwest::Client::builder()
-            .timeout(Duration::from_secs(120))
-            .build()?,
+        auth: Arc::new(Authenticator::from_config(&config, http.clone())),
+        http,
         config: Arc::new(config),
         pool,
         started_at: Instant::now(),

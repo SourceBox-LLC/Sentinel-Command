@@ -25,8 +25,30 @@ pub struct Config {
     /// Resolved from the publishable key; see `auth::issuer_from_publishable_key`.
     pub clerk_issuer: Option<String>,
 
+    // --- local (self-hosted) auth --------------------------------------
+    /// HS256 signing key for local session tokens.
+    pub app_secret_key: String,
     pub local_org_id: String,
+    pub local_admin_email: String,
+    pub local_admin_username: String,
     pub auth_provider: String,
+
+    /// Checked against a Clerk token's `azp` claim — the Python service
+    /// passes it to the SDK as `authorized_parties`.
+    pub frontend_url: String,
+}
+
+impl Config {
+    /// `AUTH_PROVIDER=local`. Anything else, including a typo, falls
+    /// through to Clerk — the safe default, and the exact complement the
+    /// Python config documents.
+    pub fn is_local_auth(&self) -> bool {
+        self.auth_provider == "local"
+    }
+
+    pub fn is_clerk_configured(&self) -> bool {
+        !self.clerk_secret_key.is_empty() && !self.clerk_publishable_key.is_empty()
+    }
 }
 
 fn var_or(key: &str, default: &str) -> String {
@@ -47,8 +69,16 @@ impl Config {
             clerk_issuer: crate::auth::issuer_from_publishable_key(&clerk_publishable_key),
             clerk_secret_key: var_or("CLERK_SECRET_KEY", ""),
             clerk_publishable_key,
-            local_org_id: var_or("LOCAL_ORG_ID", "local"),
+            app_secret_key: var_or("APP_SECRET_KEY", ""),
+            // "self-host", not "local" — this string is the org_id every
+            // row in a self-hosted install is scoped by, so a different
+            // default here would make the Rust tier read and write a
+            // different tenant than the Python one.
+            local_org_id: var_or("LOCAL_ORG_ID", "self-host"),
+            local_admin_email: var_or("LOCAL_ADMIN_EMAIL", ""),
+            local_admin_username: var_or("LOCAL_ADMIN_USERNAME", ""),
             auth_provider: var_or("AUTH_PROVIDER", "clerk"),
+            frontend_url: var_or("FRONTEND_URL", "http://localhost:5173"),
         }
     }
 }
@@ -72,7 +102,46 @@ pub fn normalize_database_url(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_database_url;
+    use super::*;
+
+    fn config_with(auth_provider: &str, secret: &str, publishable: &str) -> Config {
+        Config {
+            database_url: String::new(),
+            port: 8000,
+            upstream: String::new(),
+            static_dir: String::new(),
+            clerk_secret_key: secret.into(),
+            clerk_publishable_key: publishable.into(),
+            clerk_issuer: None,
+            app_secret_key: String::new(),
+            local_org_id: "self-host".into(),
+            local_admin_email: String::new(),
+            local_admin_username: String::new(),
+            auth_provider: auth_provider.into(),
+            frontend_url: String::new(),
+        }
+    }
+
+    #[test]
+    fn anything_but_local_means_clerk() {
+        // The Python config documents this as the safe default: a typo
+        // in AUTH_PROVIDER must not silently disable authentication.
+        assert!(config_with("local", "", "").is_local_auth());
+        for provider in ["clerk", "", "Local", "locl", "none"] {
+            assert!(
+                !config_with(provider, "", "").is_local_auth(),
+                "{provider:?} should not select local auth"
+            );
+        }
+    }
+
+    #[test]
+    fn clerk_needs_both_keys_to_count_as_configured() {
+        assert!(config_with("clerk", "sk", "pk").is_clerk_configured());
+        assert!(!config_with("clerk", "sk", "").is_clerk_configured());
+        assert!(!config_with("clerk", "", "pk").is_clerk_configured());
+        assert!(!config_with("clerk", "", "").is_clerk_configured());
+    }
 
     #[test]
     fn strips_the_sqlalchemy_driver_suffix() {
