@@ -70,6 +70,13 @@ impl From<ClaimError> for AuthError {
         match err {
             ClaimError::NotAuthenticated => AuthError::NotAuthenticated,
             ClaimError::NoOrganization => AuthError::NoOrganization,
+            ClaimError::Malformed(claim) => {
+                // Clerk signed this, so a wrong-typed claim means the
+                // wire format moved under us. That is an operator
+                // problem and needs to be visible as one.
+                tracing::error!(claim, "session token carried an unexpected claim type");
+                AuthError::Failed
+            }
         }
     }
 }
@@ -297,6 +304,39 @@ impl FromRequestParts<AppState> for RequireAdmin {
             return Err(ApiError::forbidden("Admin permission required"));
         }
         Ok(RequireAdmin(user))
+    }
+}
+
+/// `require_active_billing` — admin, and payment not past due.
+///
+/// Used for writes (create a node, mint a key) so a past-due org can
+/// still read its own cameras but cannot provision new resources.
+///
+/// The order matters and is not arbitrary: admin is checked first, so a
+/// non-admin in a past-due org gets 403, not 402. Telling a viewer about
+/// the organisation's billing state would be a leak, and it would send
+/// them to a billing page they have no permission to act on.
+pub struct RequireActiveBilling(pub AuthUser);
+
+impl FromRequestParts<AppState> for RequireActiveBilling {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let user = state.auth.authenticate(parts).await?;
+        if !user.is_admin() {
+            return Err(ApiError::forbidden("Admin permission required"));
+        }
+        if crate::settings::payment_past_due(&state.pool, &user.org_id).await? {
+            return Err(ApiError::new(
+                StatusCode::PAYMENT_REQUIRED,
+                "Your payment is past due. Please update your billing information \
+                 before making changes.",
+            ));
+        }
+        Ok(RequireActiveBilling(user))
     }
 }
 

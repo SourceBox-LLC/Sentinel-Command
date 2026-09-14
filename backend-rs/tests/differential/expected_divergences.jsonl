@@ -1,0 +1,10 @@
+{"o": {"id": 5, "rol": 6}, "sub": "u"}
+{"org_id": "o", "org_permissions": "abc", "sub": "u"}
+{"org_id": "o", "org_permissions": "xxorg:cameras:manage_cameras", "sub": "u"}
+{"org_id": "o", "permissions": "abc", "sub": "u"}
+{"org_id": "o", "org_permissions": [1, 2, 3], "sub": "u"}
+{"org_id": "o", "org_permissions": {"a": 1}, "sub": "u"}
+{"org_id": "o", "sub": 12345}
+{"org_id": 999, "sub": "u"}
+{"org_id": "o", "org_role": 7, "sub": "u"}
+{"email": 5, "org_id": "o", "sub": "u", "username": true}

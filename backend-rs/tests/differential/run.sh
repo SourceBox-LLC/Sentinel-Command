@@ -41,27 +41,9 @@ echo "resolving through rust..."
     < "$WORK/corpus.jsonl" > "$WORK/rs.jsonl"
 
 echo
-"$PYTHON" "$HERE/diff_probes.py" \
+# diff_probes.py owns the verdict: it fails on any divergence not listed
+# in expected_divergences.jsonl, on any listed one that has stopped
+# diverging, and on a corpus too thin to prove anything.
+exec "$PYTHON" "$HERE/diff_probes.py" \
     "$WORK/corpus.jsonl" "$WORK/py.jsonl" "$WORK/rs.jsonl" \
     "python vs rust" "$@"
-
-# diff_probes prints the counts; re-derive the verdict for the exit code.
-"$PYTHON" - "$WORK" <<'PY'
-import json, sys
-w = sys.argv[1]
-py = [json.loads(l) for l in open(f"{w}/py.jsonl")]
-rs = [json.loads(l) for l in open(f"{w}/rs.jsonl")]
-bad = sum(1 for a, b in zip(py, rs) if a != b)
-
-# A corpus that resolves nothing would compare equal and prove nothing;
-# this is the guard against the test quietly going vacuous.
-resolved = sum(1 for r in rs if "error" not in r)
-with_perms = sum(1 for r in rs if "error" not in r and r["org_permissions"])
-admins = sum(1 for r in rs if "error" not in r and r["is_admin"])
-print(f"coverage: {resolved} users resolved, {with_perms} with permissions, "
-      f"{admins} admin, {len(rs)-resolved} rejected")
-if resolved < 100 or with_perms < 100 or admins < 50:
-    print("CORPUS IS TOO THIN — this run proves nothing")
-    sys.exit(2)
-sys.exit(1 if bad else 0)
-PY

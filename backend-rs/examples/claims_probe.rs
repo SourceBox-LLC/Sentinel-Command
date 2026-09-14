@@ -27,6 +27,11 @@ fn main() -> io::Result<()> {
         let result = match auth_user_from_claims(&claims) {
             Err(ClaimError::NotAuthenticated) => json!({"error": "NotAuthenticated"}),
             Err(ClaimError::NoOrganization) => json!({"error": "NoOrganization"}),
+            // Python has no equivalent check; it raises instead, and its
+            // blanket handler turns that into the same 401. The probe
+            // reports it under the name the Python side uses for a raise
+            // so the two line up where they agree.
+            Err(ClaimError::Malformed(_)) => json!({"error": "EXCEPTION"}),
             Ok(user) => json!({
                 "user_id": user.user_id,
                 "org_id": user.org_id,

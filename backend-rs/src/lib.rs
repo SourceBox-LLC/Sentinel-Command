@@ -14,5 +14,6 @@ pub mod auth;
 pub mod config;
 pub mod error;
 pub mod proxy;
+pub mod settings;
 
 pub use app::{build_router, AppState, VERSION};

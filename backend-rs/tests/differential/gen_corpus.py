@@ -90,6 +90,51 @@ HAND_PICKED = [
     {"sub": "u", "org_id": "o", "email": "a@b.c", "username": "someone"},
 ]
 
+# Claims of the wrong JSON type. Clerk signs these, so none is forgeable
+# — but the two stacks handle them very differently and that difference
+# needs to be pinned down rather than discovered later. Python either
+# raises (its blanket handler -> 401) or silently coerces; Rust refuses
+# both. See validate_claim_types in src/auth/claims.rs.
+TYPE_CONFUSION = [
+    # `o` is dereferenced whatever it holds -> Python raises
+    {"sub": "u", "o": "not-an-object"},
+    {"sub": "u", "o": "not-an-object", "fea": "o:cameras"},
+    {"sub": "u", "o": 42},
+    {"sub": "u", "o": ["a"]},
+    {"sub": "u", "o": True},
+    {"sub": "u", "o": None},
+    # nested `o` fields
+    {"sub": "u", "o": {"id": 5, "rol": 6}},
+    {"sub": "u", "o": {"id": "o", "per": ["read"], "fpm": "1"}, "fea": "o:c"},
+    {"sub": "u", "o": {"id": "o", "per": "read", "fpm": 1}, "fea": "o:c"},
+    {"sub": "u", "o": {"id": "o", "rol": "admin", "per": None, "fpm": None}},
+    # `pla`: falsy non-strings take the no-crash path in Python
+    {"sub": "u", "org_id": "o", "pla": 42},
+    {"sub": "u", "org_id": "o", "pla": None},
+    {"sub": "u", "org_id": "o", "pla": 0},
+    {"sub": "u", "org_id": "o", "pla": []},
+    {"sub": "u", "org_id": "o", "pla": True},
+    # `fea`: no truthiness guard, so every non-string raises
+    {"sub": "u", "org_id": "o", "fea": 42},
+    {"sub": "u", "org_id": "o", "fea": ["o:cameras"]},
+    {"sub": "u", "org_id": "o", "fea": None},
+    # permissions as something other than a list of strings. The string
+    # case is the dangerous one: Python's `in` becomes a substring test.
+    {"sub": "u", "org_id": "o", "org_permissions": "abc"},
+    {"sub": "u", "org_id": "o", "org_permissions": "xxorg:cameras:manage_cameras"},
+    {"sub": "u", "org_id": "o", "permissions": "abc"},
+    {"sub": "u", "org_id": "o", "org_permissions": [1, 2, 3]},
+    {"sub": "u", "org_id": "o", "org_permissions": {"a": 1}},
+    {"sub": "u", "org_id": "o", "org_permissions": None,
+     "permissions": ["org:cameras:manage_cameras"]},
+    # plain string claims Python would coerce
+    {"sub": 12345, "org_id": "o"},
+    {"sub": None, "org_id": "o"},
+    {"sub": "u", "org_id": 999},
+    {"sub": "u", "org_id": "o", "org_role": 7},
+    {"sub": "u", "org_id": "o", "email": 5, "username": True},
+]
+
 PERM_POOL = ["read", "write", "manage_cameras", "delete", "invite"]
 FEATURE_POOL = ["cameras", "billing", "admin", "audit"]
 
@@ -141,6 +186,7 @@ def exhaustive_bitmaps():
 
 def main():
     out = list(HAND_PICKED)
+    out.extend(TYPE_CONFUSION)
     out.extend(exhaustive_bitmaps())
     out.extend(random_v2() for _ in range(2000))
     for claims in out:

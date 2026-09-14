@@ -59,6 +59,108 @@ pub enum ClaimError {
     NotAuthenticated,
     /// Valid user, but no organisation selected. 400.
     NoOrganization,
+    /// A claim is present with a type this code does not expect. 401,
+    /// with the same "Authentication failed" body Python's blanket
+    /// handler produces. See `validate_claim_types`.
+    Malformed(&'static str),
+}
+
+/// Python's notion of truthiness, for the claims where the original code
+/// branches on it (`if plan_claim`, `if fpm_str`). `0`, `false`, `""`,
+/// `[]`, `{}` and `null` are all falsy there and take the no-crash path.
+fn is_falsy(v: &Value) -> bool {
+    match v {
+        Value::Null => true,
+        Value::Bool(b) => !b,
+        Value::Number(n) => n.as_f64() == Some(0.0),
+        Value::String(s) => s.is_empty(),
+        Value::Array(a) => a.is_empty(),
+        Value::Object(o) => o.is_empty(),
+    }
+}
+
+/// `true` if the claim is absent or JSON null — both of which Python's
+/// `.get(key, default)` turns into the default without complaint.
+fn absent(claims: &Value, key: &str) -> bool {
+    matches!(claims.get(key), None | Some(Value::Null))
+}
+
+/// Reject claim sets whose types this code does not expect.
+///
+/// Clerk signs these, so a wrong-typed claim cannot be forged — it means
+/// either Clerk changed its wire format or something upstream is broken.
+/// Either way the safe answer is to refuse, and refusing here keeps the
+/// rest of this module free of type-coercion branches.
+///
+/// Python has no such check, and the two stacks therefore differ on
+/// malformed input in two ways, both deliberate:
+///
+/// * Where Python raises (`pla`/`fea`/`o.per`/`o.fpm` of the wrong type,
+///   or a non-object `o`), its blanket handler returns 401
+///   "Authentication failed". This returns the same 401 — an exact match.
+/// * Where Python silently coerces (`sub`, `org_id`, `o.id`, `o.rol`), it
+///   builds an `AuthUser` around a non-string. That is worth diverging
+///   from rather than copying: `org_permissions` arriving as a *string*
+///   makes Python's `permission in self.org_permissions` a substring
+///   test, so a value like `"xxorg:cameras:manage_cameras"` would pass
+///   the admin check. Failing closed here cannot.
+fn validate_claim_types(claims: &Value) -> Result<(), ClaimError> {
+    // Plain string claims. Python coerces these; we refuse them.
+    for key in ["sub", "org_id", "org_role", "email", "username"] {
+        if !absent(claims, key) && !claims[key].is_string() {
+            return Err(ClaimError::Malformed(key));
+        }
+    }
+
+    // `pla` is read behind `if plan_claim`, so a falsy non-string takes
+    // the "free_org" path in Python without raising. Only a truthy
+    // non-string reaches `.split` and blows up.
+    if let Some(pla) = claims.get("pla") {
+        if !pla.is_string() && !is_falsy(pla) {
+            return Err(ClaimError::Malformed("pla"));
+        }
+    }
+
+    // `fea` has no such guard — `claims.get("fea", "").split(",")` runs
+    // unconditionally, so any non-string, null included, raises.
+    if let Some(fea) = claims.get("fea") {
+        if !fea.is_string() {
+            return Err(ClaimError::Malformed("fea"));
+        }
+    }
+
+    // Permissions must be a list of strings or nothing at all.
+    for key in ["org_permissions", "permissions"] {
+        if let Some(v) = claims.get(key) {
+            if v.is_null() {
+                continue;
+            }
+            let ok = v
+                .as_array()
+                .is_some_and(|a| a.iter().all(Value::is_string));
+            if !ok {
+                return Err(ClaimError::Malformed(key));
+            }
+        }
+    }
+
+    // `o` is dereferenced with `.get` in Python whatever it holds, so
+    // anything that is not a dict raises — including null, because
+    // `claims.get("o", {})` returns the null rather than the default.
+    if let Some(o) = claims.get("o") {
+        let Some(o) = o.as_object() else {
+            return Err(ClaimError::Malformed("o"));
+        };
+        for key in ["id", "rol", "per", "fpm"] {
+            match o.get(key) {
+                None | Some(Value::Null) => {}
+                Some(v) if v.is_string() => {}
+                Some(_) => return Err(ClaimError::Malformed("o")),
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn string_claim(claims: &Value, key: &str) -> String {
@@ -180,6 +282,10 @@ pub fn decode_v2_permissions(claims: &Value) -> Vec<String> {
 /// at the top level, V2 packs them into a compact `o` claim and encodes
 /// permissions as a bitmap.
 pub fn auth_user_from_claims(claims: &Value) -> Result<AuthUser, ClaimError> {
+    // Everything below assumes claims are the types Clerk documents.
+    // This is what makes that assumption safe.
+    validate_claim_types(claims)?;
+
     // V1 first, then V2's bitmap. `permissions` is accepted as an alias
     // because Clerk has used both spellings.
     //
@@ -362,6 +468,68 @@ mod tests {
             json!({"sub": "u", "o": {"per": "read"}, "fea": "o:c"}),            // no fpm
         ] {
             assert!(decode_v2_permissions(&c).is_empty(), "should be empty for {c}");
+        }
+    }
+
+    #[test]
+    fn a_permission_list_that_is_a_string_cannot_grant_admin() {
+        // This is the reason type validation exists rather than being
+        // tidiness. Python's `permission in self.org_permissions` is a
+        // membership test on a list and a *substring* test on a string,
+        // so this claim set resolves to is_admin=true over there. It
+        // must not here.
+        let c = json!({
+            "sub": "u", "org_id": "o",
+            "org_permissions": "xxorg:cameras:manage_cameras",
+        });
+        assert_eq!(
+            auth_user_from_claims(&c),
+            Err(ClaimError::Malformed("org_permissions"))
+        );
+    }
+
+    #[test]
+    fn wrong_typed_claims_are_refused_rather_than_coerced() {
+        for (claims, expected) in [
+            (json!({"sub": 12345, "org_id": "o"}), "sub"),
+            (json!({"sub": "u", "org_id": 999}), "org_id"),
+            (json!({"sub": "u", "org_id": "o", "org_role": 7}), "org_role"),
+            (json!({"sub": "u", "org_id": "o", "email": 5}), "email"),
+            (json!({"sub": "u", "org_id": "o", "pla": 42}), "pla"),
+            (json!({"sub": "u", "org_id": "o", "fea": 42}), "fea"),
+            (json!({"sub": "u", "org_id": "o", "fea": null}), "fea"),
+            (json!({"sub": "u", "o": "not-an-object"}), "o"),
+            (json!({"sub": "u", "o": null}), "o"),
+            (json!({"sub": "u", "o": {"id": 5}}), "o"),
+            (json!({"sub": "u", "o": {"id": "o", "per": ["read"]}}), "o"),
+            (json!({"sub": "u", "org_id": "o", "org_permissions": [1]}), "org_permissions"),
+        ] {
+            assert_eq!(
+                auth_user_from_claims(&claims),
+                Err(ClaimError::Malformed(expected)),
+                "should refuse {claims}"
+            );
+        }
+    }
+
+    #[test]
+    fn claims_that_are_absent_or_null_are_not_malformed() {
+        // Python's `.get(key, default)` swallows both, and so must this
+        // — refusing them would reject ordinary tokens.
+        for claims in [
+            json!({"sub": "u", "org_id": "o"}),
+            json!({"sub": "u", "org_id": "o", "pla": null}),
+            json!({"sub": "u", "org_id": "o", "org_permissions": null}),
+            json!({"sub": "u", "org_id": "o", "org_role": null}),
+            json!({"sub": "u", "o": {"id": "o", "rol": "admin", "per": null, "fpm": null}}),
+            // falsy non-strings reach `pla`'s no-crash path in Python
+            json!({"sub": "u", "org_id": "o", "pla": 0}),
+            json!({"sub": "u", "org_id": "o", "pla": []}),
+        ] {
+            assert!(
+                auth_user_from_claims(&claims).is_ok(),
+                "should accept {claims}"
+            );
         }
     }
 

@@ -83,8 +83,15 @@ impl JwksCache {
             http,
             cached: RwLock::new(None),
             // Far enough in the past that the first forced refresh is
-            // never rate-limited.
-            fetch_lock: Mutex::new(Instant::now() - MIN_FORCED_REFRESH_INTERVAL),
+            // never rate-limited. `checked_sub` because `Instant` is
+            // monotonic from boot on Linux, so plain subtraction panics
+            // if the process starts within 10s of boot — which is
+            // exactly what happens on a Fly machine cold start.
+            fetch_lock: Mutex::new(
+                Instant::now()
+                    .checked_sub(MIN_FORCED_REFRESH_INTERVAL)
+                    .unwrap_or_else(Instant::now),
+            ),
         }
     }
 

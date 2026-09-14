@@ -91,9 +91,18 @@ def main():
         try:
             out = resolve(claims)
         except Exception as exc:
-            # Python raising where Rust returns a value is itself a
-            # finding — record it rather than crashing the run.
-            out = {"error": "EXCEPTION", "type": type(exc).__name__, "msg": str(exc)}
+            # A raise here is not a crash of the test — it is what the
+            # production service does on a malformed claim, and its
+            # blanket handler turns it into a 401. Rust reports its own
+            # Malformed rejection under the same name so the two can be
+            # compared; the exception detail goes to stderr rather than
+            # into the compared value, which would otherwise differ on
+            # the message text alone.
+            print(
+                f"EXCEPTION {type(exc).__name__}: {exc} <- {json.dumps(claims)}",
+                file=sys.stderr,
+            )
+            out = {"error": "EXCEPTION"}
         print(json.dumps(out, sort_keys=True))
 
 
