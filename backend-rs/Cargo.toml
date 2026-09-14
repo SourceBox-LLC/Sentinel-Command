@@ -1,0 +1,57 @@
+[package]
+name = "sentinel-command"
+version = "2.1.2"
+edition = "2021"
+authors = ["SourceBox LLC"]
+description = "Command Center backend — Rust web tier."
+license = "AGPL-3.0"
+repository = "https://github.com/SourceBox-LLC/Sentinel-Command"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws", "macros"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs", "limit", "trace"] }
+
+# Runtime-checked queries rather than the compile-time macros, so a build
+# needs no live database — CI builds this without a Postgres container.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "chrono",
+    "json",
+    "macros",
+    "migrate",
+] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# NaiveDateTime throughout: the Python service stores and serves naive
+# (tz-less) timestamps. An Offset type would append a "+00:00" that no
+# existing client parses.
+chrono = { version = "0.4", features = ["serde"] }
+
+# The strangler proxy, and outbound calls to Clerk / Resend.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+hyper = { version = "1", features = ["client"] }
+http-body-util = "0.1"
+bytes = "1"
+
+# Clerk session verification is local RS256 against a cached JWKS — there
+# is no Rust SDK and none is needed. See src/auth.rs.
+jsonwebtoken = "9"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+anyhow = "1"
+sha2 = "0.11"
+thiserror = "2"
+
+[dev-dependencies]
+http-body-util = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = "debuginfo"
