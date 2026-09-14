@@ -851,3 +851,68 @@ def test_cameranode_disk_low_check_failure_does_not_break_heartbeat(admin_client
     hb = _heartbeat_with_disk(admin_client, node_id, api_key, used_pct=99.0)
 
     assert hb.status_code == 200
+
+
+# --- node_id collision handling -------------------------------------------
+#
+# node_id is the first 8 chars of a uuid4 (32 bits) and the column is unique
+# across EVERY org, so a collision is one customer's new node landing on an id
+# another customer already holds. Before the retry it surfaced as an
+# unhandled IntegrityError -> 500 while someone was adding their first node.
+#
+# The shim replaces nodes.py's OWN reference to the uuid module rather than
+# mutating the real one — request_context.py also calls uuid4() and wants a
+# genuine UUID with a .hex attribute.
+
+
+class _UuidShim:
+    """Stands in for the uuid module inside app.api.nodes only."""
+
+    def __init__(self, collide_with, *, forever):
+        self._collide_with = collide_with
+        self._forever = forever
+        self.calls = 0
+
+    def uuid4(self):
+        import uuid as _real
+
+        self.calls += 1
+        # call 1 is the api_key; node_id draws start at call 2.
+        if self.calls == 1:
+            return _real.uuid4()
+        if self._forever or self.calls == 2:
+            return _real.UUID(self._collide_with.ljust(8, "0") + "0" * 24)
+        return _real.uuid4()
+
+
+def test_create_node_survives_a_node_id_collision(admin_client, monkeypatch):
+    """A colliding first draw must be retried, not 500."""
+    import app.api.nodes as nodes_mod
+
+    first = admin_client.post("/api/nodes", json={"name": "First"})
+    assert first.status_code == 200
+    taken = first.json()["node_id"]
+
+    shim = _UuidShim(taken, forever=False)
+    monkeypatch.setattr(nodes_mod, "uuid_mod", shim)
+
+    resp = admin_client.post("/api/nodes", json={"name": "Second"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["node_id"] != taken
+    assert shim.calls >= 3, "the collision should have forced a second draw"
+
+
+def test_create_node_gives_up_cleanly_if_every_draw_collides(
+    admin_client, monkeypatch
+):
+    """Exhausting the retries is a 503, never an unhandled 500."""
+    import app.api.nodes as nodes_mod
+
+    first = admin_client.post("/api/nodes", json={"name": "First"})
+    assert first.status_code == 200
+    taken = first.json()["node_id"]
+
+    monkeypatch.setattr(nodes_mod, "uuid_mod", _UuidShim(taken, forever=True))
+
+    resp = admin_client.post("/api/nodes", json={"name": "Doomed"})
+    assert resp.status_code == 503, resp.text

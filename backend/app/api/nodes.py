@@ -4,6 +4,7 @@ import uuid as uuid_mod
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.audit import audit_label, write_audit
@@ -24,6 +25,9 @@ from app.models.models import Camera, CameraNode, Setting
 from app.schemas.schemas import NodeCreate, NodeHeartbeat, NodeRegister
 
 logger = logging.getLogger(__name__)
+
+# Retries for the 32-bit node_id draw. See the comment at the retry loop.
+_NODE_ID_ATTEMPTS = 3
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 
@@ -835,19 +839,57 @@ async def create_node(
             detail=f"Node limit reached ({limits['max_nodes']} on {plan_name} plan). Upgrade your plan to add more nodes.",
         )
 
-    node_id = str(uuid_mod.uuid4())[:8]
+    # node_id is the first 8 chars of a uuid4 — 32 bits — and the column is
+    # unique across EVERY org, not per-org. A collision therefore isn't a
+    # per-tenant curiosity: it's one customer's new node landing on an id
+    # another customer already holds.
+    #
+    # 8 hex characters is a deliberate UX choice (the operator types this
+    # into the installer), so the fix is to retry rather than to widen it.
+    # Without the retry a collision surfaced as an unhandled IntegrityError
+    # -> 500, at the worst possible moment: someone adding their first node.
+    #
+    # Odds of a single creation colliding, by fleet size:
+    #     1k nodes   1 in 4,294,967
+    #    10k nodes   1 in   429,496
+    #   100k nodes   1 in    42,949
+    # Rare per request, certain enough in aggregate, and free to handle.
     api_key = str(uuid_mod.uuid4())
     api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
 
-    node = CameraNode(
-        node_id=node_id,
-        org_id=user.org_id,
-        name=data.name or f"Node-{node_id}",
-        api_key_hash=api_key_hash,
-        status="pending",
-    )
-    db.add(node)
-    db.commit()
+    node = None
+    for attempt in range(_NODE_ID_ATTEMPTS):
+        node_id = str(uuid_mod.uuid4())[:8]
+        node = CameraNode(
+            node_id=node_id,
+            org_id=user.org_id,
+            name=data.name or f"Node-{node_id}",
+            api_key_hash=api_key_hash,
+            status="pending",
+        )
+        db.add(node)
+        try:
+            db.commit()
+            break
+        except IntegrityError:
+            # Let the unique constraint be the arbiter rather than a
+            # pre-check SELECT, which would race two concurrent creates.
+            db.rollback()
+            node = None
+            logger.warning(
+                "node_id collision on %s (attempt %d/%d) — regenerating",
+                node_id, attempt + 1, _NODE_ID_ATTEMPTS,
+            )
+
+    if node is None:
+        # Three collisions in a row is not bad luck at any plausible fleet
+        # size; it means something else is wrong (a duplicated uuid source,
+        # or a constraint firing on a different column).
+        logger.error("node creation failed after %d id attempts", _NODE_ID_ATTEMPTS)
+        raise HTTPException(
+            status_code=503,
+            detail="Could not allocate a node ID. Please try again.",
+        )
 
     logger.info("Node created: node_id=%s, name=%s, org=%s", node_id, node.name, user.org_id)
 
