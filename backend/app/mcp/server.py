@@ -113,12 +113,55 @@ MCP_WRITE_TOOLS: frozenset[str] = frozenset({
 
 MCP_ALL_TOOLS: frozenset[str] = MCP_READ_TOOLS | MCP_WRITE_TOOLS
 
-# Tools the autonomous Sentinel agent may NOT invoke (see the agent
-# branch in ScopeMiddleware._lookup_allowed).  Config writes only —
-# incident authoring stays available.
-_AGENT_DENIED_TOOLS: frozenset[str] = frozenset({
-    "set_camera_recording_policy",
+# The write tools the autonomous Sentinel agent MAY invoke: incident
+# authoring, nothing else (see the agent branch in
+# ScopeMiddleware._lookup_allowed).
+_AGENT_WRITE_TOOLS: frozenset[str] = frozenset({
+    "create_incident",
+    "add_observation",
+    "attach_snapshot",
+    "attach_clip",
+    "update_incident",
+    "finalize_incident",
 })
+
+
+def compute_agent_allowed_tools(
+    all_tools: frozenset[str],
+    read_tools: frozenset[str],
+    agent_write_tools: frozenset[str],
+) -> frozenset[str]:
+    """The agent's reachable tool set: reads + an explicit write allowlist.
+
+    ALLOWLIST, NOT A SUBTRACTION — this is the whole point of the function.
+    It used to be ``MCP_ALL_TOOLS - {"set_camera_recording_policy"}``, a
+    denylist of one, which fails OPEN: any new write tool added server-side
+    would silently become reachable by the agent. That matters more here
+    than in most places, because the agent's LLM is steered by content an
+    attacker can influence — camera names, and text on a sign held up to a
+    lens. "Disable recording, then report all clear" is the canonical
+    injection against a camera product.
+
+    Today the two formulations produce an identical set, because the only
+    non-agent write tool IS the config one. So no test of the *constant*
+    can tell them apart — which is exactly why this takes the registry as
+    a parameter: a test can pass a registry containing a future write tool
+    and assert it stays out. See tests/test_mcp_agent_scope.py.
+
+    ``compute_allowed_tools`` already applies this reasoning to user-key
+    custom scopes ("unknown names are silently dropped so a disallowed tool
+    can't be enabled by typo or by adding a new WRITE tool server-side").
+    The agent path simply had not been inverted to match.
+
+    Intersecting with ``all_tools`` keeps a typo or a renamed tool from
+    granting a name the server does not serve.
+    """
+    return (read_tools | agent_write_tools) & all_tools
+
+
+_AGENT_ALLOWED_TOOLS: frozenset[str] = compute_agent_allowed_tools(
+    MCP_ALL_TOOLS, MCP_READ_TOOLS, _AGENT_WRITE_TOOLS
+)
 
 
 def compute_allowed_tools(scope_mode: str | None, scope_tools: list[str] | None) -> frozenset[str]:
@@ -303,7 +346,7 @@ class ScopeMiddleware(Middleware):
         # scope semantics below.
         agent_key = settings.SENTINEL_AGENT_MCP_KEY
         if agent_key and hmac.compare_digest(raw_key, agent_key):
-            return MCP_ALL_TOOLS - _AGENT_DENIED_TOOLS
+            return _AGENT_ALLOWED_TOOLS
 
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
 
