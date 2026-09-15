@@ -148,6 +148,32 @@ CASES = [
     ("GET", "/api/nodes/plan", True),
     ("GET", "/api/nodes/ws-status", True),
 
+    # --- incidents (reads) --------------------------------------------
+    ("GET", "/api/incidents", True),
+    ("GET", "/api/incidents", False),
+    ("GET", "/api/incidents/counts", True),
+    ("GET", "/api/incidents/1", True),
+    ("GET", "/api/incidents/2", True),
+    ("GET", "/api/incidents/3", True),
+    # another tenant's, and a missing one
+    ("GET", "/api/incidents/4", True),
+    ("GET", "/api/incidents/9999", True),
+    # path param that is not an integer — FastAPI 422, not axum's 400
+    ("GET", "/api/incidents/abc", True),
+    ("GET", "/api/incidents/1.5", True),
+    ("GET", "/api/incidents/-1", True),
+    *[("GET", f"/api/incidents?{q}", True) for q in [
+        "limit=1", "limit=200", "limit=2&offset=1",
+        "status=open", "status=resolved", "status=acknowledged", "status=dismissed",
+        "severity=low", "severity=high", "severity=critical",
+        "camera_id=cam-live", "camera_id=nope",
+        "status=open&severity=high",
+        # handler-validated enums: 400 with a plain message, not the 422
+        "status=nonsense", "severity=nonsense",
+        # Pydantic-validated bounds: the 422 envelope
+        "limit=0", "limit=201", "offset=-1", "limit=abc",
+    ]],
+
     # methods Rust has NOT ported on a path it HAS — these must still
     # reach Python rather than being answered with 405 by axum.
     ("POST", "/api/cameras", True),

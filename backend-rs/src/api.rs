@@ -6,6 +6,7 @@
 
 pub mod audit;
 pub mod cameras;
+pub mod incidents;
 pub mod mcp_activity;
 pub mod motion;
 pub mod nodes;

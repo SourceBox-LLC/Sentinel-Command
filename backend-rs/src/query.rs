@@ -177,6 +177,36 @@ impl Query {
     }
 }
 
+/// Validate an integer **path** parameter, FastAPI-style.
+///
+/// Taking `Path<i32>` directly would hand axum's own rejection to the
+/// caller — `400 "Invalid URL: Cannot parse `abc` to a `i32`"` — where
+/// FastAPI returns its 422 envelope with `loc: ["path", "<name>"]`. The
+/// SPA parses that envelope, so the difference is client-visible.
+///
+/// Handlers therefore take `Path<String>` and call this.
+pub fn path_int(name: &str, raw: &str) -> Result<i32, ApiError> {
+    if let Some(v) = parse_python_int(raw) {
+        if let Ok(v) = i32::try_from(v) {
+            return Ok(v);
+        }
+    }
+    let msg = "Input should be a valid integer, unable to parse string as an integer";
+    Err(ApiError::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        json!({
+            "error": "validation_failed",
+            "message": format!("{msg} (path.{name})"),
+            "errors": [{
+                "type": "int_parsing",
+                "loc": ["path", name],
+                "msg": msg,
+                "input": raw,
+            }],
+        }),
+    ))
+}
+
 /// Parse an integer the way Python's `int()` plus Pydantic's string
 /// coercion does.
 ///
@@ -270,6 +300,29 @@ mod tests {
         ] {
             assert_eq!(parse_python_int(raw), None, "{raw:?}");
         }
+    }
+
+    #[test]
+    fn a_path_parameter_rejects_like_fastapi_not_like_axum() {
+        // axum's own rejection is a 400 with a Rust type name in the
+        // body; the SPA parses the 422 envelope instead.
+        let err = path_int("incident_id", "abc").unwrap_err();
+        assert_eq!(err.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(err.detail["errors"][0]["loc"], json!(["path", "incident_id"]));
+        assert_eq!(err.detail["errors"][0]["input"], "abc");
+        assert_eq!(
+            err.detail["message"],
+            "Input should be a valid integer, unable to parse string as an integer (path.incident_id)"
+        );
+    }
+
+    #[test]
+    fn a_path_parameter_accepts_what_python_accepts() {
+        assert_eq!(path_int("id", "42").unwrap(), 42);
+        assert_eq!(path_int("id", "042").unwrap(), 42);
+        assert_eq!(path_int("id", "-1").unwrap(), -1);
+        // out of i32 range is a parse failure, not a wrap
+        assert!(path_int("id", "99999999999999").is_err());
     }
 
     #[test]

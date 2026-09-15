@@ -86,6 +86,18 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/nodes/plan", still_python())
         .route("/api/nodes/ws-status", still_python())
         .route("/api/nodes/{node_id}", ported(api::nodes::get_node))
+        // /counts must be declared here too: it is a static sibling of
+        // /{incident_id} and would otherwise be swallowed. It is ported
+        // rather than pinned, so it is a real route, not a proxy pin.
+        .route("/api/incidents", ported(api::incidents::list_incidents))
+        .route("/api/incidents/counts", ported(api::incidents::incident_counts))
+        .route(
+            "/api/incidents/{incident_id}",
+            get(api::incidents::get_incident)
+                .patch(api::incidents::update_incident)
+                .delete(api::incidents::delete_incident)
+                .fallback(proxy::forward),
+        )
         .route("/api/motion/events", ported(api::motion::list_motion_events))
         .route(
             "/api/motion/events/stats",

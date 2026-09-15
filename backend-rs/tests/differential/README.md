@@ -282,3 +282,71 @@ process's memory with no shared store behind it, so the routes reading it
 cannot move one at a time. `hls.py` — the plan's headline slice-3 target
 — is the most thoroughly blocked, because `mcp/server.py` imports its
 segment cache directly and MCP stays Python by plan.
+
+## Writes: side effects, not just responses (slice 4)
+
+```bash
+tests/differential/write_diff.py "$TOKEN"
+```
+
+A write handler can return exactly the right JSON and still write the
+wrong row, skip an audit entry, or leave `updated_at` untouched.
+Response diffing cannot see any of that. So each case runs twice against
+a freshly reseeded database — once per stack — and compares the response
+**and** the resulting table contents:
+
+```
+reseed -> request to python -> snapshot
+reseed -> request to rust   -> snapshot
+```
+
+Current result: **25/25 identical on response and side effects.**
+
+Two things legitimately differ between the runs and are normalised:
+timestamps written as "now" (anything within 10 minutes of the request
+becomes `<recent>`, so an *older* `created_at` is still compared exactly
+and "handler wrongly reset created_at" is still caught), and nothing
+else. Row ids are compared as-is, which is why `seed_cameras.sql`
+restarts every sequence — without that, ids climb on each reseed and
+every case reads as a side-effect diff. That is what happened on the
+first run.
+
+`WATCHED` deliberately includes tables a case is not expected to touch.
+A handler that writes a stray audit row, or fails to write an expected
+one, is precisely the bug this exists to find.
+
+### What it found
+
+`PATCH /api/incidents/{id}` with a body that changes nothing. SQLAlchemy
+emits **no UPDATE at all** when no attribute actually changed, so
+`updated_at` — an `onupdate` column — keeps its old value. An
+unconditional `UPDATE` in Rust bumped it on every no-op patch, and the
+dashboard sorts and badges on that field. The port now compares the
+computed values against the current row and skips the write when they
+match, which also covers patching a field to the value it already holds.
+
+Invisible to response diffing: the response body was identical, because
+it is re-read from the row after the write.
+
+### Teeth
+
+| injected bug | caught |
+| --- | --- |
+| always UPDATE (bumps `updated_at` on a no-op) | 5 / 25 |
+| re-stamp `resolved_at` when re-resolving | 2 / 25 |
+| `NULL` report serialised as `null` rather than `""` | 9 / 25 |
+| reopening does not clear the resolution | 1 / 25 |
+| ownership check dropped (cross-tenant read + delete) | 2 / 25 |
+
+One mutation — dropping the org filter from the `DELETE` statement —
+was **not** caught, correctly: `owned_incident()` already 404s first, so
+that filter is defence-in-depth rather than the barrier. Removing the
+ownership check itself is the mutation that matters, and it is caught.
+
+## Path parameters
+
+`Path<i32>` hands axum's own rejection to the caller —
+`400 "Invalid URL: Cannot parse `abc` to a `i32`"` — where FastAPI
+returns its 422 envelope with `loc: ["path", "<name>"]`. The SPA parses
+that envelope. Handlers therefore take `Path<String>` and call
+`query::path_int`, and the differential covers `abc`, `1.5` and `-1`.

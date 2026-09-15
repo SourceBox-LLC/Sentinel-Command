@@ -7,6 +7,21 @@
 -- identical while never testing a live camera. Re-run this file
 -- immediately before diffing.
 
+-- Every sequence is RESTARTed so row ids are deterministic across
+-- reseeds. The write differential compares ids directly, and a sequence
+-- that keeps climbing makes every case look like a side-effect diff —
+-- which is exactly what it did before this block existed.
+ALTER SEQUENCE IF EXISTS cameras_id_seq RESTART WITH 1;
+ALTER SEQUENCE IF EXISTS camera_nodes_id_seq RESTART WITH 1;
+ALTER SEQUENCE IF EXISTS camera_groups_id_seq RESTART WITH 1;
+ALTER SEQUENCE IF EXISTS settings_id_seq RESTART WITH 1;
+ALTER SEQUENCE IF EXISTS audit_log_id_seq RESTART WITH 1;
+ALTER SEQUENCE IF EXISTS stream_access_logs_id_seq RESTART WITH 1;
+ALTER SEQUENCE IF EXISTS motion_events_id_seq RESTART WITH 1;
+ALTER SEQUENCE IF EXISTS mcp_activity_logs_id_seq RESTART WITH 1;
+ALTER SEQUENCE IF EXISTS incidents_id_seq RESTART WITH 1;
+ALTER SEQUENCE IF EXISTS incident_evidence_id_seq RESTART WITH 1;
+
 DELETE FROM cameras;
 DELETE FROM camera_groups;
 DELETE FROM camera_nodes;
@@ -182,3 +197,41 @@ INSERT INTO mcp_activity_logs (org_id, tool_name, key_name, status, duration_ms,
 SELECT 'other-org', 'tool_theirs', 'their_key', 'ok', 10, '{}', NULL,
        now()::timestamp - (i || ' days')::interval
 FROM generate_series(1, 9) AS i;
+
+-- ---- incidents ------------------------------------------------------
+-- Sequences are RESTARTed so ids are deterministic across reseeds; the
+-- write differential compares them directly and a drifting sequence
+-- would make every case look like a diff.
+DELETE FROM incident_evidence;
+DELETE FROM incidents;
+
+INSERT INTO incidents
+  (org_id, camera_id, title, summary, report, severity, status, created_by,
+   created_at, updated_at, resolved_at, resolved_by)
+VALUES
+  -- 1: open, has evidence, old timestamps so a handler that wrongly
+  -- rewrites created_at is caught rather than normalised away
+  ('self-host', 'cam-live', 'Front door forced', 'Someone at the door', NULL,
+   'high', 'open', 'user:local-admin',
+   timestamp '2026-09-01 08:00:00', timestamp '2026-09-01 08:00:00', NULL, NULL),
+  -- 2: open, no evidence, NULL report
+  ('self-host', NULL, 'Unknown vehicle', 'Idling in the street', NULL,
+   'medium', 'open', 'mcp:agent-key',
+   timestamp '2026-09-02 09:30:00', timestamp '2026-09-02 09:30:00', NULL, NULL),
+  -- 3: already resolved — re-resolving must NOT re-stamp resolved_at
+  ('self-host', 'cam-failed', 'Camera offline', 'Garage went dark', 'Full report here',
+   'low', 'resolved', 'user:someone-else',
+   timestamp '2026-08-20 12:00:00', timestamp '2026-08-21 12:00:00',
+   timestamp '2026-08-21 12:00:00', 'user:someone-else'),
+  -- 4: another tenant's, must 404 from both stacks
+  ('other-org', 'cam-theirs', 'Theirs', 'Not ours', NULL,
+   'critical', 'open', 'user:them',
+   timestamp '2026-09-03 10:00:00', timestamp '2026-09-03 10:00:00', NULL, NULL);
+
+INSERT INTO incident_evidence (incident_id, kind, text, camera_id, data, data_mime, timestamp)
+VALUES
+  (1, 'observation', 'Heard knocking', 'cam-live', NULL, NULL, timestamp '2026-09-01 08:01:00'),
+  -- has_data is derived from data_mime, never from the deferred blob
+  (1, 'snapshot', NULL, 'cam-live', '\x89504e47'::bytea, 'image/png', timestamp '2026-09-01 08:02:00'),
+  (1, 'action', 'Notified owner', NULL, NULL, NULL, timestamp '2026-09-01 08:03:00'),
+  (4, 'observation', 'Theirs', 'cam-theirs', NULL, NULL, timestamp '2026-09-03 10:01:00');
