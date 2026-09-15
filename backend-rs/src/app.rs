@@ -13,7 +13,7 @@ use serde_json::json;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::config::Config;
-use crate::proxy;
+use crate::{api, proxy};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -26,6 +26,9 @@ pub struct AppState {
     /// Resolved once at startup: which credential scheme this deployment
     /// runs, and the JWKS cache behind it.
     pub auth: Arc<crate::auth::Authenticator>,
+    /// Upstream client for the strangler proxy. Separate from `http`
+    /// because it must not normalise request paths — see `proxy.rs`.
+    pub proxy: proxy::ProxyClient,
     pub started_at: Instant,
 }
 
@@ -41,6 +44,12 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         // ---- served by Rust --------------------------------------------
         .route("/api/health", get(health))
+        // Read-only camera routes (slice 2). Writes on these same paths
+        // are slice 4 and must still reach Python — hence `ported`
+        // rather than a bare `get`.
+        .route("/api/cameras", ported(api::cameras::list_cameras))
+        .route("/api/cameras/{camera_id}", ported(api::cameras::get_camera))
+        .route("/api/camera-groups", ported(api::cameras::list_camera_groups))
         // ---- SPA --------------------------------------------------------
         // Static assets are files on disk; serving them through the Python
         // proxy would double the cost of every page load for no reason.
@@ -58,6 +67,23 @@ pub fn build_router(state: AppState) -> Router {
         // answer, because it still owns the catch-all that returns
         // index.html.
         .layer(axum::Extension(IndexPath(index)))
+}
+
+/// A GET that Rust has ported, on a path whose other methods Python
+/// still owns.
+///
+/// Registering a bare `get(handler)` would make axum answer every other
+/// method on that path with 405 instead of forwarding it — so the moment
+/// `GET /api/cameras` moved over, `POST /api/cameras` would stop working.
+/// The method-level fallback keeps the unported verbs flowing to Python.
+///
+/// Drop the `.fallback` only once every method on the path is ported.
+fn ported<H, T>(handler: H) -> axum::routing::MethodRouter<AppState>
+where
+    H: axum::handler::Handler<T, AppState>,
+    T: 'static,
+{
+    get(handler).fallback(proxy::forward)
 }
 
 /// Path to the SPA entrypoint, carried so the eventual client-side-route

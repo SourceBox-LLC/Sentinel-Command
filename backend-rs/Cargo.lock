@@ -1614,6 +1614,7 @@ dependencies = [
  "chrono",
  "http-body-util",
  "hyper",
+ "hyper-util",
  "jsonwebtoken",
  "reqwest",
  "serde",

@@ -49,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState {
         auth: Arc::new(Authenticator::from_config(&config, http.clone())),
+        proxy: sentinel_command::proxy::build_client(),
         http,
         config: Arc::new(config),
         pool,

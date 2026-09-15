@@ -99,3 +99,62 @@ are easy to get wrong in a port and are now pinned by
 That test is gated on `TEST_DATABASE_URL` so `cargo test` still passes
 with no database. Verified in both directions: with the variable set a
 deliberately wrong expectation fails, and without it the cases skip.
+
+## Ported routes (slice 2 onward)
+
+```bash
+tests/differential/http_run.sh        # add -v to list every case
+```
+
+Sends identical requests to Rust (`:8000`) and Python (`:8001`), both
+pointed at one Postgres, and compares status and JSON body. Current
+result: **31/31 identical**.
+
+Both stacks run with `AUTH_PROVIDER=local` so they share one HS256
+secret and accept the same token — which makes the token itself a test,
+since it is minted by Python's own `issue_token()` and verified by the
+Rust port of `local_auth.py`.
+
+Bodies are compared structurally, not textually: neither list route has
+an `ORDER BY` (both emit SQLAlchemy's unordered `filter_by(...).all()`),
+so lists are compared as multisets. Comparing by position would produce
+flakes, not findings.
+
+### Seeding is part of the run, deliberately
+
+`effective_status` turns a camera offline 90 seconds after its last
+heartbeat, so a fixture seeded once and reused later exercises only the
+offline branch. That is not hypothetical: the first run of this harness
+reported **31/31 identical while testing neither a live camera nor the
+`last_error` surfacing**, because the fixture had aged out during an
+unrelated debugging detour. `http_run.sh` therefore re-seeds before every
+run, and `http_diff.py` refuses to report at all unless the fixture still
+covers live cameras, offline cameras, surfaced errors, and both
+timestamp shapes.
+
+### Does it have teeth?
+
+| injected bug | cases caught |
+| --- | --- |
+| `last_error` surfaced regardless of status | 4 / 31 |
+| heartbeat window 900s instead of 90s | coverage guard fires |
+| chrono `%.f` instead of Python's `isoformat()` | 2 / 31 |
+| org filter dropped from the list query (tenant leak) | 1 / 31 |
+
+The coverage guard was checked too: ageing the fixture past 90 seconds
+makes the run exit 2 with "COVERAGE TOO THIN" rather than a false green.
+
+### What it found
+
+`GET /api/cameras/../nodes` returned **200 from Rust and 404 from
+Python**. The cause was not the router: `reqwest` builds every request
+through a `Url`, which applies RFC 3986 dot-segment removal, so the proxy
+was silently rewriting `/api/cameras/../nodes` to `/api/nodes` (and
+`/a/./b` to `/a/b`) before forwarding. Python normalises nothing, so the
+two stacks answered different routes for the same request.
+
+No privilege escalation — every endpoint involved requires the same auth
+— but a proxy that rewrites paths is not a transparent proxy, and
+transparency is the entire contract during a strangler migration. The
+proxy now uses hyper directly and passes the URI through byte for byte;
+`proxy.rs` has a regression test for it.
