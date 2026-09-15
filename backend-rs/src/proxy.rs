@@ -10,6 +10,18 @@
 //! exactly as it did when Python served it directly, including its
 //! failures. The only judgement here is which headers not to forward.
 //!
+//! Two things a buffering proxy gets wrong, and both are handled below
+//! because both are load-bearing here:
+//!
+//! * **WebSocket upgrades.** `/api/ws/node` is how every CameraNode
+//!   connects. Stripping `Connection`/`Upgrade` as hop-by-hop headers —
+//!   correct for an ordinary request — makes Python see a plain GET to a
+//!   WebSocket-only route and answer 404, which would take the entire
+//!   node fleet offline.
+//! * **Streaming responses.** The motion feed and the Home Assistant
+//!   integration are Server-Sent Events. Collecting the body before
+//!   returning it means an endpoint that never ends never responds.
+//!
 //! As route groups move into Rust they are registered ahead of this
 //! fallback and simply stop reaching it. When the last one moves, this
 //! file and the second process are deleted together.
@@ -20,7 +32,8 @@ use axum::{
     http::{header, HeaderMap, HeaderName, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
-use http_body_util::BodyExt;
+use hyper::upgrade::OnUpgrade;
+use hyper_util::rt::TokioIo;
 
 use crate::app::AppState;
 
@@ -60,8 +73,27 @@ fn is_hop_by_hop(name: &HeaderName) -> bool {
     HOP_BY_HOP.contains(&name.as_str())
 }
 
+/// Whether this request is asking to switch protocols.
+///
+/// `Connection` is a comma-separated list and both header values are
+/// case-insensitive, so `connection: keep-alive, Upgrade` counts.
+fn is_upgrade_request(headers: &HeaderMap) -> bool {
+    let connection_upgrades = headers
+        .get(header::CONNECTION)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| {
+            v.split(',')
+                .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
+        });
+    connection_upgrades && headers.contains_key(header::UPGRADE)
+}
+
 pub async fn forward(State(state): State<AppState>, req: Request) -> Response {
-    let (parts, body) = req.into_parts();
+    let (mut parts, body) = req.into_parts();
+    let upgrading = is_upgrade_request(&parts.headers);
+    // Taken before the request is consumed. Awaiting it later yields the
+    // raw client socket once the 101 has been written back.
+    let client_upgrade = parts.extensions.remove::<OnUpgrade>();
 
     let path_and_query = parts
         .uri
@@ -101,7 +133,15 @@ pub async fn forward(State(state): State<AppState>, req: Request) -> Response {
     for (name, value) in parts.headers.iter() {
         // Host is re-derived from the upstream authority below; passing
         // the client's through would name the wrong server.
-        if is_hop_by_hop(name) || name == header::HOST {
+        //
+        // On an upgrade, `Connection` and `Upgrade` are exactly what the
+        // upstream needs to see — they are hop-by-hop, and this hop IS
+        // the handshake. Dropping them is what turned a WebSocket into a
+        // 404.
+        if name == header::HOST {
+            continue;
+        }
+        if !upgrading && is_hop_by_hop(name) {
             continue;
         }
         builder = builder.header(name, value);
@@ -115,7 +155,7 @@ pub async fn forward(State(state): State<AppState>, req: Request) -> Response {
         }
     };
 
-    let upstream = match state.proxy.request(outbound).await {
+    let mut upstream = match state.proxy.request(outbound).await {
         Ok(r) => r,
         Err(err) => {
             // The Python process is in the same container; a failure here
@@ -130,6 +170,47 @@ pub async fn forward(State(state): State<AppState>, req: Request) -> Response {
         }
     };
 
+    // ---- protocol switch: tunnel the two sockets together ------------
+    if upstream.status() == StatusCode::SWITCHING_PROTOCOLS {
+        let upstream_upgrade = hyper::upgrade::on(&mut upstream);
+        let Some(client_upgrade) = client_upgrade else {
+            tracing::error!("proxy: upstream switched protocols but the client cannot upgrade");
+            return (StatusCode::BAD_GATEWAY, "cannot upgrade this connection").into_response();
+        };
+
+        tokio::spawn(async move {
+            // The 101 has to reach the client before its socket can be
+            // taken, so both futures are awaited here rather than before
+            // returning the response.
+            let (client_io, upstream_io) = match (client_upgrade.await, upstream_upgrade.await) {
+                (Ok(c), Ok(u)) => (TokioIo::new(c), TokioIo::new(u)),
+                (Err(err), _) | (_, Err(err)) => {
+                    tracing::error!(error = %err, "proxy: upgrade failed");
+                    return;
+                }
+            };
+            let mut client_io = client_io;
+            let mut upstream_io = upstream_io;
+            // Copy until either side closes. A WebSocket lives as long as
+            // the node does, so this task is long-running by design.
+            if let Err(err) =
+                tokio::io::copy_bidirectional(&mut client_io, &mut upstream_io).await
+            {
+                tracing::debug!(error = %err, "proxy: tunnel closed");
+            }
+        });
+
+        // Every header goes back, hop-by-hop included: `Upgrade` and
+        // `Connection` are the handshake, and `Sec-WebSocket-Accept`
+        // proves it to the client.
+        let (up_parts, _) = upstream.into_parts();
+        let mut response = Response::new(Body::empty());
+        *response.status_mut() = up_parts.status;
+        *response.headers_mut() = up_parts.headers;
+        return response;
+    }
+
+    // ---- ordinary response: stream it, never collect it --------------
     let (up_parts, up_body) = upstream.into_parts();
     let mut headers = HeaderMap::new();
     for (name, value) in up_parts.headers.iter() {
@@ -139,15 +220,11 @@ pub async fn forward(State(state): State<AppState>, req: Request) -> Response {
         headers.insert(name.clone(), value.clone());
     }
 
-    let bytes = match up_body.collect().await {
-        Ok(b) => b.to_bytes(),
-        Err(err) => {
-            tracing::error!(error = %err, "proxy: could not read upstream body");
-            return (StatusCode::BAD_GATEWAY, "upstream response was truncated").into_response();
-        }
-    };
-
-    (up_parts.status, headers, Body::from(bytes)).into_response()
+    // `Body::new` hands the upstream body through as a stream. Collecting
+    // it first would make a Server-Sent Events endpoint — the motion feed,
+    // the Home Assistant integration — hang until it ended, which is
+    // never.
+    (up_parts.status, headers, Body::new(up_body)).into_response()
 }
 
 /// Join the configured upstream origin to a request's raw path+query.

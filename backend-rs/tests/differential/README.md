@@ -422,3 +422,50 @@ One deliberate difference remains. The SDK passes
 this port does, and also requires `exp` and `iss` to be present. Both are
 stricter, both are unreachable in practice (the signature already ties a
 token to one instance's JWKS), and stricter is the safe direction.
+
+## Streaming protocols (WebSocket and SSE)
+
+```bash
+tests/differential/streaming_diff.py "$TOKEN"
+```
+
+Neither protocol fits a request/response differential, and the proxy was
+broken for **both** in ways nothing else in this suite would have caught.
+Found by asking what no harness reaches, not by a failing test.
+
+### `/ws/node` — the entire node fleet
+
+`Connection` and `Upgrade` are hop-by-hop headers, so the proxy stripped
+them. That is correct for an ordinary request and catastrophic for a
+handshake: Python saw a plain GET to a WebSocket-only route and answered
+**404**. Every CameraNode would have failed to connect.
+
+The tell was subtle — the 404 carried `server: uvicorn`, so the request
+*had* reached Python; it just no longer looked like an upgrade.
+
+The proxy now forwards those headers on an upgrade request, and on a 101
+takes `hyper::upgrade::on` for both sides and copies bidirectionally.
+Verified with a real authenticated handshake: 101 plus a full
+client→server→client round trip returning an identical `ack`.
+
+### SSE — the motion feed and the Home Assistant integration
+
+The proxy called `.collect()` on the response body before returning it,
+so an endpoint that never ends never responded. Measured before the fix:
+Python emitted its first event immediately, Rust emitted **nothing** for
+the full six-second timeout. The body is streamed through now.
+
+### Teeth
+
+Reverting each fix individually is caught:
+
+| reverted fix | result |
+| --- | --- |
+| strip `Upgrade`/`Connection` again | no successful handshake, exit 2 |
+| `.collect()` the response body again | no SSE event, exit 2 |
+
+Both surface through the coverage guard rather than as a diff, because
+when a stream fails on both stacks the comparison itself is meaningless —
+two identical failures would otherwise read as a pass. The guard's
+message names both plausible causes (proxy vs stale fixture) and says
+which log line tells them apart.
