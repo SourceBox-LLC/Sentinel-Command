@@ -45,6 +45,36 @@ CASES = [
     ("GET", "/api/cameras/../nodes", True),
     ("GET", "/api/cameras/cam%20space", True),
     ("GET", "/api/cameras/", True),
+    # --- settings ----------------------------------------------------
+    ("GET", "/api/settings", True),
+    ("GET", "/api/settings", False),
+    ("GET", "/api/settings/notifications", True),
+    ("GET", "/api/settings/motion-ingestion", True),
+
+    # --- audit logs: pagination, filters and every 422 shape ----------
+    ("GET", "/api/audit-logs", True),
+    ("GET", "/api/audit-logs", False),
+    *[("GET", f"/api/audit-logs?{q}", True) for q in [
+        "limit=1", "limit=5", "limit=500", "limit=3&offset=10",
+        "offset=0", "offset=1000000", "offset=999999",
+        "event=camera_created", "event=node_registered", "event=nope", "event=",
+        # the LIKE-escaping cases: an underscore and a percent that the
+        # caller typed literally and must not be treated as wildcards
+        "username=clerk_user_alpha", "username=beta%25user", "username=_",
+        "username=%25", "username=CLERK_USER_ALPHA", "username=nobody",
+        "event=camera_created&username=clerk_user_alpha&limit=2",
+        # parsing edges measured against the running service
+        "limit=1_000", "limit=5.0", "limit=%205%20", "limit=05", "limit=1&limit=2",
+        # every validation failure
+        "limit=0", "limit=501", "limit=abc", "limit=", "limit=5.5", "limit=1e3",
+        "limit=0x10", "limit=true", "offset=-1", "offset=1000001",
+        "format=xml", "format=json", "offset=-1&limit=0", "limit=0&offset=-1",
+        "unknown=x",
+    ]],
+    # csv still belongs to Python; validation must still run in Rust first
+    ("GET", "/api/audit-logs?format=csv&limit=2", True),
+    ("GET", "/api/audit-logs?format=csv&limit=0", True),
+
     # methods Rust has NOT ported on a path it HAS — these must still
     # reach Python rather than being answered with 405 by axum.
     ("POST", "/api/cameras", True),

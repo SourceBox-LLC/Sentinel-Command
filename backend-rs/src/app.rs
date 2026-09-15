@@ -50,6 +50,16 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/cameras", ported(api::cameras::list_cameras))
         .route("/api/cameras/{camera_id}", ported(api::cameras::get_camera))
         .route("/api/camera-groups", ported(api::cameras::list_camera_groups))
+        .route("/api/settings", ported(api::settings::get_all_settings))
+        .route(
+            "/api/settings/notifications",
+            ported(api::settings::get_notification_settings),
+        )
+        .route(
+            "/api/settings/motion-ingestion",
+            ported(api::settings::get_motion_ingestion),
+        )
+        .route("/api/audit-logs", ported(api::audit::list_audit_logs))
         // ---- SPA --------------------------------------------------------
         // Static assets are files on disk; serving them through the Python
         // proxy would double the cost of every page load for no reason.

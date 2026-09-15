@@ -4,4 +4,6 @@
 //! diffed against the Python it replaces; until then it stays in the
 //! proxy fallback in `app.rs`.
 
+pub mod audit;
 pub mod cameras;
+pub mod settings;

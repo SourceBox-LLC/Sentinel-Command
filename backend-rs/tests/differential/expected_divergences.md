@@ -62,3 +62,56 @@ hardening note for the Python service, not an incident.
 | `org_id: 999` | resolves, `org_id: 999` | 401 |
 | `org_role: 7` | resolves, `org_role: 7` | 401 |
 | `email: 5, username: true` | resolves with those values | 401 |
+
+# Ported routes (slice 2)
+
+Two more deliberate divergences, both cases where the Python raises and
+returns 500. They are asserted by `latent_crashes.sh` rather than living
+in the main HTTP differential, because each makes Python 500 for *every*
+request to its route — leaving the rows in the fixture would turn every
+other case on that route red and hide real regressions.
+
+Neither is reachable in production today (every writer sets the columns
+involved), so both are hardening notes for `backend/`, not incidents.
+
+## `AuditLog.to_dict()` crashes on a NULL timestamp
+
+```python
+"timestamp": self.timestamp.isoformat(),   # column is nullable
+```
+
+`timestamp` has no `nullable=False`, so one odd row 500s an entire page
+of audit history — up to 500 rows fail because of one. Rust serves
+`"timestamp": null` for that row and the rest of the page normally.
+
+Reproduced: `GET /api/audit-logs?limit=500` → rust 200, python 500.
+
+## `/settings/motion-ingestion` crashes on a NULL value
+
+```python
+enabled = Setting.get(db, org_id, "motion_ingestion_enabled", "true").lower() == "true"
+```
+
+`Setting.get` returns `setting.value` when a row exists, which is `None`
+for a NULL value — and `.lower()` on it raises. The sibling routes
+(`/settings`, `/settings/notifications`) compare the same shape of data
+with a bare `==` and do not crash, so this is an inconsistency between
+three routes reading the same table rather than a considered choice.
+
+Rust answers `{"motion_ingestion_enabled": false}`. Deliberately
+**disabled**, not enabled: this is a kill switch for a runaway sensor
+flooding events, and silently re-opening it because its stored value
+became unreadable is the wrong direction. Defaulting to `true` would
+have matched the route's *documented* default while defeating its
+purpose in exactly the case where it matters.
+
+Reproduced: `GET /api/settings/motion-ingestion` → rust 200, python 500.
+
+## One inconsistency deliberately preserved
+
+`/settings/motion-ingestion` lowercases before comparing; `/settings` and
+`/settings/notifications` do not. So a stored `"TRUE"` reads as *enabled*
+for motion ingestion and as *off* for the notification toggles. The
+fixture contains exactly that value for both, and both stacks agree.
+This is copied rather than fixed: the Python still serves the write path
+for these settings, and a looser read on one side would disagree with it.

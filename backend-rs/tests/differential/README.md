@@ -108,7 +108,9 @@ tests/differential/http_run.sh        # add -v to list every case
 
 Sends identical requests to Rust (`:8000`) and Python (`:8001`), both
 pointed at one Postgres, and compares status and JSON body. Current
-result: **31/31 identical**.
+result: **77/77 identical**, covering the camera reads, the settings
+reads, and `/api/audit-logs` — the last with 36 query-string variants
+including every FastAPI 422 shape.
 
 Both stacks run with `AUTH_PROVIDER=local` so they share one HS256
 secret and accept the same token — which makes the token itself a test,
@@ -141,6 +143,9 @@ timestamp shapes.
 | chrono `%.f` instead of Python's `isoformat()` | 2 / 31 |
 | org filter dropped from the list query (tenant leak) | 1 / 31 |
 
+(Counts are from the 31-case run at slice 2's first commit; the suite has
+since grown to 77.)
+
 The coverage guard was checked too: ageing the fixture past 90 seconds
 makes the run exit 2 with "COVERAGE TOO THIN" rather than a false green.
 
@@ -158,3 +163,32 @@ No privilege escalation — every endpoint involved requires the same auth
 transparency is the entire contract during a strangler migration. The
 proxy now uses hyper directly and passes the URI through byte for byte;
 `proxy.rs` has a regression test for it.
+
+## Query-parameter validation
+
+`src/query.rs` reproduces FastAPI's 422 responses — same status, same
+`detail` envelope, same `errors` list, same ordering. Every rule in it
+was measured against the running service rather than read out of the
+Pydantic docs, which turned up several things worth knowing:
+
+* a repeated parameter takes the **last** value, not the first;
+* values are whitespace-stripped, so `?limit=%205%20` is 5;
+* `"5.0"` parses as 5, but `"5.5"`, `"1e3"` and `"0x10"` do not;
+* `"1_000"` parses as 1000 — Python's underscore digit separators reach
+  query parsing;
+* errors are reported in the order parameters are *declared* in the
+  handler signature, not the order they appear in the query string, and
+  `message` summarises only the first.
+
+The differential covers all of these plus every failure mode
+(`int_parsing`, `greater_than_equal`, `less_than_equal`,
+`string_pattern_mismatch`) and both single- and multi-error responses.
+
+## Latent crashes found in the Python
+
+```bash
+tests/differential/latent_crashes.sh
+```
+
+Two routes 500 on data their own columns permit. See
+`expected_divergences.md`; neither is reachable in production today.

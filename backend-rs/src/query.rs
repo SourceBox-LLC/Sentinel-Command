@@ -1,0 +1,358 @@
+//! Query-parameter parsing that reproduces FastAPI's 422 responses.
+//!
+//! The SPA branches on these bodies, so a ported route has to reject bad
+//! input the same way the Python did — same status, same `detail` shape,
+//! same `errors` list. `main.py` already rewrites Pydantic's envelope
+//! into `{"detail": {"error": "validation_failed", "message": ..., "errors": [...]}}`,
+//! which is what this produces.
+//!
+//! Every rule here was measured against the running service rather than
+//! inferred from the Pydantic docs. The surprises worth naming:
+//!
+//! * a repeated parameter takes the **last** value, not the first;
+//! * values are whitespace-stripped, so `?limit=%205%20` is 5;
+//! * `"5.0"` parses as 5 but `"5.5"` and `"1e3"` do not;
+//! * `"1_000"` parses as 1000 — Python's underscore digit separators
+//!   survive into query parsing;
+//! * errors are reported in the order the parameters are *declared*,
+//!   not the order they appear in the query string, and `message`
+//!   summarises only the first.
+
+use axum::http::StatusCode;
+use serde_json::{json, Value};
+
+use crate::error::ApiError;
+
+pub struct Query {
+    params: Vec<(String, String)>,
+    errors: Vec<Value>,
+}
+
+impl Query {
+    /// Parse the raw query string. `None` is an empty query, not an error.
+    pub fn parse(raw: Option<&str>) -> Self {
+        let params = raw
+            .map(|q| {
+                form_urlencoded::parse(q.as_bytes())
+                    .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self {
+            params,
+            errors: Vec::new(),
+        }
+    }
+
+    /// The last occurrence of a parameter, which is the one FastAPI uses.
+    fn last(&self, name: &str) -> Option<&str> {
+        self.params
+            .iter()
+            .rev()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+    }
+
+    fn push_error(&mut self, kind: &str, name: &str, msg: String, input: &str, ctx: Option<Value>) {
+        let mut err = json!({
+            "type": kind,
+            "loc": ["query", name],
+            "msg": msg,
+            "input": input,
+        });
+        if let Some(ctx) = ctx {
+            err["ctx"] = ctx;
+        }
+        self.errors.push(err);
+    }
+
+    /// An integer parameter with optional inclusive bounds.
+    ///
+    /// Returns the default when absent, and on any failure returns the
+    /// default too — the caller runs on regardless, because FastAPI
+    /// collects *every* parameter's errors before rejecting, and the
+    /// order of that list is part of the response.
+    pub fn int(&mut self, name: &str, default: i64, ge: Option<i64>, le: Option<i64>) -> i64 {
+        let Some(raw) = self.last(name).map(str::to_string) else {
+            return default;
+        };
+
+        let Some(value) = parse_python_int(&raw) else {
+            self.push_error(
+                "int_parsing",
+                name,
+                "Input should be a valid integer, unable to parse string as an integer".into(),
+                &raw,
+                None,
+            );
+            return default;
+        };
+
+        // Both bounds are checked, but Pydantic stops at the first
+        // failing constraint per field, so this returns after either.
+        if let Some(ge) = ge {
+            if value < ge {
+                let msg = format!("Input should be greater than or equal to {ge}");
+                self.push_error("greater_than_equal", name, msg, &raw, Some(json!({"ge": ge})));
+                return default;
+            }
+        }
+        if let Some(le) = le {
+            if value > le {
+                let msg = format!("Input should be less than or equal to {le}");
+                self.push_error("less_than_equal", name, msg, &raw, Some(json!({"le": le})));
+                return default;
+            }
+        }
+        value
+    }
+
+    /// A string parameter constrained to a set of literals.
+    ///
+    /// `pattern` is the regex source only so the error message can quote
+    /// it the way Pydantic does; matching is done against `allowed`,
+    /// which keeps a regex engine out of the dependency tree for the one
+    /// place this is used.
+    pub fn pattern(&mut self, name: &str, default: &str, pattern: &str, allowed: &[&str]) -> String {
+        let Some(raw) = self.last(name).map(str::to_string) else {
+            return default.to_string();
+        };
+        if allowed.contains(&raw.as_str()) {
+            return raw;
+        }
+        let msg = format!("String should match pattern '{pattern}'");
+        self.push_error(
+            "string_pattern_mismatch",
+            name,
+            msg,
+            &raw,
+            Some(json!({ "pattern": pattern })),
+        );
+        default.to_string()
+    }
+
+    /// An optional free-text parameter. Absent and empty are the same
+    /// thing to the callers here, which all treat `""` as "no filter"
+    /// because Python tests them for truthiness.
+    pub fn optional_str(&self, name: &str) -> Option<String> {
+        self.last(name)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    }
+
+    /// Turn any accumulated errors into the 422 FastAPI would return.
+    pub fn finish(&self) -> Result<(), ApiError> {
+        if self.errors.is_empty() {
+            return Ok(());
+        }
+        // The summary is built from the first error only, with "body"
+        // stripped out of the location path.
+        let first = &self.errors[0];
+        let loc = first["loc"]
+            .as_array()
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .filter(|p| *p != "body")
+                    .collect::<Vec<_>>()
+                    .join(".")
+            })
+            .unwrap_or_default();
+        let msg = first["msg"].as_str().unwrap_or("Validation failed");
+        let summary = if loc.is_empty() {
+            msg.to_string()
+        } else {
+            format!("{msg} ({loc})")
+        };
+
+        Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            json!({
+                "error": "validation_failed",
+                "message": summary,
+                "errors": self.errors,
+            }),
+        ))
+    }
+}
+
+/// Parse an integer the way Python's `int()` plus Pydantic's string
+/// coercion does.
+///
+/// Accepts surrounding whitespace, a sign, underscore digit separators,
+/// and a decimal point followed only by zeros. Rejects scientific
+/// notation, hex, and any real fraction — all measured against the
+/// running service.
+fn parse_python_int(raw: &str) -> Option<i64> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    let (digits, fraction) = match s.split_once('.') {
+        Some((d, f)) => (d, Some(f)),
+        None => (s, None),
+    };
+
+    // A fraction is allowed only when it is entirely zeros: "5.0" is 5,
+    // "5.5" is not an integer.
+    if let Some(f) = fraction {
+        if f.is_empty() || !f.bytes().all(|b| b == b'0') {
+            return None;
+        }
+    }
+
+    // Underscores separate digits and are not allowed at either end or
+    // doubled up, matching Python's own rule.
+    let cleaned = strip_digit_separators(digits)?;
+    cleaned.parse::<i64>().ok()
+}
+
+fn strip_digit_separators(s: &str) -> Option<String> {
+    let (sign, rest) = match s.strip_prefix(['+', '-']) {
+        Some(rest) => (&s[..1], rest),
+        None => ("", s),
+    };
+    if rest.is_empty() {
+        return None;
+    }
+
+    let mut out = String::with_capacity(rest.len());
+    let bytes = rest.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'_' {
+            // Must sit between two digits.
+            let prev_ok = i > 0 && bytes[i - 1].is_ascii_digit();
+            let next_ok = i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit();
+            if !prev_ok || !next_ok {
+                return None;
+            }
+            continue;
+        }
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        out.push(b as char);
+    }
+    Some(format!("{sign}{out}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_the_integer_forms_python_accepts() {
+        for (raw, expected) in [
+            ("5", 5),
+            (" 5 ", 5),
+            ("05", 5),
+            ("+5", 5),
+            ("-5", -5),
+            ("5.0", 5),
+            ("5.00", 5),
+            ("1_000", 1000),
+            ("-0", 0),
+        ] {
+            assert_eq!(parse_python_int(raw), Some(expected), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_the_forms_python_rejects() {
+        // 1e3 and 0x10 are the interesting ones: both are valid Rust
+        // float/int literals and neither is accepted here, because
+        // Pydantic does not accept them either.
+        for raw in [
+            "", " ", "abc", "true", "5.5", "1e3", "0x10", "_5", "5_", "1__0", "+", "-", ".",
+            "5.", "٥",
+        ] {
+            assert_eq!(parse_python_int(raw), None, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn a_repeated_parameter_takes_the_last_value() {
+        let mut q = Query::parse(Some("limit=1&limit=2"));
+        assert_eq!(q.int("limit", 100, Some(1), Some(500)), 2);
+        assert!(q.finish().is_ok());
+    }
+
+    #[test]
+    fn absent_parameters_take_the_default_without_erroring() {
+        let mut q = Query::parse(None);
+        assert_eq!(q.int("limit", 100, Some(1), Some(500)), 100);
+        assert_eq!(q.pattern("format", "json", "^(json|csv)$", &["json", "csv"]), "json");
+        assert_eq!(q.optional_str("event"), None);
+        assert!(q.finish().is_ok());
+    }
+
+    #[test]
+    fn an_empty_filter_is_the_same_as_an_absent_one() {
+        // Python tests these for truthiness, so "" applies no filter.
+        let q = Query::parse(Some("event=&username="));
+        assert_eq!(q.optional_str("event"), None);
+        assert_eq!(q.optional_str("username"), None);
+    }
+
+    #[test]
+    fn a_bound_violation_produces_pydantics_exact_error() {
+        let mut q = Query::parse(Some("limit=0"));
+        q.int("limit", 100, Some(1), Some(500));
+        let err = q.finish().unwrap_err();
+        assert_eq!(err.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            err.detail,
+            json!({
+                "error": "validation_failed",
+                "message": "Input should be greater than or equal to 1 (query.limit)",
+                "errors": [{
+                    "type": "greater_than_equal",
+                    "loc": ["query", "limit"],
+                    "msg": "Input should be greater than or equal to 1",
+                    "input": "0",
+                    "ctx": {"ge": 1},
+                }],
+            })
+        );
+    }
+
+    #[test]
+    fn every_failing_parameter_is_reported_in_declaration_order() {
+        // FastAPI collects all of them and summarises the first. The
+        // order follows the handler signature, not the query string —
+        // so this must be driven by the order the validators run.
+        let mut q = Query::parse(Some("offset=-1&limit=0"));
+        q.int("limit", 100, Some(1), Some(500));
+        q.int("offset", 0, Some(0), Some(1_000_000));
+        let err = q.finish().unwrap_err();
+        let errors = err.detail["errors"].as_array().unwrap();
+        assert_eq!(errors.len(), 2);
+        assert_eq!(errors[0]["loc"], json!(["query", "limit"]));
+        assert_eq!(errors[1]["loc"], json!(["query", "offset"]));
+        assert_eq!(
+            err.detail["message"],
+            "Input should be greater than or equal to 1 (query.limit)"
+        );
+    }
+
+    #[test]
+    fn a_pattern_mismatch_quotes_the_pattern() {
+        let mut q = Query::parse(Some("format=xml"));
+        q.pattern("format", "json", "^(json|csv)$", &["json", "csv"]);
+        let err = q.finish().unwrap_err();
+        assert_eq!(
+            err.detail["message"],
+            "String should match pattern '^(json|csv)$' (query.format)"
+        );
+        assert_eq!(err.detail["errors"][0]["ctx"]["pattern"], "^(json|csv)$");
+    }
+
+    #[test]
+    fn percent_and_plus_encoding_are_decoded() {
+        let q = Query::parse(Some("username=a%20b&event=x+y"));
+        assert_eq!(q.optional_str("username").as_deref(), Some("a b"));
+        assert_eq!(q.optional_str("event").as_deref(), Some("x y"));
+    }
+}

@@ -76,3 +76,34 @@ SELECT * FROM (VALUES
   ('cam-theirs',    'other-org', (SELECT id FROM camera_nodes WHERE node_id='node-cccc3333'), 'Their Cam', 'rtsp', 'streaming',
      (SELECT id FROM camera_groups WHERE name='Their Group'), now()::timestamp, 'streaming', NULL, false, false, false, NULL, NULL)
 ) AS v;
+
+-- ---- settings -------------------------------------------------------
+DELETE FROM settings WHERE org_id IN ('self-host', 'other-org');
+INSERT INTO settings (org_id, key, value) VALUES
+  ('self-host', 'motion_notifications', 'true'),
+  ('self-host', 'camera_transition_notifications', 'false'),
+  -- deliberately mixed case: the notification toggles compare with a
+  -- bare == "true", so this reads as OFF, while motion-ingestion
+  -- lowercases first and would read the same value as ON.
+  ('self-host', 'node_transition_notifications', 'TRUE'),
+  ('self-host', 'timezone', 'America/Los_Angeles'),
+  ('self-host', 'motion_ingestion_enabled', 'TRUE'),
+  ('other-org', 'timezone', 'Europe/London');
+
+-- ---- audit log ------------------------------------------------------
+DELETE FROM audit_log;
+INSERT INTO audit_log (org_id, timestamp, event, ip_address, username, user_id, details)
+SELECT
+  CASE WHEN i % 7 = 0 THEN 'other-org' ELSE 'self-host' END,
+  timestamp '2026-09-01 00:00:00' + (i || ' minutes')::interval
+    + CASE WHEN i % 3 = 0 THEN interval '123456 microseconds' ELSE interval '0' END,
+  CASE WHEN i % 4 = 0 THEN 'camera_created' ELSE 'node_registered' END,
+  '10.0.0.' || (i % 255),
+  CASE WHEN i % 5 = 0 THEN 'clerk_user_alpha' ELSE 'beta%user' END,
+  'user_' || i,
+  '{"i": ' || i || '}'
+FROM generate_series(1, 240) AS i;
+
+-- rows that exercise the NULL branches both stacks handle differently
+INSERT INTO audit_log (org_id, timestamp, event, ip_address, username, user_id, details) VALUES
+  ('self-host', timestamp '2026-09-02 12:00:00', 'null_fields', NULL, NULL, NULL, NULL);
