@@ -73,8 +73,15 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/cameras/{camera_id}/motion", still_python())
         .route("/api/cameras/{camera_id}/playlist", still_python())
         .route("/api/cameras/{camera_id}/push-segment", still_python())
-        .route("/api/cameras/{camera_id}/recording", still_python())
-        .route("/api/cameras/{camera_id}/recording-settings", still_python())
+        .route(
+            "/api/cameras/{camera_id}/recording",
+            axum::routing::post(api::recording::toggle_recording).fallback(proxy::forward),
+        )
+        .route(
+            "/api/cameras/{camera_id}/recording-settings",
+            axum::routing::patch(api::recording::update_recording_policy)
+                .fallback(proxy::forward),
+        )
         .route("/api/cameras/{camera_id}/snapshot", still_python())
         .route("/api/cameras/{camera_id}/stream.m3u8", still_python())
         .route("/api/settings", ported(api::settings::get_all_settings))

@@ -354,9 +354,77 @@ impl BodyErrors {
         }
     }
 
+    /// An optional boolean field. Absent yields `None`; present but
+    /// uncoercible records a `bool_parsing` error.
+    pub fn optional_bool(&mut self, body: &Value, field: &str) -> Option<bool> {
+        match body.get(field) {
+            None | Some(Value::Null) => None,
+            Some(value) => match parse_pydantic_bool(value) {
+                Some(b) => Some(b),
+                None => {
+                    self.bool_parsing(field, value);
+                    None
+                }
+            },
+        }
+    }
+
+    /// An optional `"HH:MM"` field, max 5 characters.
+    ///
+    /// The empty string is allowed through — the Python validator returns
+    /// it unchanged, and the handler turns it into NULL to clear the
+    /// window.
+    ///
+    /// **This 422 is one the Python cannot currently produce.** Its
+    /// `field_validator` raises a `ValueError`, Pydantic v2 puts that
+    /// exception object into `ctx["error"]`, and the custom 422 handler
+    /// in `main.py` calls `JSONResponse(content=...)` on it — which
+    /// `json.dumps` cannot serialise, so the request 500s instead. See
+    /// expected_divergences.md; this emits the response the validator was
+    /// written to produce.
+    pub fn optional_hhmm(&mut self, body: &Value, field: &str) -> Option<String> {
+        // Pydantic stops at the first failing constraint per field, so a
+        // value that is too long or the wrong type never reaches the
+        // custom validator. Reporting both would produce two errors
+        // where Python produces one.
+        let before = self.errors.len();
+        let value = self.optional_string(body, field, 5)?;
+        if self.errors.len() != before {
+            return None;
+        }
+        if value.is_empty() || is_hhmm(&value) {
+            return Some(value);
+        }
+        self.push(
+            "value_error",
+            field,
+            "Value error, must be HH:MM 24-hour, e.g. 08:30",
+            json!(value),
+            Some(json!({"error": "must be HH:MM 24-hour, e.g. 08:30"})),
+        );
+        None
+    }
+
     pub fn finish(&self) -> Result<(), ApiError> {
         validation_error(&self.errors)
     }
+}
+
+/// `^([01]\d|2[0-3]):[0-5]\d$`, written out so the crate needs no regex
+/// engine for its one use.
+fn is_hhmm(value: &str) -> bool {
+    let b = value.as_bytes();
+    if b.len() != 5 || b[2] != b':' {
+        return false;
+    }
+    if !(b[0].is_ascii_digit() && b[1].is_ascii_digit()
+        && b[3].is_ascii_digit() && b[4].is_ascii_digit())
+    {
+        return false;
+    }
+    let hour_ok = matches!(b[0], b'0' | b'1') || (b[0] == b'2' && (b'0'..=b'3').contains(&b[1]));
+    let minute_ok = (b'0'..=b'5').contains(&b[3]);
+    hour_ok && minute_ok
 }
 
 /// Pydantic v2's lax boolean coercion.
@@ -504,6 +572,21 @@ mod tests {
             "5.", "٥",
         ] {
             assert_eq!(parse_python_int(raw), None, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn hhmm_accepts_only_a_real_24_hour_clock_time() {
+        for good in ["00:00", "08:30", "09:59", "19:45", "23:59", "20:00"] {
+            assert!(is_hhmm(good), "{good} should be valid");
+        }
+        for bad in [
+            // the one an operator actually types
+            "8:30",
+            "24:00", "23:60", "2:5", "0830", "08-30", "aa:bb", "08:3", "08:300",
+            "", " 8:30", "08:30 ", "٠٨:٣٠",
+        ] {
+            assert!(!is_hhmm(bad), "{bad:?} should be rejected");
         }
     }
 

@@ -11,5 +11,6 @@ pub mod incidents;
 pub mod mcp_activity;
 pub mod motion;
 pub mod nodes;
+pub mod recording;
 pub mod settings;
 pub mod stream_logs;

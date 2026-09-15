@@ -142,6 +142,69 @@ CASES = [
      {"motion_notifications": False}),
     ("notifications, wrong type", "POST", "/api/settings/notifications",
      {"motion_notifications": "nope"}),
+
+    # --- recording toggle ---------------------------------------------
+    ("start recording", "POST", "/api/cameras/cam-stale/recording", {"recording": True}),
+    ("stop recording", "POST", "/api/cameras/cam-live/recording", {"recording": False}),
+    # cam-live is already recording: no change, so updated_at must not move
+    ("start an already-recording cam", "POST", "/api/cameras/cam-live/recording",
+     {"recording": True}),
+    ("recording key absent", "POST", "/api/cameras/cam-live/recording", {}),
+    ("recording truthy string", "POST", "/api/cameras/cam-stale/recording",
+     {"recording": "yes"}),
+    ("recording missing camera", "POST", "/api/cameras/nope/recording", {"recording": True}),
+    ("recording another tenant's", "POST", "/api/cameras/cam-theirs/recording",
+     {"recording": True}),
+
+    # --- recording policy ---------------------------------------------
+    ("policy: continuous on", "PATCH", "/api/cameras/cam-stale/recording-settings",
+     {"continuous_24_7": True}),
+    ("policy: scheduled with window", "PATCH", "/api/cameras/cam-stale/recording-settings",
+     {"scheduled_recording": True, "scheduled_start": "08:30", "scheduled_end": "17:00"}),
+    ("policy: clear the window", "PATCH", "/api/cameras/cam-failed/recording-settings",
+     {"scheduled_start": "", "scheduled_end": ""}),
+    ("policy: one toggle only", "PATCH", "/api/cameras/cam-failed/recording-settings",
+     {"scheduled_recording": False}),
+    ("policy: empty patch", "PATCH", "/api/cameras/cam-live/recording-settings", {}),
+    # both modes at once is rejected on the RESULTING state, so this
+    # catches "turn continuous on while scheduled is already on"
+    ("policy: both modes in one patch", "PATCH", "/api/cameras/cam-stale/recording-settings",
+     {"continuous_24_7": True, "scheduled_recording": True}),
+    ("policy: continuous on over existing schedule", "PATCH",
+     "/api/cameras/cam-failed/recording-settings", {"continuous_24_7": True}),
+    ("policy: swap mode in one patch", "PATCH",
+     "/api/cameras/cam-failed/recording-settings",
+     {"continuous_24_7": True, "scheduled_recording": False}),
+    ("policy: bad bool", "PATCH", "/api/cameras/cam-live/recording-settings",
+     {"continuous_24_7": "nope"}),
+    ("policy: start too long", "PATCH", "/api/cameras/cam-live/recording-settings",
+     {"scheduled_start": "123456"}),
+    ("policy: start wrong type", "PATCH", "/api/cameras/cam-live/recording-settings",
+     {"scheduled_start": 5}),
+    ("policy: missing camera", "PATCH", "/api/cameras/nope/recording-settings",
+     {"continuous_24_7": True}),
+    ("policy: another tenant's", "PATCH", "/api/cameras/cam-theirs/recording-settings",
+     {"continuous_24_7": True}),
+]
+
+# Cases where the two stacks are known to differ, with a reason. Same
+# contract as the claim differential's list: an unexpected divergence
+# fails the run, and so does an expected one that has stopped diverging.
+EXPECTED_DIVERGENCES = {
+    # Python 500s on ANY custom pydantic validator: the validator raises
+    # ValueError, pydantic v2 puts the exception object in ctx["error"],
+    # and main.py's 422 handler calls JSONResponse on it, which
+    # json.dumps cannot serialise. Rust returns the 422 the validator was
+    # written to produce. See expected_divergences.md.
+    "policy: bad HH:MM",
+    "policy: single-digit hour",
+}
+
+CASES += [
+    ("policy: bad HH:MM", "PATCH", "/api/cameras/cam-live/recording-settings",
+     {"scheduled_start": "25:00"}),
+    ("policy: single-digit hour", "PATCH", "/api/cameras/cam-live/recording-settings",
+     {"scheduled_start": "8:30"}),
 ]
 
 
@@ -247,7 +310,18 @@ def main():
         body_same = py_body == rs_body
         db_same = py_db == rs_db
 
-        if status_same and body_same and db_same:
+        identical = status_same and body_same and db_same
+        if name in EXPECTED_DIVERGENCES:
+            if identical:
+                bad += 1
+                print(f"  STALE   {name:<34} listed as an expected divergence "
+                      f"but the two now agree")
+            elif VERBOSE:
+                print(f"  ok(div) {name:<34} differs as expected "
+                      f"(rust={rs_status} python={py_status})")
+            continue
+
+        if identical:
             if VERBOSE:
                 print(f"  ok      {name:<34} {method} {path} -> {rs_status}")
             continue

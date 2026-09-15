@@ -135,3 +135,45 @@ Python's *own* handling of a genuinely absent or malformed body is a
 clean 422, which Rust matches exactly (`parse_body` in `src/query.rs`,
 including the single-element `loc: ["body"]` that makes the summary read
 "Field required" with no field name).
+
+## Every custom Pydantic validator 500s instead of 422 (slice 4)
+
+The most consequential of these, because it is reachable through normal
+use rather than by malformed data.
+
+```
+PATCH /api/cameras/{id}/recording-settings
+{"scheduled_start": "8:30"}          ->  python 500, rust 422
+```
+
+`CameraRecordingPolicy._validate_hhmm` raises `ValueError`. Pydantic v2
+puts the **exception object** into `ctx["error"]`, and
+`validation_exception_handler` in `main.py` passes the error list
+straight to `JSONResponse(content=...)`. `json.dumps` cannot serialise a
+`ValueError`, so the handler itself raises and the request becomes a 500:
+
+```
+File "app/main.py", line 457, in validation_exception_handler
+TypeError: Object of type ValueError is not JSON serializable
+```
+
+This is not specific to `HH:MM`. It fires for **any** custom
+`field_validator` in the codebase — currently two:
+
+| validator | reached by |
+| --- | --- |
+| `CameraRecordingPolicy._validate_hhmm` | typing `8:30` instead of `08:30` in the schedule UI |
+| `McpKeyCreate` `scope_tools` | creating a scoped MCP key |
+
+The built-in constraints (`max_length`, `bool` coercion) are unaffected —
+their `ctx` holds plain values — which is why `{"scheduled_start":
+"123456"}` correctly returns 422 while `{"scheduled_start": "25:00"}`
+returns 500.
+
+Rust emits the 422 the validator was written to produce. The two cases
+are listed in `write_diff.py`'s `EXPECTED_DIVERGENCES`, so the run fails
+if they stop diverging — which is what will happen when the Python is
+fixed.
+
+**The fix is one line in `main.py`**: run the error list through
+`fastapi.encoders.jsonable_encoder` before handing it to `JSONResponse`.
