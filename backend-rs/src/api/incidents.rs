@@ -20,7 +20,7 @@ use crate::app::AppState;
 use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::{iso_naive, now_naive};
-use crate::query::{path_int, Query};
+use crate::query::{parse_body, path_int, Query};
 use crate::ratelimit::RateLimit;
 
 const SEVERITIES: [&str; 4] = ["low", "medium", "high", "critical"];
@@ -248,8 +248,10 @@ pub async fn update_incident(
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Path(incident_id): Path<String>,
-    Json(patch): Json<IncidentPatch>,
+    body: axum::body::Bytes,
 ) -> Result<Json<Value>, ApiError> {
+    let patch: IncidentPatch = serde_json::from_value(parse_body(&body)?)
+        .unwrap_or_default();
     let incident_id = path_int("incident_id", &incident_id)?;
     let incident = owned_incident(&state.pool, &user.org_id, incident_id).await?;
 

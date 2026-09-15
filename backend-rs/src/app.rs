@@ -51,15 +51,44 @@ pub fn build_router(state: AppState) -> Router {
         // rather than a bare `get`.
         .route("/api/cameras", ported(api::cameras::list_cameras))
         .route("/api/cameras/{camera_id}", ported(api::cameras::get_camera))
-        .route("/api/camera-groups", ported(api::cameras::list_camera_groups))
+        .route(
+            "/api/camera-groups",
+            get(api::cameras::list_camera_groups)
+                .post(api::groups::create_camera_group)
+                .fallback(proxy::forward),
+        )
+        .route(
+            "/api/camera-groups/{group_id}",
+            axum::routing::delete(api::groups::delete_camera_group).fallback(proxy::forward),
+        )
+        .route(
+            "/api/cameras/{camera_id}/group",
+            axum::routing::put(api::groups::assign_camera_group).fallback(proxy::forward),
+        )
+        // Siblings of /{camera_id}/group. The route-capture guard caught
+        // these the moment that route landed — including push-segment,
+        // the hot video ingest path, which a 404 here would have taken
+        // down. All still belong to Python.
+        .route("/api/cameras/{camera_id}/codec", still_python())
+        .route("/api/cameras/{camera_id}/motion", still_python())
+        .route("/api/cameras/{camera_id}/playlist", still_python())
+        .route("/api/cameras/{camera_id}/push-segment", still_python())
+        .route("/api/cameras/{camera_id}/recording", still_python())
+        .route("/api/cameras/{camera_id}/recording-settings", still_python())
+        .route("/api/cameras/{camera_id}/snapshot", still_python())
+        .route("/api/cameras/{camera_id}/stream.m3u8", still_python())
         .route("/api/settings", ported(api::settings::get_all_settings))
         .route(
             "/api/settings/notifications",
-            ported(api::settings::get_notification_settings),
+            get(api::settings::get_notification_settings)
+                .post(api::groups::update_notification_settings)
+                .fallback(proxy::forward),
         )
         .route(
             "/api/settings/motion-ingestion",
-            ported(api::settings::get_motion_ingestion),
+            get(api::settings::get_motion_ingestion)
+                .post(api::groups::update_motion_ingestion)
+                .fallback(proxy::forward),
         )
         .route("/api/audit-logs", ported(api::audit::list_audit_logs))
         .route(

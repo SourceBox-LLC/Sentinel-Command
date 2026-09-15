@@ -68,10 +68,29 @@ psql -c "UPDATE settings SET value = 'TRUE'
           WHERE org_id = 'self-host' AND key = 'motion_ingestion_enabled'" >/dev/null
 
 echo
+echo "3. A JSON body sent with a non-JSON Content-Type 500s rather than"
+echo "   being rejected. FastAPI reads the body for a declared Pydantic"
+echo "   model but raises when the media type is not JSON."
+r=$(curl -s -o /dev/null -w '%{http_code}' -m 10 -X POST \
+      -H "Authorization: Bearer $TOKEN" -H "Content-Type: text/plain" \
+      -d '{"name":"probe"}' "http://127.0.0.1:8000/api/camera-groups")
+p=$(curl -s -o /dev/null -w '%{http_code}' -m 10 -X POST \
+      -H "Authorization: Bearer $TOKEN" -H "Content-Type: text/plain" \
+      -d '{"name":"probe"}' "http://127.0.0.1:8001/api/camera-groups")
+if [[ "$p" == "500" ]]; then
+    printf '  ok    %-44s rust=%s python=%s\n' "POST with Content-Type: text/plain" "$r" "$p"
+else
+    printf '  FAIL  %-44s rust=%s python=%s (expected python 500)\n' \
+           "POST with Content-Type: text/plain" "$r" "$p"
+    fails=$((fails + 1))
+fi
+psql -c "DELETE FROM camera_groups WHERE name = 'probe'" >/dev/null
+
+echo
 if (( fails )); then
     echo "$fails check(s) did not reproduce — the Python may have been fixed."
     echo "If so, delete the corresponding entry here and in"
     echo "expected_divergences.md rather than leaving a stale claim."
     exit 1
 fi
-echo "both latent crashes reproduced; Rust serves through them"
+echo "all three latent crashes reproduced; Rust serves through them"

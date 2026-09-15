@@ -142,38 +142,243 @@ impl Query {
 
     /// Turn any accumulated errors into the 422 FastAPI would return.
     pub fn finish(&self) -> Result<(), ApiError> {
-        if self.errors.is_empty() {
-            return Ok(());
-        }
-        // The summary is built from the first error only, with "body"
-        // stripped out of the location path.
-        let first = &self.errors[0];
-        let loc = first["loc"]
-            .as_array()
-            .map(|parts| {
-                parts
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .filter(|p| *p != "body")
-                    .collect::<Vec<_>>()
-                    .join(".")
-            })
-            .unwrap_or_default();
-        let msg = first["msg"].as_str().unwrap_or("Validation failed");
-        let summary = if loc.is_empty() {
-            msg.to_string()
-        } else {
-            format!("{msg} ({loc})")
-        };
+        validation_error(&self.errors)
+    }
+}
 
-        Err(ApiError::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            json!({
-                "error": "validation_failed",
-                "message": summary,
-                "errors": self.errors,
-            }),
-        ))
+/// Build the 422 envelope `main.py`'s handler produces, or `Ok` when
+/// there is nothing to report.
+///
+/// The summary comes from the first error only, and `"body"` is stripped
+/// out of its location path — so a bad body field reads
+/// `"Field required (name)"`, not `"(body.name)"`.
+pub fn validation_error(errors: &[Value]) -> Result<(), ApiError> {
+    if errors.is_empty() {
+        return Ok(());
+    }
+    let first = &errors[0];
+    let loc = first["loc"]
+        .as_array()
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|p| *p != "body")
+                .collect::<Vec<_>>()
+                .join(".")
+        })
+        .unwrap_or_default();
+    let msg = first["msg"].as_str().unwrap_or("Validation failed");
+    let summary = if loc.is_empty() {
+        msg.to_string()
+    } else {
+        format!("{msg} ({loc})")
+    };
+
+    Err(ApiError::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        json!({
+            "error": "validation_failed",
+            "message": summary,
+            "errors": errors,
+        }),
+    ))
+}
+
+/// Read a JSON request body the way FastAPI does.
+///
+/// `Json<Value>` will not do: it requires `Content-Type: application/json`
+/// and answers 415 otherwise, where FastAPI reads the bytes regardless
+/// and reports a missing or malformed body as its own 422.
+///
+/// An absent or empty body is `missing` at `loc: ["body"]` — note the
+/// single-element location, which is what makes the summary read
+/// "Field required" with no field name.
+pub fn parse_body(bytes: &[u8]) -> Result<Value, ApiError> {
+    if bytes.is_empty() {
+        return Err(validation_error(&[json!({
+            "type": "missing",
+            "loc": ["body"],
+            "msg": "Field required",
+            "input": Value::Null,
+        })])
+        .unwrap_err());
+    }
+    serde_json::from_slice(bytes).map_err(|err| {
+        // Python reports the character offset in `loc`; serde reports a
+        // line and column. The offset is recomputed from them so the
+        // shape matches, though the exact index can differ for some
+        // inputs — the SPA reads `type`, not the position.
+        let offset = byte_offset(bytes, err.line(), err.column());
+        validation_error(&[json!({
+            "type": "json_invalid",
+            "loc": ["body", offset],
+            "msg": "JSON decode error",
+            "input": {},
+            "ctx": {"error": err.to_string()},
+        })])
+        .unwrap_err()
+    })
+}
+
+fn byte_offset(bytes: &[u8], line: usize, column: usize) -> usize {
+    let mut current_line = 1;
+    for (i, &b) in bytes.iter().enumerate() {
+        if current_line == line {
+            return i + column;
+        }
+        if b == b'\n' {
+            current_line += 1;
+        }
+    }
+    bytes.len()
+}
+
+/// Accumulates Pydantic-shaped errors for a JSON request body.
+///
+/// Handlers take `Json<Value>` and validate by hand rather than deriving
+/// `Deserialize`: serde's own rejection is a plain-text 400 with a Rust
+/// error message, and the SPA parses FastAPI's envelope.
+#[derive(Default)]
+pub struct BodyErrors {
+    errors: Vec<Value>,
+}
+
+impl BodyErrors {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn push(&mut self, kind: &str, field: &str, msg: &str, input: Value, ctx: Option<Value>) {
+        let mut err = json!({
+            "type": kind,
+            "loc": ["body", field],
+            "msg": msg,
+            "input": input,
+        });
+        if let Some(ctx) = ctx {
+            err["ctx"] = ctx;
+        }
+        self.errors.push(err);
+    }
+
+    /// A required field is absent. `input` is the **whole body**, which
+    /// is what Pydantic reports for a missing key.
+    pub fn missing(&mut self, field: &str, body: &Value) {
+        self.push("missing", field, "Field required", body.clone(), None);
+    }
+
+    pub fn string_type(&mut self, field: &str, input: &Value) {
+        self.push(
+            "string_type",
+            field,
+            "Input should be a valid string",
+            input.clone(),
+            None,
+        );
+    }
+
+    /// Length is counted in **characters**, not bytes — an emoji icon is
+    /// one character to Pydantic and four bytes to Rust.
+    pub fn too_long(&mut self, field: &str, input: &str, max: usize) {
+        self.push(
+            "string_too_long",
+            field,
+            &format!("String should have at most {max} characters"),
+            json!(input),
+            Some(json!({ "max_length": max })),
+        );
+    }
+
+    pub fn bool_parsing(&mut self, field: &str, input: &Value) {
+        self.push(
+            "bool_parsing",
+            field,
+            "Input should be a valid boolean, unable to interpret input",
+            input.clone(),
+            None,
+        );
+    }
+
+    /// A required string field with a maximum length.
+    pub fn required_string(&mut self, body: &Value, field: &str, max: usize) -> String {
+        match body.get(field) {
+            None | Some(Value::Null) => {
+                self.missing(field, body);
+                String::new()
+            }
+            Some(Value::String(s)) => {
+                if s.chars().count() > max {
+                    self.too_long(field, s, max);
+                }
+                s.clone()
+            }
+            Some(other) => {
+                self.string_type(field, other);
+                String::new()
+            }
+        }
+    }
+
+    /// An optional string field with a maximum length. Absent yields
+    /// `None`; an explicit null yields `Some(Value::Null)` upstream, so
+    /// callers distinguish the two themselves.
+    pub fn optional_string(&mut self, body: &Value, field: &str, max: usize) -> Option<String> {
+        match body.get(field) {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) => {
+                if s.chars().count() > max {
+                    self.too_long(field, s, max);
+                }
+                Some(s.clone())
+            }
+            Some(other) => {
+                self.string_type(field, other);
+                None
+            }
+        }
+    }
+
+    /// A boolean field with a default, coerced the way Pydantic's lax
+    /// mode does.
+    pub fn bool_with_default(&mut self, body: &Value, field: &str, default: bool) -> bool {
+        match body.get(field) {
+            None => default,
+            Some(value) => match parse_pydantic_bool(value) {
+                Some(b) => b,
+                None => {
+                    self.bool_parsing(field, value);
+                    default
+                }
+            },
+        }
+    }
+
+    pub fn finish(&self) -> Result<(), ApiError> {
+        validation_error(&self.errors)
+    }
+}
+
+/// Pydantic v2's lax boolean coercion.
+///
+/// Accepts the JSON booleans, 0 and 1, and a fixed set of strings.
+/// Anything else is an error rather than a silent `false`, which is the
+/// difference between "the operator turned notifications off" and "the
+/// request was malformed".
+pub fn parse_pydantic_bool(value: &Value) -> Option<bool> {
+    match value {
+        Value::Bool(b) => Some(*b),
+        Value::Number(n) => match n.as_f64() {
+            Some(0.0) => Some(false),
+            Some(1.0) => Some(true),
+            _ => None,
+        },
+        Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "t" | "yes" | "y" | "on" => Some(true),
+            "0" | "false" | "f" | "no" | "n" | "off" => Some(false),
+            _ => None,
+        },
+        _ => None,
     }
 }
 

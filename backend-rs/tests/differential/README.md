@@ -350,3 +350,23 @@ ownership check itself is the mutation that matters, and it is caught.
 returns its 422 envelope with `loc: ["path", "<name>"]`. The SPA parses
 that envelope. Handlers therefore take `Path<String>` and call
 `query::path_int`, and the differential covers `abc`, `1.5` and `-1`.
+
+## Body parsing
+
+`Json<Value>` will not do: it requires `Content-Type: application/json`
+and answers **415** otherwise, where FastAPI reads the bytes regardless
+and returns its own 422. Handlers take `Bytes` and call
+`query::parse_body`, which reproduces:
+
+* an absent or empty body — `missing` at `loc: ["body"]`. The
+  single-element location is what makes the summary read "Field required"
+  with no field name;
+* malformed JSON — `json_invalid` with a character offset;
+* field-level errors through `BodyErrors`: `missing`, `string_type`,
+  `string_too_long` (counted in **characters**, so an emoji icon is one),
+  and `bool_parsing` with Pydantic v2's lax coercion.
+
+Field lengths are enforced in the handler rather than left to the column
+widths, because a varchar overflow is a 500 from Postgres where Pydantic
+returns a 422 naming the field. The differential covers a 101-character
+name and a 21-character colour.

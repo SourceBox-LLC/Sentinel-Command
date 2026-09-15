@@ -115,3 +115,23 @@ for motion ingestion and as *off* for the notification toggles. The
 fixture contains exactly that value for both, and both stacks agree.
 This is copied rather than fixed: the Python still serves the write path
 for these settings, and a looser read on one side would disagree with it.
+
+## A JSON body with a non-JSON Content-Type (slice 4)
+
+```
+POST /api/camera-groups
+Content-Type: text/plain
+
+{"name": "x"}
+```
+
+Python returns **500**. FastAPI reads the body for the declared Pydantic
+model but raises when the media type is not JSON. Rust parses the bytes
+and accepts it.
+
+Reproduced by `latent_crashes.sh`. Diverging here rather than copying the
+500 is deliberate: an unhandled exception is not a contract, and the
+Python's *own* handling of a genuinely absent or malformed body is a
+clean 422, which Rust matches exactly (`parse_body` in `src/query.rs`,
+including the single-element `loc: ["body"]` that makes the summary read
+"Field required" with no field name).
