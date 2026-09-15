@@ -70,6 +70,22 @@ pub fn build_router(state: AppState) -> Router {
             "/api/audit/stream-logs/stats",
             ported(api::stream_logs::stream_log_stats),
         )
+        // Only the single-node read. GET /api/nodes itself is blocked on
+        // release_cache — see api/nodes.rs.
+        //
+        // The static siblings MUST be declared alongside it. A route
+        // pattern of `/api/nodes/{node_id}` matches `/api/nodes/plan`
+        // with node_id="plan", so porting the parameterised route
+        // silently captured three paths that still belong to Python and
+        // answered them 404. FastAPI is saved from this by declaration
+        // order; axum has no ordering between separately registered
+        // paths, so the statics are pinned to the proxy explicitly.
+        .route("/api/nodes/validate", still_python())
+        .route("/api/nodes/register", still_python())
+        .route("/api/nodes/heartbeat", still_python())
+        .route("/api/nodes/plan", still_python())
+        .route("/api/nodes/ws-status", still_python())
+        .route("/api/nodes/{node_id}", ported(api::nodes::get_node))
         .route("/api/motion/events", ported(api::motion::list_motion_events))
         .route(
             "/api/motion/events/stats",
@@ -120,6 +136,15 @@ where
     T: 'static,
 {
     get(handler).fallback(proxy::forward)
+}
+
+/// A path Rust must not answer, pinned so a parameterised sibling
+/// cannot swallow it.
+///
+/// Needed because `/a/{id}` matches `/a/literal`. Without this, porting
+/// a `{id}` route quietly takes over every static path beside it.
+fn still_python() -> axum::routing::MethodRouter<AppState> {
+    axum::routing::any(proxy::forward)
 }
 
 /// Path to the SPA entrypoint, carried so the eventual client-side-route

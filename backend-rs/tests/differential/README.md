@@ -249,3 +249,36 @@ like a port bug.
 Both were verified by breaking them deliberately: a stale fixture exits
 2 with "COVERAGE TOO THIN", and a seed with tied timestamps exits 2 with
 "FIXTURE DEFECT: 145 tied sort key(s)".
+
+## Route capture
+
+```bash
+tests/differential/route_capture.py
+```
+
+A route registered as `/api/nodes/{node_id}` also matches
+`/api/nodes/plan`. FastAPI is saved from this by declaration order —
+`/plan` sits above `/{node_id}` in the same router — but axum has no
+ordering between separately registered paths, so porting a
+parameterised route silently takes over every literal path beside it and
+answers 404.
+
+It happened on the first run of slice 3: `GET /api/nodes/{node_id}`
+captured `/plan`, `/ws-status`, `/validate`, `/register` and
+`/heartbeat`. `app.rs` now pins each to the proxy with `still_python()`,
+and this script proves none has been missed. Verified by deleting a pin:
+it exits 1 naming the path.
+
+The first version of the check walked `app.routes` and reported a clean
+"(none)". This FastAPI version nests routes under `_IncludedRouter`
+wrappers whose `path` is `None`, so the filter dropped every real route
+and produced a false all-clear. It reads the OpenAPI schema now — a
+check that cannot fail is worse than no check.
+
+## What cannot be ported, and why
+
+See `in_process_state.md`. Several modules keep state in the Python
+process's memory with no shared store behind it, so the routes reading it
+cannot move one at a time. `hls.py` — the plan's headline slice-3 target
+— is the most thoroughly blocked, because `mcp/server.py` imports its
+segment cache directly and MCP stays Python by plan.

@@ -136,6 +136,18 @@ CASES = [
     ("GET", "/api/mcp/activity/sessions", True),
     ("GET", "/api/mcp/activity/stats", True),
 
+    # --- nodes: only the single-node read is ported -------------------
+    ("GET", "/api/nodes/node-aaaa1111", True),
+    ("GET", "/api/nodes/node-bbbb2222", True),
+    ("GET", "/api/nodes/node-aaaa1111", False),
+    # another tenant's node must 404, not leak
+    ("GET", "/api/nodes/node-cccc3333", True),
+    ("GET", "/api/nodes/does-not-exist", True),
+    # these stay with Python; they read in-process state
+    ("GET", "/api/nodes", True),
+    ("GET", "/api/nodes/plan", True),
+    ("GET", "/api/nodes/ws-status", True),
+
     # methods Rust has NOT ported on a path it HAS — these must still
     # reach Python rather than being answered with 405 by axum.
     ("POST", "/api/cameras", True),
