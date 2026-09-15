@@ -370,3 +370,55 @@ Field lengths are enforced in the handler rather than left to the column
 widths, because a varchar overflow is a 500 from Postgres where Pydantic
 returns a 422 naming the field. The differential covers a 101-character
 name and a 21-character colour.
+
+## Where the differentials cannot reach: the Clerk path
+
+Both HTTP harnesses run with `AUTH_PROVIDER=local`, because that is the
+only way the two stacks can accept the *same* token. That is a real
+strength — the token is minted by Python's own `issue_token()` and
+verified by the Rust port of `local_auth.py` — but it means **no
+differential exercises the Clerk verifier at all**. Production runs
+Clerk.
+
+`tests/clerk_verifier.rs` covers it against a synthetic keypair, and the
+claim differential covers everything downstream of verification. What
+neither covers is whether the *verification options* match the SDK's.
+Those have to be read.
+
+Reading `clerk_backend_api` 7.0.0 turned up one bug and confirmed three
+guesses:
+
+| behaviour | source | verdict |
+| --- | --- | --- |
+| a **missing `azp` is rejected** when `authorized_parties` is set | `verifytoken.py::_decode_token` | **was wrong** — fixed |
+| `azp` compared by exact string membership, no normalisation | same | **was wrong** — fixed |
+| clock skew allowance 5000 ms | `VerifyTokenOptions.clock_skew_in_ms` | matched (5 s) |
+| `o.rol` carries no `org:` prefix | Clerk session-token docs | matched |
+| `pla` / `fea` carry `u:` or `o:` scope prefixes | same | matched |
+
+The `azp` one is worth dwelling on. Clerk's own documentation says the
+claim "could be omitted if, for privacy-related reasons, `Origin` is
+empty or null" — which reads like a reason to treat it as optional, and
+is exactly why the port had a passing test asserting that a token
+without `azp` is *accepted*. The SDK does the opposite:
+
+```python
+if options.authorized_parties is not None:
+    azp = payload.get("azp")
+    if azp is None or azp not in options.authorized_parties:
+        raise TokenVerificationError(...)
+```
+
+Command Center always passes `authorized_parties`, so an absent `azp` is
+a 401 in production. The port was the more permissive of the two tiers —
+the one direction that is never acceptable.
+
+The lesson generalises: for anything the differential cannot reach, the
+dependency's **source** outranks its documentation, and a test written
+from the documentation can encode the bug.
+
+One deliberate difference remains. The SDK passes
+`options={'verify_iss': False}` and does not check the issuer at all;
+this port does, and also requires `exp` and `iss` to be present. Both are
+stricter, both are unreachable in practice (the signature already ties a
+token to one instance's JWKS), and stricter is the safe direction.

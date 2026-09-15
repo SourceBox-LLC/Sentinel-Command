@@ -290,10 +290,18 @@ async fn a_token_minted_for_another_origin_is_rejected() {
 }
 
 #[tokio::test]
-async fn a_token_with_no_azp_is_accepted() {
-    // Clerk omits `azp` for tokens that are not browser-originated, and
-    // the SDK only checks the claim when it is present. Rejecting these
-    // would break machine callers.
+async fn a_token_with_no_azp_is_rejected() {
+    // This test asserted the opposite until the Python SDK was read.
+    // Clerk's docs say azp "could be omitted if, for privacy-related
+    // reasons, Origin is empty or null", which reads like a reason to
+    // treat it as optional. But clerk_backend_api 7.0.0 does:
+    //
+    //     if azp is None or azp not in options.authorized_parties:
+    //         raise TokenVerificationError(...)
+    //
+    // and Command Center always passes authorized_parties, so a missing
+    // azp is a 401 there. Accepting it here made Rust the more
+    // permissive tier — the one direction a port must never drift.
     let h = start_jwks_server(JWKS.to_string()).await;
     let v = verifier(&h.issuer);
 
@@ -301,7 +309,52 @@ async fn a_token_with_no_azp_is_accepted() {
     claims.as_object_mut().unwrap().remove("azp");
     let token = sign(&claims, Some(KID));
 
-    v.verify(&token).await.expect("should verify without azp");
+    assert!(matches!(
+        v.verify(&token).await,
+        Err(AuthError::NotAuthenticated)
+    ));
+}
+
+#[tokio::test]
+async fn azp_is_compared_exactly_not_normalised() {
+    // The SDK's check is `azp not in authorized_parties` — plain string
+    // membership. A trailing slash is a different origin to it, so
+    // normalising here would accept what Python rejects.
+    let h = start_jwks_server(JWKS.to_string()).await;
+    let v = verifier(&h.issuer);
+
+    for azp in [
+        &format!("{FRONTEND}/"),
+        &FRONTEND.replace("https://", "http://"),
+        &FRONTEND.to_uppercase(),
+    ] {
+        let mut claims = base_claims(&h.issuer);
+        claims["azp"] = json!(azp);
+        let token = sign(&claims, Some(KID));
+        assert!(
+            matches!(v.verify(&token).await, Err(AuthError::NotAuthenticated)),
+            "{azp} should not match {FRONTEND}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_clock_skew_allowance_matches_the_sdk() {
+    // clerk_backend_api's VerifyTokenOptions.clock_skew_in_ms defaults
+    // to 5000, so a token whose nbf is 3 seconds in the future is still
+    // accepted and one 30 seconds out is not.
+    let h = start_jwks_server(JWKS.to_string()).await;
+    let v = verifier(&h.issuer);
+
+    let mut ok = base_claims(&h.issuer);
+    ok["nbf"] = json!(now() + 3);
+    v.verify(&sign(&ok, Some(KID)))
+        .await
+        .expect("3s of drift is within the 5s allowance");
+
+    let mut bad = base_claims(&h.issuer);
+    bad["nbf"] = json!(now() + 30);
+    assert!(v.verify(&sign(&bad, Some(KID))).await.is_err());
 }
 
 #[tokio::test]

@@ -170,8 +170,9 @@ fn session_cookie(parts: &Parts) -> Option<String> {
 pub struct ClerkVerifier {
     issuer: Option<String>,
     jwks: Option<jwks::JwksCache>,
-    /// The Python service passes `authorized_parties=[FRONTEND_URL]`;
-    /// this is checked against the token's `azp`.
+    /// The Python service passes `authorized_parties=[FRONTEND_URL]`,
+    /// and the SDK then *requires* `azp` to be present and to match one
+    /// of them exactly.
     authorized_party: String,
 }
 
@@ -181,7 +182,11 @@ impl ClerkVerifier {
         Self {
             issuer,
             jwks,
-            authorized_party: frontend_url.trim_end_matches('/').to_string(),
+            // Stored verbatim. The SDK's check is `azp not in
+            // authorized_parties` — plain string membership, with no
+            // trailing-slash normalisation — so normalising here would
+            // accept origins the Python rejects.
+            authorized_party: frontend_url,
         }
     }
 
@@ -238,12 +243,32 @@ impl ClerkVerifier {
         let data = jsonwebtoken::decode::<Value>(token, &key, &validation)
             .map_err(|_| AuthError::NotAuthenticated)?;
 
-        // `azp` identifies the origin the token was minted for. Checked
-        // only when present, matching the SDK: Clerk omits it for tokens
-        // that are not browser-originated.
-        if let Some(azp) = data.claims.get("azp").and_then(Value::as_str) {
-            if azp.trim_end_matches('/') != self.authorized_party {
-                tracing::warn!(azp = %azp, "token rejected: azp is not the configured frontend");
+        // `azp` identifies the origin the token was minted for.
+        //
+        // A **missing** azp is rejected, not waved through. Clerk's docs
+        // say azp "could be omitted if, for privacy-related reasons,
+        // Origin is empty or null", which reads like a reason to treat
+        // it as optional — but the Python SDK this must match does:
+        //
+        //     if options.authorized_parties is not None:
+        //         azp = payload.get("azp")
+        //         if azp is None or azp not in options.authorized_parties:
+        //             raise TokenVerificationError(...)
+        //
+        // and Command Center always passes authorized_parties. So an
+        // absent azp is a 401 over there, and accepting it here would
+        // make the Rust tier the more permissive of the two.
+        //
+        // The comparison is exact — `not in` on a list of strings, no
+        // trailing-slash normalisation.
+        let azp = data.claims.get("azp").and_then(Value::as_str);
+        match azp {
+            Some(azp) if azp == self.authorized_party => {}
+            _ => {
+                tracing::warn!(
+                    azp = ?azp,
+                    "token rejected: azp absent or not the configured frontend"
+                );
                 return Err(AuthError::NotAuthenticated);
             }
         }
