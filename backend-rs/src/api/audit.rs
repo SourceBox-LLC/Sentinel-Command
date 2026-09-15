@@ -14,6 +14,7 @@ use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::iso_naive;
 use crate::query::Query;
+use crate::ratelimit::RateLimit;
 
 #[derive(Debug, sqlx::FromRow)]
 struct AuditLogRow {
@@ -51,7 +52,7 @@ impl AuditLogRow {
 /// This is an admin-only endpoint, so it is filter precision rather than
 /// a security boundary — but a filter that matches the wrong rows in an
 /// audit view is its own kind of problem.
-fn escape_like(input: &str) -> String {
+pub(crate) fn escape_like(input: &str) -> String {
     input
         .replace('\\', "\\\\")
         .replace('%', "\\%")
@@ -64,6 +65,8 @@ fn escape_like(input: &str) -> String {
 /// as `/api/audit/stream-logs` and `/api/mcp/activity/logs` so the
 /// dashboard shares one pagination component across all three.
 pub async fn list_audit_logs(
+    // Python: @limiter.limit("120/minute")
+    _rate: RateLimit<120>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     request: Request,

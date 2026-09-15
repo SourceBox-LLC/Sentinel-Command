@@ -17,6 +17,8 @@ pub mod error;
 pub mod models;
 pub mod proxy;
 pub mod query;
+pub mod ratelimit;
 pub mod settings;
 
 pub use app::{build_router, AppState, VERSION};
+pub use auth::AuthUser;

@@ -50,6 +50,9 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState {
         auth: Arc::new(Authenticator::from_config(&config, http.clone())),
         proxy: sentinel_command::proxy::build_client(),
+        limiter: Arc::new(
+            sentinel_command::ratelimit::Limiter::from_env(&config.redis_url).await,
+        ),
         http,
         config: Arc::new(config),
         pool,
@@ -60,7 +63,12 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
     tracing::info!(port, %upstream, version = VERSION, "command center (rust tier) listening");
 
-    axum::serve(listener, build_router(state))
+    // with_connect_info so the rate limiter can fall back to the peer
+    // address when no proxy header identifies the client.
+    axum::serve(
+        listener,
+        build_router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
             tracing::info!("shutting down");

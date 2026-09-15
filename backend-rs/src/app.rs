@@ -29,6 +29,8 @@ pub struct AppState {
     /// Upstream client for the strangler proxy. Separate from `http`
     /// because it must not normalise request paths — see `proxy.rs`.
     pub proxy: proxy::ProxyClient,
+    /// Per-tenant rate limiting for ported routes.
+    pub limiter: Arc<crate::ratelimit::Limiter>,
     pub started_at: Instant,
 }
 
@@ -60,6 +62,30 @@ pub fn build_router(state: AppState) -> Router {
             ported(api::settings::get_motion_ingestion),
         )
         .route("/api/audit-logs", ported(api::audit::list_audit_logs))
+        .route(
+            "/api/audit/stream-logs",
+            ported(api::stream_logs::list_stream_logs),
+        )
+        .route(
+            "/api/audit/stream-logs/stats",
+            ported(api::stream_logs::stream_log_stats),
+        )
+        .route("/api/motion/events", ported(api::motion::list_motion_events))
+        .route(
+            "/api/motion/events/stats",
+            ported(api::motion::motion_stats),
+        )
+        // Only the DB-backed MCP routes. /recent, /sessions and /stats
+        // read an in-memory tracker inside the Python process and stay
+        // proxied — see api/mcp_activity.rs.
+        .route(
+            "/api/mcp/activity/logs",
+            ported(api::mcp_activity::list_mcp_logs),
+        )
+        .route(
+            "/api/mcp/activity/logs/stats",
+            ported(api::mcp_activity::mcp_log_stats),
+        )
         // ---- SPA --------------------------------------------------------
         // Static assets are files on disk; serving them through the Python
         // proxy would double the cost of every page load for no reason.

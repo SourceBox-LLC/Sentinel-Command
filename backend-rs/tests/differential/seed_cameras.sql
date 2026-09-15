@@ -107,3 +107,78 @@ FROM generate_series(1, 240) AS i;
 -- rows that exercise the NULL branches both stacks handle differently
 INSERT INTO audit_log (org_id, timestamp, event, ip_address, username, user_id, details) VALUES
   ('self-host', timestamp '2026-09-02 12:00:00', 'null_fields', NULL, NULL, NULL, NULL);
+
+-- ---- stream access / motion / mcp activity --------------------------
+-- Row counts per group are strictly DISTINCT, by construction. Several
+-- of these routes order by COUNT(*) DESC with no tiebreaker, so equal
+-- counts leave the row order up to Postgres and make the differential
+-- flaky rather than informative. Camera k gets k*10 rows, tool k gets
+-- k*7, and so on.
+DELETE FROM stream_access_logs;
+INSERT INTO stream_access_logs (user_id, user_email, org_id, camera_id, node_id, ip_address, accessed_at)
+SELECT
+  -- One user per camera, so per-user counts are distinct too (10..50).
+  -- user_3's email is NULL throughout, which exercises the `or ""`
+  -- mapping without splitting any user across two groups — a split
+  -- would create a COUNT tie and make the LIMIT 10 ordering arbitrary.
+  'user_' || k,
+  CASE WHEN k = 3 THEN NULL ELSE 'user' || k || '@example.com' END,
+  'self-host',
+  'cam-' || k,
+  'node-aaaa1111',
+  '10.1.0.' || (i % 255),
+  -- Strictly distinct: k%5 picks a distinct day per camera and i a
+  -- distinct second within it. Ties here would make ORDER BY
+  -- accessed_at DESC LIMIT 100 return a different page of 150 rows on
+  -- each run — which it did, and it read as a port bug.
+  now()::timestamp - ((k % 5) || ' days')::interval - (i || ' seconds')::interval
+FROM generate_series(1, 5) AS k, generate_series(1, k * 10) AS i;
+
+-- a second tenant's rows, which must never appear in a self-host response
+INSERT INTO stream_access_logs (user_id, user_email, org_id, camera_id, node_id, ip_address, accessed_at)
+SELECT 'other_user', 'them@example.com', 'other-org', 'cam-theirs', 'node-cccc3333',
+       '10.9.9.' || i, now()::timestamp - (i || ' seconds')::interval
+FROM generate_series(1, 17) AS i;
+
+DELETE FROM motion_events;
+INSERT INTO motion_events (org_id, camera_id, node_id, score, segment_seq, timestamp)
+SELECT
+  'self-host',
+  'cam-' || k,
+  'node-aaaa1111',
+  (i * 7 + k) % 101,
+  CASE WHEN i % 6 = 0 THEN NULL ELSE i END,
+  -- inside the default 24h window for the first two cameras, outside it
+  -- for the rest, so ?hours= actually changes the answer
+  -- k*9 hours puts cameras 1-2 inside the default 24h window and 3-4
+  -- outside it, so ?hours= changes the answer; i seconds keeps every
+  -- row's sort key distinct.
+  now()::timestamp - ((k * 9) || ' hours')::interval - (i || ' seconds')::interval
+FROM generate_series(1, 4) AS k, generate_series(1, k * 8) AS i;
+
+INSERT INTO motion_events (org_id, camera_id, node_id, score, segment_seq, timestamp)
+SELECT 'other-org', 'cam-theirs', 'node-cccc3333', 50, i,
+       now()::timestamp - (i || ' hours')::interval
+FROM generate_series(1, 11) AS i;
+
+DELETE FROM mcp_activity_logs;
+INSERT INTO mcp_activity_logs (org_id, tool_name, key_name, status, duration_ms, args_summary, error, timestamp)
+SELECT
+  'self-host',
+  'tool_' || k,
+  -- key_alpha_one carries a literal underscore and key%beta a literal
+  -- percent: this route escapes both, unlike /api/audit/stream-logs
+  CASE WHEN k = 1 THEN 'key_alpha_one' ELSE 'key%beta' END,
+  CASE WHEN i % 8 = 0 THEN 'error' ELSE 'ok' END,
+  CASE WHEN i % 7 = 0 THEN NULL ELSE i * 3 END,
+  '{"n": ' || i || '}',
+  CASE WHEN i % 8 = 0 THEN 'boom ' || i ELSE NULL END,
+  -- i%4 spreads rows across days for the by_day aggregate; i seconds
+  -- keeps the ORDER BY timestamp DESC page deterministic.
+  now()::timestamp - ((k * 3 + (i % 4)) || ' days')::interval - (i || ' seconds')::interval
+FROM generate_series(1, 3) AS k, generate_series(1, k * 7) AS i;
+
+INSERT INTO mcp_activity_logs (org_id, tool_name, key_name, status, duration_ms, args_summary, error, timestamp)
+SELECT 'other-org', 'tool_theirs', 'their_key', 'ok', 10, '{}', NULL,
+       now()::timestamp - (i || ' days')::interval
+FROM generate_series(1, 9) AS i;

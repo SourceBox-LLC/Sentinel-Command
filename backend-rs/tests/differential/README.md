@@ -192,3 +192,60 @@ tests/differential/latent_crashes.sh
 
 Two routes 500 on data their own columns permit. See
 `expected_divergences.md`; neither is reachable in production today.
+
+## Rate limiting
+
+Porting a route to Rust **removes its rate limit** unless the limit is
+ported too: the `@limiter.limit` decorators live on the Python handlers,
+and once Rust owns a path Python never sees those requests. The slice-2
+differential surfaced this as a wave of 429s that looked like port bugs —
+five ported routes had silently lost their limits.
+
+`src/ratelimit.rs` reproduces `app/core/limiter.py`: the same bucket key
+(node-key hash → org from the *unverified* JWT → `Fly-Client-IP` →
+`X-Forwarded-For` → peer address), the same fixed-window strategy, and
+the same flat 429 body with `Retry-After: 60` — flat, note, not the
+`{"detail": ...}` envelope the other errors use.
+
+Verified against the running Python: both stacks first return 429 on
+**request #61** of a 60/minute route, and the bodies are identical once
+key order is normalised.
+
+Because Rust owns a ported route exclusively, its counter does not need
+to be shared with Python's — nothing else counts those requests. It does
+need to be shared between Rust *instances*, which is what `REDIS_URL` is
+for; without it the counters are per-process and a caller round-robining
+across machines gets N× the limit. That is the same caveat the Python
+module documents about itself.
+
+### Running the harness with limits on
+
+`http_run.sh` flushes the shared counters before each run, so repeated
+runs are deterministic:
+
+```bash
+docker run -d --name cc-redis-test -p 16379:6379 redis:7-alpine
+# then start both tiers with REDIS_URL=redis://127.0.0.1:16379/0
+```
+
+If a case does hit a limit anyway, `http_diff.py` reports the run
+**INCONCLUSIVE** (exit 3) rather than counting 429s as diffs — a false
+green and a false red are both worse than an honest "re-run me".
+
+## Two fixture guards
+
+Both exist because the thing they catch already happened once and read
+like a port bug.
+
+* **Stale fixture** — `effective_status` flips a camera offline after 90
+  seconds, so an aged fixture tests only the offline path. The run aborts
+  unless live cameras, offline cameras, surfaced errors and both
+  timestamp shapes are all present.
+* **Tied sort keys** — several routes page with `ORDER BY <timestamp>
+  DESC` and no tiebreaker, so two rows sharing a sort key let Postgres
+  return a different page of 150 on each run. The run aborts (exit 2) if
+  the seeded data contains any tie.
+
+Both were verified by breaking them deliberately: a stale fixture exits
+2 with "COVERAGE TOO THIN", and a seed with tied timestamps exits 2 with
+"FIXTURE DEFECT: 145 tied sort key(s)".

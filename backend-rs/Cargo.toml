@@ -53,6 +53,11 @@ bytes = "1"
 # is no Rust SDK and none is needed. See src/auth.rs.
 jsonwebtoken = "9"
 
+# Shared rate-limit counters. Production sets REDIS_URL and the Python
+# limiter already uses it; without shared storage a caller round-robining
+# across machines would get N x the nominal limit.
+redis = { version = "0.27", default-features = false, features = ["tokio-comp", "connection-manager"] }
+
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 anyhow = "1"

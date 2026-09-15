@@ -6,4 +6,7 @@
 
 pub mod audit;
 pub mod cameras;
+pub mod mcp_activity;
+pub mod motion;
 pub mod settings;
+pub mod stream_logs;

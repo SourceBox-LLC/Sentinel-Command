@@ -32,6 +32,8 @@ pub struct Config {
     pub local_admin_email: String,
     pub local_admin_username: String,
     pub auth_provider: String,
+    /// Shared storage for rate-limit counters.
+    pub redis_url: String,
 
     /// Checked against a Clerk token's `azp` claim — the Python service
     /// passes it to the SDK as `authorized_parties`.
@@ -78,6 +80,7 @@ impl Config {
             local_admin_email: var_or("LOCAL_ADMIN_EMAIL", ""),
             local_admin_username: var_or("LOCAL_ADMIN_USERNAME", ""),
             auth_provider: var_or("AUTH_PROVIDER", "clerk"),
+            redis_url: var_or("REDIS_URL", ""),
             frontend_url: var_or("FRONTEND_URL", "http://localhost:5173"),
         }
     }
@@ -118,6 +121,7 @@ mod tests {
             local_admin_email: String::new(),
             local_admin_username: String::new(),
             auth_provider: auth_provider.into(),
+            redis_url: String::new(),
             frontend_url: String::new(),
         }
     }

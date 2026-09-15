@@ -75,6 +75,67 @@ CASES = [
     ("GET", "/api/audit-logs?format=csv&limit=2", True),
     ("GET", "/api/audit-logs?format=csv&limit=0", True),
 
+    # --- stream access logs (plan-gated on the "admin" feature) -------
+    ("GET", "/api/audit/stream-logs", True),
+    ("GET", "/api/audit/stream-logs", False),
+    *[("GET", f"/api/audit/stream-logs?{q}", True) for q in [
+        "limit=5", "limit=3&offset=7", "offset=140",
+        "camera_id=cam-1", "camera_id=cam-5", "camera_id=nope",
+        # NOT escaped on this route, unlike its two siblings: an
+        # underscore here really is a LIKE wildcard, and the port has to
+        # reproduce that rather than tidy it up.
+        "user_id=user_1", "user_id=user%5F1", "user_id=_", "user_id=%25",
+        "user_id=USER_1", "user_id=example.com", "user_id=nobody",
+        "camera_id=cam-2&user_id=user_2&limit=4",
+        "limit=0", "limit=501", "offset=-1", "format=xml",
+    ]],
+    ("GET", "/api/audit/stream-logs?format=csv&limit=2", True),
+    ("GET", "/api/audit/stream-logs/stats", True),
+    ("GET", "/api/audit/stream-logs/stats", False),
+    *[("GET", f"/api/audit/stream-logs/stats?{q}", True) for q in [
+        "days=1", "days=7", "days=30", "days=0",
+        # no `ge` on this one in the Python, so a negative window is
+        # accepted and simply returns zeroes
+        "days=-5", "days=31", "days=abc",
+    ]],
+
+    # --- motion ------------------------------------------------------
+    ("GET", "/api/motion/events", True),
+    ("GET", "/api/motion/events", False),
+    *[("GET", f"/api/motion/events?{q}", True) for q in [
+        "hours=1", "hours=24", "hours=168", "limit=5", "limit=3&offset=4",
+        "camera_id=cam-1", "camera_id=cam-4", "camera_id=nope",
+        "hours=48&camera_id=cam-2&limit=6",
+        "hours=0", "hours=169", "limit=0", "offset=-1", "hours=abc",
+    ]],
+    ("GET", "/api/motion/events/stats", True),
+    *[("GET", f"/api/motion/events/stats?{q}", True) for q in [
+        "hours=1", "hours=24", "hours=168", "hours=-5", "hours=169", "hours=abc",
+    ]],
+
+    # --- mcp activity: the DB-backed routes only ----------------------
+    ("GET", "/api/mcp/activity/logs", True),
+    ("GET", "/api/mcp/activity/logs", False),
+    *[("GET", f"/api/mcp/activity/logs?{q}", True) for q in [
+        "limit=5", "limit=4&offset=3",
+        "tool_name=tool_1", "tool_name=tool_3", "tool_name=nope",
+        "status=ok", "status=error", "status=nope",
+        # escaped on this route: the underscore and percent are literal
+        "key_name=key_alpha_one", "key_name=key%25beta", "key_name=_", "key_name=%25",
+        "tool_name=tool_2&status=error&limit=3",
+        "limit=0", "limit=501", "offset=-1", "format=xml",
+    ]],
+    ("GET", "/api/mcp/activity/logs?format=csv&limit=2", True),
+    ("GET", "/api/mcp/activity/logs/stats", True),
+    *[("GET", f"/api/mcp/activity/logs/stats?{q}", True) for q in [
+        "days=1", "days=7", "days=30", "days=-5", "days=31", "days=abc",
+    ]],
+    # these three read an in-memory tracker in the Python process and
+    # must still be proxied, not answered from an empty Rust one
+    ("GET", "/api/mcp/activity/recent", True),
+    ("GET", "/api/mcp/activity/sessions", True),
+    ("GET", "/api/mcp/activity/stats", True),
+
     # methods Rust has NOT ported on a path it HAS — these must still
     # reach Python rather than being answered with 405 by axum.
     ("POST", "/api/cameras", True),
@@ -159,6 +220,7 @@ def main():
         return 2
 
     bad = 0
+    rate_limited = []
     for method, path, auth in CASES:
         rs_status, rs_body = fetch(RUST, method, path, auth)
         py_status, py_body = fetch(PYTHON, method, path, auth)
@@ -166,6 +228,13 @@ def main():
 
         same = (rs_status == py_status) and (rs == py)
         label = f"{method} {path}" + ("" if auth else "  (no auth)")
+
+        # A 429 on either side means the run itself exhausted a limit, not
+        # that the port is wrong. Counting it as a diff would be a false
+        # positive; counting it as a pass would hide a real one.
+        if 429 in (rs_status, py_status) and not path.startswith("/api/_ratelimit"):
+            rate_limited.append(label)
+            continue
         if same:
             if VERBOSE:
                 print(f"  ok      {label:<46} {rs_status}")
@@ -175,6 +244,12 @@ def main():
             if rs_status == py_status:
                 print(f"            rust  : {json.dumps(rs, sort_keys=True)[:300]}")
                 print(f"            python: {json.dumps(py, sort_keys=True)[:300]}")
+
+    if rate_limited:
+        print(f"\nINCONCLUSIVE: {len(rate_limited)} case(s) hit a rate limit and were "
+              f"not compared, e.g. {rate_limited[0]}")
+        print("Flush the limiter (docker exec cc-redis-test redis-cli FLUSHDB) and re-run.")
+        return 3
 
     print(f"\n{len(CASES) - bad}/{len(CASES)} identical, {bad} differing")
     return 1 if bad else 0
