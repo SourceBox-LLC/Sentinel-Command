@@ -31,6 +31,8 @@ pub struct AppState {
     pub proxy: proxy::ProxyClient,
     /// Per-tenant rate limiting for ported routes.
     pub limiter: Arc<crate::ratelimit::Limiter>,
+    /// Allowed origins for routes Rust serves; see `cors.rs`.
+    pub cors: crate::cors::CorsConfig,
     pub started_at: Instant,
 }
 
@@ -45,7 +47,10 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         // ---- served by Rust --------------------------------------------
-        .route("/api/health", get(health))
+        // `ported`, not a bare `get`: axum answers HEAD from a GET
+        // handler and FastAPI returns 405, so even the health check
+        // diverged on HEAD.
+        .route("/api/health", ported(health))
         // Read-only camera routes (slice 2). Writes on these same paths
         // are slice 4 and must still reach Python — hence `ported`
         // rather than a bare `get`.
@@ -160,6 +165,14 @@ pub fn build_router(state: AppState) -> Router {
         // this fallback; when it forwards nothing, the Python process and
         // proxy.rs are deleted together.
         .fallback(proxy::forward)
+        // CORS for routes Rust answers itself. Applied to the whole
+        // router but a no-op on proxied responses, which already carry
+        // Python's headers — a second Access-Control-Allow-Origin makes
+        // the browser reject the response outright.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::cors::layer,
+        ))
         .with_state(state)
         .layer(tower_http::trace::TraceLayer::new_for_http())
         // `index` is captured for the SPA fallback once client-side routes
@@ -183,7 +196,11 @@ where
     H: axum::handler::Handler<T, AppState>,
     T: 'static,
 {
-    get(handler).fallback(proxy::forward)
+    // `.head(proxy::forward)` is not redundant. axum answers HEAD from a
+    // GET handler automatically; FastAPI does not, and returns 405. So a
+    // ported route silently started accepting HEAD where Python refused
+    // it. Routing HEAD to the proxy restores Python's answer.
+    get(handler).head(proxy::forward).fallback(proxy::forward)
 }
 
 /// A path Rust must not answer, pinned so a parameterised sibling

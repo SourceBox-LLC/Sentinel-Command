@@ -38,6 +38,8 @@ pub struct Config {
     /// Checked against a Clerk token's `azp` claim — the Python service
     /// passes it to the SDK as `authorized_parties`.
     pub frontend_url: String,
+    /// Comma-separated extra CORS origins.
+    pub cors_allowed_origins: String,
 }
 
 impl Config {
@@ -82,6 +84,10 @@ impl Config {
             auth_provider: var_or("AUTH_PROVIDER", "clerk"),
             redis_url: var_or("REDIS_URL", ""),
             frontend_url: var_or("FRONTEND_URL", "http://localhost:5173"),
+            cors_allowed_origins: var_or(
+                "CORS_ALLOWED_ORIGINS",
+                "https://app.sentinel-command.com",
+            ),
         }
     }
 }
@@ -123,6 +129,7 @@ mod tests {
             auth_provider: auth_provider.into(),
             redis_url: String::new(),
             frontend_url: String::new(),
+            cors_allowed_origins: String::new(),
         }
     }
 

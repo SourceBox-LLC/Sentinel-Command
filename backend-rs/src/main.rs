@@ -50,6 +50,10 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState {
         auth: Arc::new(Authenticator::from_config(&config, http.clone())),
         proxy: sentinel_command::proxy::build_client(),
+        cors: sentinel_command::cors::CorsConfig::from_env(
+            &config.frontend_url,
+            &config.cors_allowed_origins,
+        ),
         limiter: Arc::new(
             sentinel_command::ratelimit::Limiter::from_env(&config.redis_url).await,
         ),

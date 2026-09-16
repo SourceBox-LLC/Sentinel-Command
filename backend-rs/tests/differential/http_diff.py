@@ -174,6 +174,27 @@ CASES = [
         "limit=0", "limit=201", "offset=-1", "limit=abc",
     ]],
 
+    # --- CORS: a ported route must carry the same headers Python does --
+    ("GET", "/api/cameras", True, {"Origin": "http://localhost:5173"}),
+    ("GET", "/api/cameras", True, {"Origin": "http://localhost:8000"}),
+    # a disallowed origin still gets Starlette's "simple headers", but no
+    # allow-origin and no Vary
+    ("GET", "/api/cameras", True, {"Origin": "https://evil.test"}),
+    ("GET", "/api/cameras", True, {"Origin": "https://app.example.com.evil.test"}),
+    ("GET", "/api/settings", True, {"Origin": "http://localhost:5173"}),
+    ("GET", "/api/incidents", True, {"Origin": "http://localhost:5173"}),
+    # a proxied route must not end up with the headers twice
+    ("GET", "/api/nodes", True, {"Origin": "http://localhost:5173"}),
+    # unauthenticated responses carry them too
+    ("GET", "/api/cameras", False, {"Origin": "http://localhost:5173"}),
+
+    # --- HEAD: axum answers it from a GET handler, FastAPI 405s --------
+    ("HEAD", "/api/health", False),
+    ("HEAD", "/api/cameras", True),
+    ("HEAD", "/api/settings", True),
+    ("HEAD", "/api/incidents", True),
+    ("HEAD", "/api/nodes", True),
+
     # methods Rust has NOT ported on a path it HAS — these must still
     # reach Python rather than being answered with 405 by axum.
     ("POST", "/api/cameras", True),
@@ -183,17 +204,36 @@ CASES = [
 ]
 
 
-def fetch(base, method, path, with_auth):
+# Headers compared alongside status and body. CORS is here because a
+# ported route leaves Python's CORSMiddleware behind and came back with
+# none of these — the preflight still passed (OPTIONS falls through to
+# the proxy) so the browser failed only on the real response.
+COMPARED_HEADERS = (
+    "access-control-allow-origin",
+    "access-control-allow-credentials",
+    "access-control-expose-headers",
+    "vary",
+    "retry-after",
+)
+
+
+def fetch(base, method, path, with_auth, extra_headers=None):
     req = urllib.request.Request(base + path, method=method)
     if with_auth:
         req.add_header("Authorization", f"Bearer {TOKEN}")
+    for k, v in (extra_headers or {}).items():
+        req.add_header(k, v)
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
-            return r.status, r.read()
+            return r.status, r.read(), _headers(r.headers)
     except urllib.error.HTTPError as e:
-        return e.code, e.read()
+        return e.code, e.read(), _headers(e.headers)
     except Exception as e:  # noqa: BLE001
-        return None, str(e).encode()
+        return None, str(e).encode(), {}
+
+
+def _headers(msg):
+    return {k: msg.get(k) for k in COMPARED_HEADERS if msg.get(k) is not None}
 
 
 def normalise(body):
@@ -222,7 +262,7 @@ def check_coverage():
     31/31 identical while doing exactly that, testing neither a live
     camera nor the last_error surfacing. Re-seed, then run.
     """
-    status, body = fetch(RUST, "GET", "/api/cameras", True)
+    status, body, _ = fetch(RUST, "GET", "/api/cameras", True)
     if status != 200:
         print(f"COVERAGE: /api/cameras returned {status}, expected 200")
         return False
@@ -259,12 +299,14 @@ def main():
 
     bad = 0
     rate_limited = []
-    for method, path, auth in CASES:
-        rs_status, rs_body = fetch(RUST, method, path, auth)
-        py_status, py_body = fetch(PYTHON, method, path, auth)
+    for case in CASES:
+        method, path, auth = case[0], case[1], case[2]
+        extra = case[3] if len(case) > 3 else None
+        rs_status, rs_body, rs_head = fetch(RUST, method, path, auth, extra)
+        py_status, py_body, py_head = fetch(PYTHON, method, path, auth, extra)
         rs, py = normalise(rs_body), normalise(py_body)
 
-        same = (rs_status == py_status) and (rs == py)
+        same = (rs_status == py_status) and (rs == py) and (rs_head == py_head)
         label = f"{method} {path}" + ("" if auth else "  (no auth)")
 
         # A 429 on either side means the run itself exhausted a limit, not
@@ -279,7 +321,10 @@ def main():
         else:
             bad += 1
             print(f"  DIFFER  {label:<46} rust={rs_status} python={py_status}")
-            if rs_status == py_status:
+            if rs_head != py_head:
+                print(f"            headers rust  : {json.dumps(rs_head, sort_keys=True)}")
+                print(f"            headers python: {json.dumps(py_head, sort_keys=True)}")
+            if rs_status == py_status and rs != py:
                 print(f"            rust  : {json.dumps(rs, sort_keys=True)[:300]}")
                 print(f"            python: {json.dumps(py, sort_keys=True)[:300]}")
 

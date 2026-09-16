@@ -540,3 +540,52 @@ Hour-scoped limits (`10/hour`, `3/hour`) are reported as failures rather
 than passes: this crate's limiter only implements a minute window, so
 porting such a route would silently hand out 60× the budget. None is
 ported yet.
+
+## Response headers
+
+The HTTP differential compares a fixed set of response headers alongside
+status and body — not just on the CORS cases, on every case. Two
+defects were invisible without it:
+
+### Ported routes carried no CORS headers
+
+Python wraps every response in Starlette's `CORSMiddleware`; a ported
+route leaves that wrapper behind. The preflight still succeeded, because
+`OPTIONS` is not a method any ported route claims and so falls through to
+the proxy — and then the browser blocked the *actual* response. Every
+cross-origin caller would have broken: the Vite dev server on :5173, any
+separately-hosted frontend, the `CORS_ALLOWED_ORIGINS` deployments.
+
+`src/cors.rs` reproduces the three cases, all measured rather than
+reasoned about, because reasoning got it wrong twice:
+
+| request | headers |
+| --- | --- |
+| allowed origin | `allow-credentials`, `allow-origin`, `expose-headers`, `Vary: Origin` |
+| **disallowed** origin | `allow-credentials` and `expose-headers` only — no `allow-origin`, and **no `Vary`** |
+| no `Origin` header | nothing at all |
+
+The middle row is the surprising one. A disallowed origin still gets
+Starlette's "simple headers", and does *not* get `Vary: Origin` even
+though the response genuinely varies by it. My first implementation
+added `Vary` there on the reasoning that it was correct HTTP; the second
+dropped the simple headers because a narrower `grep` had hidden them.
+
+Preflight stays with Python deliberately — a second implementation of it
+is a second thing to keep in sync.
+
+### HEAD
+
+axum answers `HEAD` from a `GET` handler automatically; FastAPI does not
+and returns 405. So every ported route silently started accepting `HEAD`
+where Python refused it, `/api/health` included. `ported()` routes `HEAD`
+to the proxy.
+
+### Teeth
+
+| injected bug | caught |
+| --- | --- |
+| CORS layer removed | 7 / 211 |
+| `allow-origin` echoed for any origin | 2 / 211 |
+| `Vary: Origin` dropped | 5 / 211 |
+| `HEAD` answered from the GET handler | 4 / 211 |
