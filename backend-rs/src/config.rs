@@ -37,6 +37,9 @@ pub struct Config {
     pub auth_provider: String,
     /// Shared storage for rate-limit counters.
     pub redis_url: String,
+    /// The operator's platform-wide email kill switch. Defaults off, so
+    /// a deployment that never sets it sends nothing.
+    pub email_enabled: bool,
 
     /// Checked against a Clerk token's `azp` claim — the Python service
     /// passes it to the SDK as `authorized_parties`.
@@ -98,6 +101,7 @@ impl Config {
             local_admin_password_hash: var_or("LOCAL_ADMIN_PASSWORD_HASH", ""),
             auth_provider: var_or("AUTH_PROVIDER", "clerk"),
             redis_url: var_or("REDIS_URL", ""),
+            email_enabled: var_or("EMAIL_ENABLED", "false").to_lowercase() == "true",
             frontend_url: var_or("FRONTEND_URL", "http://localhost:5173"),
             cors_allowed_origins: var_or(
                 "CORS_ALLOWED_ORIGINS",
@@ -144,6 +148,7 @@ mod tests {
             local_admin_password_hash: String::new(),
             auth_provider: auth_provider.into(),
             redis_url: String::new(),
+            email_enabled: false,
             frontend_url: String::new(),
             cors_allowed_origins: String::new(),
         }

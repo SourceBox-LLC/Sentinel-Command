@@ -740,3 +740,52 @@ that branch never runs in the differential. Covered by a unit test.
 
 Both are cases where "the responses are identical" is true and
 irrelevant.
+
+## The non-admin caller
+
+Every differential ran as an **admin** until slice 4's notification work,
+because `issue_token()` hardcodes `org_role: "org:admin"`. So every
+`is_admin()` branch and every `require_admin` 403 went untested across
+thirty routes.
+
+Mutation testing surfaced it: deleting the notification audience filter
+— which leaks admin-only inbox rows to ordinary members — scored
+**296/296 identical**.
+
+`http_run.sh` now mints a second token by hand, signed with the same
+HS256 secret but carrying `org_role: "org:member"`. Both stacks read the
+role straight from the claims, so both accept it and both treat the
+caller as a non-admin. Cases marked `"member"` use it.
+
+The difference is visible and real: on `/api/audit-logs` the admin gets
+200 and the member 403; on the inbox the admin sees 116 rows including
+29 admin-audience, the member sees 87 and none.
+
+## Fixtures that must straddle a threshold
+
+`unread-count` reports `capped: count > 99`. With one caller at 117
+unread, `> 99` and `> 50` agree on every request, so a wrong threshold is
+invisible — and was. The member's read-state is seeded to land their
+count at **66**, between the two, which is what makes the branch
+testable.
+
+The general rule, learned three times on this branch: a fixture has to
+put a value on *both* sides of every boundary the code tests, not merely
+exercise the code path.
+
+## Relative timestamps: the recurring fixture trap
+
+Three times now a fixture seeded relative to `now()` has broken the write
+differential, which reseeds twice seconds apart:
+
+| column | symptom |
+| --- | --- |
+| `cameras.last_seen` | every write case differed |
+| `notifications.created_at` | every write case differed |
+| `user_notification_state.last_viewed_at` | 2/111 identical |
+
+The read differential *needs* them relative — live-vs-offline cameras, an
+unread count in a specific band. So `write_diff.py` has a `FREEZE` block
+that pins each one after seeding, to distinct fixed values where
+ordering matters. Any new `now()`-relative column in the fixture needs an
+entry there.

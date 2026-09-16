@@ -49,7 +49,8 @@ RECENT_WINDOW = timedelta(minutes=10)
 # a stray audit row, or fails to write an expected one, is exactly the
 # kind of bug response diffing misses.
 WATCHED = ["incidents", "incident_evidence", "audit_log", "settings",
-           "camera_groups", "cameras", "mcp_api_keys"]
+           "camera_groups", "cameras", "mcp_api_keys",
+           "notifications", "user_notification_state"]
 
 # (name, method, path, body) — body None means no request body.
 CASES = [
@@ -202,6 +203,28 @@ EXPECTED_DIVERGENCES = {
 }
 
 CASES += [
+    # --- notifications -------------------------------------------------
+    # Each of these creates the read-state row on first touch — a write
+    # on a GET, which the side-effect snapshot sees.
+    ("mark viewed", "POST", "/api/notifications/mark-viewed", None),
+    ("clear all", "POST", "/api/notifications/clear-all", None),
+    ("email prefs, one toggle", "POST", "/api/notifications/email/preferences",
+     {"email_motion": True}),
+    ("email prefs, several", "POST", "/api/notifications/email/preferences",
+     {"email_motion": True, "email_camera_offline": False, "email_member_audit": False}),
+    ("email prefs, empty body", "POST", "/api/notifications/email/preferences", {}),
+    # explicit null is a no-op, like an absent field
+    ("email prefs, explicit null", "POST", "/api/notifications/email/preferences",
+     {"email_motion": None}),
+    # email_welcome is readable but NOT writable — the POST model has no
+    # such field, so it must be ignored rather than stored
+    ("email prefs, unwritable key", "POST", "/api/notifications/email/preferences",
+     {"email_welcome": False}),
+    ("email prefs, unknown key", "POST", "/api/notifications/email/preferences",
+     {"nonsense": True}),
+    ("email prefs, wrong type", "POST", "/api/notifications/email/preferences",
+     {"email_motion": "nope"}),
+
     # --- local auth ----------------------------------------------------
     ("login, correct credentials", "POST", "/api/auth/local/login",
      {"username": "admin", "password": "correct horse battery staple"}),
@@ -263,6 +286,19 @@ UPDATE cameras SET last_seen = timestamp '2026-01-01 00:00:00'
  WHERE last_seen IS NOT NULL;
 UPDATE camera_nodes SET last_seen = timestamp '2026-01-01 00:00:00'
  WHERE last_seen IS NOT NULL;
+-- Anchored to a fixed base but kept DISTINCT per row: the inbox pages
+-- with ORDER BY created_at DESC and no tiebreaker, so collapsing these
+-- to one constant would trade a reseed-drift diff for a flaky one.
+UPDATE notifications
+   SET created_at = timestamp '2026-09-01 00:00:00' + (id || ' minutes')::interval;
+-- The read differential seeds this one relative to now(), to land a
+-- caller's unread count between the two display thresholds. Relative is
+-- exactly wrong here: the two reseeds happen seconds apart and every
+-- row that references it drifts. Third time this pattern has bitten —
+-- cameras.last_seen, notifications.created_at, and now this.
+UPDATE user_notification_state
+   SET last_viewed_at = timestamp '2026-06-01 00:00:00'
+ WHERE last_viewed_at IS NOT NULL;
 """
 
 

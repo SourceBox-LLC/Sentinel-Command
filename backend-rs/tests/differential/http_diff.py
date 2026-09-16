@@ -26,6 +26,10 @@ RUST = "http://127.0.0.1:8000"
 PYTHON = "http://127.0.0.1:8001"
 
 TOKEN = sys.argv[1]
+# A non-admin caller. Without one, every is_admin() branch and every
+# require_admin 403 goes untested, because issue_token() always mints
+# org:admin.
+MEMBER_TOKEN = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("-") else None
 VERBOSE = "-v" in sys.argv
 
 # (method, path, expect_auth) — expect_auth False sends no credential.
@@ -214,6 +218,40 @@ CASES = [
     ("GET", "/api/cameras", False, {"Authorization": "Bearer  double.space.token"}),
     ("GET", "/api/cameras", False, {"Authorization": "Basic dXNlcjpwYXNz"}),
 
+    # --- a NON-ADMIN caller --------------------------------------------
+    # require_admin must 403, and the notification inbox must hide
+    # audience="admin" rows. Neither was covered until a mutation
+    # scored 296/296 with the audience filter deleted.
+    ("GET", "/api/notifications", "member"),
+    ("GET", "/api/notifications?limit=200", "member"),
+    ("GET", "/api/notifications/unread-count", "member"),
+    ("GET", "/api/cameras", "member"),
+    ("GET", "/api/camera-groups", "member"),
+    ("GET", "/api/settings", "member"),
+    ("GET", "/api/incidents", "member"),
+    ("GET", "/api/incidents/counts", "member"),
+    ("GET", "/api/incidents/1", "member"),
+    ("GET", "/api/audit-logs", "member"),
+    ("GET", "/api/audit/stream-logs", "member"),
+    ("GET", "/api/audit/stream-logs/stats", "member"),
+    ("GET", "/api/mcp/activity/logs", "member"),
+    ("GET", "/api/mcp/keys", "member"),
+    ("GET", "/api/nodes/node-aaaa1111", "member"),
+    ("GET", "/api/motion/events", "member"),
+    ("GET", "/api/notifications/email/preferences", "member"),
+
+    # --- notifications -------------------------------------------------
+    ("GET", "/api/notifications", True),
+    ("GET", "/api/notifications", False),
+    ("GET", "/api/notifications/unread-count", True),
+    ("GET", "/api/notifications/email/preferences", True),
+    *[("GET", f"/api/notifications?{q}", True) for q in [
+        "limit=5", "limit=200", "limit=3&offset=10", "offset=0",
+        "hours=1", "hours=168", "hours=720",
+        # bounds: limit has ge/le, hours has only le
+        "limit=0", "limit=201", "offset=-1", "hours=721", "hours=-5", "hours=abc",
+    ]],
+
     # --- local auth: login and refresh ---------------------------------
     # POST cases carry a body, so they live in write_diff; these cover
     # the rejection paths, which have no side effects.
@@ -332,7 +370,9 @@ def served_paths():
 
 def fetch(base, method, path, with_auth, extra_headers=None):
     req = urllib.request.Request(base + path, method=method)
-    if with_auth:
+    if with_auth == "member":
+        req.add_header("Authorization", f"Bearer {MEMBER_TOKEN}")
+    elif with_auth:
         req.add_header("Authorization", f"Bearer {TOKEN}")
     for k, v in (extra_headers or {}).items():
         req.add_header(k, v)

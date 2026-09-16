@@ -274,3 +274,52 @@ VALUES
    NULL, false, 'all', NULL, 'mcp'),
   ('other-org', 'hash_10', 'Theirs Integration', timestamp '2026-09-09 11:00:00',
    NULL, false, 'all', NULL, 'integration');
+
+-- ---- notifications --------------------------------------------------
+DELETE FROM user_notification_state;
+DELETE FROM notifications;
+ALTER SEQUENCE IF EXISTS notifications_id_seq RESTART WITH 1;
+ALTER SEQUENCE IF EXISTS user_notification_state_id_seq RESTART WITH 1;
+
+INSERT INTO notifications
+  (org_id, kind, audience, title, body, severity, link, camera_id, node_id, meta_json, created_at)
+SELECT
+  CASE WHEN i % 9 = 0 THEN 'other-org' ELSE 'self-host' END,
+  (ARRAY['motion','camera_offline','node_offline','incident_created'])[1 + (i % 4)],
+  -- a third are admin-only, so the audience filter has something to hide
+  CASE WHEN i % 3 = 0 THEN 'admin' ELSE 'all' END,
+  'Notification ' || i,
+  'Body text for ' || i,
+  (ARRAY['info','warning','error','critical'])[1 + (i % 4)],
+  CASE WHEN i % 5 = 0 THEN NULL ELSE '/cameras/' || i END,
+  CASE WHEN i % 4 = 0 THEN 'cam-live' ELSE NULL END,
+  CASE WHEN i % 6 = 0 THEN 'node-aaaa1111' ELSE NULL END,
+  -- valid JSON, absent, and malformed: meta parses to null on failure
+  CASE WHEN i % 7 = 0 THEN 'not json at all'
+       WHEN i % 5 = 0 THEN NULL
+       ELSE '{"i": ' || i || ', "z": "last"}' END,
+  -- distinct timestamps: ORDER BY created_at DESC has no tiebreaker
+  now()::timestamp - (i || ' minutes')::interval
+-- 130 rows: the unread badge caps display at >99, so a smaller fixture
+-- leaves that branch untested (a mutation to the threshold scored
+-- 296/296 before this).
+FROM generate_series(1, 130) AS i;
+
+-- a row older than the default 168h window
+INSERT INTO notifications (org_id, kind, audience, title, body, severity, created_at)
+VALUES ('self-host', 'motion', 'all', 'Ancient', 'outside the window', 'info',
+        now()::timestamp - interval '40 days');
+
+-- The admin's read-state is seeded OLD so every notification counts as
+-- unread and the >99 display cap is actually exercised; a state row
+-- created on first access is stamped with now(), which makes unread 0
+-- and leaves that branch dead. The member is deliberately left
+-- unseeded, so the create-on-first-access path is covered too.
+INSERT INTO user_notification_state (clerk_user_id, org_id, last_viewed_at, cleared_at)
+VALUES
+  -- Admin: everything unread, so `capped` is true (>99).
+  ('local-admin', 'self-host', timestamp '2026-01-01 00:00:00', NULL),
+  -- Member: partway back, landing the count BETWEEN 51 and 99. Without
+  -- a caller in that band, `count > 99` and `count > 50` agree on every
+  -- request and a wrong threshold is invisible — which it was.
+  ('local-member', 'self-host', now()::timestamp - interval '100 minutes', NULL);

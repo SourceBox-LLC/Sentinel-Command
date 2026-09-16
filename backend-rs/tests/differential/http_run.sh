@@ -75,5 +75,28 @@ from app.core.local_auth import issue_token
 print(issue_token())
 ")"
 
+# A second token whose org_role is NOT admin.
+#
+# `issue_token()` hardcodes "org:admin", so in local-auth mode every
+# caller is an admin and the entire non-admin path — every is_admin()
+# branch, every require_admin 403 — was untested. Mutation testing found
+# it: deleting the notification audience filter scored 296/296.
+#
+# Both stacks verify the same HS256 secret and read org_role straight
+# from the claims, so a hand-signed token with a different role is
+# accepted by both and exercises the branch.
+MEMBER_TOKEN="$(cd "$REPO/backend" && env APP_SECRET_KEY="$APP_SECRET_KEY" "$PYTHON" -c "
+import os, time, jwt
+now = int(time.time())
+print(jwt.encode({
+    'sub': 'sentinel-local-auth',
+    'user_id': 'local-member',
+    'org_id': 'self-host',
+    'org_role': 'org:member',
+    'iat': now,
+    'exp': now + 3600,
+}, os.environ['APP_SECRET_KEY'], algorithm='HS256'))
+")"
+
 echo
-exec "$PYTHON" "$HERE/http_diff.py" "$TOKEN" "$@"
+exec "$PYTHON" "$HERE/http_diff.py" "$TOKEN" "$MEMBER_TOKEN" "$@"

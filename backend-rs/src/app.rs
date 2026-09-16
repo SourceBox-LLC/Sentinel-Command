@@ -148,6 +148,26 @@ pub fn build_router(state: AppState) -> Router {
             "/api/integration/keys/{key_id}",
             served(axum::routing::delete(api::keys::revoke_integration_key)),
         )
+        .route("/api/notifications", ported(api::notifications::list_notifications))
+        .route(
+            "/api/notifications/unread-count",
+            ported(api::notifications::unread_count),
+        )
+        .route(
+            "/api/notifications/mark-viewed",
+            served(axum::routing::post(api::notifications::mark_viewed)),
+        )
+        .route(
+            "/api/notifications/clear-all",
+            served(axum::routing::post(api::notifications::clear_all)),
+        )
+        .route(
+            "/api/notifications/email/preferences",
+            served(
+                get(api::notifications::get_email_preferences)
+                    .post(api::notifications::update_email_preferences),
+            ),
+        )
         .route("/api/motion/events", ported(api::motion::list_motion_events))
         .route(
             "/api/motion/events/stats",
