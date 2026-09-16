@@ -663,3 +663,46 @@ returns 405, while the suite reported 218/218.
 Anything that should hold for *every* served route should be generated
 from the route table for the same reason. A hand-picked sample tests the
 routes you remembered, which are the ones you already fixed.
+
+## Adversarial input
+
+A batch of odd-but-plausible requests is fired at every ported route:
+Unicode and percent-encoded path parameters, `%00`, `%2F`, traversal
+sequences, a 300-character id, doubled query parameters, SQL-looking
+filter values, awkward `Authorization` header shapes, doubled path
+separators, trailing slashes.
+
+It found two things, both in the same run.
+
+### `%2F` in a path parameter
+
+Starlette percent-decodes the path **before** matching, so
+`/api/cameras/cam%2Flive` becomes three segments and matches no route —
+the router's 404, `{"detail": "Not Found"}`. axum matches on the raw
+path, so the same request reached the handler with
+`camera_id = "cam/live"` and produced the handler's own
+`{"detail": "Camera not found"}`. Same status, different body; the same
+divergence covered `%2e%2e%2f` traversal attempts.
+
+`query::path_segment` rejects a decoded slash, restoring Starlette's
+answer.
+
+### Internal errors had the wrong shape entirely
+
+There is **not one deliberate `HTTPException(status_code=500)`** in the
+Python service — every 500 over there is an unhandled exception, which
+Starlette renders as `text/plain; charset=utf-8` with the body
+`Internal Server Error`. The port was answering `{"detail": "database
+error"}` as JSON: a shape no Python 500 has, and a hint about what broke
+into the bargain. `ApiError::internal` now renders exactly what
+Starlette does, and the sqlx message goes to the log only.
+
+### One divergence kept
+
+Python's 500s carry **no** security headers and no request id —
+Starlette's outermost `ServerErrorMiddleware` sits above the middleware
+that stamps them, so an error response skips the lot. Verified on two
+unrelated 500s. Rust keeps them; an error page without `nosniff` is
+worse than one with it, and copying the gap would mean writing code to
+strip them. The differential compares status and body on a 500, not
+headers.

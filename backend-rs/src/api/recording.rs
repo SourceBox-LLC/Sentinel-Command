@@ -20,7 +20,7 @@ use crate::audit::{audit_label, python_json, write_audit};
 use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::now_naive;
-use crate::query::{parse_body, BodyErrors};
+use crate::query::{parse_body, BodyErrors, path_segment};
 use crate::ratelimit::PerMinute;
 
 /// Fetch a camera's current recording fields, scoped to the caller's org.
@@ -55,12 +55,13 @@ pub async fn toggle_recording(
     ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     body: axum::body::Bytes,
 ) -> Result<Json<Value>, ApiError> {
+    let camera_id = path_segment(&camera_id)?;
     let body = parse_body(&body)?;
     // `bool(body.get("recording", False))` — Python truthiness over
     // whatever arrived, so a missing key is "stop recording".
     let recording = truthy(body.get("recording"));
 
-    let current = owned_camera(&state.pool, &user.org_id, &camera_id).await?;
+    let current = owned_camera(&state.pool, &user.org_id, camera_id).await?;
 
     // SQLAlchemy emits no UPDATE when the value is unchanged, so
     // `updated_at` must not move for a press that changes nothing.
@@ -71,7 +72,7 @@ pub async fn toggle_recording(
         )
         .bind(recording)
         .bind(now_naive())
-        .bind(&camera_id)
+        .bind(camera_id)
         .bind(&user.org_id)
         .execute(&state.pool)
         .await?;
@@ -124,6 +125,7 @@ pub async fn update_recording_policy(
     ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     body: axum::body::Bytes,
 ) -> Result<Json<Value>, ApiError> {
+    let camera_id = path_segment(&camera_id)?;
     let body = parse_body(&body)?;
 
     let mut errors = BodyErrors::new();
@@ -133,7 +135,7 @@ pub async fn update_recording_policy(
     let end = errors.optional_hhmm(&body, "scheduled_end");
     errors.finish()?;
 
-    let current = owned_camera(&state.pool, &user.org_id, &camera_id).await?;
+    let current = owned_camera(&state.pool, &user.org_id, camera_id).await?;
 
     // Validate the *resulting* state, not the patch, so the row can
     // never reach an impossible combination even via a direct API call.
@@ -180,7 +182,7 @@ pub async fn update_recording_policy(
         .bind(&next_start)
         .bind(&next_end)
         .bind(now_naive())
-        .bind(&camera_id)
+        .bind(camera_id)
         .bind(&user.org_id)
         .execute(&state.pool)
         .await?;

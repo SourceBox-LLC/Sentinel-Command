@@ -450,6 +450,24 @@ pub fn parse_pydantic_bool(value: &Value) -> Option<bool> {
     }
 }
 
+/// Validate a string path parameter the way Starlette's router would.
+///
+/// Starlette percent-decodes the path *before* matching, so
+/// `/api/cameras/cam%2Flive` becomes three segments and matches no route
+/// at all — a router 404 with `{"detail": "Not Found"}`. axum's matcher
+/// works on the raw path, so the same request reaches the handler with
+/// `camera_id = "cam/live"` and produces the handler's own 404
+/// (`"Camera not found"`). Same status, different body.
+///
+/// Rejecting a decoded slash here restores Starlette's answer. The same
+/// rule covers `%2e%2e%2f` traversal attempts, which decode to `../`.
+pub fn path_segment(raw: &str) -> Result<&str, ApiError> {
+    if raw.contains('/') {
+        return Err(ApiError::not_found("Not Found"));
+    }
+    Ok(raw)
+}
+
 /// Validate an integer **path** parameter, FastAPI-style.
 ///
 /// Taking `Path<i32>` directly would hand axum's own rejection to the
@@ -587,6 +605,25 @@ mod tests {
             "", " 8:30", "08:30 ", "٠٨:٣٠",
         ] {
             assert!(!is_hhmm(bad), "{bad:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn a_decoded_slash_means_no_route_matched() {
+        // Starlette decodes before routing, so these never reach a
+        // handler over there and get the router's 404, not the
+        // handler's.
+        for raw in ["cam/live", "../..", "a/b/c", "/"] {
+            let err = path_segment(raw).unwrap_err();
+            assert_eq!(err.status, StatusCode::NOT_FOUND);
+            assert_eq!(err.detail, json!("Not Found"));
+        }
+    }
+
+    #[test]
+    fn an_ordinary_segment_passes_through() {
+        for raw in ["cam-live", "café", "🎥", "cam%20live", "a.b_c-d"] {
+            assert_eq!(path_segment(raw).unwrap(), raw);
         }
     }
 

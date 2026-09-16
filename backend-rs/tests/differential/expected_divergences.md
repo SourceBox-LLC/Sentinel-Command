@@ -198,3 +198,20 @@ Rust rejects it at the path-parameter boundary with the same 422 shape a
 non-numeric id gets, which is what the value *is* — not a valid id for
 this column. Fifth latent crash; the least consequential of them, since
 it takes a deliberately silly URL.
+
+## A 500 carries the security headers (slice 4 audit)
+
+Python's 500 responses have **no** `X-Content-Type-Options`,
+`X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` or
+`X-Request-Id`. An unhandled exception is caught by Starlette's
+outermost `ServerErrorMiddleware`, which sits above the middleware that
+stamps them, so the error response skips the lot. Verified on two
+unrelated 500s — the NULL-setting crash and a NUL byte in a path
+parameter — both bare.
+
+Rust keeps the headers on a 500. Diverging deliberately: an error page
+without `nosniff` is worse than one with it, nothing can depend on their
+absence, and copying the gap would mean writing code to strip them.
+
+The HTTP differential compares status and body on a 500 but not headers,
+for this reason.

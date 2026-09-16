@@ -26,6 +26,7 @@ use serde_json::{json, Value};
 use crate::app::AppState;
 use crate::auth::RequireAdmin;
 use crate::error::ApiError;
+use crate::query::path_segment;
 use crate::models::{iso_naive, now_naive};
 
 /// A node is offline after three missed heartbeats.
@@ -129,9 +130,10 @@ pub async fn get_node(
     RequireAdmin(user): RequireAdmin,
     Path(node_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
+    let node_id = path_segment(&node_id)?;
     let row: Option<CameraNodeRow> =
         sqlx::query_as(&format!("{NODE_SELECT} WHERE n.node_id = $1 AND n.org_id = $2"))
-            .bind(&node_id)
+            .bind(node_id)
             .bind(&user.org_id)
             .fetch_optional(&state.pool)
             .await?;

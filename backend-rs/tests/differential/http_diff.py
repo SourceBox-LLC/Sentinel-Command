@@ -178,6 +178,42 @@ CASES = [
         "limit=0", "limit=201", "offset=-1", "limit=abc",
     ]],
 
+    # --- adversarial but plausible input ------------------------------
+    # Unicode, encoding and separator handling on a path parameter.
+    ("GET", "/api/cameras/caf%C3%A9", True),
+    ("GET", "/api/cameras/%F0%9F%8E%A5", True),
+    ("GET", "/api/cameras/cam%2Flive", True),
+    ("GET", "/api/cameras/cam%00live", True),
+    ("GET", "/api/cameras/%2e%2e%2f%2e%2e", True),
+    ("GET", "/api/cameras/" + "x" * 300, True),
+    ("GET", "/api/incidents/%31", True),
+    ("GET", "/api/incidents/+1", True),
+    ("GET", "/api/incidents/1%20", True),
+    # Trailing slashes and doubled separators.
+    ("GET", "/api/settings/", True),
+    ("GET", "/api//cameras", True),
+    ("GET", "/api/incidents//counts", True),
+    # Query-string oddities on routes that parse one.
+    ("GET", "/api/audit-logs?limit=5&limit=", True),
+    ("GET", "/api/audit-logs?LIMIT=5", True),
+    ("GET", "/api/audit-logs?limit[]=5", True),
+    ("GET", "/api/audit-logs?username=%00", True),
+    ("GET", "/api/audit-logs?username=%E2%80%8B", True),
+    ("GET", "/api/motion/events?hours=24&hours=1", True),
+    ("GET", "/api/incidents?status=open&status=resolved", True),
+    # A filter value that looks like SQL.
+    ("GET", "/api/audit-logs?event=%27%20OR%20%271%27%3D%271", True),
+    ("GET", "/api/incidents?camera_id=%27%3B%20DROP%20TABLE%20incidents%3B--", True),
+    # Header oddities.
+    ("GET", "/api/cameras", True, {"Accept": "text/html"}),
+    ("GET", "/api/cameras", True, {"Accept-Encoding": "br"}),
+    ("GET", "/api/cameras", True, {"X-Forwarded-For": "1.2.3.4, 5.6.7.8"}),
+    # Authorization header shapes.
+    ("GET", "/api/cameras", False, {"Authorization": "Bearer"}),
+    ("GET", "/api/cameras", False, {"Authorization": "bearer lowercase.token.here"}),
+    ("GET", "/api/cameras", False, {"Authorization": "Bearer  double.space.token"}),
+    ("GET", "/api/cameras", False, {"Authorization": "Basic dXNlcjpwYXNz"}),
+
     # --- api keys ------------------------------------------------------
     ("GET", "/api/mcp/keys", True),
     ("GET", "/api/mcp/keys", False),
@@ -389,6 +425,16 @@ def main():
 
         same = (rs_status == py_status) and (rs == py) and (rs_head == py_head)
         label = f"{method} {path}" + ("" if auth else "  (no auth)")
+
+        # Python's 500s carry no headers at all: an unhandled exception
+        # is caught by Starlette's outermost ServerErrorMiddleware, above
+        # the middleware that stamps the security headers and the request
+        # id. Rust keeps them, which is strictly safer and which no
+        # client can depend on the absence of. Compare status and body on
+        # a 500, not headers.
+        if rs_status == 500 and py_status == 500:
+            rs_head = py_head = {}
+            same = (rs_status == py_status) and (rs == py)
 
         # A 429 on either side means the run itself exhausted a limit, not
         # that the port is wrong. Counting it as a diff would be a false

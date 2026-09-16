@@ -15,7 +15,7 @@ use crate::audit::{audit_label, python_json, write_audit};
 use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::now_naive;
-use crate::query::{parse_body, path_int, BodyErrors, Query};
+use crate::query::{parse_body, path_int, BodyErrors, Query, path_segment};
 use crate::ratelimit::PerMinute;
 use crate::settings;
 
@@ -125,6 +125,7 @@ pub async fn assign_camera_group(
     Path(camera_id): Path<String>,
     request: Request,
 ) -> Result<Json<Value>, ApiError> {
+    let camera_id = path_segment(&camera_id)?;
     let mut q = Query::parse(request.uri().query());
     // No bounds in the Python signature, so no bounds here.
     let raw_group_id = q.optional_str("group_id");
@@ -137,7 +138,7 @@ pub async fn assign_camera_group(
 
     let camera: Option<(i32,)> =
         sqlx::query_as("SELECT id FROM cameras WHERE camera_id = $1 AND org_id = $2")
-            .bind(&camera_id)
+            .bind(camera_id)
             .bind(&user.org_id)
             .fetch_optional(&state.pool)
             .await?;
@@ -168,14 +169,14 @@ pub async fn assign_camera_group(
     // UPDATE when the value is unchanged, so `updated_at` must not move
     // for a no-op reassignment.
     let current: (Option<i32>,) = sqlx::query_as("SELECT group_id FROM cameras WHERE camera_id = $1")
-        .bind(&camera_id)
+        .bind(camera_id)
         .fetch_one(&state.pool)
         .await?;
     if current.0 != assign {
         sqlx::query("UPDATE cameras SET group_id = $1, updated_at = $2 WHERE camera_id = $3 AND org_id = $4")
             .bind(assign)
             .bind(now_naive())
-            .bind(&camera_id)
+            .bind(camera_id)
             .bind(&user.org_id)
             .execute(&state.pool)
             .await?;

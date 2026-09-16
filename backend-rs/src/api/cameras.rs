@@ -14,6 +14,7 @@ use serde_json::Value;
 use crate::app::AppState;
 use crate::auth::RequireView;
 use crate::error::ApiError;
+use crate::query::path_segment;
 use crate::models::{CameraGroupRow, CameraRow, CAMERA_SELECT};
 
 /// `GET /api/cameras` — every camera in the caller's organisation.
@@ -42,9 +43,10 @@ pub async fn get_camera(
     RequireView(user): RequireView,
     Path(camera_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
+    let camera_id = path_segment(&camera_id)?;
     let row: Option<CameraRow> =
         sqlx::query_as(&format!("{CAMERA_SELECT} WHERE c.camera_id = $1 AND c.org_id = $2"))
-            .bind(&camera_id)
+            .bind(camera_id)
             .bind(&user.org_id)
             .fetch_optional(&state.pool)
             .await?;
