@@ -23,7 +23,9 @@ Usage: route_capture.py            (exits non-zero on an unpinned path)
 """
 
 import re
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -31,6 +33,15 @@ BACKEND_RS = HERE.parent.parent
 BACKEND = BACKEND_RS.parent / "backend"
 
 sys.path.insert(0, str(BACKEND))
+
+# Importing app.main builds the SQLAlchemy engine at module scope, and
+# app/core/config.py defaults DATABASE_URL to "sqlite:///./sentinel.db"
+# — a *relative* path, so running this from backend-rs/ silently
+# created a 380 KB SQLite file with the full production schema in the
+# Rust crate root, where `git add -A` duly picked it up. Nothing here
+# touches the database; pointing it somewhere disposable is enough.
+os.environ.setdefault("DATABASE_URL", "sqlite:///" + tempfile.gettempdir() + "/cc-route-capture.db")
+
 from app.main import app  # noqa: E402
 
 

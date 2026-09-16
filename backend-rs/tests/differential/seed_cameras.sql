@@ -238,7 +238,54 @@ VALUES
   -- has_data is derived from data_mime, never from the deferred blob
   (1, 'snapshot', NULL, 'cam-live', '\x89504e47'::bytea, 'image/png', timestamp '2026-09-01 08:02:00'),
   (1, 'action', 'Notified owner', NULL, NULL, NULL, timestamp '2026-09-01 08:03:00'),
-  (4, 'observation', 'Theirs', 'cam-theirs', NULL, NULL, timestamp '2026-09-03 10:01:00');
+  -- 4
+  (4, 'observation', 'Theirs', 'cam-theirs', NULL, NULL, timestamp '2026-09-03 10:01:00'),
+
+  -- Evidence blob + synthetic-playlist fixtures (ids 5-15).
+  --
+  -- The playlist route reads a duration back out of the stored MIME
+  -- with a bare float(), which is looser than it looks, and the blob
+  -- route strips MIME parameters and then re-adds a charset for text/*
+  -- only. Both behaviours are data-dependent, so each branch needs a
+  -- row rather than a unit test alone. Timestamps are distinct so the
+  -- evidence list inside GET /api/incidents/1 has no tied sort key.
+  -- 5: the ordinary clip
+  (1, 'clip', NULL, 'cam-live', '\x47400011'::bytea, 'video/mp2t;duration=12.5',
+   timestamp '2026-09-01 08:04:00'),
+  -- 6: a clip with no duration parameter -> the 60s fallback
+  (1, 'clip', NULL, 'cam-live', '\x47400011'::bytea, 'video/mp2t',
+   timestamp '2026-09-01 08:05:00'),
+  -- 7: unparseable duration -> float() raises, Python skips the
+  --    parameter and keeps the fallback
+  (1, 'clip', NULL, 'cam-live', '\x47400011'::bytea, 'video/mp2t;duration=oops',
+   timestamp '2026-09-01 08:06:00'),
+  -- 8: negative duration -> int() truncates toward zero, then max(1, ..)
+  (1, 'clip', NULL, 'cam-live', '\x47400011'::bytea, 'video/mp2t;duration=-3.7',
+   timestamp '2026-09-01 08:07:00'),
+  -- 9: zero-length blob -> `not evidence.data` is true, so 404 from both
+  (1, 'clip', NULL, 'cam-live', '\x'::bytea, 'video/mp2t;duration=5',
+   timestamp '2026-09-01 08:08:00'),
+  -- 10: data with no MIME at all -> application/octet-stream
+  (1, 'snapshot', NULL, 'cam-live', '\x89504e47'::bytea, NULL,
+   timestamp '2026-09-01 08:09:00'),
+  -- 11: a text/* MIME -> Starlette appends "; charset=utf-8"
+  (1, 'snapshot', NULL, 'cam-live', '\x68690a'::bytea, 'text/plain',
+   timestamp '2026-09-01 08:10:00'),
+  -- 12: a MIME that is nothing but a parameter -> split()[0] is empty
+  --     and the `or` falls through to octet-stream
+  (1, 'snapshot', NULL, 'cam-live', '\x68690a'::bytea, ';weird',
+   timestamp '2026-09-01 08:11:00'),
+  -- 13: two duration parameters -> the loop does not break, last wins
+  (1, 'clip', NULL, 'cam-live', '\x47400011'::bytea, 'video/mp2t;duration=5;duration=9',
+   timestamp '2026-09-01 08:12:00'),
+  -- 14: a clip row whose blob was never attached -> 404 from both,
+  --     even though has_data reads true off the non-null MIME
+  (1, 'clip', NULL, 'cam-live', NULL, 'video/mp2t;duration=5',
+   timestamp '2026-09-01 08:13:00'),
+  -- 15: whitespace and a digit-group underscore, both of which
+  --     Python's float() accepts and Rust's parser does not
+  (1, 'clip', NULL, 'cam-live', '\x47400011'::bytea, 'video/mp2t; duration= 1_0.5',
+   timestamp '2026-09-01 08:14:00');
 
 -- ---- api keys -------------------------------------------------------
 DELETE FROM mcp_api_keys;

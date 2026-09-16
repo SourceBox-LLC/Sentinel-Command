@@ -52,6 +52,21 @@ pub fn build_router(state: AppState) -> Router {
         // handler and FastAPI returns 405, so even the health check
         // diverged on HEAD.
         .route("/api/health", ported(health))
+        // RFC 9116 requires the .well-known path; the root alias is kept
+        // because some older scanners only probe there.
+        .route("/.well-known/security.txt", ported(api::well_known::security_txt))
+        .route("/security.txt", ported(api::well_known::security_txt))
+        .route("/install.sh", ported(api::install::install_sh))
+        .route("/mcp-setup.sh", ported(api::install::mcp_setup_sh))
+        .route("/mcp-setup.ps1", ported(api::install::mcp_setup_ps1))
+        .route(
+            "/api/incidents/{incident_id}/evidence/{evidence_id}",
+            ported(api::incidents::get_evidence_blob),
+        )
+        .route(
+            "/api/incidents/{incident_id}/evidence/{evidence_id}/playlist.m3u8",
+            ported(api::incidents::get_evidence_playlist),
+        )
         // Read-only camera routes (slice 2). Writes on these same paths
         // are slice 4 and must still reach Python — hence `ported`
         // rather than a bare `get`.

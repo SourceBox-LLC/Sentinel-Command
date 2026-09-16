@@ -218,6 +218,60 @@ CASES = [
     ("GET", "/api/cameras", False, {"Authorization": "Bearer  double.space.token"}),
     ("GET", "/api/cameras", False, {"Authorization": "Basic dXNlcjpwYXNz"}),
 
+    # --- install + MCP setup scripts: public, header-heavy -------------
+    #
+    # The bodies are read straight off disk, so a diff here is almost
+    # always a header diff: the media types differ between the three
+    # (text/x-shellscript vs text/plain), only the two mcp-setup routes
+    # carry Cache-Control, and Starlette appends "; charset=utf-8" to
+    # every one of them because they all start with "text/".
+    ("GET", "/install.sh", False),
+    ("GET", "/mcp-setup.sh", False),
+    ("GET", "/mcp-setup.ps1", False),
+    # A signed-in browser hits the same routes; auth changes nothing.
+    ("GET", "/install.sh", True),
+    # Not ported, and must stay on the proxy: it resolves the newest
+    # GitHub release through an in-process cache.
+    ("GET", "/downloads/linux/x86_64", False),
+    ("GET", "/downloads/nope/x86_64", False),
+
+    # --- incident evidence blobs and their synthetic playlists ---------
+    #
+    # One case per fixture row (see seed_cameras.sql ids 2, 5-15): each
+    # pins a branch of the MIME handling or the duration parse.
+    *[("GET", f"/api/incidents/1/evidence/{e}", True) for e in
+      (2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)],
+    *[("GET", f"/api/incidents/1/evidence/{e}/playlist.m3u8", True) for e in
+      (2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)],
+    # No such evidence row, but the incident is the caller's: the 404
+    # detail is the evidence one.
+    ("GET", "/api/incidents/1/evidence/9999", True),
+    ("GET", "/api/incidents/1/evidence/9999/playlist.m3u8", True),
+    # The incident is missing or another tenant's, so Python raises out
+    # of _get_owned_incident first and the detail is "Incident not
+    # found" — a different string, from a different check.
+    ("GET", "/api/incidents/9999/evidence/1", True),
+    ("GET", "/api/incidents/9999/evidence/1/playlist.m3u8", True),
+    ("GET", "/api/incidents/4/evidence/4", True),
+    ("GET", "/api/incidents/4/evidence/4/playlist.m3u8", True),
+    # Evidence 2 belongs to incident 1, so asking for it under incident
+    # 3 must 404 rather than leak across incidents.
+    ("GET", "/api/incidents/3/evidence/2", True),
+    # Path integers: FastAPI 422s these before the handler runs.
+    ("GET", "/api/incidents/1/evidence/abc", True),
+    ("GET", "/api/incidents/abc/evidence/1", True),
+    ("GET", "/api/incidents/1/evidence/5.0", True),
+    ("GET", "/api/incidents/1/evidence/", True),
+    # Unauthenticated and non-admin: both must be refused identically.
+    ("GET", "/api/incidents/1/evidence/5", False),
+    ("GET", "/api/incidents/1/evidence/5/playlist.m3u8", False),
+
+    # --- security.txt: public, both locations --------------------------
+    ("GET", "/.well-known/security.txt", False),
+    ("GET", "/security.txt", False),
+    # authenticated callers get the same file
+    ("GET", "/.well-known/security.txt", True),
+
     # --- a NON-ADMIN caller --------------------------------------------
     # require_admin must 403, and the notification inbox must hide
     # audience="admin" rows. Neither was covered until a mutation
@@ -231,6 +285,11 @@ CASES = [
     ("GET", "/api/incidents", "member"),
     ("GET", "/api/incidents/counts", "member"),
     ("GET", "/api/incidents/1", "member"),
+    # Both evidence routes are require_admin, so a member must get the
+    # same 403 from each stack — the case that a differential run as
+    # admin cannot see at all.
+    ("GET", "/api/incidents/1/evidence/5", "member"),
+    ("GET", "/api/incidents/1/evidence/5/playlist.m3u8", "member"),
     ("GET", "/api/audit-logs", "member"),
     ("GET", "/api/audit/stream-logs", "member"),
     ("GET", "/api/audit/stream-logs/stats", "member"),
@@ -324,6 +383,16 @@ COMPARED_HEADERS = (
     "referrer-policy",
     "permissions-policy",
     "x-request-id",
+    # The response's own headers, not the middleware's. These went
+    # uncompared until the install-script routes landed, where the
+    # media type *is* the behaviour: /mcp-setup.ps1 is text/plain and
+    # /mcp-setup.sh is text/x-shellscript, both with a charset Starlette
+    # appends rather than the handler setting it, and only those two
+    # carry Cache-Control. Body-only diffing scores all three identical
+    # while a client sniffing the type gets the wrong answer.
+    "content-type",
+    "content-disposition",
+    "cache-control",
 )
 
 # A freshly minted request id is random, so only its shape can be
@@ -398,7 +467,19 @@ def _headers(msg):
 
 
 def normalise(body):
-    """Parse JSON if possible; sort lists by a stable key."""
+    """Parse JSON if possible; sort lists by a stable key.
+
+    security.txt is plain text with an `Expires` field regenerated on
+    every request, so the two stacks differ by however many seconds
+    apart they were called. The field is asserted separately — that it
+    parses, and that it lands inside RFC 9116's one-year cap — by unit
+    tests in src/api/well_known.rs.
+    """
+    if body.startswith(b"# Sentinel by SourceBox"):
+        return "\n".join(
+            ln for ln in body.decode("utf-8", "replace").splitlines()
+            if not ln.startswith("Expires:")
+        )
     try:
         v = json.loads(body)
     except Exception:  # noqa: BLE001

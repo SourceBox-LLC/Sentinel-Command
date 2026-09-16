@@ -11,6 +11,8 @@
 //! filed.
 
 use axum::extract::{Path, Request, State};
+use axum::http::HeaderValue;
+use axum::response::Response;
 use axum::Json;
 use chrono::NaiveDateTime;
 use serde::Deserialize;
@@ -234,6 +236,255 @@ pub async fn get_incident(
     Ok(Json(out))
 }
 
+/// Starlette's `Response.init_headers` appends `; charset=utf-8` to any
+/// `media_type` that starts with lowercase `text/` and does not already
+/// name a charset. Reproduced here because `data_mime` comes out of the
+/// database, so the branch is data-dependent rather than decided at the
+/// call site.
+fn starlette_content_type(media_type: &str) -> String {
+    if media_type.starts_with("text/") && !media_type.to_ascii_lowercase().contains("charset=") {
+        format!("{media_type}; charset=utf-8")
+    } else {
+        media_type.to_string()
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct EvidenceBlobRow {
+    data: Option<Vec<u8>>,
+    data_mime: Option<String>,
+    kind: String,
+}
+
+/// The evidence row for `{incident_id}/{evidence_id}`, after the parent
+/// incident's ownership has been checked.
+///
+/// `Ok(None)` means the incident is the caller's but that evidence row
+/// is not there; the two callers word their own 404 for that case. An
+/// `Err` is either the parent incident's own 404 — which carries
+/// **"Incident not found"**, not the evidence message, because Python
+/// raises out of `_get_owned_incident` before it ever queries the
+/// evidence table — or a database failure, which must stay a 500 rather
+/// than being flattened into a 404.
+async fn owned_evidence(
+    pool: &sqlx::PgPool,
+    org_id: &str,
+    incident_id: i32,
+    evidence_id: i32,
+) -> Result<Option<EvidenceBlobRow>, ApiError> {
+    // Ownership of the *parent* is the org check; the evidence row
+    // carries no org_id of its own. Checking it first means a foreign
+    // incident id 404s before any blob leaves the database.
+    owned_incident(pool, org_id, incident_id).await?;
+
+    Ok(sqlx::query_as(
+        "SELECT data, data_mime, kind FROM incident_evidence
+          WHERE id = $1 AND incident_id = $2",
+    )
+    .bind(evidence_id)
+    .bind(incident_id)
+    .fetch_optional(pool)
+    .await?)
+}
+
+/// `GET /api/incidents/{incident_id}/evidence/{evidence_id}` — the
+/// snapshot or clip bytes.
+///
+/// Rate limited because it serves arbitrary-size video out of the
+/// database and bypasses the viewer-hour cap that gates the live HLS
+/// endpoints; without a cap it is a bandwidth tap.
+pub async fn get_evidence_blob(
+    _rate: PerMinute<120>,
+    State(state): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Path((incident_id, evidence_id)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let incident_id = path_int("incident_id", &incident_id)?;
+    let evidence_id = path_int("evidence_id", &evidence_id)?;
+
+    // `not evidence.data` in Python is falsy for zero bytes as well as
+    // for NULL, so an observation row and an empty blob are both 404.
+    let evidence = owned_evidence(&state.pool, &user.org_id, incident_id, evidence_id).await?;
+    let Some(EvidenceBlobRow {
+        data: Some(data),
+        data_mime,
+        ..
+    }) = evidence
+    else {
+        return Err(ApiError::not_found("Evidence blob not found"));
+    };
+    if data.is_empty() {
+        return Err(ApiError::not_found("Evidence blob not found"));
+    }
+
+    // MIME parameters are stripped: clips are stored as
+    // `video/mp2t;duration=N` to carry length without a schema
+    // migration, and browsers do not need it.
+    let raw = data_mime.unwrap_or_default();
+    let media_type = match raw.split(';').next().unwrap_or("").trim() {
+        "" => "application/octet-stream",
+        m => m,
+    };
+
+    let Ok(content_type) = HeaderValue::from_str(&starlette_content_type(media_type)) else {
+        // A `data_mime` carrying control characters would be rejected by
+        // the Python's HTTP writer rather than sent, which surfaces as a
+        // 500. Nothing in the API can set one — `data_mime` is written
+        // only by the MCP capture tools — so this is a guard, not a path.
+        tracing::error!(media_type, "evidence data_mime is not a valid header value");
+        return Err(ApiError::internal("Internal Server Error"));
+    };
+
+    Ok(blob_response(content_type, data))
+}
+
+/// A single-segment VOD playlist so the dashboard can play a clip
+/// through hls.js, with the same auth as the live player.
+///
+/// `#EXT-X-TARGETDURATION` must be >= every `#EXTINF` (RFC 8216 §4.3.3.1),
+/// which is why the fallback duration is generous rather than zero.
+pub async fn get_evidence_playlist(
+    _rate: PerMinute<120>,
+    State(state): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Path((incident_id, evidence_id)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let incident_id = path_int("incident_id", &incident_id)?;
+    let evidence_id = path_int("evidence_id", &evidence_id)?;
+
+    let evidence = owned_evidence(&state.pool, &user.org_id, incident_id, evidence_id).await?;
+    let Some(EvidenceBlobRow {
+        data: Some(data),
+        data_mime,
+        kind,
+    }) = evidence
+    else {
+        return Err(ApiError::not_found("Clip not found"));
+    };
+    if data.is_empty() || kind != "clip" {
+        return Err(ApiError::not_found("Clip not found"));
+    }
+
+    let duration = clip_duration(data_mime.as_deref().unwrap_or(""));
+    let Some(target_duration) = target_duration(duration) else {
+        // Python's `int(float("inf"))` raises OverflowError and
+        // `int(float("nan"))` raises ValueError; either way the request
+        // ends as an unhandled 500.
+        tracing::error!(duration, "clip duration is not representable");
+        return Err(ApiError::internal("Internal Server Error"));
+    };
+
+    // An absolute segment URL, not a relative one: the playlist lives at
+    // `.../playlist.m3u8`, so relative resolution in hls.js would land a
+    // path segment too deep.
+    let playlist = format!(
+        "#EXTM3U\n\
+         #EXT-X-VERSION:3\n\
+         #EXT-X-TARGETDURATION:{target_duration}\n\
+         #EXT-X-MEDIA-SEQUENCE:0\n\
+         #EXT-X-PLAYLIST-TYPE:VOD\n\
+         #EXTINF:{duration:.3},\n\
+         /api/incidents/{incident_id}/evidence/{evidence_id}\n\
+         #EXT-X-ENDLIST\n"
+    );
+
+    Ok(blob_response(
+        HeaderValue::from_static("application/vnd.apple.mpegurl"),
+        playlist.into_bytes(),
+    ))
+}
+
+/// Both evidence routes answer with the same private cache policy: the
+/// bytes are tenant data, so a shared cache must not hold them, but a
+/// browser replaying a clip should not refetch it every seek.
+fn blob_response(content_type: HeaderValue, body: Vec<u8>) -> Response {
+    use axum::response::IntoResponse;
+
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=300"),
+    );
+    headers.insert(axum::http::header::CONTENT_TYPE, content_type);
+    (headers, body).into_response()
+}
+
+/// Pull `duration=` back out of a stored `video/mp2t;duration=N`.
+///
+/// Python reads it with bare `float()`, which is looser than it looks —
+/// it accepts surrounding whitespace, a leading sign, digit-group
+/// underscores and `inf`/`nan`. A parameter that fails to parse is
+/// skipped (Python catches ValueError and moves on), and a later
+/// `duration=` wins over an earlier one because the loop keeps going.
+fn clip_duration(raw_mime: &str) -> f64 {
+    // The default is well above any real clip: `#EXT-X-TARGETDURATION`
+    // has to be >= the `#EXTINF` it covers, so guessing low would emit
+    // an invalid playlist while guessing high only costs buffering.
+    let mut duration = 60.0_f64;
+    if !raw_mime.contains(';') {
+        return duration;
+    }
+    for param in raw_mime.split(';').skip(1) {
+        let param = param.trim();
+        if let Some(value) = param.strip_prefix("duration=") {
+            if let Some(parsed) = parse_python_float(value) {
+                duration = parsed;
+            }
+        }
+    }
+    duration
+}
+
+/// `max(1, int(duration) + 1)` — `int()` truncates toward zero, so a
+/// negative duration lands on the floor of 1 rather than going negative.
+///
+/// `None` where Python raises: `int()` rejects infinities and NaN.
+fn target_duration(duration: f64) -> Option<i64> {
+    if !duration.is_finite() {
+        return None;
+    }
+    let truncated = duration.trunc();
+    // Python integers are unbounded, so a duration past i64 has no exact
+    // answer here. It is not reachable through the API — `data_mime` is
+    // written only by the MCP capture tools — and saturating keeps a
+    // hand-written value from wrapping into a negative target.
+    if truncated >= i64::MAX as f64 {
+        return Some(i64::MAX);
+    }
+    Some((truncated as i64).saturating_add(1).max(1))
+}
+
+/// Python's `float()` accepts more than Rust's `f64::from_str`:
+/// underscores between digits, and `infinity` as a spelling of `inf`.
+/// It rejects a few things Rust takes as well — a trailing or leading
+/// underscore, and an underscore adjacent to the decimal point.
+fn parse_python_float(raw: &str) -> Option<f64> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.contains('_') {
+        // Underscores are legal only *between* two digits, so every one
+        // of them must have a digit on each side.
+        let bytes = trimmed.as_bytes();
+        for (i, b) in bytes.iter().enumerate() {
+            if *b != b'_' {
+                continue;
+            }
+            let before = i.checked_sub(1).map(|j| bytes[j]);
+            let after = bytes.get(i + 1).copied();
+            if !matches!((before, after), (Some(a), Some(c)) if a.is_ascii_digit() && c.is_ascii_digit())
+            {
+                return None;
+            }
+        }
+    }
+    let cleaned = trimmed.replace('_', "");
+    // Rust parses "inf"/"infinity"/"nan" case-insensitively, as does
+    // Python, so no special-casing is needed for those.
+    cleaned.parse::<f64>().ok()
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct IncidentPatch {
     status: Option<String>,
@@ -361,4 +612,114 @@ pub async fn delete_incident(
         .await?;
 
     Ok(Json(json!({ "deleted": incident_id })))
+}
+
+#[cfg(test)]
+mod evidence_tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_duration_parameter_falls_back_to_sixty() {
+        // #EXT-X-TARGETDURATION must be >= every #EXTINF it covers, so
+        // the fallback deliberately guesses high.
+        assert_eq!(clip_duration(""), 60.0);
+        assert_eq!(clip_duration("video/mp2t"), 60.0);
+        assert_eq!(clip_duration("video/mp2t;codecs=avc1"), 60.0);
+        // Case matters: Python tests `startswith("duration=")`.
+        assert_eq!(clip_duration("video/mp2t;Duration=5"), 60.0);
+    }
+
+    #[test]
+    fn the_duration_parameter_is_read_the_way_python_reads_it() {
+        assert_eq!(clip_duration("video/mp2t;duration=12.5"), 12.5);
+        assert_eq!(clip_duration("video/mp2t; duration=12.5"), 12.5);
+        assert_eq!(clip_duration("video/mp2t;duration= 12.5"), 12.5);
+        // A later parameter wins: Python's loop does not break.
+        assert_eq!(clip_duration("video/mp2t;duration=5;duration=9"), 9.0);
+        // An unparseable value is skipped, leaving whatever came before.
+        assert_eq!(clip_duration("video/mp2t;duration=5;duration=x"), 5.0);
+        assert_eq!(clip_duration("video/mp2t;duration=oops"), 60.0);
+    }
+
+    #[test]
+    fn python_float_accepts_underscores_only_between_digits() {
+        // Verified against CPython: 1_0 is 10.0, but 1__0, 1e_3 and a
+        // leading or trailing underscore all raise ValueError.
+        for (raw, expected) in [
+            ("5", Some(5.0)),
+            ("1_0", Some(10.0)),
+            ("1_0.5", Some(10.5)),
+            ("-3.7", Some(-3.7)),
+            ("+3", Some(3.0)),
+            ("1e3", Some(1000.0)),
+            ("5.", Some(5.0)),
+            (".5", Some(0.5)),
+            ("_5", None),
+            ("5_", None),
+            ("1__0", None),
+            ("1e_3", None),
+            ("1_e3", None),
+            ("1._5", None),
+            ("0x10", None),
+            ("5=6", None),
+            ("", None),
+            ("   ", None),
+        ] {
+            assert_eq!(parse_python_float(raw), expected, "input {raw:?}");
+        }
+        assert!(parse_python_float("inf").unwrap().is_infinite());
+        assert!(parse_python_float("Infinity").unwrap().is_infinite());
+        assert!(parse_python_float("nan").unwrap().is_nan());
+    }
+
+    #[test]
+    fn target_duration_truncates_toward_zero_and_floors_at_one() {
+        // Cross-checked against `max(1, int(d) + 1)` in CPython.
+        assert_eq!(target_duration(12.5), Some(13));
+        assert_eq!(target_duration(59.9996), Some(60));
+        assert_eq!(target_duration(0.0), Some(1));
+        assert_eq!(target_duration(0.4), Some(1));
+        // int() truncates toward zero, so -3.7 -> -3 -> -2 -> floored.
+        assert_eq!(target_duration(-3.7), Some(1));
+    }
+
+    #[test]
+    fn a_non_finite_duration_is_a_five_hundred_not_a_playlist() {
+        // Python: int(inf) raises OverflowError, int(nan) raises
+        // ValueError. Either one leaves the request as an unhandled 500,
+        // so emitting a playlist here would be a divergence, not a fix.
+        assert_eq!(target_duration(f64::INFINITY), None);
+        assert_eq!(target_duration(f64::NEG_INFINITY), None);
+        assert_eq!(target_duration(f64::NAN), None);
+    }
+
+    #[test]
+    fn extinf_is_formatted_to_three_places_like_python() {
+        // Both languages round the exact binary value half-to-even, so
+        // 1.0005 goes down and 2.0005 goes up. These are the values
+        // CPython's "%.3f" produces.
+        for (value, expected) in [
+            (12.5, "12.500"),
+            (59.9996, "60.000"),
+            (1.0005, "1.000"),
+            (2.0005, "2.001"),
+            (-3.7, "-3.700"),
+        ] {
+            assert_eq!(format!("{value:.3}"), expected, "value {value}");
+        }
+    }
+
+    #[test]
+    fn charset_is_appended_only_to_lowercase_text_types() {
+        // Starlette's exact rule, and it is case-sensitive on the
+        // prefix: "TEXT/plain" goes out unchanged.
+        assert_eq!(starlette_content_type("image/jpeg"), "image/jpeg");
+        assert_eq!(starlette_content_type("video/mp2t"), "video/mp2t");
+        assert_eq!(starlette_content_type("text/plain"), "text/plain; charset=utf-8");
+        assert_eq!(starlette_content_type("TEXT/plain"), "TEXT/plain");
+        assert_eq!(
+            starlette_content_type("text/html; charset=iso-8859-1"),
+            "text/html; charset=iso-8859-1"
+        );
+    }
 }

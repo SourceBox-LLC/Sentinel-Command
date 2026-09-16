@@ -107,10 +107,16 @@ tests/differential/http_run.sh        # add -v to list every case
 ```
 
 Sends identical requests to Rust (`:8000`) and Python (`:8001`), both
-pointed at one Postgres, and compares status and JSON body. Current
-result: **77/77 identical**, covering the camera reads, the settings
-reads, and `/api/audit-logs` — the last with 36 query-string variants
-including every FastAPI 422 shape.
+pointed at one Postgres, and compares status, body and a fixed set of
+response headers. Current result: **366/366 identical**, covering the
+camera reads, the settings reads, `/api/audit-logs` (36 query-string
+variants including every FastAPI 422 shape), notifications, incidents
+and their evidence blobs, `security.txt`, and the install scripts.
+
+Start both tiers with `tests/differential/tiers.sh start` — it is the
+only place the environment both of them need is written down. Redirect
+its output to a file rather than piping it; the daemons it spawns share
+the pipe long enough to make `tiers.sh start | tail` look like a hang.
 
 Both stacks run with `AUTH_PROVIDER=local` so they share one HS256
 secret and accept the same token — which makes the token itself a test,
@@ -144,7 +150,41 @@ timestamp shapes.
 | org filter dropped from the list query (tenant leak) | 1 / 31 |
 
 (Counts are from the 31-case run at slice 2's first commit; the suite has
-since grown to 77.)
+since grown to 366.)
+
+### Headers are compared, because for some routes they *are* the answer
+
+`COMPARED_HEADERS` started as the CORS and security sets — things that
+live on the Python handler rather than in it, and so do not travel with
+a port. The install scripts forced `content-type`, `content-disposition`
+and `cache-control` onto the list too: all three routes return a file
+read straight off disk, so body-only diffing scores them identical while
+`/mcp-setup.ps1` goes out as the wrong media type or `/mcp-setup.sh`
+loses the `Cache-Control` that bounds how long a known-broken script can
+be served from a cache.
+
+Ten mutations, each introduced into the Rust deliberately and reverted
+after, with the number of cases the run caught:
+
+| injected bug | cases caught |
+| --- | --- |
+| `/mcp-setup.sh` loses its `Cache-Control` | 1 |
+| `/mcp-setup.sh` served as `text/plain` | 1 |
+| `Content-Disposition` loses its filename | 4 |
+| charset never appended to a `text/*` blob | 1 |
+| first `duration=` parameter wins instead of last | 1 |
+| target duration rounds instead of truncating | 2 |
+| a foreign incident 404s with the evidence message | 4 |
+| a zero-length blob is served as 200 | 1 |
+| an all-parameter MIME is not replaced by octet-stream | 1 |
+| `float()` stops accepting digit-group underscores | 1 |
+
+The driver for this is not checked in, but the lesson from writing it
+is: its first version started the Rust tier from its own inlined
+environment, forgot `LOCAL_ADMIN_PASSWORD_HASH`, and added a constant
+two-case divergence to *every* mutation it scored — inflating each
+result and hiding whether any single check had teeth. That is why
+`tiers.sh` exists and why nothing else may start a tier.
 
 The coverage guard was checked too: ageing the fixture past 90 seconds
 makes the run exit 2 with "COVERAGE TOO THIN" rather than a false green.

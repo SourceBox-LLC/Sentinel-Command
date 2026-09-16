@@ -18,6 +18,8 @@ pub struct Config {
     /// Directory holding the built SPA (`frontend/dist` copied to
     /// `/app/static` by the Dockerfile).
     pub static_dir: String,
+    /// Install and MCP-setup scripts, served verbatim.
+    pub scripts_dir: String,
 
     // --- Clerk ---------------------------------------------------------
     pub clerk_secret_key: String,
@@ -87,6 +89,7 @@ impl Config {
             port: var_or("PORT", "8000").parse().unwrap_or(8000),
             upstream: var_or("PYTHON_UPSTREAM", "http://127.0.0.1:8001"),
             static_dir: var_or("STATIC_DIR", "/app/static"),
+            scripts_dir: var_or("SCRIPTS_DIR", "/app/scripts"),
             clerk_issuer: crate::auth::issuer_from_publishable_key(&clerk_publishable_key),
             clerk_secret_key: var_or("CLERK_SECRET_KEY", ""),
             clerk_publishable_key,
@@ -138,6 +141,7 @@ mod tests {
             port: 8000,
             upstream: String::new(),
             static_dir: String::new(),
+            scripts_dir: String::new(),
             clerk_secret_key: secret.into(),
             clerk_publishable_key: publishable.into(),
             clerk_issuer: None,
