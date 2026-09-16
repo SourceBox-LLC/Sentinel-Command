@@ -510,3 +510,33 @@ not `urllib`. The server answers 413 and closes while the client is
 still sending, which `urllib` surfaces as `ConnectionResetError` rather
 than as the response — and that reset is the *desired* behaviour, so the
 probe has to be able to see past it.
+
+## Rate-limit parity
+
+```bash
+tests/differential/ratelimit_parity.py
+```
+
+Porting a route removes its `@limiter.limit` decorator, because the
+decorator is on the Python handler and Python never sees the request once
+Rust owns the path. Slice 2 shipped five routes with their limits
+silently dropped before that was noticed — by accident, through a wave of
+429s that looked like port bugs.
+
+This compares the two tables directly: every method+path Rust serves,
+against the decorator on the same route in Python. Currently **26 pairs,
+0 mismatches**. Verified by mutation: dropping a limit or changing its
+value is named exactly.
+
+It also refuses to run when its own view of `app.rs` is incomplete, which
+is not hypothetical — the first version's regex excluded `:` before the
+verb and so skipped every route written as `axum::routing::delete(...)`.
+Four ported routes went unchecked and it still printed "0 mismatches".
+The guard compares the *set* of served paths against `app.rs`; comparing
+counts was itself wrong first, because `still_python()` appears in its
+own function definition as well as at every call site.
+
+Hour-scoped limits (`10/hour`, `3/hour`) are reported as failures rather
+than passes: this crate's limiter only implements a minute window, so
+porting such a route would silently hand out 60× the budget. None is
+ported yet.

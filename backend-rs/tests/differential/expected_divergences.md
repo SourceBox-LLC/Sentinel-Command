@@ -177,3 +177,24 @@ fixed.
 
 **The fix is one line in `main.py`**: run the error list through
 `fastapi.encoders.jsonable_encoder` before handing it to `JSONResponse`.
+
+## An out-of-range path integer 500s instead of 422
+
+```
+GET /api/incidents/99999999999999   ->  python 500, rust 422
+GET /api/incidents/2147483648       ->  python 500, rust 422
+```
+
+`incident_id: int` is unbounded in Python, so the value reaches the query
+and Postgres rejects it:
+
+```
+psycopg.errors.NumericValueOutOfRange: integer out of range
+sqlalchemy.exc.DataError
+```
+
+The column is `Integer`, so anything outside int32 can never match a row.
+Rust rejects it at the path-parameter boundary with the same 422 shape a
+non-numeric id gets, which is what the value *is* — not a valid id for
+this column. Fifth latent crash; the least consequential of them, since
+it takes a deliberately silly URL.

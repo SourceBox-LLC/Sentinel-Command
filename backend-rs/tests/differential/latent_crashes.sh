@@ -87,10 +87,16 @@ fi
 psql -c "DELETE FROM camera_groups WHERE name = 'probe'" >/dev/null
 
 echo
+echo "4. An out-of-range path integer reaches the query and Postgres"
+echo "   rejects it: incident_id is unbounded in python, the column is"
+echo "   Integer, so anything past int32 is a DataError rather than a 404."
+check "GET /api/incidents/99999999999999" "/api/incidents/99999999999999" 422 500
+
+echo
 if (( fails )); then
     echo "$fails check(s) did not reproduce — the Python may have been fixed."
     echo "If so, delete the corresponding entry here and in"
     echo "expected_divergences.md rather than leaving a stale claim."
     exit 1
 fi
-echo "all three latent crashes reproduced; Rust serves through them"
+echo "all four latent crashes reproduced; Rust serves through them"

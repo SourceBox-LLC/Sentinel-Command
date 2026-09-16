@@ -70,9 +70,11 @@ pub fn client_ip(headers: &HeaderMap, peer: Option<&str>) -> String {
 /// column that the dashboard renders and the differential compares
 /// literally, so the spacing is part of the contract.
 ///
-/// Key order is insertion order, which `serde_json::Map` preserves only
-/// with its `preserve_order` feature — so callers here pass an ordered
-/// slice rather than a map, and the order is the order Python writes.
+/// Key order is insertion order. Top-level pairs come in as an ordered
+/// slice; nested objects rely on serde_json's `preserve_order` feature,
+/// without which its `Map` is a `BTreeMap` and silently re-sorts them.
+/// That was a real defect: `{"zebra": 1, "apple": 2}` serialised as
+/// `{"apple":2,"zebra":1}` where Python writes the original order.
 pub fn python_json(pairs: &[(&str, Value)]) -> String {
     let mut out = String::from("{");
     for (i, (key, value)) in pairs.iter().enumerate() {
@@ -223,6 +225,17 @@ mod tests {
         assert_eq!(
             python_json(&[("meta", json!({"x": 1}))]),
             r#"{"meta": {"x": 1}}"#
+        );
+    }
+
+    #[test]
+    fn a_nested_object_keeps_the_order_it_was_written_in() {
+        // serde_json's default Map is a BTreeMap and would emit
+        // {"apple": 2, "zebra": 1} here. Python writes insertion order,
+        // and this string is stored in the audit trail verbatim.
+        assert_eq!(
+            python_json(&[("meta", json!({"zebra": 1, "apple": 2}))]),
+            r#"{"meta": {"zebra": 1, "apple": 2}}"#
         );
     }
 
