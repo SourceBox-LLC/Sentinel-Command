@@ -706,3 +706,37 @@ unrelated 500s. Rust keeps them; an error page without `nosniff` is
 worse than one with it, and copying the gap would mean writing code to
 strip them. The differential compares status and body on a 500, not
 headers.
+
+## Local admin login
+
+`POST /api/auth/local/login` and `/refresh` are ported, and registered
+**conditionally** — the Python mounts that router only in the `else`
+branch of `is_clerk_auth()`, so under Clerk the paths do not exist.
+Claiming them unconditionally would answer 503 where Python answers 404,
+and would advertise a self-hosted login on a hosted deployment.
+
+The strongest evidence here is not the differential. Both stacks share
+one `APP_SECRET_KEY` and one argon2 hash, so:
+
+* each stack's minted token is accepted by the **other** for API access
+  *and* for refresh;
+* the claims are identical apart from `iat`/`exp`.
+
+### Two properties the differential cannot see
+
+Mutation testing found both, by scoring 102/102 on changes that are
+plainly wrong:
+
+**Short-circuiting on a wrong username.** Both paths return the same 401
+with the same body — only the clock differs. The Python comments the
+reason: returning in microseconds for a bad username while a good one
+costs ~100ms hands an attacker the valid username by response timing
+before they ever guess at the password. Covered by a timing test that
+asserts a wrong username still pays for the argon2 verify; with an early
+return it fails at **9.5µs**.
+
+**A malformed stored hash accepting.** The fixture has a valid hash, so
+that branch never runs in the differential. Covered by a unit test.
+
+Both are cases where "the responses are identical" is true and
+irrelevant.

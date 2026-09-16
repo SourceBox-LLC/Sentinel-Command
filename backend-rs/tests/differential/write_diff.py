@@ -25,6 +25,7 @@ Usage: write_diff.py <token> [-v]
 """
 
 import json
+import re
 import subprocess
 import sys
 import urllib.error
@@ -201,6 +202,29 @@ EXPECTED_DIVERGENCES = {
 }
 
 CASES += [
+    # --- local auth ----------------------------------------------------
+    ("login, correct credentials", "POST", "/api/auth/local/login",
+     {"username": "admin", "password": "correct horse battery staple"}),
+    ("login, wrong password", "POST", "/api/auth/local/login",
+     {"username": "admin", "password": "wrong"}),
+    # a wrong username must not short-circuit — same message, and the
+    # argon2 verify still runs so the timing does not leak the username
+    ("login, wrong username", "POST", "/api/auth/local/login",
+     {"username": "nobody", "password": "correct horse battery staple"}),
+    ("login, both wrong", "POST", "/api/auth/local/login",
+     {"username": "nobody", "password": "wrong"}),
+    ("login, empty strings", "POST", "/api/auth/local/login",
+     {"username": "", "password": ""}),
+    ("login, missing password", "POST", "/api/auth/local/login", {"username": "admin"}),
+    ("login, missing both", "POST", "/api/auth/local/login", {}),
+    ("login, wrong types", "POST", "/api/auth/local/login",
+     {"username": 5, "password": True}),
+    ("login, unicode password", "POST", "/api/auth/local/login",
+     {"username": "admin", "password": "\u00e9\u00e9\u00e9"}),
+    ("refresh, garbage token", "POST", "/api/auth/local/refresh", {"token": "not-a-jwt"}),
+    ("refresh, empty token", "POST", "/api/auth/local/refresh", {"token": ""}),
+    ("refresh, missing token", "POST", "/api/auth/local/refresh", {}),
+
     # --- revoking an integration key ----------------------------------
     ("revoke integration key", "DELETE", "/api/integration/keys/5", None),
     ("revoke the other one", "DELETE", "/api/integration/keys/6", None),
@@ -266,12 +290,23 @@ def snapshot():
 TS_FORMATS = ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S")
 
 
+JWT = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
+
+
 def normalise(value, now):
-    """Replace just-written timestamps with a token, recursively."""
+    """Replace just-written timestamps with a token, recursively.
+
+    A freshly signed session token differs between the two runs by its
+    `iat`/`exp` alone, so only its shape is compared. The token is
+    proven equivalent elsewhere: both stacks verify each other's, which
+    is what the HTTP differential runs on.
+    """
     if isinstance(value, dict):
         return {k: normalise(v, now) for k, v in value.items()}
     if isinstance(value, list):
         return [normalise(v, now) for v in value]
+    if isinstance(value, str) and JWT.match(value):
+        return "<jwt>"
     if isinstance(value, str) and 19 <= len(value) <= 26 and value[4] == "-":
         for fmt in TS_FORMATS:
             try:

@@ -44,8 +44,9 @@ pub const VERSION: &str = "2.1.2";
 pub fn build_router(state: AppState) -> Router {
     let static_dir = state.config.static_dir.clone();
     let index = format!("{static_dir}/index.html");
+    let local_auth = state.config.is_local_auth();
 
-    Router::new()
+    let mut router = Router::new()
         // ---- served by Rust --------------------------------------------
         // `ported`, not a bare `get`: axum answers HEAD from a GET
         // handler and FastAPI returns 405, so even the health check
@@ -168,6 +169,26 @@ pub fn build_router(state: AppState) -> Router {
         // proxy would double the cost of every page load for no reason.
         .nest_service("/assets", ServeDir::new(format!("{static_dir}/assets")))
         .route_service("/favicon.svg", ServeFile::new(format!("{static_dir}/favicon.svg")))
+        ;
+
+    // Registered only in local mode, matching main.py: the Python
+    // mounts this router in the `else` branch of is_clerk_auth(), so
+    // under Clerk these paths do not exist. Claiming them here would
+    // answer 503 where Python answers 404 — and would advertise a
+    // self-hosted login on a hosted deployment.
+    if local_auth {
+        router = router
+            .route(
+                "/api/auth/local/login",
+                served(axum::routing::post(api::local_auth::login)),
+            )
+            .route(
+                "/api/auth/local/refresh",
+                served(axum::routing::post(api::local_auth::refresh)),
+            );
+    }
+
+    router
         // ---- everything else is still Python ---------------------------
         // Deliberately last. Every slice that lands removes routes from
         // this fallback; when it forwards nothing, the Python process and

@@ -214,6 +214,13 @@ CASES = [
     ("GET", "/api/cameras", False, {"Authorization": "Bearer  double.space.token"}),
     ("GET", "/api/cameras", False, {"Authorization": "Basic dXNlcjpwYXNz"}),
 
+    # --- local auth: login and refresh ---------------------------------
+    # POST cases carry a body, so they live in write_diff; these cover
+    # the rejection paths, which have no side effects.
+    ("POST", "/api/auth/local/login", False),
+    ("POST", "/api/auth/local/refresh", False),
+    ("GET", "/api/auth/local/login", False),
+
     # --- api keys ------------------------------------------------------
     ("GET", "/api/mcp/keys", True),
     ("GET", "/api/mcp/keys", False),
