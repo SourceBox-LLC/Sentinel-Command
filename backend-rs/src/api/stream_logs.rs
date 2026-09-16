@@ -14,7 +14,7 @@ use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::{iso_naive, now_naive};
 use crate::query::Query;
-use crate::ratelimit::RateLimit;
+use crate::ratelimit::PerMinute;
 use crate::AuthUser;
 
 /// The audit dashboard is a paid feature.
@@ -65,7 +65,7 @@ impl StreamAccessLogRow {
 /// `GET /api/audit/stream-logs`.
 pub async fn list_stream_logs(
     // Python: @limiter.limit("120/minute")
-    _rate: RateLimit<120>,
+    _rate: PerMinute<120>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     request: Request,
@@ -142,7 +142,7 @@ pub async fn list_stream_logs(
 /// simply returns zeroes. Reproduced rather than tightened.
 pub async fn stream_log_stats(
     // Python: @limiter.limit("60/minute")
-    _rate: RateLimit<60>,
+    _rate: PerMinute<60>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     request: Request,

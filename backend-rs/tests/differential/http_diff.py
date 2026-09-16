@@ -16,6 +16,9 @@ Usage:
 import json
 import re
 import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
 import urllib.error
 import urllib.request
 
@@ -175,6 +178,12 @@ CASES = [
         "limit=0", "limit=201", "offset=-1", "limit=abc",
     ]],
 
+    # --- api keys ------------------------------------------------------
+    ("GET", "/api/mcp/keys", True),
+    ("GET", "/api/mcp/keys", False),
+    ("GET", "/api/integration/keys", True),
+    ("GET", "/api/integration/keys", False),
+
     # --- CORS: a ported route must carry the same headers Python does --
     ("GET", "/api/cameras", True, {"Origin": "http://localhost:5173"}),
     ("GET", "/api/cameras", True, {"Origin": "http://localhost:8000"}),
@@ -200,12 +209,11 @@ CASES = [
     # overwritten on the way back out
     ("GET", "/api/nodes", True, {"X-Request-Id": "client-supplied-5678"}),
 
-    # --- HEAD: axum answers it from a GET handler, FastAPI 405s --------
-    ("HEAD", "/api/health", False),
-    ("HEAD", "/api/cameras", True),
-    ("HEAD", "/api/settings", True),
-    ("HEAD", "/api/incidents", True),
-    ("HEAD", "/api/nodes", True),
+    # HEAD is generated for every served path below rather than listed,
+    # because hand-picking the sample is what hid the bug: the five paths
+    # originally listed here all happened to go through `ported()`, and
+    # the four routes registered by hand kept answering HEAD with 200
+    # while this reported 218/218.
 
     # methods Rust has NOT ported on a path it HAS — these must still
     # reach Python rather than being answered with 405 by axum.
@@ -241,6 +249,42 @@ COMPARED_HEADERS = (
 # compared. An echoed-back inbound id is compared literally, because
 # honouring the client's id is the behaviour under test.
 MINTED_ID = re.compile(r"^[0-9a-f]{16}$")
+
+
+def served_paths():
+    """Every path app.rs serves, with a concrete value for each {param}.
+
+    Read out of the route table rather than listed here, so a newly
+    ported route is covered the day it lands.
+    """
+    src = (HERE.parent.parent / "src" / "app.rs").read_text()
+    concrete = {
+        "{camera_id}": "cam-live",
+        "{incident_id}": "1",
+        "{node_id}": "node-aaaa1111",
+        "{group_id}": "1",
+    }
+    out = []
+    for m in re.finditer(r'\.route\(\s*"([^"]+)"\s*,', src):
+        i = src.rindex("(", 0, m.end())
+        depth, j = 0, i
+        while j < len(src):
+            if src[j] == "(":
+                depth += 1
+            elif src[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        if "still_python" in src[m.end():j]:
+            continue
+        path = m.group(1)
+        for placeholder, value in concrete.items():
+            path = path.replace(placeholder, value)
+        if "{" in path:
+            continue
+        out.append(path)
+    return sorted(set(out))
 
 
 def fetch(base, method, path, with_auth, extra_headers=None):
@@ -327,6 +371,9 @@ def check_coverage():
 
 
 def main():
+    # Generated, not listed — see the note in CASES.
+    CASES.extend(("HEAD", p, True) for p in served_paths())
+
     if not check_coverage():
         print("\nrun seed_cameras.sql against the test database, then re-run")
         return 2

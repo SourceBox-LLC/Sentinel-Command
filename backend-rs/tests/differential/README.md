@@ -536,10 +536,17 @@ The guard compares the *set* of served paths against `app.rs`; comparing
 counts was itself wrong first, because `still_python()` appears in its
 own function definition as well as at every call site.
 
-Hour-scoped limits (`10/hour`, `3/hour`) are reported as failures rather
-than passes: this crate's limiter only implements a minute window, so
-porting such a route would silently hand out 60× the budget. None is
-ported yet.
+The **window** is compared as well as the number, which is the point: a
+30/hour route ported with a minute window is sixty times the intended
+budget, and the count alone looks correct. The limiter takes a window
+now (`PerMinute<N>` / `PerHour<N>`), and the 429 body renders
+`"30 per 1 hour"` byte-identically to slowapi's.
+
+This is not theoretical. `DELETE /api/integration/keys/{key_id}` was
+ported in this commit, the checker failed the run because the route is
+`30/hour`, and the window support exists because of that failure. The
+checker refusing to pass is what made it a five-minute fix instead of a
+production finding.
 
 ## Response headers
 
@@ -644,3 +651,15 @@ keeps it. Verified by deleting the guard — the differential stays at
 | inbound request id never honoured | differential | 2 / 218 |
 | no length check on the inbound id | differential | 2 / 218 |
 | proxied responses restamped | **unit test** | differential sees nothing |
+
+## Generated cases beat hand-picked ones
+
+The HEAD cases are generated from `app.rs`'s route table, not listed.
+The five originally listed all happened to go through `ported()`, and
+`ported()` was the only place the HEAD fix had been applied — so four
+routes registered by hand kept answering HEAD with 200 where Python
+returns 405, while the suite reported 218/218.
+
+Anything that should hold for *every* served route should be generated
+from the route table for the same reason. A hand-picked sample tests the
+routes you remembered, which are the ones you already fixed.

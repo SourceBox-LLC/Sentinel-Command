@@ -20,7 +20,7 @@ use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::{iso_naive, now_naive};
 use crate::query::Query;
-use crate::ratelimit::RateLimit;
+use crate::ratelimit::PerMinute;
 
 #[derive(Debug, sqlx::FromRow)]
 struct McpActivityLogRow {
@@ -54,7 +54,7 @@ impl McpActivityLogRow {
 /// `GET /api/mcp/activity/logs`.
 pub async fn list_mcp_logs(
     // Python: @limiter.limit("120/minute")
-    _rate: RateLimit<120>,
+    _rate: PerMinute<120>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     request: Request,
@@ -132,7 +132,7 @@ pub async fn list_mcp_logs(
 /// `GET /api/mcp/activity/logs/stats`.
 pub async fn mcp_log_stats(
     // Python: @limiter.limit("60/minute")
-    _rate: RateLimit<60>,
+    _rate: PerMinute<60>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     request: Request,

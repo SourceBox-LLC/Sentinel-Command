@@ -239,3 +239,38 @@ VALUES
   (1, 'snapshot', NULL, 'cam-live', '\x89504e47'::bytea, 'image/png', timestamp '2026-09-01 08:02:00'),
   (1, 'action', 'Notified owner', NULL, NULL, NULL, timestamp '2026-09-01 08:03:00'),
   (4, 'observation', 'Theirs', 'cam-theirs', NULL, NULL, timestamp '2026-09-03 10:01:00');
+
+-- ---- api keys -------------------------------------------------------
+DELETE FROM mcp_api_keys;
+ALTER SEQUENCE IF EXISTS mcp_api_keys_id_seq RESTART WITH 1;
+INSERT INTO mcp_api_keys
+  (org_id, key_hash, name, created_at, last_used_at, revoked, scope_mode, scope_tools, kind)
+VALUES
+  -- 1: mcp, all tools
+  ('self-host', 'hash_1', 'Laptop MCP', timestamp '2026-09-01 10:00:00',
+   timestamp '2026-09-10 11:00:00', false, 'all', NULL, 'mcp'),
+  -- 2: mcp, custom scope
+  ('self-host', 'hash_2', 'Scoped MCP', timestamp '2026-09-02 10:00:00',
+   NULL, false, 'custom', '["list_cameras", "get_camera"]', 'mcp'),
+  -- 3: legacy row — NULL scope_mode and NULL kind both fall back
+  ('self-host', 'hash_3', 'Legacy Key', timestamp '2026-09-03 10:00:00',
+   NULL, false, NULL, NULL, 'mcp'),
+  -- 4: already revoked, so it must not appear in either list
+  ('self-host', 'hash_4', 'Revoked Key', timestamp '2026-09-04 10:00:00',
+   NULL, true, 'all', NULL, 'mcp'),
+  -- 5, 6: integration keys — a separate surface in the same table
+  ('self-host', 'hash_5', 'Home Assistant', timestamp '2026-09-05 10:00:00',
+   timestamp '2026-09-11 09:00:00', false, 'all', NULL, 'integration'),
+  ('self-host', 'hash_6', 'HA Spare', timestamp '2026-09-06 10:00:00',
+   NULL, false, 'all', NULL, 'integration'),
+  -- 7: malformed scope_tools — parsed as [] rather than raising
+  ('self-host', 'hash_7', 'Bad Scope', timestamp '2026-09-07 10:00:00',
+   NULL, false, 'custom', 'not json at all', 'mcp'),
+  -- 8: non-string elements, which python stringifies
+  ('self-host', 'hash_8', 'Odd Scope', timestamp '2026-09-08 10:00:00',
+   NULL, false, 'custom', '[1, true, null, "x"]', 'mcp'),
+  -- 9: another tenant's, must never appear
+  ('other-org', 'hash_9', 'Theirs', timestamp '2026-09-09 10:00:00',
+   NULL, false, 'all', NULL, 'mcp'),
+  ('other-org', 'hash_10', 'Theirs Integration', timestamp '2026-09-09 11:00:00',
+   NULL, false, 'all', NULL, 'integration');

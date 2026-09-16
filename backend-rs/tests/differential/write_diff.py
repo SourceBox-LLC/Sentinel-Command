@@ -48,7 +48,7 @@ RECENT_WINDOW = timedelta(minutes=10)
 # a stray audit row, or fails to write an expected one, is exactly the
 # kind of bug response diffing misses.
 WATCHED = ["incidents", "incident_evidence", "audit_log", "settings",
-           "camera_groups", "cameras"]
+           "camera_groups", "cameras", "mcp_api_keys"]
 
 # (name, method, path, body) — body None means no request body.
 CASES = [
@@ -201,6 +201,16 @@ EXPECTED_DIVERGENCES = {
 }
 
 CASES += [
+    # --- revoking an integration key ----------------------------------
+    ("revoke integration key", "DELETE", "/api/integration/keys/5", None),
+    ("revoke the other one", "DELETE", "/api/integration/keys/6", None),
+    # kind scoping: an MCP key id here must 404 rather than cross surfaces
+    ("revoke an MCP key via integration", "DELETE", "/api/integration/keys/1", None),
+    ("revoke an already-revoked key", "DELETE", "/api/integration/keys/4", None),
+    ("revoke missing key", "DELETE", "/api/integration/keys/9999", None),
+    ("revoke another tenant's key", "DELETE", "/api/integration/keys/10", None),
+    ("revoke, non-integer id", "DELETE", "/api/integration/keys/abc", None),
+
     ("policy: bad HH:MM", "PATCH", "/api/cameras/cam-live/recording-settings",
      {"scheduled_start": "25:00"}),
     ("policy: single-digit hour", "PATCH", "/api/cameras/cam-live/recording-settings",

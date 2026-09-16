@@ -14,7 +14,7 @@ use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::iso_naive;
 use crate::query::Query;
-use crate::ratelimit::RateLimit;
+use crate::ratelimit::PerMinute;
 
 #[derive(Debug, sqlx::FromRow)]
 struct AuditLogRow {
@@ -66,7 +66,7 @@ pub(crate) fn escape_like(input: &str) -> String {
 /// dashboard shares one pagination component across all three.
 pub async fn list_audit_logs(
     // Python: @limiter.limit("120/minute")
-    _rate: RateLimit<120>,
+    _rate: PerMinute<120>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     request: Request,

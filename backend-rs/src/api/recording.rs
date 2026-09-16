@@ -21,7 +21,7 @@ use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::now_naive;
 use crate::query::{parse_body, BodyErrors};
-use crate::ratelimit::RateLimit;
+use crate::ratelimit::PerMinute;
 
 /// Fetch a camera's current recording fields, scoped to the caller's org.
 async fn owned_camera(
@@ -47,7 +47,7 @@ async fn owned_camera(
 /// the change up on its next tick, which is why there is no WebSocket
 /// command here and nothing to lose when a node restarts.
 pub async fn toggle_recording(
-    _rate: RateLimit<30>,
+    _rate: PerMinute<30>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Path(camera_id): Path<String>,
@@ -116,7 +116,7 @@ fn truthy(value: Option<&Value>) -> bool {
 /// Every field is optional so a PATCH can flip one toggle without
 /// re-asserting the others.
 pub async fn update_recording_policy(
-    _rate: RateLimit<30>,
+    _rate: PerMinute<30>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Path(camera_id): Path<String>,

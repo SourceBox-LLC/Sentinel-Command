@@ -28,9 +28,12 @@ use sha2::{Digest, Sha256};
 
 use crate::app::AppState;
 
-/// Every limit in the service is minute-scoped, which is why the 429
-/// handler can advertise a flat 60-second `Retry-After`.
-const WINDOW: Duration = Duration::from_secs(60);
+/// The 429 handler advertises a flat 60-second `Retry-After` whatever
+/// the window is — including the hour-scoped routes, where it is plainly
+/// too short. That is the Python's behaviour and its stated reasoning
+/// ("our tightest rate windows are minute-scoped"), so it is reproduced
+/// rather than corrected.
+const RETRY_AFTER_SECONDS: u64 = 60;
 
 /// Counter storage.
 pub enum Store {
@@ -76,13 +79,13 @@ impl Limiter {
     }
 
     /// Count one request against `bucket`, returning false when the
-    /// caller has exceeded `limit` within the window.
+    /// caller has exceeded `limit` within `window`.
     ///
     /// Fixed window, matching slowapi's default strategy: the counter
     /// resets on a wall-clock boundary rather than sliding, so a caller
     /// can burst across a boundary. That is the behaviour the Python has
     /// and the behaviour its documented limits were chosen against.
-    pub async fn check(&self, bucket: &str, limit: u32) -> bool {
+    pub async fn check(&self, bucket: &str, limit: u32, window: Duration) -> bool {
         match &self.store {
             Store::Redis(conn) => {
                 let mut conn = conn.clone();
@@ -98,7 +101,7 @@ impl Limiter {
                         if count == 1 {
                             let _: Result<(), _> = redis::cmd("EXPIRE")
                                 .arg(bucket)
-                                .arg(WINDOW.as_secs())
+                                .arg(window.as_secs())
                                 .query_async(&mut conn)
                                 .await;
                         }
@@ -121,7 +124,7 @@ impl Limiter {
                 };
                 let now = Instant::now();
                 let entry = map.entry(bucket.to_string()).or_insert((0, now));
-                if now.duration_since(entry.1) >= WINDOW {
+                if now.duration_since(entry.1) >= window {
                     *entry = (0, now);
                 }
                 entry.0 += 1;
@@ -130,7 +133,7 @@ impl Limiter {
                 // Opportunistic sweep so a long-lived process does not
                 // accumulate one entry per tenant per route forever.
                 if map.len() > 10_000 {
-                    map.retain(|_, (_, started)| now.duration_since(*started) < WINDOW);
+                    map.retain(|_, (_, started)| now.duration_since(*started) < window);
                 }
                 allowed
             }
@@ -233,14 +236,16 @@ fn base64url_decode(input: &str) -> Option<Vec<u8>> {
 /// API errors use — `rate_limit_exceeded_handler` returns a flat object,
 /// and integrators read `error` and `retry_after_seconds` off the top
 /// level.
-fn too_many_requests(limit: u32) -> Response {
+fn too_many_requests(limit: u32, window_secs: u64) -> Response {
+    // slowapi renders the limit as e.g. "120 per 1 minute" or
+    // "30 per 1 hour" — both measured against the running service.
+    let window = if window_secs >= 3600 { "hour" } else { "minute" };
     let body = json!({
         "error": "rate_limit_exceeded",
         "message": "Too many requests. Back off and retry after the Retry-After window. \
                     See https://sentinel-command.com/docs#api-rate-limits for per-route limits.",
-        // slowapi renders the limit as e.g. "120 per 1 minute".
-        "limit": format!("{limit} per 1 minute"),
-        "retry_after_seconds": 60,
+        "limit": format!("{limit} per 1 {window}"),
+        "retry_after_seconds": RETRY_AFTER_SECONDS,
     });
     (
         StatusCode::TOO_MANY_REQUESTS,
@@ -250,13 +255,28 @@ fn too_many_requests(limit: u32) -> Response {
         .into_response()
 }
 
-/// Extractor enforcing `PER_MINUTE` requests per tenant per route.
+/// Extractor enforcing `LIMIT` requests per tenant per route within
+/// `WINDOW_SECS`.
 ///
-/// The limit is a const parameter so each route states its own budget at
-/// the point it is registered, the way the Python decorator does.
-pub struct RateLimit<const PER_MINUTE: u32>;
+/// Both are const parameters so each route states its own budget at the
+/// point it is registered, the way the Python decorator does. Use the
+/// `PerMinute` / `PerHour` aliases rather than spelling the window out.
+pub struct RateLimit<const LIMIT: u32, const WINDOW_SECS: u64>;
 
-impl<const PER_MINUTE: u32> FromRequestParts<AppState> for RateLimit<PER_MINUTE> {
+/// `@limiter.limit("N/minute")`.
+pub type PerMinute<const N: u32> = RateLimit<N, 60>;
+
+/// `@limiter.limit("N/hour")`.
+///
+/// Worth having as its own alias: a route limited at 30/hour that is
+/// ported with a minute window silently gets sixty times the budget,
+/// which is why `ratelimit_parity.py` fails rather than passes on an
+/// hour-scoped route it cannot account for.
+pub type PerHour<const N: u32> = RateLimit<N, 3600>;
+
+impl<const LIMIT: u32, const WINDOW_SECS: u64> FromRequestParts<AppState>
+    for RateLimit<LIMIT, WINDOW_SECS>
+{
     type Rejection = Response;
 
     async fn from_request_parts(
@@ -278,12 +298,18 @@ impl<const PER_MINUTE: u32> FromRequestParts<AppState> for RateLimit<PER_MINUTE>
             .map(|m| m.as_str().to_string())
             .unwrap_or_else(|| parts.uri.path().to_string());
 
-        let bucket = format!("rl:{tenant}:{route}:{PER_MINUTE}");
-        if state.limiter.check(&bucket, PER_MINUTE).await {
+        // The window is part of the key: changing a route's window must
+        // start a fresh counter, not inherit the old one's count.
+        let bucket = format!("rl:{tenant}:{route}:{LIMIT}:{WINDOW_SECS}");
+        if state
+            .limiter
+            .check(&bucket, LIMIT, Duration::from_secs(WINDOW_SECS))
+            .await
+        {
             Ok(RateLimit)
         } else {
-            tracing::info!(%route, limit = PER_MINUTE, "rate limit exceeded");
-            Err(too_many_requests(PER_MINUTE))
+            tracing::info!(%route, limit = LIMIT, window = WINDOW_SECS, "rate limit exceeded");
+            Err(too_many_requests(LIMIT, WINDOW_SECS))
         }
     }
 }
@@ -388,10 +414,14 @@ mod tests {
         let limiter = Limiter {
             store: Store::Memory(Mutex::new(HashMap::new())),
         };
+        let minute = Duration::from_secs(60);
         for i in 1..=5 {
-            assert!(limiter.check("b", 5).await, "request {i} should be allowed");
+            assert!(
+                limiter.check("b", 5, minute).await,
+                "request {i} should be allowed"
+            );
         }
-        assert!(!limiter.check("b", 5).await, "the 6th must be rejected");
+        assert!(!limiter.check("b", 5, minute).await, "the 6th must be rejected");
     }
 
     #[tokio::test]
@@ -399,12 +429,13 @@ mod tests {
         let limiter = Limiter {
             store: Store::Memory(Mutex::new(HashMap::new())),
         };
+        let minute = Duration::from_secs(60);
         for _ in 0..5 {
-            limiter.check("tenant-a", 5).await;
+            limiter.check("tenant-a", 5, minute).await;
         }
-        assert!(!limiter.check("tenant-a", 5).await);
+        assert!(!limiter.check("tenant-a", 5, minute).await);
         assert!(
-            limiter.check("tenant-b", 5).await,
+            limiter.check("tenant-b", 5, minute).await,
             "one loud tenant must not starve another"
         );
     }
@@ -412,8 +443,28 @@ mod tests {
     #[test]
     fn the_429_body_matches_the_python_handler() {
         // Flat, not the {"detail": ...} envelope the other errors use.
-        let resp = too_many_requests(120);
+        let resp = too_many_requests(120, 60);
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        // Retry-After stays 60 even for an hour window, matching Python.
         assert_eq!(resp.headers().get("retry-after").unwrap(), "60");
+        let hourly = too_many_requests(30, 3600);
+        assert_eq!(hourly.headers().get("retry-after").unwrap(), "60");
+    }
+
+    #[tokio::test]
+    async fn an_hour_window_does_not_reset_after_a_minute() {
+        // A 30/hour route ported with a minute window gets sixty times
+        // the budget. The window is part of the bucket key so the two
+        // can never share a counter either.
+        let limiter = Limiter {
+            store: Store::Memory(Mutex::new(HashMap::new())),
+        };
+        let hour = Duration::from_secs(3600);
+        for _ in 0..3 {
+            assert!(limiter.check("hourly", 3, hour).await);
+        }
+        assert!(!limiter.check("hourly", 3, hour).await);
+        // A different window is a different bucket.
+        assert!(limiter.check("minutely", 3, Duration::from_secs(60)).await);
     }
 }

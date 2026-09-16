@@ -43,7 +43,7 @@ def python_limits():
 
 
 def rust_handler_limits():
-    """handler fn name -> RateLimit<N> or None."""
+    """handler fn name -> (n, window) or None."""
     out = {}
     for f in sorted((BACKEND_RS / "src/api").glob("*.rs")):
         src = f.read_text()
@@ -61,8 +61,18 @@ def rust_handler_limits():
                         break
                 j += 1
             args = src[i:j]
-            lm = re.search(r"RateLimit<(\d+)>", args)
-            out[name] = int(lm.group(1)) if lm else None
+            per_minute = re.search(r"PerMinute<(\d+)>", args)
+            per_hour = re.search(r"PerHour<(\d+)>", args)
+            raw = re.search(r"RateLimit<(\d+),\s*(\d+)>", args)
+            if per_minute:
+                out[name] = (int(per_minute.group(1)), "minute")
+            elif per_hour:
+                out[name] = (int(per_hour.group(1)), "hour")
+            elif raw:
+                secs = int(raw.group(2))
+                out[name] = (int(raw.group(1)), "hour" if secs >= 3600 else "minute")
+            else:
+                out[name] = None
     return out
 
 
@@ -158,26 +168,21 @@ def main():
         want, got = py[(method, path)], handlers.get(handler)
         if want is None:
             if got is not None:
-                print(f"  FAIL  {method:<6} {path:<46} python has no limit, rust applies {got}/min")
+                print(f"  FAIL  {method:<6} {path:<46} python has no limit, "
+                      f"rust applies {got[0]}/{got[1]}")
                 bad += 1
             else:
                 print(f"  ok    {method:<6} {path:<46} unlimited, as in python")
             continue
-        n, window = want
-        if window != "minute":
-            # Every limit this crate implements is minute-scoped; an
-            # hour-scoped route must not be ported until the limiter
-            # supports the window, or it silently gets 60x the budget.
-            print(f"  FAIL  {method:<6} {path:<46} python={n}/{window}, "
-                  f"rust only implements minute windows")
-            bad += 1
-            continue
-        if got != n:
-            print(f"  FAIL  {method:<6} {path:<46} python={n}/min rust="
-                  f"{'none' if got is None else str(got)+'/min'}")
+        # The window is compared as well as the number: a 30/hour route
+        # ported with a minute window is sixty times the budget, and the
+        # count alone would look correct.
+        if got != want:
+            shown = "none" if got is None else f"{got[0]}/{got[1]}"
+            print(f"  FAIL  {method:<6} {path:<46} python={want[0]}/{want[1]} rust={shown}")
             bad += 1
         else:
-            print(f"  ok    {method:<6} {path:<46} {n}/min")
+            print(f"  ok    {method:<6} {path:<46} {want[0]}/{want[1]}")
 
     print(f"\n{bad} mismatch(es)")
     return 1 if bad else 0

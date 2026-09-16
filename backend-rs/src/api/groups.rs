@@ -16,7 +16,7 @@ use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::now_naive;
 use crate::query::{parse_body, path_int, BodyErrors, Query};
-use crate::ratelimit::RateLimit;
+use crate::ratelimit::PerMinute;
 use crate::settings;
 
 /// Defaults from `CameraGroupCreate`.
@@ -25,7 +25,7 @@ const DEFAULT_ICON: &str = "📁";
 
 /// `POST /api/camera-groups`.
 pub async fn create_camera_group(
-    _rate: RateLimit<20>,
+    _rate: PerMinute<20>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     body: axum::body::Bytes,
@@ -76,7 +76,7 @@ pub async fn create_camera_group(
 
 /// `DELETE /api/camera-groups/{group_id}`.
 pub async fn delete_camera_group(
-    _rate: RateLimit<60>,
+    _rate: PerMinute<60>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Path(group_id): Path<String>,
@@ -119,7 +119,7 @@ pub async fn delete_camera_group(
 /// `int = None` in the Python signature, which FastAPI reads from the
 /// query string.
 pub async fn assign_camera_group(
-    _rate: RateLimit<60>,
+    _rate: PerMinute<60>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Path(camera_id): Path<String>,
@@ -190,7 +190,7 @@ pub async fn assign_camera_group(
 
 /// `POST /api/settings/motion-ingestion` — the ingestion kill switch.
 pub async fn update_motion_ingestion(
-    _rate: RateLimit<30>,
+    _rate: PerMinute<30>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     headers: HeaderMap,
@@ -235,7 +235,7 @@ pub async fn update_motion_ingestion(
 
 /// `POST /api/settings/notifications`.
 pub async fn update_notification_settings(
-    _rate: RateLimit<30>,
+    _rate: PerMinute<30>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     headers: HeaderMap,

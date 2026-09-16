@@ -21,7 +21,7 @@ use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::{iso_naive, now_naive};
 use crate::query::{parse_body, path_int, Query};
-use crate::ratelimit::RateLimit;
+use crate::ratelimit::PerMinute;
 
 const SEVERITIES: [&str; 4] = ["low", "medium", "high", "critical"];
 const STATUSES: [&str; 4] = ["open", "acknowledged", "resolved", "dismissed"];
@@ -244,7 +244,7 @@ pub struct IncidentPatch {
 
 /// `PATCH /api/incidents/{incident_id}` — acknowledge, resolve, dismiss.
 pub async fn update_incident(
-    _rate: RateLimit<120>,
+    _rate: PerMinute<120>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Path(incident_id): Path<String>,
@@ -344,7 +344,7 @@ pub async fn update_incident(
 /// foreign key in the schema — SQLAlchemy's `cascade="all, delete-orphan"`
 /// would otherwise do it in Python, and only one of the two needs to.
 pub async fn delete_incident(
-    _rate: RateLimit<60>,
+    _rate: PerMinute<60>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Path(incident_id): Path<String>,

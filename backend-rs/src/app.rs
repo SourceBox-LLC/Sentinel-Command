@@ -58,17 +58,17 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/cameras/{camera_id}", ported(api::cameras::get_camera))
         .route(
             "/api/camera-groups",
-            get(api::cameras::list_camera_groups)
-                .post(api::groups::create_camera_group)
-                .fallback(proxy::forward),
+            served(
+                get(api::cameras::list_camera_groups).post(api::groups::create_camera_group),
+            ),
         )
         .route(
             "/api/camera-groups/{group_id}",
-            axum::routing::delete(api::groups::delete_camera_group).fallback(proxy::forward),
+            served(axum::routing::delete(api::groups::delete_camera_group)),
         )
         .route(
             "/api/cameras/{camera_id}/group",
-            axum::routing::put(api::groups::assign_camera_group).fallback(proxy::forward),
+            served(axum::routing::put(api::groups::assign_camera_group)),
         )
         // Siblings of /{camera_id}/group. The route-capture guard caught
         // these the moment that route landed — including push-segment,
@@ -80,27 +80,28 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/cameras/{camera_id}/push-segment", still_python())
         .route(
             "/api/cameras/{camera_id}/recording",
-            axum::routing::post(api::recording::toggle_recording).fallback(proxy::forward),
+            served(axum::routing::post(api::recording::toggle_recording)),
         )
         .route(
             "/api/cameras/{camera_id}/recording-settings",
-            axum::routing::patch(api::recording::update_recording_policy)
-                .fallback(proxy::forward),
+            served(axum::routing::patch(api::recording::update_recording_policy)),
         )
         .route("/api/cameras/{camera_id}/snapshot", still_python())
         .route("/api/cameras/{camera_id}/stream.m3u8", still_python())
         .route("/api/settings", ported(api::settings::get_all_settings))
         .route(
             "/api/settings/notifications",
-            get(api::settings::get_notification_settings)
-                .post(api::groups::update_notification_settings)
-                .fallback(proxy::forward),
+            served(
+                get(api::settings::get_notification_settings)
+                    .post(api::groups::update_notification_settings),
+            ),
         )
         .route(
             "/api/settings/motion-ingestion",
-            get(api::settings::get_motion_ingestion)
-                .post(api::groups::update_motion_ingestion)
-                .fallback(proxy::forward),
+            served(
+                get(api::settings::get_motion_ingestion)
+                    .post(api::groups::update_motion_ingestion),
+            ),
         )
         .route("/api/audit-logs", ported(api::audit::list_audit_logs))
         .route(
@@ -134,10 +135,17 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/incidents/counts", ported(api::incidents::incident_counts))
         .route(
             "/api/incidents/{incident_id}",
-            get(api::incidents::get_incident)
-                .patch(api::incidents::update_incident)
-                .delete(api::incidents::delete_incident)
-                .fallback(proxy::forward),
+            served(
+                get(api::incidents::get_incident)
+                    .patch(api::incidents::update_incident)
+                    .delete(api::incidents::delete_incident),
+            ),
+        )
+        .route("/api/mcp/keys", ported(api::keys::list_mcp_keys))
+        .route("/api/integration/keys", ported(api::keys::list_integration_keys))
+        .route(
+            "/api/integration/keys/{key_id}",
+            served(axum::routing::delete(api::keys::revoke_integration_key)),
         )
         .route("/api/motion/events", ported(api::motion::list_motion_events))
         .route(
@@ -200,11 +208,24 @@ where
     H: axum::handler::Handler<T, AppState>,
     T: 'static,
 {
-    // `.head(proxy::forward)` is not redundant. axum answers HEAD from a
-    // GET handler automatically; FastAPI does not, and returns 405. So a
-    // ported route silently started accepting HEAD where Python refused
-    // it. Routing HEAD to the proxy restores Python's answer.
-    get(handler).head(proxy::forward).fallback(proxy::forward)
+    served(get(handler))
+}
+
+/// Finish a method router for a path Rust serves.
+///
+/// Every route goes through this, and it exists because forgetting
+/// either line is silent:
+///
+/// * `.head(proxy::forward)` — axum answers HEAD from a GET handler
+///   automatically and FastAPI returns 405, so a ported route quietly
+///   starts accepting a method Python refuses. This was fixed once in
+///   `ported()` alone, and the four routes registered by hand kept the
+///   bug for another commit.
+/// * `.fallback(proxy::forward)` — without it axum answers every
+///   unported method on the path with 405 instead of forwarding it, so
+///   porting `GET /api/cameras` would break `POST /api/cameras`.
+fn served(router: axum::routing::MethodRouter<AppState>) -> axum::routing::MethodRouter<AppState> {
+    router.head(proxy::forward).fallback(proxy::forward)
 }
 
 /// A path Rust must not answer, pinned so a parameterised sibling
