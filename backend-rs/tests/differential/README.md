@@ -469,3 +469,44 @@ when a stream fails on both stacks the comparison itself is meaningless —
 two identical failures would otherwise read as a pass. The guard's
 message names both plausible causes (proxy vs stale fixture) and says
 which log line tells them apart.
+
+## Request bodies: correctness and memory
+
+```bash
+tests/differential/upload_diff.py "$TOKEN"
+```
+
+`push-segment` is the highest-volume route in the service — up to 20/s
+per node — and the one place a proxy's body handling has teeth.
+
+`_read_capped_body` in `hls.py` rejects an oversized push on its
+`Content-Length` before reading it, and its docstring says why: *"the
+lever that makes a 10 GB attempted upload cost zero memory at the
+server"*. The proxy called `to_bytes(body, usize::MAX)`, buffering the
+whole upload before forwarding a byte — which defeats that lever
+completely, because the bytes land in Rust's memory before Python ever
+sees the header.
+
+Measured on a single 400 MB upload:
+
+| proxy | RSS |
+| --- | --- |
+| buffering (`to_bytes`) | 21 MB → **731 MB** |
+| streaming (now) | 21 MB → 22 MB |
+
+The machine has 985 MB and a 384 MB segment cache to fit beside it, so
+two concurrent uploads were an OOM. One unauthenticated request could
+have taken the service down — the 400 MB is buffered *before* the
+handler ever checks the node key.
+
+The script asserts three things: a real 300 KB segment survives the hop
+byte-for-byte (pushed as a node, fetched back as a viewer, SHA-256
+compared), an 8 MB push is refused 413 by both stacks, and a 400 MB
+upload grows RSS by less than 64 MB. Reintroducing the buffer is caught:
+the ceiling reports 763 MB and names the cause.
+
+One probe detail worth keeping: the oversized push is sent with `curl`,
+not `urllib`. The server answers 413 and closes while the client is
+still sending, which `urllib` surfaces as `ConnectionResetError` rather
+than as the response — and that reset is the *desired* behaviour, so the
+probe has to be able to see past it.

@@ -112,20 +112,6 @@ pub async fn forward(State(state): State<AppState>, req: Request) -> Response {
         }
     };
 
-    // Collect the body rather than streaming it. Uploads here are bounded
-    // by SEGMENT_PUSH_MAX_BYTES and the axum body limit already applied
-    // upstream of this handler, and buffering keeps the proxy a single
-    // obvious hop instead of a streaming pipeline with its own failure
-    // modes. Revisit if a genuinely large endpoint ends up proxied for
-    // long.
-    let body_bytes = match axum::body::to_bytes(body, usize::MAX).await {
-        Ok(b) => b,
-        Err(err) => {
-            tracing::error!(error = %err, "proxy: could not read request body");
-            return (StatusCode::BAD_REQUEST, "could not read request body").into_response();
-        }
-    };
-
     let mut builder = hyper::Request::builder()
         .method(parts.method.clone())
         .uri(uri);
@@ -147,7 +133,17 @@ pub async fn forward(State(state): State<AppState>, req: Request) -> Response {
         builder = builder.header(name, value);
     }
 
-    let outbound = match builder.body(Body::from(body_bytes)) {
+    // The request body is streamed, never collected.
+    //
+    // `to_bytes(body, usize::MAX)` here used to buffer the whole upload
+    // before forwarding a byte. `_read_capped_body` in hls.py rejects an
+    // oversized push on its Content-Length "BEFORE any bytes land in
+    // memory ... the lever that makes a 10 GB attempted upload cost zero
+    // memory at the server" — and buffering in front of it defeated
+    // precisely that. Measured on a 400 MB upload: RSS 21 MB -> 731 MB,
+    // on a machine with 985 MB and a 384 MB segment cache to fit beside
+    // it. Two concurrent uploads would have been an OOM.
+    let outbound = match builder.body(body) {
         Ok(r) => r,
         Err(err) => {
             tracing::error!(error = %err, "proxy: could not build upstream request");
