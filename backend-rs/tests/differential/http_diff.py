@@ -14,6 +14,7 @@ Usage:
 """
 
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -188,6 +189,17 @@ CASES = [
     # unauthenticated responses carry them too
     ("GET", "/api/cameras", False, {"Origin": "http://localhost:5173"}),
 
+    # --- request id: honoured when plausible, replaced when not -------
+    ("GET", "/api/cameras", True, {"X-Request-Id": "client-supplied-1234"}),
+    ("GET", "/api/cameras", True, {"X-Request-Id": "a-b-c-d-e-f-g-h"}),
+    ("GET", "/api/cameras", True, {"X-Request-Id": "short"}),
+    ("GET", "/api/cameras", True, {"X-Request-Id": "has space in it"}),
+    ("GET", "/api/cameras", True, {"X-Request-Id": "semi;colon;injection"}),
+    ("GET", "/api/cameras", True, {"X-Request-Id": "x" * 200}),
+    # proxied, for contrast: the id must come from Python, not be
+    # overwritten on the way back out
+    ("GET", "/api/nodes", True, {"X-Request-Id": "client-supplied-5678"}),
+
     # --- HEAD: axum answers it from a GET handler, FastAPI 405s --------
     ("HEAD", "/api/health", False),
     ("HEAD", "/api/cameras", True),
@@ -214,7 +226,21 @@ COMPARED_HEADERS = (
     "access-control-expose-headers",
     "vary",
     "retry-after",
+    # The security set main.py stamps on every response. A ported route
+    # left the middleware behind and shipped none of it — including
+    # X-Frame-Options, whose absence is what made the dashboard
+    # clickjackable the last time this regressed.
+    "x-content-type-options",
+    "x-frame-options",
+    "referrer-policy",
+    "permissions-policy",
+    "x-request-id",
 )
+
+# A freshly minted request id is random, so only its shape can be
+# compared. An echoed-back inbound id is compared literally, because
+# honouring the client's id is the behaviour under test.
+MINTED_ID = re.compile(r"^[0-9a-f]{16}$")
 
 
 def fetch(base, method, path, with_auth, extra_headers=None):
@@ -233,7 +259,15 @@ def fetch(base, method, path, with_auth, extra_headers=None):
 
 
 def _headers(msg):
-    return {k: msg.get(k) for k in COMPARED_HEADERS if msg.get(k) is not None}
+    out = {}
+    for k in COMPARED_HEADERS:
+        v = msg.get(k)
+        if v is None:
+            continue
+        if k == "x-request-id" and MINTED_ID.match(v):
+            v = "<minted>"
+        out[k] = v
+    return out
 
 
 def normalise(body):

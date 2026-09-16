@@ -173,6 +173,10 @@ pub fn build_router(state: AppState) -> Router {
             state.clone(),
             crate::cors::layer,
         ))
+        // Request id and the security header set. Outside the CORS layer
+        // so it sees the final response, and a no-op on proxied
+        // responses, which already carry Python's.
+        .layer(axum::middleware::from_fn(crate::headers::layer))
         .with_state(state)
         .layer(tower_http::trace::TraceLayer::new_for_http())
         // `index` is captured for the SPA fallback once client-side routes

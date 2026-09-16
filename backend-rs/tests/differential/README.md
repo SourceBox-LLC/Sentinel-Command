@@ -589,3 +589,58 @@ to the proxy.
 | `allow-origin` echoed for any origin | 2 / 211 |
 | `Vary: Origin` dropped | 5 / 211 |
 | `HEAD` answered from the GET handler | 4 / 211 |
+
+## Security headers and the request id
+
+`main.py` stamps two more things onto every response through middleware,
+and a ported route left both behind. The Rust tier was answering with
+`content-type`, `content-length` and `date`, and nothing else.
+
+```
+x-request-id: 9b681f7596b74624
+x-content-type-options: nosniff
+x-frame-options: DENY
+referrer-policy: strict-origin-when-cross-origin
+permissions-policy: camera=(), microphone=(), geolocation=()
+```
+
+The security set is not decoration. `_apply_security_headers` carries a
+comment about a previous regression where the SPA document shipped
+without them, and "the one response where frame-ancestors actually
+matters (the document) was the one being skipped, leaving the dashboard
+clickjackable". Porting routes reintroduced the same shape of gap on the
+API surface.
+
+The request id is honoured from the client when it is 8–128 characters
+of alphanumerics and hyphens, and replaced otherwise — the Python
+comment gives the reason, which is that an unvalidated header injects
+arbitrary text into log lines and Sentry tags. Note that Python's
+`str.isalnum()` is Unicode-aware, so an ASCII-only check here would
+reject ids the Python tier accepts; the port matches the looser rule
+deliberately.
+
+`COMPARED_HEADERS` in the differential covers all five, with a minted id
+normalised to `<minted>` so only its shape is compared.
+
+### One property the differential cannot see
+
+"Do not restamp a proxied response" is real — restamping would hand the
+client an id that appears in no log line — but no response comparison can
+catch it. When the client supplies an id, both stacks echo the same one;
+when it does not, Python's minted id and Rust's are both sixteen hex
+characters and indistinguishable.
+
+So it is tested directly instead: `headers::stamp` is split out of the
+layer, and a unit test asserts that a response already carrying an id
+keeps it. Verified by deleting the guard — the differential stays at
+218/218 and the unit test fails.
+
+### Teeth
+
+| injected bug | caught by | cases |
+| --- | --- | --- |
+| headers middleware removed | differential | 197 / 218 |
+| `X-Frame-Options` weakened to `SAMEORIGIN` | differential | 197 / 218 |
+| inbound request id never honoured | differential | 2 / 218 |
+| no length check on the inbound id | differential | 2 / 218 |
+| proxied responses restamped | **unit test** | differential sees nothing |
