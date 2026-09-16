@@ -39,6 +39,11 @@ PYTHON = "http://127.0.0.1:8001"
 PG_CONTAINER = "cc-schema-test"
 
 TOKEN = sys.argv[1]
+# A non-admin caller. The read differential gained one after a mutation
+# that leaks admin-only inbox rows scored 296/296; the writes had the
+# same hole — every require_admin rejection on a mutating route was
+# untested, which is the half where being wrong actually changes data.
+MEMBER_TOKEN = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("-") else None
 VERBOSE = "-v" in sys.argv
 
 # Timestamps this close to the request are "now" and get normalised.
@@ -53,6 +58,7 @@ WATCHED = ["incidents", "incident_evidence", "audit_log", "settings",
            "notifications", "user_notification_state"]
 
 # (name, method, path, body) — body None means no request body.
+# A 5th element "member" sends the non-admin token instead.
 CASES = [
     # --- PATCH: status transitions ------------------------------------
     ("ack open incident", "PATCH", "/api/incidents/1", {"status": "acknowledged"}),
@@ -203,6 +209,31 @@ EXPECTED_DIVERGENCES = {
 }
 
 CASES += [
+    # --- a NON-ADMIN attempting every ported write ---------------------
+    # require_admin must refuse, and nothing may reach the database. The
+    # side-effect snapshot is the point: a handler that 403s *after*
+    # writing would pass a response-only comparison.
+    ("member: patch incident", "PATCH", "/api/incidents/1", {"status": "resolved"}, "member"),
+    ("member: delete incident", "DELETE", "/api/incidents/1", None, "member"),
+    ("member: create group", "POST", "/api/camera-groups", {"name": "Sneaky"}, "member"),
+    ("member: delete group", "DELETE", "/api/camera-groups/1", None, "member"),
+    ("member: assign group", "PUT", "/api/cameras/cam-live/group?group_id=1", None, "member"),
+    ("member: toggle recording", "POST", "/api/cameras/cam-live/recording",
+     {"recording": True}, "member"),
+    ("member: recording policy", "PATCH", "/api/cameras/cam-live/recording-settings",
+     {"continuous_24_7": True}, "member"),
+    ("member: motion ingestion", "POST", "/api/settings/motion-ingestion",
+     {"enabled": False}, "member"),
+    ("member: notification settings", "POST", "/api/settings/notifications",
+     {"motion_notifications": False}, "member"),
+    ("member: revoke key", "DELETE", "/api/integration/keys/5", None, "member"),
+    ("member: email prefs", "POST", "/api/notifications/email/preferences",
+     {"email_motion": True}, "member"),
+    # these two are require_view, so a member SHOULD succeed — the pair
+    # proves the member token works rather than failing everything
+    ("member: mark viewed", "POST", "/api/notifications/mark-viewed", None, "member"),
+    ("member: clear all", "POST", "/api/notifications/clear-all", None, "member"),
+
     # --- notifications -------------------------------------------------
     # Each of these creates the read-state row on first touch — a write
     # on a GET, which the side-effect snapshot sees.
@@ -355,10 +386,11 @@ def normalise(value, now):
     return value
 
 
-def fetch(base, method, path, body):
+def fetch(base, method, path, body, who="admin"):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(base + path, method=method, data=data)
-    req.add_header("Authorization", f"Bearer {TOKEN}")
+    token = MEMBER_TOKEN if who == "member" else TOKEN
+    req.add_header("Authorization", f"Bearer {token}")
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
@@ -370,10 +402,10 @@ def fetch(base, method, path, body):
         return None, str(e).encode()
 
 
-def run_case(base, method, path, body):
+def run_case(base, method, path, body, who="admin"):
     reseed()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    status, raw = fetch(base, method, path, body)
+    status, raw = fetch(base, method, path, body, who)
     try:
         parsed = json.loads(raw)
     except Exception:  # noqa: BLE001
@@ -383,9 +415,11 @@ def run_case(base, method, path, body):
 
 def main():
     bad = 0
-    for name, method, path, body in CASES:
-        py_status, py_body, py_db = run_case(PYTHON, method, path, body)
-        rs_status, rs_body, rs_db = run_case(RUST, method, path, body)
+    for case in CASES:
+        name, method, path, body = case[0], case[1], case[2], case[3]
+        who = case[4] if len(case) > 4 else "admin"
+        py_status, py_body, py_db = run_case(PYTHON, method, path, body, who)
+        rs_status, rs_body, rs_db = run_case(RUST, method, path, body, who)
 
         status_same = py_status == rs_status
         body_same = py_body == rs_body

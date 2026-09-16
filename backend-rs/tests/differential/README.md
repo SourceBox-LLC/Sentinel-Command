@@ -789,3 +789,42 @@ unread count in a specific band. So `write_diff.py` has a `FREEZE` block
 that pins each one after seeding, to distinct fixed values where
 ordering matters. Any new `now()`-relative column in the fixture needs an
 entry there.
+
+## Auth parity
+
+```bash
+tests/differential/auth_parity.py
+```
+
+Porting a route means re-declaring its auth, and nothing checked that
+the re-declaration matched. A route Python guards with `require_admin`
+could be ported behind `require_view` and **every differential would
+still pass**, because an admin satisfies both and the differentials ran
+only as an admin.
+
+Same class as the rate limits: the gate lives on the Python handler and
+does not come along.
+
+| Python | Rust |
+| --- | --- |
+| `Depends(require_view)` | `RequireView` |
+| `Depends(require_admin)` | `RequireAdmin` |
+| `Depends(require_active_billing)` | `RequireActiveBilling` |
+| `Depends(get_current_user)` | `AuthUser` |
+| no auth dependency | no extractor |
+
+Currently **0 mismatches**. Mutation-verified twice: weakening a gate to
+`RequireView` and dropping one entirely are both named exactly.
+
+## Non-admin writes
+
+`write_run.sh` mints both tokens and runs the side-effect differential
+with them. The non-admin cases attempt every ported write and assert
+the refusal **and that nothing reached the database** — a handler that
+403s *after* writing would pass a response-only comparison.
+
+Two of the cases are `require_view` routes where the member should
+succeed, which is what proves the member token works rather than
+failing everything indiscriminately.
+
+Removing the `require_admin` gate is caught on 11 of 124 cases.
