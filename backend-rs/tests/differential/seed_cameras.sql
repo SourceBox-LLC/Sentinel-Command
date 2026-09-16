@@ -320,6 +320,15 @@ VALUES
   ('other-org', 'hash_9', 'Theirs', timestamp '2026-09-09 10:00:00',
    NULL, false, 'all', NULL, 'mcp'),
   ('other-org', 'hash_10', 'Theirs Integration', timestamp '2026-09-09 11:00:00',
+   NULL, false, 'all', NULL, 'integration'),
+  -- 11: a non-ASCII name, which the revoke audit row writes into its
+  --     `details` JSON. json.dumps defaults to ensure_ascii=True and
+  --     escapes every character outside printable ASCII to \uXXXX,
+  --     astral ones as a surrogate pair; serde_json emits UTF-8 and
+  --     agrees on neither. Nothing in this fixture had a non-ASCII
+  --     string before, so the port stored "Café" where Python
+  --     stored "Caf\u00e9" and every harness called it identical.
+  ('self-host', 'hash_11', 'Café 🎥 — Terrasse', timestamp '2026-09-10 10:00:00',
    NULL, false, 'all', NULL, 'integration');
 
 -- ---- notifications --------------------------------------------------

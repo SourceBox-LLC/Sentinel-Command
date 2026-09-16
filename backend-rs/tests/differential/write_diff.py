@@ -281,6 +281,9 @@ CASES += [
 
     # --- revoking an integration key ----------------------------------
     ("revoke integration key", "DELETE", "/api/integration/keys/5", None),
+    # The audit row this writes carries the key's name in its details
+    # JSON, and that name is non-ASCII on purpose — see seed row 11.
+    ("revoke a key with a non-ascii name", "DELETE", "/api/integration/keys/11", None),
     ("revoke the other one", "DELETE", "/api/integration/keys/6", None),
     # kind scoping: an MCP key id here must 404 rather than cross surfaces
     ("revoke an MCP key via integration", "DELETE", "/api/integration/keys/1", None),
