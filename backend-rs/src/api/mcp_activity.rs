@@ -54,7 +54,7 @@ impl McpActivityLogRow {
 /// `GET /api/mcp/activity/logs`.
 pub async fn list_mcp_logs(
     // Python: @limiter.limit("120/minute")
-    _rate: PerMinute<120>,
+    rate: PerMinute<120>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     request: Request,
@@ -67,6 +67,7 @@ pub async fn list_mcp_logs(
     let offset = q.int("offset", 0, Some(0), Some(1_000_000));
     let format = q.pattern("format", "json", "^(json|csv)$", &["json", "csv"]);
     q.finish()?;
+    rate.check().await?;
 
     if format == "csv" {
         return Ok(crate::proxy::forward(State(state), request).await);
@@ -132,7 +133,7 @@ pub async fn list_mcp_logs(
 /// `GET /api/mcp/activity/logs/stats`.
 pub async fn mcp_log_stats(
     // Python: @limiter.limit("60/minute")
-    _rate: PerMinute<60>,
+    rate: PerMinute<60>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     request: Request,
@@ -140,6 +141,7 @@ pub async fn mcp_log_stats(
     let mut q = Query::parse(request.uri().query());
     let days = q.int("days", 7, None, Some(30));
     q.finish()?;
+    rate.check().await?;
 
     let since = now_naive() - Duration::days(days);
 

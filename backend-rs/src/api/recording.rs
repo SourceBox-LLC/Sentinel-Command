@@ -47,7 +47,7 @@ async fn owned_camera(
 /// the change up on its next tick, which is why there is no WebSocket
 /// command here and nothing to lose when a node restarts.
 pub async fn toggle_recording(
-    _rate: PerMinute<30>,
+    rate: PerMinute<30>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Path(camera_id): Path<String>,
@@ -56,6 +56,9 @@ pub async fn toggle_recording(
     body: axum::body::Bytes,
 ) -> Result<Json<Value>, ApiError> {
     let camera_id = path_segment(&camera_id)?;
+    // Before the body: toggle_recording reads it with `await
+    // request.json()` inside the function, after the decorator.
+    rate.check().await?;
     let body = parse_body(&body)?;
     // `bool(body.get("recording", False))` — Python truthiness over
     // whatever arrived, so a missing key is "stop recording".
@@ -117,7 +120,7 @@ fn truthy(value: Option<&Value>) -> bool {
 /// Every field is optional so a PATCH can flip one toggle without
 /// re-asserting the others.
 pub async fn update_recording_policy(
-    _rate: PerMinute<30>,
+    rate: PerMinute<30>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Path(camera_id): Path<String>,
@@ -134,6 +137,7 @@ pub async fn update_recording_policy(
     let start = errors.optional_hhmm(&body, "scheduled_start");
     let end = errors.optional_hhmm(&body, "scheduled_end");
     errors.finish()?;
+    rate.check().await?;
 
     let current = owned_camera(&state.pool, &user.org_id, camera_id).await?;
 

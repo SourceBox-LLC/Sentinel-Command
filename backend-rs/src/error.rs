@@ -28,6 +28,9 @@ pub struct ApiError {
     /// A JSON envelope here would be a shape no Python 500 ever has, and
     /// would leak a hint about what broke besides.
     opaque: bool,
+    /// A slowapi 429, which has its own body shape and `Retry-After`
+    /// rather than the `{"detail": ...}` envelope.
+    rate_limit: Option<(u32, u64)>,
 }
 
 impl ApiError {
@@ -36,6 +39,7 @@ impl ApiError {
             status,
             detail: detail.into(),
             opaque: false,
+            rate_limit: None,
         }
     }
 
@@ -63,12 +67,25 @@ impl ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: detail.into(),
             opaque: true,
+            rate_limit: None,
+        }
+    }
+
+    pub fn rate_limited(limit: u32, window_secs: u64) -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            detail: Value::Null,
+            opaque: false,
+            rate_limit: Some((limit, window_secs)),
         }
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        if let Some((limit, window)) = self.rate_limit {
+            return crate::ratelimit::too_many_requests(limit, window);
+        }
         if self.opaque {
             // Byte-for-byte what Starlette emits for an unhandled
             // exception, down to the charset.

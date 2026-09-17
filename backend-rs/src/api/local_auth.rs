@@ -23,23 +23,27 @@ const NOT_CONFIGURED: &str = "Local authentication not configured. Set APP_SECRE
 
 /// `POST /api/auth/local/login`.
 pub async fn login(
-    _rate: PerMinute<10>,
+    rate: PerMinute<10>,
     State(state): State<AppState>,
     body: axum::body::Bytes,
 ) -> Result<Json<Value>, ApiError> {
-    if !state.config.is_local_auth_configured() {
-        return Err(ApiError::new(
-            axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            NOT_CONFIGURED,
-        ));
-    }
-
+    // Python validates `payload: LoginRequest` before the decorator and
+    // raises the 503 inside the function, after it. So a malformed body
+    // is a free 422 even on an install with local auth unconfigured,
+    // and the 503 spends a slot.
     let body = parse_body(&body)?;
     let mut errors = BodyErrors::new();
     // No max_length on either field in the Python model, so none here.
     let username = errors.required_string(&body, "username", usize::MAX);
     let password = errors.required_string(&body, "password", usize::MAX);
     errors.finish()?;
+    rate.check().await?;
+    if !state.config.is_local_auth_configured() {
+        return Err(ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            NOT_CONFIGURED,
+        ));
+    }
 
     let expected_user = state.config.local_admin_username.clone();
     let expected_hash = state.config.local_admin_password_hash.clone();
@@ -68,21 +72,21 @@ pub async fn login(
 
 /// `POST /api/auth/local/refresh`.
 pub async fn refresh(
-    _rate: PerMinute<30>,
+    rate: PerMinute<30>,
     State(state): State<AppState>,
     body: axum::body::Bytes,
 ) -> Result<Json<Value>, ApiError> {
+    let body = parse_body(&body)?;
+    let mut errors = BodyErrors::new();
+    let token = errors.required_string(&body, "token", usize::MAX);
+    errors.finish()?;
+    rate.check().await?;
     if !state.config.is_local_auth_configured() {
         return Err(ApiError::new(
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
             NOT_CONFIGURED,
         ));
     }
-
-    let body = parse_body(&body)?;
-    let mut errors = BodyErrors::new();
-    let token = errors.required_string(&body, "token", usize::MAX);
-    errors.finish()?;
 
     // `refresh_token` verifies then re-issues unconditionally — there is
     // no "only refresh when nearly expired" threshold here. The client

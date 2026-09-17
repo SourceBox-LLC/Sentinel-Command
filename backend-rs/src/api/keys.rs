@@ -189,7 +189,7 @@ pub async fn revoke_integration_key(
     // the parity checker refused this route until the limiter could
     // express one, because a minute window here is sixty times the
     // intended budget.
-    _rate: PerHour<30>,
+    rate: PerHour<30>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Path(key_id): Path<String>,
@@ -197,6 +197,7 @@ pub async fn revoke_integration_key(
     ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
 ) -> Result<Json<Value>, ApiError> {
     let key_id = path_int("key_id", &key_id)?;
+    rate.check().await?;
     revoke(
         &state,
         &user,

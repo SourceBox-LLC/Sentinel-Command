@@ -199,6 +199,7 @@ def main() -> int:
                          scenario_b(port, limit, handler))
         py_a, py_b = out["python"]
         rs_a, rs_b = out["rust"]
+        before = bad
 
         for key in py_a:
             if py_a[key] != rs_a[key]:
@@ -218,7 +219,7 @@ def main() -> int:
         elif py_b[1] != 429:
             bad += 1
             print(f"  NOLIMIT {label}: {limit + 1} calls and no 429 from either tier")
-        else:
+        if bad == before:
             print(f"  ok      {label}")
     reseed()
     flush()
@@ -226,6 +227,8 @@ def main() -> int:
         print("REFUSING: no route matched")
         return 2
     print(f"\n{ran} route(s) checked, {bad} problem(s)")
+    # The shape every other harness reports in, so mutate.py can score it.
+    print(f"{ran - min(bad, ran)}/{ran} identical, {bad} differing")
     return 1 if bad else 0
 
 

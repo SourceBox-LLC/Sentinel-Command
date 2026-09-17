@@ -294,13 +294,14 @@ async fn owned_evidence(
 /// database and bypasses the viewer-hour cap that gates the live HLS
 /// endpoints; without a cap it is a bandwidth tap.
 pub async fn get_evidence_blob(
-    _rate: PerMinute<120>,
+    rate: PerMinute<120>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Path((incident_id, evidence_id)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
     let incident_id = path_int("incident_id", &incident_id)?;
     let evidence_id = path_int("evidence_id", &evidence_id)?;
+    rate.check().await?;
 
     // `not evidence.data` in Python is falsy for zero bytes as well as
     // for NULL, so an observation row and an empty blob are both 404.
@@ -344,13 +345,14 @@ pub async fn get_evidence_blob(
 /// `#EXT-X-TARGETDURATION` must be >= every `#EXTINF` (RFC 8216 §4.3.3.1),
 /// which is why the fallback duration is generous rather than zero.
 pub async fn get_evidence_playlist(
-    _rate: PerMinute<120>,
+    rate: PerMinute<120>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Path((incident_id, evidence_id)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
     let incident_id = path_int("incident_id", &incident_id)?;
     let evidence_id = path_int("evidence_id", &evidence_id)?;
+    rate.check().await?;
 
     let evidence = owned_evidence(&state.pool, &user.org_id, incident_id, evidence_id).await?;
     let Some(EvidenceBlobRow {
@@ -495,7 +497,7 @@ pub struct IncidentPatch {
 
 /// `PATCH /api/incidents/{incident_id}` — acknowledge, resolve, dismiss.
 pub async fn update_incident(
-    _rate: PerMinute<120>,
+    rate: PerMinute<120>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Path(incident_id): Path<String>,
@@ -504,6 +506,7 @@ pub async fn update_incident(
     let patch: IncidentPatch = serde_json::from_value(parse_body(&body)?)
         .unwrap_or_default();
     let incident_id = path_int("incident_id", &incident_id)?;
+    rate.check().await?;
     let incident = owned_incident(&state.pool, &user.org_id, incident_id).await?;
 
     let mut status = incident.status.clone();
@@ -595,12 +598,13 @@ pub async fn update_incident(
 /// foreign key in the schema — SQLAlchemy's `cascade="all, delete-orphan"`
 /// would otherwise do it in Python, and only one of the two needs to.
 pub async fn delete_incident(
-    _rate: PerMinute<60>,
+    rate: PerMinute<60>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Path(incident_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let incident_id = path_int("incident_id", &incident_id)?;
+    rate.check().await?;
     // Fetched first so a missing or other-tenant incident 404s before
     // anything is deleted.
     owned_incident(&state.pool, &user.org_id, incident_id).await?;

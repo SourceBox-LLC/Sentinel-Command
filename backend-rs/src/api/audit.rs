@@ -66,7 +66,7 @@ pub(crate) fn escape_like(input: &str) -> String {
 /// dashboard shares one pagination component across all three.
 pub async fn list_audit_logs(
     // Python: @limiter.limit("120/minute")
-    _rate: PerMinute<120>,
+    rate: PerMinute<120>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     request: Request,
@@ -82,6 +82,7 @@ pub async fn list_audit_logs(
     let offset = q.int("offset", 0, Some(0), Some(1_000_000));
     let format = q.pattern("format", "json", "^(json|csv)$", &["json", "csv"]);
     q.finish()?;
+    rate.check().await?;
 
     // The CSV branch is a streaming export with a 50,000-row window and
     // its own filename convention. Streaming it is a different shape of

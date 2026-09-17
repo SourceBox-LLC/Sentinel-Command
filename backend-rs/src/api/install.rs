@@ -68,7 +68,10 @@ async fn script(
 }
 
 /// `GET /install.sh` — the CameraNode installer for Linux and macOS.
-pub async fn install_sh(_rate: PerMinute<30>, State(state): State<AppState>) -> Response {
+pub async fn install_sh(rate: PerMinute<30>, State(state): State<AppState>) -> Response {
+    if let Err(err) = rate.check().await {
+        return err.into_response();
+    }
     // No Cache-Control, matching the Python: only the two mcp-setup
     // scripts carry one.
     script(
@@ -82,7 +85,10 @@ pub async fn install_sh(_rate: PerMinute<30>, State(state): State<AppState>) -> 
 
 /// `GET /mcp-setup.sh` — points an MCP client at this Command Center.
 /// Unrelated to installing a CameraNode.
-pub async fn mcp_setup_sh(_rate: PerMinute<30>, State(state): State<AppState>) -> Response {
+pub async fn mcp_setup_sh(rate: PerMinute<30>, State(state): State<AppState>) -> Response {
+    if let Err(err) = rate.check().await {
+        return err.into_response();
+    }
     script(
         &state,
         "mcp-setup.sh",
@@ -93,7 +99,10 @@ pub async fn mcp_setup_sh(_rate: PerMinute<30>, State(state): State<AppState>) -
 }
 
 /// `GET /mcp-setup.ps1` — the Windows equivalent.
-pub async fn mcp_setup_ps1(_rate: PerMinute<30>, State(state): State<AppState>) -> Response {
+pub async fn mcp_setup_ps1(rate: PerMinute<30>, State(state): State<AppState>) -> Response {
+    if let Err(err) = rate.check().await {
+        return err.into_response();
+    }
     // `text/plain`, not `x-shellscript`. The Python differs between the
     // two deliberately and a client sniffing the type would notice.
     script(

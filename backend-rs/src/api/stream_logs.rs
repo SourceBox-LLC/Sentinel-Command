@@ -65,13 +65,11 @@ impl StreamAccessLogRow {
 /// `GET /api/audit/stream-logs`.
 pub async fn list_stream_logs(
     // Python: @limiter.limit("120/minute")
-    _rate: PerMinute<120>,
+    rate: PerMinute<120>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     request: Request,
 ) -> Result<Response, ApiError> {
-    require_admin_feature(&user)?;
-
     let mut q = Query::parse(request.uri().query());
     let camera_id = q.optional_str("camera_id");
     let user_filter = q.optional_str("user_id");
@@ -79,6 +77,13 @@ pub async fn list_stream_logs(
     let offset = q.int("offset", 0, Some(0), Some(1_000_000));
     let format = q.pattern("format", "json", "^(json|csv)$", &["json", "csv"]);
     q.finish()?;
+    // Query parameters are validated before the decorator runs; the
+    // feature check is a call inside the Python function, after it. The
+    // order also decides which of two errors a caller sees. Spent before
+    // the CSV hand-off too, so JSON and CSV share one budget as they do
+    // in Python.
+    rate.check().await?;
+    require_admin_feature(&user)?;
 
     if format == "csv" {
         return Ok(crate::proxy::forward(State(state), request).await);
@@ -142,16 +147,16 @@ pub async fn list_stream_logs(
 /// simply returns zeroes. Reproduced rather than tightened.
 pub async fn stream_log_stats(
     // Python: @limiter.limit("60/minute")
-    _rate: PerMinute<60>,
+    rate: PerMinute<60>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     request: Request,
 ) -> Result<axum::Json<Value>, ApiError> {
-    require_admin_feature(&user)?;
-
     let mut q = Query::parse(request.uri().query());
     let days = q.int("days", 7, None, Some(30));
     q.finish()?;
+    rate.check().await?;
+    require_admin_feature(&user)?;
 
     let since = now_naive() - Duration::days(days);
 

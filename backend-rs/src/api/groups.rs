@@ -25,7 +25,7 @@ const DEFAULT_ICON: &str = "📁";
 
 /// `POST /api/camera-groups`.
 pub async fn create_camera_group(
-    _rate: PerMinute<20>,
+    rate: PerMinute<20>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     body: axum::body::Bytes,
@@ -40,6 +40,7 @@ pub async fn create_camera_group(
     let color_field = errors.optional_string(&body, "color", 20);
     let icon_field = errors.optional_string(&body, "icon", 10);
     errors.finish()?;
+    rate.check().await?;
 
     // Name uniqueness is per-org and checked in the handler, not by a
     // constraint — two orgs may both have an "Outdoor".
@@ -76,12 +77,13 @@ pub async fn create_camera_group(
 
 /// `DELETE /api/camera-groups/{group_id}`.
 pub async fn delete_camera_group(
-    _rate: PerMinute<60>,
+    rate: PerMinute<60>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Path(group_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let group_id = path_int("group_id", &group_id)?;
+    rate.check().await?;
 
     let group: Option<(String,)> =
         sqlx::query_as("SELECT name FROM camera_groups WHERE id = $1 AND org_id = $2")
@@ -119,7 +121,7 @@ pub async fn delete_camera_group(
 /// `int = None` in the Python signature, which FastAPI reads from the
 /// query string.
 pub async fn assign_camera_group(
-    _rate: PerMinute<60>,
+    rate: PerMinute<60>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Path(camera_id): Path<String>,
@@ -135,6 +137,7 @@ pub async fn assign_camera_group(
         None => None,
     };
     q.finish()?;
+    rate.check().await?;
 
     let camera: Option<(i32,)> =
         sqlx::query_as("SELECT id FROM cameras WHERE camera_id = $1 AND org_id = $2")
@@ -191,13 +194,16 @@ pub async fn assign_camera_group(
 
 /// `POST /api/settings/motion-ingestion` — the ingestion kill switch.
 pub async fn update_motion_ingestion(
-    _rate: PerMinute<30>,
+    rate: PerMinute<30>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     headers: HeaderMap,
     ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     body: axum::body::Bytes,
 ) -> Result<Json<Value>, ApiError> {
+    // Before the body: this handler reads it with `await request.json()`
+    // inside the function, after the decorator.
+    rate.check().await?;
     let body = parse_body(&body)?;
     // `bool(payload.get("enabled"))` — Python truthiness, so any
     // non-empty string, any non-zero number and any non-empty container
@@ -236,7 +242,7 @@ pub async fn update_motion_ingestion(
 
 /// `POST /api/settings/notifications`.
 pub async fn update_notification_settings(
-    _rate: PerMinute<30>,
+    rate: PerMinute<30>,
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     headers: HeaderMap,
@@ -251,6 +257,7 @@ pub async fn update_notification_settings(
     let camera = errors.bool_with_default(&body, "camera_transition_notifications", true);
     let node = errors.bool_with_default(&body, "node_transition_notifications", true);
     errors.finish()?;
+    rate.check().await?;
     // `str(bool).lower()` in Python — "true" / "false", which is what
     // the GET side compares against with a bare `==`.
     for (key, value) in [

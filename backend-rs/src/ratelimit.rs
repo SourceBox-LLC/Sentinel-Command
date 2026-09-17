@@ -236,7 +236,7 @@ fn base64url_decode(input: &str) -> Option<Vec<u8>> {
 /// API errors use — `rate_limit_exceeded_handler` returns a flat object,
 /// and integrators read `error` and `retry_after_seconds` off the top
 /// level.
-fn too_many_requests(limit: u32, window_secs: u64) -> Response {
+pub(crate) fn too_many_requests(limit: u32, window_secs: u64) -> Response {
     // slowapi renders the limit as e.g. "120 per 1 minute" or
     // "30 per 1 hour" — both measured against the running service.
     let window = if window_secs >= 3600 { "hour" } else { "minute" };
@@ -255,13 +255,51 @@ fn too_many_requests(limit: u32, window_secs: u64) -> Response {
         .into_response()
 }
 
-/// Extractor enforcing `LIMIT` requests per tenant per route within
+/// A route's rate limit: `LIMIT` requests per tenant per route within
 /// `WINDOW_SECS`.
 ///
 /// Both are const parameters so each route states its own budget at the
 /// point it is registered, the way the Python decorator does. Use the
 /// `PerMinute` / `PerHour` aliases rather than spelling the window out.
-pub struct RateLimit<const LIMIT: u32, const WINDOW_SECS: u64>;
+///
+/// **Extracting this spends nothing. The handler must call
+/// [`RateLimit::check`].** The extractor used to spend the slot itself,
+/// as the first argument of every handler, and that disagreed with
+/// Python about *which requests count*. slowapi's `@limiter.limit` wraps
+/// the endpoint function, and FastAPI resolves every dependency before
+/// calling it — authentication, and path, query and body validation.
+/// So in Python a request refused with 401, 403 or 422 never reaches the
+/// limiter, while an `HTTPException` raised inside the function has
+/// already spent its slot. Measured: six member 403s against the 5/hour
+/// wipe-logs route, then an admin call — 200 from Python.
+///
+/// Checking first let a member exhaust an organisation's budget on an
+/// admin route and lock the admin out. `check()` goes exactly where the
+/// decorator runs: after auth and validation, before anything the
+/// handler itself raises. `tests/differential/ratelimit_order.py` holds
+/// every limited route to both halves of that — refusals are free, and
+/// the limit still fires, so a handler that forgets to call `check()`
+/// fails there.
+pub struct RateLimit<const LIMIT: u32, const WINDOW_SECS: u64> {
+    limiter: std::sync::Arc<Limiter>,
+    bucket: String,
+}
+
+impl<const LIMIT: u32, const WINDOW_SECS: u64> RateLimit<LIMIT, WINDOW_SECS> {
+    /// Spend one slot, or refuse with slowapi's 429.
+    pub async fn check(&self) -> Result<(), crate::error::ApiError> {
+        if self
+            .limiter
+            .check(&self.bucket, LIMIT, Duration::from_secs(WINDOW_SECS))
+            .await
+        {
+            Ok(())
+        } else {
+            tracing::info!(bucket = %self.bucket, limit = LIMIT, window = WINDOW_SECS, "rate limit exceeded");
+            Err(crate::error::ApiError::rate_limited(LIMIT, WINDOW_SECS))
+        }
+    }
+}
 
 /// `@limiter.limit("N/minute")`.
 pub type PerMinute<const N: u32> = RateLimit<N, 60>;
@@ -277,7 +315,7 @@ pub type PerHour<const N: u32> = RateLimit<N, 3600>;
 impl<const LIMIT: u32, const WINDOW_SECS: u64> FromRequestParts<AppState>
     for RateLimit<LIMIT, WINDOW_SECS>
 {
-    type Rejection = Response;
+    type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(
         parts: &mut Parts,
@@ -301,16 +339,10 @@ impl<const LIMIT: u32, const WINDOW_SECS: u64> FromRequestParts<AppState>
         // The window is part of the key: changing a route's window must
         // start a fresh counter, not inherit the old one's count.
         let bucket = format!("rl:{tenant}:{route}:{LIMIT}:{WINDOW_SECS}");
-        if state
-            .limiter
-            .check(&bucket, LIMIT, Duration::from_secs(WINDOW_SECS))
-            .await
-        {
-            Ok(RateLimit)
-        } else {
-            tracing::info!(%route, limit = LIMIT, window = WINDOW_SECS, "rate limit exceeded");
-            Err(too_many_requests(LIMIT, WINDOW_SECS))
-        }
+        Ok(RateLimit {
+            limiter: state.limiter.clone(),
+            bucket,
+        })
     }
 }
 
