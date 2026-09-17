@@ -20,10 +20,6 @@
 # LOCAL_ADMIN_PASSWORD_HASH added a constant two-case background
 # divergence to every mutation it scored.
 #
-# Redirect this script's output to a file rather than piping it: the
-# spawned daemons briefly share the pipe, so `tiers.sh start | tail`
-# blocks after the tiers are already up and looks like a failed start.
-#
 # `restart` rebuilds the Rust binary first. Processes are killed by the
 # PID holding the port, never by `pkill -f` on the binary name: that
 # pattern also matches the shell running it, and killing the session is
@@ -54,6 +50,21 @@ export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:16379/0}"
 # has nothing to do with the port.
 export SCRIPTS_DIR="$REPO/backend/scripts"
 export STATIC_DIR="$REPO/backend/static"
+
+
+# Start a daemon with NO path back to this script's stdout.
+#
+# `( cmd >log 2>&1 & )` is not enough, and the reason took a diagnostic
+# to find: the daemon's own descriptors were clean, but the forked
+# *subshell* outlived the script while still holding the caller's
+# stdout pipe. Anything reading that pipe — `tiers.sh start | tail`, or
+# subprocess.run(capture_output=True) — then waits forever on a pipe
+# nobody will write to, long after the tiers are up and healthy. The
+# outer redirection closes that path.
+spawn() {
+    local log="$1"; shift
+    ( exec setsid "$@" </dev/null >"$log" 2>&1 & ) </dev/null >/dev/null 2>&1
+}
 
 port_pid() { ss -lntpH "sport = :$1" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1; }
 
@@ -96,9 +107,9 @@ case "${1:-status}" in
         stop_one 8000
         mkdir -p "$LOGS"
         (cd "$RS" && cargo build 2>&1 | tail -3)
-        (cd "$RS" && DATABASE_URL="postgresql://cc:cc@127.0.0.1:15434/cc" \
+        DATABASE_URL="postgresql://cc:cc@127.0.0.1:15434/cc" \
             PYTHON_UPSTREAM="http://127.0.0.1:8001" \
-            setsid ./target/debug/sentinel-command </dev/null >"$LOGS/8000.log" 2>&1 &)
+            spawn "$LOGS/8000.log" "$RS/target/debug/sentinel-command"
         wait_healthy 8000
         ;;
     start|restart)
@@ -111,17 +122,14 @@ case "${1:-status}" in
         # Python first: Rust proxies to it at startup and an unreachable
         # upstream makes every unported route a 502 that looks like a
         # port bug.
-        # `setsid` with all three descriptors redirected, not a bare
-        # `&`. A backgrounded child inherits this script's stdout, so a
-        # caller piping it into `tail` waits on a pipe the daemons hold
-        # open for as long as they run — the script appears to hang when
-        # in fact it finished.
-        (cd "$REPO/backend" && DATABASE_URL="postgresql+psycopg://cc:cc@127.0.0.1:15434/cc" \
-            setsid .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 \
-            </dev/null >"$LOGS/8001.log" 2>&1 &)
-        (cd "$RS" && DATABASE_URL="postgresql://cc:cc@127.0.0.1:15434/cc" \
+        cd "$REPO/backend"
+        DATABASE_URL="postgresql+psycopg://cc:cc@127.0.0.1:15434/cc" \
+            spawn "$LOGS/8001.log" "$REPO/backend/.venv/bin/python" -m uvicorn \
+            app.main:app --host 127.0.0.1 --port 8001
+        cd "$RS"
+        DATABASE_URL="postgresql://cc:cc@127.0.0.1:15434/cc" \
             PYTHON_UPSTREAM="http://127.0.0.1:8001" \
-            setsid ./target/debug/sentinel-command </dev/null >"$LOGS/8000.log" 2>&1 &)
+            spawn "$LOGS/8000.log" "$RS/target/debug/sentinel-command"
 
         wait_healthy 8001
         wait_healthy 8000

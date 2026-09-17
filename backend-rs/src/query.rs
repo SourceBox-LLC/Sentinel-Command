@@ -146,6 +146,100 @@ impl Query {
     }
 }
 
+/// Why a value could not become an `int`, in Pydantic's own vocabulary.
+#[derive(Debug, PartialEq, Eq)]
+pub enum IntError {
+    /// A string that does not spell one.
+    Parsing,
+    /// A number with a fractional part.
+    FromFloat,
+    /// The wrong JSON type entirely.
+    Type,
+}
+
+/// Pydantic v2's lax `int` coercion, measured against the running
+/// service rather than reasoned out — it is looser than Rust's and
+/// tighter than Python's `int()` in different places.
+///
+/// Accepts: an integer; a float with no fractional part (so JSON `1e3`
+/// is 1000); `true`/`false` as 1/0, because `bool` is a subclass of
+/// `int` in Python; and a string spelling an integer, with surrounding
+/// whitespace, a leading sign, digit-group underscores, leading zeros,
+/// or a whole decimal part (`"7.0"`).
+///
+/// Rejects: `"1e3"` — exponent notation is fine as a JSON number and
+/// not as a string; `"7."` and `".5"`, which need digits on both sides;
+/// `"0x10"`, `"inf"`, `"nan"`, `""`; and Arabic-Indic digits, which
+/// Python's own `int()` would accept.
+pub fn parse_pydantic_int(value: &Value) -> Result<i64, IntError> {
+    match value {
+        Value::Bool(b) => Ok(i64::from(*b)),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                return Ok(i);
+            }
+            match n.as_f64() {
+                Some(f) if f.fract() == 0.0 => Ok(f as i64),
+                Some(_) => Err(IntError::FromFloat),
+                None => Err(IntError::Type),
+            }
+        }
+        Value::String(s) => parse_pydantic_int_str(s).ok_or(IntError::Parsing),
+        _ => Err(IntError::Type),
+    }
+}
+
+fn parse_pydantic_int_str(raw: &str) -> Option<i64> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Underscores group digits and must have a digit on each side.
+    if trimmed.contains('_') {
+        let b = trimmed.as_bytes();
+        for (i, c) in b.iter().enumerate() {
+            if *c != b'_' {
+                continue;
+            }
+            let before = i.checked_sub(1).map(|j| b[j]);
+            let after = b.get(i + 1).copied();
+            if !matches!((before, after), (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit())
+            {
+                return None;
+            }
+        }
+    }
+    let cleaned = trimmed.replace('_', "");
+
+    // `str::parse` accepts a leading `+` and rejects everything else
+    // here — notably `0x10`, `inf` and non-ASCII digits.
+    if let Ok(n) = cleaned.parse::<i64>() {
+        return Some(n);
+    }
+
+    // The one non-integer spelling accepted: a decimal point with
+    // digits on both sides and nothing but zeros after it. Exponent
+    // notation is deliberately not handled — "1e3" is rejected as a
+    // string even though JSON `1e3` is accepted as a number.
+    let (int_part, frac_part) = cleaned.split_once('.')?;
+    let digits = int_part.strip_prefix(['+', '-']).unwrap_or(int_part);
+    if digits.is_empty()
+        || !digits.bytes().all(|c| c.is_ascii_digit())
+        || frac_part.is_empty()
+        || !frac_part.bytes().all(|c| c.is_ascii_digit())
+    {
+        return None;
+    }
+    if frac_part.bytes().any(|c| c != b'0') {
+        return None;
+    }
+    digits_to_i64(int_part)
+}
+
+fn digits_to_i64(s: &str) -> Option<i64> {
+    s.parse::<i64>().ok()
+}
+
 /// Build the 422 envelope `main.py`'s handler produces, or `Ok` when
 /// there is nothing to report.
 ///
@@ -162,8 +256,16 @@ pub fn validation_error(errors: &[Value]) -> Result<(), ApiError> {
         .map(|parts| {
             parts
                 .iter()
-                .filter_map(Value::as_str)
-                .filter(|p| *p != "body")
+                // A list index is a *number* in the loc, not a string:
+                // `["body", "tool_trace", 0]` summarises as
+                // "(tool_trace.0)". Reading only the strings dropped the
+                // index and named the wrong thing.
+                .filter_map(|p| match p {
+                    Value::String(s) if s == "body" => None,
+                    Value::String(s) => Some(s.clone()),
+                    Value::Number(n) => Some(n.to_string()),
+                    _ => None,
+                })
                 .collect::<Vec<_>>()
                 .join(".")
         })
@@ -250,9 +352,20 @@ impl BodyErrors {
     }
 
     fn push(&mut self, kind: &str, field: &str, msg: &str, input: Value, ctx: Option<Value>) {
+        self.push_at(kind, &[json!(field)], msg, input, ctx);
+    }
+
+    /// Report against an arbitrary location under `body`.
+    ///
+    /// Needed for containers: a non-dict inside `tool_trace` is reported
+    /// at `["body", "tool_trace", 0]`, one error per offending element,
+    /// in order.
+    fn push_at(&mut self, kind: &str, loc: &[Value], msg: &str, input: Value, ctx: Option<Value>) {
+        let mut full = vec![json!("body")];
+        full.extend_from_slice(loc);
         let mut err = json!({
             "type": kind,
-            "loc": ["body", field],
+            "loc": full,
             "msg": msg,
             "input": input,
         });
@@ -260,6 +373,60 @@ impl BodyErrors {
             err["ctx"] = ctx;
         }
         self.errors.push(err);
+    }
+
+    /// A string that does not spell an integer. Distinct from
+    /// `int_type`, which is for a value of the wrong JSON type
+    /// altogether — Pydantic reports them differently and the SPA shows
+    /// the message.
+    pub fn int_parsing(&mut self, field: &str, input: &Value) {
+        self.push(
+            "int_parsing",
+            field,
+            "Input should be a valid integer, unable to parse string as an integer",
+            input.clone(),
+            None,
+        );
+    }
+
+    pub fn int_type(&mut self, field: &str, input: &Value) {
+        self.push(
+            "int_type",
+            field,
+            "Input should be a valid integer",
+            input.clone(),
+            None,
+        );
+    }
+
+    pub fn int_from_float(&mut self, field: &str, input: &Value) {
+        self.push(
+            "int_from_float",
+            field,
+            "Input should be a valid integer, got a number with a fractional part",
+            input.clone(),
+            None,
+        );
+    }
+
+    pub fn list_type(&mut self, field: &str, input: &Value) {
+        self.push(
+            "list_type",
+            field,
+            "Input should be a valid list",
+            input.clone(),
+            None,
+        );
+    }
+
+    pub fn dict_type_at(&mut self, field: &str, index: usize, input: &Value) {
+        self.push_at(
+            "dict_type",
+            &[json!(field), json!(index)],
+            "Input should be a valid dictionary",
+            input.clone(),
+            None,
+        );
     }
 
     /// A required field is absent. `input` is the **whole body**, which
@@ -301,9 +468,17 @@ impl BodyErrors {
     }
 
     /// A required string field with a maximum length.
+    /// A required string field.
+    ///
+    /// An **absent** key is `missing`; an explicit `null` is
+    /// `string_type`, because to Pydantic the field is present and of
+    /// the wrong type. Collapsing the two reported "Field required
+    /// (name)" where Python reports "Input should be a valid string
+    /// (name)" — found by probing, not by any test, because no write
+    /// case had ever sent an explicit null.
     pub fn required_string(&mut self, body: &Value, field: &str, max: usize) -> String {
         match body.get(field) {
-            None | Some(Value::Null) => {
+            None => {
                 self.missing(field, body);
                 String::new()
             }
@@ -403,6 +578,95 @@ impl BodyErrors {
             Some(json!({"error": "must be HH:MM 24-hour, e.g. 08:30"})),
         );
         None
+    }
+
+    /// A string field with a default: absent takes the default, and a
+    /// present value must still be a string of at most `max`
+    /// characters — an explicit null is `string_type`, not the default.
+    pub fn string_with_default(&mut self, body: &Value, field: &str, max: usize) -> String {
+        match body.get(field) {
+            None => String::new(),
+            Some(Value::String(s)) => {
+                if s.chars().count() > max {
+                    self.too_long(field, s, max);
+                }
+                s.clone()
+            }
+            Some(other) => {
+                self.string_type(field, other);
+                String::new()
+            }
+        }
+    }
+
+    /// An `int` field with a default, read with Pydantic's lax rules.
+    pub fn int_with_default(&mut self, body: &Value, field: &str, default: i64) -> i64 {
+        match body.get(field) {
+            None => default,
+            Some(value) => match parse_pydantic_int(value) {
+                Ok(n) => n,
+                Err(IntError::Parsing) => {
+                    self.int_parsing(field, value);
+                    default
+                }
+                Err(IntError::FromFloat) => {
+                    self.int_from_float(field, value);
+                    default
+                }
+                Err(IntError::Type) => {
+                    self.int_type(field, value);
+                    default
+                }
+            },
+        }
+    }
+
+    /// An `Optional[int]` field: absent or JSON null is `None`, and only
+    /// a present non-null value is coerced.
+    pub fn optional_int(&mut self, body: &Value, field: &str) -> Option<i64> {
+        match body.get(field) {
+            None | Some(Value::Null) => None,
+            Some(value) => match parse_pydantic_int(value) {
+                Ok(n) => Some(n),
+                Err(IntError::Parsing) => {
+                    self.int_parsing(field, value);
+                    None
+                }
+                Err(IntError::FromFloat) => {
+                    self.int_from_float(field, value);
+                    None
+                }
+                Err(IntError::Type) => {
+                    self.int_type(field, value);
+                    None
+                }
+            },
+        }
+    }
+
+    /// An `Optional[list[dict]]`: absent or null is `None`, a non-list
+    /// is one `list_type`, and every non-dict element is its own
+    /// `dict_type` at that index.
+    pub fn optional_list_of_objects(&mut self, body: &Value, field: &str) -> Option<Vec<Value>> {
+        let value = match body.get(field) {
+            None | Some(Value::Null) => return None,
+            Some(value) => value,
+        };
+        let Some(items) = value.as_array() else {
+            self.list_type(field, value);
+            return None;
+        };
+        let mut bad = false;
+        for (i, item) in items.iter().enumerate() {
+            if !item.is_object() {
+                self.dict_type_at(field, i, item);
+                bad = true;
+            }
+        }
+        if bad {
+            return None;
+        }
+        Some(items.clone())
     }
 
     pub fn finish(&self) -> Result<(), ApiError> {
@@ -562,6 +826,86 @@ fn strip_digit_separators(s: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pydantic_int_coercion_matches_what_the_service_does() {
+        // Every row measured against the running FastAPI service, not
+        // reasoned out: this is looser than Rust's parser and tighter
+        // than Python's int() in different places.
+        use IntError::*;
+        for (input, expected) in [
+            (json!(7), Ok(7)),
+            (json!(-2), Ok(-2)),
+            (json!(3.0), Ok(3)),
+            (json!(1e3), Ok(1000)),
+            (json!(2.7), Err(FromFloat)),
+            (json!(true), Ok(1)),
+            (json!(false), Ok(0)),
+            (json!(null), Err(Type)),
+            (json!([]), Err(Type)),
+            (json!({}), Err(Type)),
+            (json!("7"), Ok(7)),
+            (json!("  7  "), Ok(7)),
+            (json!("+7"), Ok(7)),
+            (json!("-7"), Ok(-7)),
+            (json!("0007"), Ok(7)),
+            (json!("1_000"), Ok(1000)),
+            // A whole decimal string is accepted; a fractional one is not.
+            (json!("7.0"), Ok(7)),
+            (json!("7.00"), Ok(7)),
+            (json!("7.5"), Err(Parsing)),
+            (json!("7."), Err(Parsing)),
+            (json!(".5"), Err(Parsing)),
+            // Exponent form is fine as a JSON number and not as a string.
+            (json!("1e3"), Err(Parsing)),
+            (json!("1E3"), Err(Parsing)),
+            (json!("0x10"), Err(Parsing)),
+            (json!("inf"), Err(Parsing)),
+            (json!("nan"), Err(Parsing)),
+            (json!(""), Err(Parsing)),
+            (json!("   "), Err(Parsing)),
+            (json!("7 8"), Err(Parsing)),
+            (json!("_7"), Err(Parsing)),
+            (json!("7_"), Err(Parsing)),
+            (json!("1__0"), Err(Parsing)),
+            // Arabic-Indic digits, which Python's own int() accepts.
+            (json!("\u{0667}"), Err(Parsing)),
+        ] {
+            assert_eq!(parse_pydantic_int(&input), expected, "input {input}");
+        }
+    }
+
+    #[test]
+    fn a_list_index_survives_into_the_error_summary() {
+        // `loc` carries a number for a list index, and reading only the
+        // strings named "tool_trace" where Python names "tool_trace.0".
+        let err = validation_error(&[json!({
+            "type": "dict_type",
+            "loc": ["body", "tool_trace", 0],
+            "msg": "Input should be a valid dictionary",
+            "input": 1,
+        })])
+        .unwrap_err();
+        assert_eq!(
+            err.detail["message"],
+            json!("Input should be a valid dictionary (tool_trace.0)")
+        );
+    }
+
+    #[test]
+    fn an_explicit_null_is_a_type_error_not_a_missing_field() {
+        // Pydantic sees the field as present and of the wrong type.
+        let mut errors = BodyErrors::new();
+        errors.required_string(&json!({"name": null}), "name", 100);
+        let err = errors.finish().unwrap_err();
+        assert_eq!(err.detail["errors"][0]["type"], json!("string_type"));
+
+        let mut errors = BodyErrors::new();
+        errors.required_string(&json!({}), "name", 100);
+        let err = errors.finish().unwrap_err();
+        assert_eq!(err.detail["errors"][0]["type"], json!("missing"));
+    }
+
 
     #[test]
     fn parses_the_integer_forms_python_accepts() {

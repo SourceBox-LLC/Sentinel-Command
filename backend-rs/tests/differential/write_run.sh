@@ -48,4 +48,10 @@ print(jwt.encode({
 }, os.environ['APP_SECRET_KEY'], algorithm='HS256'))
 ")"
 
-exec "$PYTHON" "$HERE/write_diff.py" "$ADMIN" "$MEMBER" "$@"
+# Every run's output is kept. A one-in-fifteen flake once came and went
+# with its output discarded, and without the DIFFER lines there was
+# nothing to diagnose it from.
+LAST="$HERE/../../target/last-write-diff.out"
+mkdir -p "$(dirname "$LAST")"
+"$PYTHON" "$HERE/write_diff.py" "$ADMIN" "$MEMBER" "$@" 2>&1 | tee "$LAST"
+exit "${PIPESTATUS[0]}"

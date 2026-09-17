@@ -16,6 +16,7 @@ pub mod motion;
 pub mod notifications;
 pub mod nodes;
 pub mod recording;
+pub mod sentinel;
 pub mod settings;
 pub mod well_known;
 pub mod stream_logs;

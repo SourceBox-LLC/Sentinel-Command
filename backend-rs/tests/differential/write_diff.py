@@ -25,6 +25,7 @@ Usage: write_diff.py <token> [-v]
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -53,9 +54,31 @@ RECENT_WINDOW = timedelta(minutes=10)
 # includes tables a case is not expected to touch: a handler that writes
 # a stray audit row, or fails to write an expected one, is exactly the
 # kind of bug response diffing misses.
+
+# DIFF_ONLY=<substring> restricts the run to matching cases. For mutation
+# runs, where a full sweep per injected bug costs minutes and only the
+# slice's own cases can move. A filtered run says so in its result line,
+# so a filtered green is never mistaken for a full one.
+DIFF_ONLY = os.environ.get("DIFF_ONLY", "")
+
 WATCHED = ["incidents", "incident_evidence", "audit_log", "settings",
            "camera_groups", "cameras", "mcp_api_keys",
-           "notifications", "user_notification_state"]
+           "notifications", "user_notification_state",
+           # sentinel_agent_keys is watched even though no case writes
+           # to it deliberately: every agent-authenticated request
+           # stamps last_used_at as a side effect, and a port that
+           # skipped the stamp — or stamped the wrong row — would look
+           # perfect in the response.
+           "sentinel_runs", "sentinel_agent_keys"]
+
+# The raw agent keys behind seed rows 1-3. Hashes are in
+# seed_cameras.sql; these are the values a caller presents.
+AGENT_KEYS = {
+    "agent": "osa_00000000000000000000000000000001",
+    "agent:revoked": "osa_00000000000000000000000000000002",
+    "agent:theirs": "osa_00000000000000000000000000000003",
+    "agent:unknown": "osa_ffffffffffffffffffffffffffffffff",
+}
 
 # (name, method, path, body) — body None means no request body.
 # A 5th element "member" sends the non-admin token instead.
@@ -280,6 +303,190 @@ CASES += [
     ("refresh, missing token", "POST", "/api/auth/local/refresh", {}),
 
     # --- revoking an integration key ----------------------------------
+    # --- the sentinel agent data plane --------------------------------
+    #
+    # /start claims a pending run; /complete reports a terminal outcome.
+    # Both are agent-authenticated, and both must stamp last_used_at on
+    # the key row that authenticated them.
+    ("agent claims a pending run", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/start", None, "agent"),
+    ("agent re-claims a running run", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000004/start", None, "agent"),
+    ("agent claims a terminal run", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000006/start", None, "agent"),
+    ("claim a missing run", "POST",
+     "/api/sentinel/runs/nosuchrun/start", None, "agent"),
+    # Cross-tenant: a scoped key must 404 rather than 403, so it cannot
+    # be used to probe which run ids exist.
+    ("claim another tenant's run", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000003/start", None, "agent"),
+    ("claim with a revoked key", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/start", None, "agent:revoked"),
+    ("claim with an unknown key", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/start", None, "agent:unknown"),
+    ("claim with no key", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/start", None, "agent:none"),
+    ("claim with a high-byte key", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/start", None, "agent:highbyte"),
+    # A session token is not agent auth.
+    ("claim with a session token", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/start", None, "admin"),
+
+    ("complete no_action", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "summary": "nothing there"}, "agent"),
+    ("complete incident", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "incident", "severity": "high", "incident_id": 1,
+      "summary": "filed", "tool_call_count": 4}, "agent"),
+    ("complete incident, critical", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "incident", "severity": "critical"}, "agent"),
+    ("complete error", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "error", "summary": "blew up"}, "agent"),
+    # severity and incident_id are dropped unless the outcome is
+    # `incident`, even when the caller sends them.
+    ("complete no_action with severity", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "severity": "high", "incident_id": 1}, "agent"),
+    # An incident from another org must be refused: a leaked key could
+    # otherwise plant a foreign deep-link in that org's run drawer.
+    ("complete pointing at a foreign incident", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "incident", "severity": "low", "incident_id": 4}, "agent"),
+    ("complete pointing at a missing incident", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "incident", "severity": "low", "incident_id": 9999}, "agent"),
+    # Idempotency: a same-outcome retry is a no-op returning the stored
+    # row, error -> real outcome is a one-way upgrade, and a real
+    # outcome must not be downgraded to error.
+    ("re-complete a terminal run", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000006/complete",
+     {"outcome": "incident", "severity": "low", "summary": "changed"}, "agent"),
+    ("upgrade error -> incident", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000005/complete",
+     {"outcome": "incident", "severity": "medium", "summary": "actually found one"}, "agent"),
+    ("upgrade error -> no_action", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000005/complete",
+     {"outcome": "no_action"}, "agent"),
+    ("downgrade incident -> error", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000006/complete",
+     {"outcome": "error"}, "agent"),
+    # Handler-level 400s, which run after validation.
+    ("complete bad outcome", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "nope"}, "agent"),
+    ("complete outcome with a quote", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "it's bad"}, "agent"),
+    ("complete incident, no severity", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "incident"}, "agent"),
+    ("complete incident, bad severity", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "incident", "severity": "catastrophic"}, "agent"),
+    # Pydantic 422s, measured against the running service.
+    ("complete, no outcome", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete", {}, "agent"),
+    ("complete, null outcome", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": None}, "agent"),
+    ("complete, outcome not a string", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": 5}, "agent"),
+    ("complete, summary too long", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "summary": "x" * 8001}, "agent"),
+    ("complete, summary at the cap", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "summary": "y" * 8000}, "agent"),
+    ("complete, null summary", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "summary": None}, "agent"),
+    ("complete, count not an int", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_call_count": "abc"}, "agent"),
+    ("complete, count a whole float", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_call_count": 3.0}, "agent"),
+    ("complete, count a fractional float", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_call_count": 2.7}, "agent"),
+    ("complete, count a numeric string", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_call_count": "1_000"}, "agent"),
+    ("complete, count a decimal string", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_call_count": "7.0"}, "agent"),
+    ("complete, count in exponent form", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_call_count": "1e3"}, "agent"),
+    ("complete, count a bool", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_call_count": True}, "agent"),
+    ("complete, count null", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_call_count": None}, "agent"),
+    ("complete, negative count", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_call_count": -5}, "agent"),
+    ("complete, count a list", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_call_count": []}, "agent"),
+    ("complete, trace not a list", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_trace": "x"}, "agent"),
+    ("complete, trace items not dicts", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_trace": [1, "a"]}, "agent"),
+    # The stored trace is capped twice: last fifty entries, and each
+    # entry's fields cut to length with an ellipsis.
+    ("complete with a trace", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action",
+      "tool_trace": [{"tool": "get_camera", "args": {"camera_id": "cam-live"},
+                      "result": "ok"}]}, "agent"),
+    ("complete, trace over fifty entries", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action",
+      "tool_trace": [{"tool": f"t{i}", "args": {"i": i}, "result": "r"}
+                     for i in range(60)]}, "agent"),
+    ("complete, trace with oversized fields", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action",
+      "tool_trace": [{"tool": "n" * 300, "args": {"blob": "a" * 2000},
+                      "result": "r" * 1500}]}, "agent"),
+    ("complete, trace entries missing keys", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_trace": [{}]}, "agent"),
+    ("complete, trace with non-string fields", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action",
+      "tool_trace": [{"tool": 7, "args": "not a dict", "result": None}]}, "agent"),
+    ("complete, trace with non-ascii", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action",
+      "tool_trace": [{"tool": "caf\u00e9", "args": {"n": "\u00e9"},
+                      "result": "\U0001F3A5"}]}, "agent"),
+    ("complete an empty body", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete", None, "agent"),
+    ("complete another tenant's run", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000003/complete",
+     {"outcome": "no_action"}, "agent"),
+    ("complete a missing run", "POST",
+     "/api/sentinel/runs/nosuchrun/complete", {"outcome": "no_action"}, "agent"),
+    # Bad key AND bad body: auth is a dependency, so it must be refused
+    # 401 before the body is ever validated. Getting the order backwards
+    # would leak which fields a caller got wrong to someone who cannot
+    # authenticate at all.
+    ("bad key and bad body", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": 5, "summary": None}, "agent:unknown"),
+    ("no key and bad body", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": 5}, "agent:none"),
+
     ("revoke integration key", "DELETE", "/api/integration/keys/5", None),
     # The audit row this writes carries the key's name in its details
     # JSON, and that name is non-ASCII on purpose — see seed row 11.
@@ -299,11 +506,24 @@ CASES += [
 ]
 
 
+class FixtureError(RuntimeError):
+    """The database did not end up in the state a case assumes."""
+
+
 def psql(sql):
-    return subprocess.run(
-        ["docker", "exec", "-i", PG_CONTAINER, "psql", "-U", "cc", "-d", "cc", "-tAq", "-c", sql],
+    # ON_ERROR_STOP plus a checked exit, not `check=False`. A failed
+    # query used to return empty stdout, which `snapshot()` read as an
+    # empty table — so a query error on one side and a real empty table
+    # on the other compared as a side-effect diff, and a query error on
+    # both compared as agreement.
+    r = subprocess.run(
+        ["docker", "exec", "-i", PG_CONTAINER, "psql", "-U", "cc", "-d", "cc",
+         "-v", "ON_ERROR_STOP=1", "-tAq", "-c", sql],
         capture_output=True, text=True, check=False,
-    ).stdout
+    )
+    if r.returncode != 0:
+        raise FixtureError(f"psql failed ({r.returncode}): {r.stderr.strip()[:400]}\n  sql: {sql[:200]}")
+    return r.stdout
 
 
 # The shared fixture seeds several timestamps relative to now() so the
@@ -337,11 +557,24 @@ UPDATE user_notification_state
 
 
 def reseed():
+    """Reset every table to the fixture, or raise.
+
+    This used to run with `check=False` and its output captured, so a
+    reseed that failed part-way — a lock timeout against a request the
+    previous case left open, a fixture edit with a typo — was silent,
+    and the next case ran on one side against a half-applied fixture.
+    That reads exactly like a port bug on one case and is gone on the
+    rerun: a flake. One such flake (1 case in 15 filtered runs, output
+    not kept) is what prompted making this loud.
+    """
     seed = (HERE / "seed_cameras.sql").read_text() + FREEZE
-    subprocess.run(
-        ["docker", "exec", "-i", PG_CONTAINER, "psql", "-U", "cc", "-d", "cc", "-q"],
+    r = subprocess.run(
+        ["docker", "exec", "-i", PG_CONTAINER, "psql", "-U", "cc", "-d", "cc",
+         "-v", "ON_ERROR_STOP=1", "-q"],
         input=seed, capture_output=True, text=True, check=False,
     )
+    if r.returncode != 0 or "ERROR" in r.stderr:
+        raise FixtureError(f"reseed failed ({r.returncode}): {r.stderr.strip()[:600]}")
 
 
 def snapshot():
@@ -392,8 +625,22 @@ def normalise(value, now):
 def fetch(base, method, path, body, who="admin"):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(base + path, method=method, data=data)
-    token = MEMBER_TOKEN if who == "member" else TOKEN
-    req.add_header("Authorization", f"Bearer {token}")
+    if who in AGENT_KEYS:
+        # The agent data plane authenticates on its own header and
+        # ignores Authorization entirely, so no bearer token is sent —
+        # a route that fell back to session auth would otherwise pass.
+        req.add_header("X-Sentinel-Agent-Key", AGENT_KEYS[who])
+    elif who == "agent:highbyte":
+        # A header byte above 0x7F. Python decodes headers as latin-1
+        # and used to feed the str straight to hmac.compare_digest,
+        # which raises TypeError on non-ASCII — an unauthenticated
+        # probe 500'd all three agent endpoints instead of 401ing.
+        req.add_header("X-Sentinel-Agent-Key", "osa_\u00ff")
+    elif who == "agent:none":
+        pass
+    else:
+        token = MEMBER_TOKEN if who == "member" else TOKEN
+        req.add_header("Authorization", f"Bearer {token}")
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
@@ -417,8 +664,20 @@ def run_case(base, method, path, body, who="admin"):
 
 
 def main():
+    try:
+        return _main()
+    except FixtureError as err:
+        # Exit 2, the "do not trust this run" code the other guards use,
+        # rather than a traceback that could be mistaken for a crash in
+        # the harness logic itself.
+        print(f"\nFIXTURE ERROR — this run proves nothing:\n  {err}")
+        return 2
+
+
+def _main():
     bad = 0
-    for case in CASES:
+    cases = [c for c in CASES if not DIFF_ONLY or DIFF_ONLY in c[0] or DIFF_ONLY in c[2]]
+    for case in cases:
         name, method, path, body = case[0], case[1], case[2], case[3]
         who = case[4] if len(case) > 4 else "admin"
         py_status, py_body, py_db = run_case(PYTHON, method, path, body, who)
@@ -467,7 +726,25 @@ def main():
         print("FIXTURE TOO THIN — seed incidents and evidence before trusting this")
         return 2
 
-    print(f"{len(CASES) - bad}/{len(CASES)} identical (response + side effects), {bad} differing")
+    # An empty WATCHED table compares equal to an empty WATCHED table,
+    # so a side-effect check on a table nothing seeds proves nothing —
+    # and a table name that no longer exists fails on both sides
+    # identically, which reads exactly like agreement. Both are the same
+    # failure the camera fixture had when it aged out and still scored
+    # 31/31.
+    empty = [t for t in WATCHED
+             if not int(psql(f"SELECT COUNT(*) FROM {t}").strip() or 0)]
+    # settings and user_notification_state start empty by design: they
+    # are written BY the cases, and their emptiness at rest is the
+    # baseline a stray write would break.
+    empty = [t for t in empty if t not in ("settings", "user_notification_state")]
+    if empty:
+        print(f"WATCHED TABLES WITH NO ROWS: {', '.join(empty)} — a side-effect "
+              f"comparison over an empty table is vacuous. Seed them or drop them.")
+        return 2
+
+    scope = f" [DIFF_ONLY={DIFF_ONLY!r}: {len(cases)} of {len(CASES)} cases]" if DIFF_ONLY else ""
+    print(f"{len(cases) - bad}/{len(cases)} identical (response + side effects), {bad} differing{scope}")
     return 1 if bad else 0
 
 

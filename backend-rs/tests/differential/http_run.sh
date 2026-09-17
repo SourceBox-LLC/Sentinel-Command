@@ -47,7 +47,9 @@ else
 fi
 
 echo "seeding fixtures..."
-docker exec -i "$PG_CONTAINER" psql -U cc -d cc -q < "$HERE/seed_cameras.sql"
+# ON_ERROR_STOP: without it psql exits 0 on a SQL error and the run
+# proceeds against a half-applied fixture.
+docker exec -i "$PG_CONTAINER" psql -U cc -d cc -v ON_ERROR_STOP=1 -q < "$HERE/seed_cameras.sql"
 
 # Several ported routes page with ORDER BY <timestamp> DESC and no
 # tiebreaker, so two rows sharing a sort key let Postgres return a

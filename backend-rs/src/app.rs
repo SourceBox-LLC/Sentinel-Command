@@ -67,6 +67,22 @@ pub fn build_router(state: AppState) -> Router {
             "/api/incidents/{incident_id}/evidence/{evidence_id}/playlist.m3u8",
             ported(api::incidents::get_evidence_playlist),
         )
+        // The Sentinel agent data plane. `/runs/pending` must be
+        // registered before `/runs/{run_id}` — FastAPI matches in
+        // declaration order and would otherwise read "pending" as a run
+        // id; axum prefers the static segment either way, but the order
+        // here keeps the two files reading the same.
+        .route("/api/sentinel/runs/pending", ported(api::sentinel::list_pending_runs))
+        .route("/api/sentinel/runs/{run_id}", ported(api::sentinel::get_run))
+        .route(
+            "/api/sentinel/runs/{run_id}/start",
+            served(axum::routing::post(api::sentinel::post_run_start)),
+        )
+        .route(
+            "/api/sentinel/runs/{run_id}/complete",
+            served(axum::routing::post(api::sentinel::post_run_complete)),
+        )
+        .route("/api/sentinel/agent-keys", ported(api::sentinel::list_agent_keys))
         // Read-only camera routes (slice 2). Writes on these same paths
         // are slice 4 and must still reach Python — hence `ported`
         // rather than a bare `get`.

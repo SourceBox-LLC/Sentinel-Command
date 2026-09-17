@@ -14,6 +14,7 @@ Usage:
 """
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -30,9 +31,20 @@ TOKEN = sys.argv[1]
 # require_admin 403 goes untested, because issue_token() always mints
 # org:admin.
 MEMBER_TOKEN = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("-") else None
+
+# The raw agent key behind seed row 1 (self-host, not revoked). The
+# hash is in seed_cameras.sql.
+AGENT_KEY = "osa_00000000000000000000000000000001"
 VERBOSE = "-v" in sys.argv
 
 # (method, path, expect_auth) — expect_auth False sends no credential.
+
+# DIFF_ONLY=<substring> restricts the run to matching cases. For mutation
+# runs, where a full sweep per injected bug costs minutes and only the
+# slice's own cases can move. A filtered run says so in its result line,
+# so a filtered green is never mistaken for a full one.
+DIFF_ONLY = os.environ.get("DIFF_ONLY", "")
+
 CASES = [
     ("GET", "/api/cameras", True),
     ("GET", "/api/cameras", False),
@@ -217,6 +229,71 @@ CASES = [
     ("GET", "/api/cameras", False, {"Authorization": "bearer lowercase.token.here"}),
     ("GET", "/api/cameras", False, {"Authorization": "Bearer  double.space.token"}),
     ("GET", "/api/cameras", False, {"Authorization": "Basic dXNlcjpwYXNz"}),
+
+    # --- the sentinel agent data plane, read side ----------------------
+    #
+    # Authenticated on X-Sentinel-Agent-Key rather than a bearer token,
+    # so these pass a 4th element: extra headers. The shared
+    # SENTINEL_AGENT_KEY is unset in both tiers on purpose — an unset
+    # shared key must not disable the per-org scoped path, which is the
+    # only one a self-hosted install has.
+    *[("GET", p, False, {"X-Sentinel-Agent-Key": AGENT_KEY}) for p in [
+        "/api/sentinel/runs/pending",
+        "/api/sentinel/runs/pending?limit=1",
+        "/api/sentinel/runs/pending?limit=100",
+        # bounds and parsing, all 422 shapes
+        "/api/sentinel/runs/pending?limit=0",
+        "/api/sentinel/runs/pending?limit=101",
+        "/api/sentinel/runs/pending?limit=abc",
+        "/api/sentinel/runs/pending?limit=",
+        "/api/sentinel/runs/pending?limit=1.5",
+        "/api/sentinel/runs/pending?limit=2&limit=3",
+    ]],
+    # Every way of failing agent auth, each of which must be the same
+    # 401 with the same body — telling a caller which of the two key
+    # types they got wrong is a hint they should not have.
+    ("GET", "/api/sentinel/runs/pending", False),
+    ("GET", "/api/sentinel/runs/pending", True),
+    ("GET", "/api/sentinel/runs/pending", False,
+     {"X-Sentinel-Agent-Key": "osa_00000000000000000000000000000002"}),
+    ("GET", "/api/sentinel/runs/pending", False,
+     {"X-Sentinel-Agent-Key": "osa_ffffffffffffffffffffffffffffffff"}),
+    ("GET", "/api/sentinel/runs/pending", False, {"X-Sentinel-Agent-Key": ""}),
+    # A header byte above 0x7F: latin-1 decodable, and the reason the
+    # Python hashes bytes rather than the decoded str.
+    ("GET", "/api/sentinel/runs/pending", False,
+     {"X-Sentinel-Agent-Key": "osa_\u00ff\u00fe"}),
+    # Another tenant's scoped key: valid auth, empty queue.
+    ("GET", "/api/sentinel/runs/pending", False,
+     {"X-Sentinel-Agent-Key": "osa_00000000000000000000000000000003"}),
+
+    # A single run, read by the operator rather than the agent — session
+    # auth, org-scoped, and the only route that returns tool_trace.
+    *[("GET", f"/api/sentinel/runs/{r}", True) for r in [
+        "run0000000000000000000000000001",  # pending
+        "run0000000000000000000000000004",  # running
+        "run0000000000000000000000000005",  # error
+        "run0000000000000000000000000006",  # incident, with a real trace
+        "run0000000000000000000000000007",  # trace column is not JSON
+        "run0000000000000000000000000008",  # trace parses but is not a list
+        "run0000000000000000000000000003",  # another tenant's
+        "nosuchrun",
+        "",
+    ]],
+    ("GET", "/api/sentinel/runs/run0000000000000000000000000001", False),
+    ("GET", "/api/sentinel/runs/run0000000000000000000000000001", "member"),
+    # Not ported, and must stay on the proxy: the list reads the plan
+    # cache and the licence client.
+    ("GET", "/api/sentinel/runs", True),
+    # A static sibling under the ported `{run_id}` route. POST reaches
+    # Python through the method fallback; GET matches `{run_id}` on both
+    # stacks and 404s. route_capture.py asserts the first statically —
+    # this asserts it end to end.
+    ("GET", "/api/sentinel/runs/manual", True),
+
+    ("GET", "/api/sentinel/agent-keys", True),
+    ("GET", "/api/sentinel/agent-keys", False),
+    ("GET", "/api/sentinel/agent-keys", "member"),
 
     # --- install + MCP setup scripts: public, header-heavy -------------
     #
@@ -544,7 +621,8 @@ def main():
 
     bad = 0
     rate_limited = []
-    for case in CASES:
+    cases = [c for c in CASES if not DIFF_ONLY or DIFF_ONLY in c[1]]
+    for case in cases:
         method, path, auth = case[0], case[1], case[2]
         extra = case[3] if len(case) > 3 else None
         rs_status, rs_body, rs_head = fetch(RUST, method, path, auth, extra)
@@ -589,7 +667,8 @@ def main():
         print("Flush the limiter (docker exec cc-redis-test redis-cli FLUSHDB) and re-run.")
         return 3
 
-    print(f"\n{len(CASES) - bad}/{len(CASES)} identical, {bad} differing")
+    scope = f" [DIFF_ONLY={DIFF_ONLY!r}: {len(cases)} of {len(CASES)} cases]" if DIFF_ONLY else ""
+    print(f"\n{len(cases) - bad}/{len(cases)} identical, {bad} differing{scope}")
     return 1 if bad else 0
 
 

@@ -83,3 +83,109 @@ Nothing here is blocked on a decision to keep making progress — slices 4
 and 7 contain plenty of database-backed routes. But slice 3 as written
 cannot be completed, and pretending otherwise by porting half of
 `hls.py` would break live video.
+
+## The plan cache is invisible to this harness (2026-09-16)
+
+`resolve_org_plan` opens with:
+
+```python
+if settings.is_local_auth():
+    return "self_host"
+```
+
+and `effective_plan_for_caps` short-circuits the same way before it
+reads `payment_past_due`. Both differential tiers run
+`AUTH_PROVIDER=local`, because that is what lets them share one HS256
+secret and accept each other's tokens — so **every plan lookup in every
+harness here returns the constant `"self_host"`**, and neither the
+Setting fast path, the throttled live Clerk lookup, the 30-second
+effective-plan cache, nor the seven-day past-due grace window is
+exercised at all.
+
+That matters for the ~20 routes blocked on `core.plans`. Porting them
+against this harness would produce a run that is green because the
+interesting code never executes — the same shape as the claims corpus
+that scored 2,105/2,105 while Rust was more permissive than Python on
+four claim shapes, and the camera fixture that reported 31/31 after
+ageing out of every state it was meant to cover.
+
+Two things follow, and neither is optional:
+
+1. The hosted billing path needs its own verification, on the model of
+   `tests/clerk_verifier.rs`: a fake Clerk billing endpoint on
+   localhost, both stacks pointed at it with `AUTH_PROVIDER=clerk`, and
+   cases for the entitlement rules that have no local-auth equivalent —
+   the first `active` item winning, a `canceled` item whose
+   `period_end` is still in the future counting as entitled,
+   `period_end` arriving as epoch milliseconds or as a datetime, and a
+   failed lookup keeping the cached value rather than downgrading.
+2. Whatever runs the local-auth cases must **refuse to report** unless
+   it can show the short-circuit was not taken — a coverage guard, not
+   a comment.
+
+Until both exist, a plan-gated route moving off the proxy is unproven
+no matter what the case count says.
+
+## Two caches, one strangler (2026-09-16)
+
+While both tiers run, each holds its **own** copy of every in-process
+cache: the 30-second effective-plan cache, the 60-second resolve
+throttle, and the GitHub release cache. A Clerk webhook handled by
+Python calls `invalidate_effective_plan_cache()` in the Python process
+only, so Rust keeps serving the stale plan for up to its own TTL.
+
+Bounded and self-correcting, and it disappears when the proxy does —
+but it is a divergence no differential can see, because both caches are
+cold in a test environment. Same class as the release cache already
+documented above for `GET /api/nodes`.
+
+## What is left is one connected component, not more slices (2026-09-16)
+
+`blockers.py` reports the remaining routes grouped by primitive, which
+makes them look like six independent slices. They are not. The
+in-process caches are reached from far outside the modules that own
+them:
+
+```
+api.hls  (segment cache, playlist cache, viewer-usage accumulator)
+   <- api/cameras.py     delete a camera      -> cleanup_camera_cache
+   <- api/nodes.py       decommission, delete, plan
+   <- api/webhooks.py    organization.deleted
+   <- main.py            three background loops
+   <- mcp/server.py      snapshot_recent_segment_bytes
+
+api.ws  (ConnectionManager)
+   <- api/nodes.py       ws-status, decommission
+   <- api/cameras.py     snapshot
+   <- api/integration.py snapshot
+   <- api/settings.py    danger/full-reset
+
+mcp.activity  (tracker)
+   <- api/mcp_activity.py  recent, sessions, stats, stream
+   <- mcp/server.py        every tool call
+```
+
+A cache is only correct if exactly one process owns it. The moment Rust
+owns the segment cache, every call site above has to be in Rust too —
+otherwise Python's `cleanup_camera_cache` clears a cache Rust is not
+serving from, and a deleted camera keeps streaming out of Rust's copy
+until its own eviction runs. That is a correctness bug no differential
+can see, because both caches are cold in a test environment.
+
+Those call sites drag in `core.plans`, `core.email` and
+`core.license_client` in turn. So the honest shape of the remaining
+work is:
+
+* **route-by-route, still safe:** anything that touches none of the
+  above. `blockers.py` lists what is left of that, and it is thinning.
+* **one atomic slice, ~4,200 lines:** `api/hls.py` (969),
+  `api/ws.py` (729), `mcp/server.py` (2,262) and `mcp/activity.py`
+  (250), together with the call sites that reach into them and the
+  background loops in `main.py`. This is also where the memory argument
+  lands — the segment cache is capped at 384 MB on a 985 MB machine,
+  and the idle tiers measure 23 MB (Rust, debug) against 143 MB
+  (Python).
+
+The strangler bought the first 42 routes cheaply. It does not divide
+the last group, and pretending otherwise would mean shipping a
+two-process cache split.

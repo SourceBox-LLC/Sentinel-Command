@@ -20,6 +20,11 @@ pub struct Config {
     pub static_dir: String,
     /// Install and MCP-setup scripts, served verbatim.
     pub scripts_dir: String,
+    /// The shared, multi-tenant key SourceBox's own Sentinel agent
+    /// presents. Unset on a self-hosted install — which must NOT
+    /// disable the per-org scoped keys, since that deployment is
+    /// exactly the one that issues them.
+    pub sentinel_agent_key: Option<String>,
 
     // --- Clerk ---------------------------------------------------------
     pub clerk_secret_key: String,
@@ -90,6 +95,7 @@ impl Config {
             upstream: var_or("PYTHON_UPSTREAM", "http://127.0.0.1:8001"),
             static_dir: var_or("STATIC_DIR", "/app/static"),
             scripts_dir: var_or("SCRIPTS_DIR", "/app/scripts"),
+            sentinel_agent_key: std::env::var("SENTINEL_AGENT_KEY").ok().filter(|v| !v.is_empty()),
             clerk_issuer: crate::auth::issuer_from_publishable_key(&clerk_publishable_key),
             clerk_secret_key: var_or("CLERK_SECRET_KEY", ""),
             clerk_publishable_key,
@@ -142,6 +148,7 @@ mod tests {
             upstream: String::new(),
             static_dir: String::new(),
             scripts_dir: String::new(),
+            sentinel_agent_key: None,
             clerk_secret_key: secret.into(),
             clerk_publishable_key: publishable.into(),
             clerk_issuer: None,

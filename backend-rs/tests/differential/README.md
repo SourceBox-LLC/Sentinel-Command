@@ -152,6 +152,125 @@ timestamp shapes.
 (Counts are from the 31-case run at slice 2's first commit; the suite has
 since grown to 366.)
 
+### Running the tiers
+
+```bash
+tests/differential/tiers.sh start        # both, over the test Postgres + Redis
+tests/differential/tiers.sh restart-rust # rebuild and restart :8000 only
+tests/differential/tiers.sh status
+```
+
+Everything the two tiers need to behave alike lives in that one script,
+because when it did not, they drifted: a Rust tier restarted without
+`SCRIPTS_DIR` 500'd `/install.sh` against a Python that served it fine,
+and a mutation driver that set its own environment forgot
+`LOCAL_ADMIN_PASSWORD_HASH` and added a constant two-case divergence to
+every result it scored. Nothing else may start a tier.
+
+One non-obvious property, worth knowing before debugging a "hang": the
+script spawns its daemons through a `spawn` helper that closes their
+path back to the caller's stdout. Without it a forked subshell outlives
+the script still holding that pipe, and `tiers.sh start | tail` — or
+`subprocess.run(capture_output=True)` — waits forever on a pipe nobody
+will write to, minutes after the tiers came up healthy. The daemons'
+own descriptors were clean the whole time; it took listing every
+pipe-holding process to find the subshell.
+
+### The Sentinel agent data plane
+
+`/runs/pending`, `/runs/{id}/start` and `/runs/{id}/complete`
+authenticate on `X-Sentinel-Agent-Key`, so their cases pass a header
+rather than a bearer token — a route that fell back to session auth
+would otherwise pass. Three keys are seeded: live, revoked, and
+another tenant's. `SENTINEL_AGENT_KEY` stays unset in both tiers on
+purpose: an unset shared key must not disable the scoped path, since a
+self-hosted install is exactly the deployment that issues scoped keys
+and never sets the shared one.
+
+`sentinel_agent_keys` is in `WATCHED` even though no case is supposed
+to write to it: every agent-authenticated request stamps `last_used_at`
+as a side effect, and a port that skipped the stamp would look perfect
+in the response.
+
+`/complete` carries the most Pydantic surface of anything ported so
+far, and its coercion rules were **measured against the running
+service**, not reasoned out — they are looser than Rust's and tighter
+than Python's `int()` in different places. `"7.0"` is a valid integer
+and `"1e3"` is not, though JSON `1e3` is; `"1_000"` is fine and
+`"1__0"` is not; `true` is 1 because `bool` subclasses `int`; `null`
+is `int_type` while `"abc"` is `int_parsing` and `2.7` is
+`int_from_float`. Each of those is a case.
+
+## Plan resolution (the blind spot)
+
+```bash
+tests/differential/plan_run.sh        # add -v to list every case
+```
+
+Drives the **real** `app/core/plans.py` and the Rust `plans` module
+over one fake Clerk and one Postgres, and compares the resolved plan,
+its display name and its limits, case by case.
+
+This is separate from the HTTP differential because that harness is
+structurally blind here. `resolve_org_plan` opens with
+
+```python
+if settings.is_local_auth():
+    return "self_host"
+```
+
+and both tiers there run `AUTH_PROVIDER=local` — that is what lets them
+share one HS256 secret and accept each other's tokens. So every plan
+lookup in every other harness in this directory returns one constant,
+and the entitlement rules, the two in-process caches and the seven-day
+past-due grace have never executed under test. Roughly twenty routes
+gate on this code, and porting them against a harness that cannot see
+it would produce a green run for the same reason the claims corpus once
+scored 2,105/2,105 while Rust was more permissive than Python on four
+claim shapes.
+
+Neither probe goes through HTTP, deliberately. Reaching this code
+through a request would mean `AUTH_PROVIDER=clerk` on both tiers and
+therefore real RS256 session tokens from a Clerk instance neither tier
+has. The entitlement logic needs none of that — so the probes call the
+functions, the way `run.sh` does for claim extraction.
+
+**One case list, in `plan_cases.json`.** It began as a literal inside
+the Python probe and was lifted out before the Rust one was written:
+two copies of a case list drift, and a harness whose two sides quietly
+test different inputs reports agreement it has not earned.
+
+**`fake_clerk.py`** serves
+`GET /v1/organizations/{org}/billing/subscription` with scripted
+payloads, plus `/__scenario`, `/__calls` and `/__reset`. Its payloads
+are shaped from the SDK's own models rather than guessed, because a
+model validation error inside `fetch_live_plan_slug` is swallowed by
+its blanket `except` and returns `None` — which reads as "Clerk was
+unreachable". A fake that is wrong in *that* direction turns every case
+green while testing nothing. Two rounds of this happened while writing
+it: an incomplete `Plan` object, and `slug` turning out to be a
+required non-nullable `str` (so the `if not slug: continue` branch is
+reachable only with an **empty** slug, never a missing one).
+
+Three guards, because this harness is the easiest one here to make
+vacuous:
+
+* both probes refuse to report unless the fake was actually called at
+  least as often as the case list says it should have been. That guard
+  has already earned its place — it caught the fake resetting its own
+  call counter on every scenario change;
+* the Python probe refuses to run at all if `AUTH_PROVIDER` resolves to
+  local, since every case would then short-circuit to `self_host`;
+* the comparison fails if fewer than three distinct plans came back
+  across the whole run — a constant is exactly what a stubbed resolver
+  and a short-circuit both look like.
+
+The grace boundary is probed at `@-6.9d` and `@-7.1d` rather than
+exactly `@-7d`. The rule is `age > timedelta(days=7)`, so at exactly
+seven days the answer depends on how many milliseconds elapsed between
+seeding the row and comparing it — and the two probes would not
+necessarily land on the same side.
+
 ### Headers are compared, because for some routes they *are* the answer
 
 `COMPARED_HEADERS` started as the CORS and security sets — things that

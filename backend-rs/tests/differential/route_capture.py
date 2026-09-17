@@ -53,18 +53,33 @@ def rust_routes():
     calls, so it reads cleanly.
     """
     src = (BACKEND_RS / "src" / "app.rs").read_text()
-    ported, pinned = [], set()
-    for path, handler in re.findall(r'\.route\(\s*"([^"]+)"\s*,\s*(\w+)', src):
+    ported, pinned, methods = [], set(), {}
+    for m in re.finditer(r'\.route\(\s*"([^"]+)"\s*,\s*(\w+)', src):
+        path, handler = m.group(1), m.group(2)
         if handler == "still_python":
             pinned.add(path)
-        else:
-            ported.append(path)
-    return ported, pinned
+            continue
+        ported.append(path)
+        # Which methods Rust actually *handles* on this path. `ported()`
+        # is GET; `served(axum::routing::post(..))` and friends name
+        # their own. Everything else on the path falls through to
+        # `proxy::forward`, which is why a parameterised route does not
+        # necessarily swallow a static sibling.
+        body = src[m.end():src.index("\n        .route", m.end())
+                   if "\n        .route" in src[m.end():] else len(src)]
+        verbs = set(re.findall(r'axum::routing::(get|post|put|patch|delete)\b', body))
+        methods[path] = {v.upper() for v in verbs} or {"GET"}
+    return ported, pinned, methods
 
 
 def main():
-    paths = sorted(app.openapi()["paths"].keys())
-    ported, pinned = rust_routes()
+    schema = app.openapi()["paths"]
+    paths = sorted(schema.keys())
+    python_methods = {
+        p: {m.upper() for m in ops if m.upper() not in ("HEAD", "OPTIONS")}
+        for p, ops in schema.items()
+    }
+    ported, pinned, rust_methods = rust_routes()
     params = [p for p in ported if "{" in p]
 
     print(f"{len(paths)} python paths, {len(ported)} ported, {len(pinned)} pinned to proxy")
@@ -84,9 +99,27 @@ def main():
                 continue
             if p in pinned or p in ported:
                 print(f"  ok   {pat} captures {p} — pinned")
-            else:
-                print(f"  FAIL {pat} captures {p} — NOT pinned, Rust will 404 it")
-                unpinned.append(p)
+                continue
+            # A parameterised route only swallows a static sibling on the
+            # methods it actually handles. `ported()` installs
+            # `.fallback(proxy::forward)`, so a POST-only sibling under a
+            # GET-only parameterised route still reaches Python.
+            #
+            # Without this the check failed on
+            # /api/sentinel/runs/manual, which is POST-only under a
+            # GET-only /runs/{run_id} and was in fact proxied correctly
+            # — verified against both tiers. A checker that cries wolf
+            # gets ignored, which costs more than the case it caught.
+            overlap = python_methods.get(p, set()) & rust_methods.get(pat, set())
+            if not overlap:
+                only = ",".join(sorted(python_methods.get(p, set()))) or "-"
+                takes = ",".join(sorted(rust_methods.get(pat, set()))) or "-"
+                print(f"  ok   {pat} ({takes}) does not capture {p} ({only}) — "
+                      f"no shared method, so it falls through to the proxy")
+                continue
+            print(f"  FAIL {pat} captures {p} on {','.join(sorted(overlap))} — "
+                  f"NOT pinned, Rust will answer it itself")
+            unpinned.append(p)
 
     if unpinned:
         print(f"\n{len(unpinned)} path(s) would be swallowed. Add "

@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Prove a harness has teeth: inject each bug in a spec, run, restore.
+
+Every checker in this directory has been wrong in the false-pass
+direction at least once, so a new case list is not trusted until a
+deliberately broken port makes it fail. This driver used to be
+rewritten per slice in a scratch directory, and each rewrite relearned
+the same two lessons the hard way:
+
+* restore in `finally`, never after the run — one version died on a
+  timeout mid-mutation and left `if false` where the scoped-key org
+  filter belongs: a tenant leak sitting in the source;
+* restart tiers only through `tiers.sh` — one version started Rust from
+  its own inlined environment, forgot LOCAL_ADMIN_PASSWORD_HASH, and
+  added a constant two-case divergence to every result it scored.
+
+Spec format (tests/differential/mutations/*.json):
+
+    {
+      "restart_rust": true,                 # rebuild + restart :8000 per mutation
+      "harness": [["tests/differential/http_run.sh"], ...],
+      "env": {"DIFF_ONLY": "sentinel"},      # optional, passed to harness
+      "mutations": [
+        {"name": "...", "file": "src/...", "old": "...", "new": "...",
+         "equivalent": "optional: why no observable behaviour changes"}
+      ]
+    }
+
+A mutation marked `equivalent` is expected to be caught by nothing, and
+the reason is printed — so an equivalent mutant is a documented
+decision rather than a quiet MISS someone later "fixes" by adding a
+case that cannot fail.
+
+Exit status is 1 if any non-equivalent mutation was missed.
+"""
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import re
+import subprocess
+import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+RS = HERE.parents[1]
+
+COUNT = re.compile(r"(\d+)/(\d+) identical[^\n]*?(\d+) differing")
+GUARDS = ("COVERAGE TOO THIN", "REFUSING", "FIXTURE TOO THIN", "WATCHED TABLES WITH NO ROWS")
+
+
+def restart_rust() -> bool:
+    r = subprocess.run([str(HERE / "tiers.sh"), "restart-rust"],
+                       capture_output=True, text=True, cwd=RS, timeout=900)
+    return ":8000 healthy" in r.stdout
+
+
+def run_harness(cmds, env) -> tuple[int | None, str]:
+    total, notes = 0, []
+    for cmd in cmds:
+        r = subprocess.run([str(RS / cmd[0]), *cmd[1:]], capture_output=True, text=True,
+                           cwd=RS, timeout=3600, env={**os.environ, **env})
+        out = r.stdout + r.stderr
+        m = COUNT.search(out)
+        if m:
+            total += int(m.group(3))
+            continue
+        guard = next((g for g in GUARDS if g in out), None)
+        if guard:
+            notes.append(f"{pathlib.Path(cmd[0]).name}: guard '{guard}'")
+            total += 1  # a guard firing on a mutant is a catch
+            continue
+        if "failed" in out.lower() or r.returncode not in (0, 1):
+            notes.append(f"{pathlib.Path(cmd[0]).name}: no result (rc={r.returncode})")
+            return None, "; ".join(notes)
+    return total, "; ".join(notes)
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return 64
+    spec = json.loads(pathlib.Path(sys.argv[1]).read_text())
+    only = sys.argv[2] if len(sys.argv) > 2 else None
+    env = spec.get("env", {})
+    results = []
+
+    for mut in spec["mutations"]:
+        if only and only not in mut["name"]:
+            continue
+        path = RS / mut["file"]
+        original = path.read_text()
+        if mut["old"] not in original:
+            results.append((mut, "PATCH DID NOT APPLY", ""))
+            print(f"  !!  patch did not apply: {mut['name']}", flush=True)
+            continue
+        try:
+            path.write_text(original.replace(mut["old"], mut["new"], 1))
+            if spec.get("restart_rust") and not restart_rust():
+                results.append((mut, "DID NOT BUILD", ""))
+                print(f"  !!  did not build: {mut['name']}", flush=True)
+                continue
+            caught, notes = run_harness(spec["harness"], env)
+            results.append((mut, caught, notes))
+            print(f"  {str(caught):>5}  {mut['name']}" + (f"   [{notes}]" if notes else ""), flush=True)
+        finally:
+            path.write_text(original)
+
+    if spec.get("restart_rust"):
+        restart_rust()
+
+    missed = 0
+    print("\n=== summary ===")
+    for mut, caught, notes in results:
+        eq = mut.get("equivalent")
+        if eq:
+            flag = "EQUIV" if caught == 0 else "EQ?? "
+            print(f"{flag} {str(caught):>5}  {mut['name']}\n              ({eq})")
+            continue
+        ok = isinstance(caught, int) and caught > 0
+        missed += 0 if ok else 1
+        print(f"{'OK   ' if ok else 'MISS '} {str(caught):>5}  {mut['name']}")
+    return 1 if missed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

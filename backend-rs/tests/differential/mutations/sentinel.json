@@ -1,0 +1,149 @@
+{
+ "_comment": "Mutations for the Sentinel agent data plane, scored by the read and write differentials restricted to /api/sentinel cases. See mutate.py. The first twelve were confirmed caught in an earlier, unrecorded run.",
+ "restart_rust": true,
+ "env": {
+  "DIFF_ONLY": "sentinel"
+ },
+ "harness": [
+  [
+   "tests/differential/http_run.sh"
+  ],
+  [
+   "tests/differential/write_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "scoped key sees every org's queue",
+   "file": "src/api/sentinel.rs",
+   "old": "    let rows: Vec<SentinelRunRow> = if agent.scoped {",
+   "new": "    let rows: Vec<SentinelRunRow> = if false {"
+  },
+  {
+   "name": "pending runs come back newest-first",
+   "file": "src/api/sentinel.rs",
+   "old": "ORDER BY triggered_at ASC LIMIT $2",
+   "new": "ORDER BY triggered_at DESC LIMIT $2"
+  },
+  {
+   "name": "last_used_at is never stamped",
+   "file": "src/api/sentinel.rs",
+   "old": "if let Err(err) = sqlx::query(\"UPDATE sentinel_agent_keys SET last_used_at = $1 WHERE id = $2\")",
+   "new": "if let Err(err) = sqlx::query(\"UPDATE sentinel_agent_keys SET last_used_at = last_used_at WHERE $1::timestamp IS NOT NULL AND id = $2\")"
+  },
+  {
+   "name": "a revoked key still authenticates",
+   "file": "src/api/sentinel.rs",
+   "old": "WHERE key_hash = $1 AND revoked = false",
+   "new": "WHERE key_hash = $1"
+  },
+  {
+   "name": "a scoped key may touch any org's run",
+   "file": "src/api/sentinel.rs",
+   "old": "    if agent.scoped && Some(row.org_id.as_str()) != agent.org_id.as_deref() {",
+   "new": "    if false {"
+  },
+  {
+   "name": "claimed is always true",
+   "file": "src/api/sentinel.rs",
+   "old": "    result[\"claimed\"] = json!(false);",
+   "new": "    result[\"claimed\"] = json!(true);"
+  },
+  {
+   "name": "a terminal run may be downgraded to error",
+   "file": "src/api/sentinel.rs",
+   "old": "let upgrading = row.outcome == \"error\" && matches!(outcome.as_str(), \"incident\" | \"no_action\");",
+   "new": "let upgrading = true;"
+  },
+  {
+   "name": "a terminal run is never re-completed",
+   "file": "src/api/sentinel.rs",
+   "old": "let upgrading = row.outcome == \"error\" && matches!(outcome.as_str(), \"incident\" | \"no_action\");",
+   "new": "let upgrading = false;"
+  },
+  {
+   "name": "severity survives a non-incident outcome",
+   "file": "src/api/sentinel.rs",
+   "old": "    .bind(if is_incident { severity.as_deref() } else { None })",
+   "new": "    .bind(severity.as_deref())"
+  },
+  {
+   "name": "started_at is overwritten rather than backfilled",
+   "file": "src/api/sentinel.rs",
+   "old": "started_at = COALESCE(started_at, $7),",
+   "new": "started_at = $7,"
+  },
+  {
+   "name": "a foreign incident_id is accepted",
+   "file": "src/api/sentinel.rs",
+   "old": "sqlx::query_as(\"SELECT id FROM incidents WHERE id = $1 AND org_id = $2\")",
+   "new": "sqlx::query_as(\"SELECT id FROM incidents WHERE id = $1 AND $2 = $2\")"
+  },
+  {
+   "name": "the 400 message uses double quotes",
+   "file": "src/api/sentinel.rs",
+   "old": "    let quote = if has_single && !has_double { '\"' } else { '\\'' };",
+   "new": "    let quote = '\"';"
+  },
+  {
+   "name": "the trace keeps more than fifty entries",
+   "file": "src/api/sentinel.rs",
+   "old": "let start = trace.len().saturating_sub(50);",
+   "new": "let start = 0;"
+  },
+  {
+   "name": "trace fields are not capped",
+   "file": "src/api/sentinel.rs",
+   "old": "    let tool = cap_str(map.get(\"tool\"), 200);\n        let result = cap_str(map.get(\"result\"), 1000);",
+   "new": "    let tool = cap_str(map.get(\"tool\"), 100000);\n        let result = cap_str(map.get(\"result\"), 100000);"
+  },
+  {
+   "name": "trace is serialised with serde separators",
+   "file": "src/api/sentinel.rs",
+   "old": "    crate::audit::python_json_value(&Value::Array(sanitised))",
+   "new": "    serde_json::to_string(&Value::Array(sanitised)).unwrap_or_default()"
+  },
+  {
+   "name": "a negative count is stored as-is",
+   "file": "src/api/sentinel.rs",
+   "old": "i32::try_from(tool_call_count.max(0)).unwrap_or(i32::MAX)",
+   "new": "i32::try_from(tool_call_count).unwrap_or(i32::MAX)"
+  },
+  {
+   "name": "a fractional float is accepted as an int",
+   "file": "src/query.rs",
+   "old": "                Some(_) => Err(IntError::FromFloat),",
+   "new": "                Some(f) => Ok(f as i64),"
+  },
+  {
+   "name": "a whole float is rejected",
+   "file": "src/query.rs",
+   "old": "                Some(f) if f.fract() == 0.0 => Ok(f as i64),",
+   "new": "                Some(f) if f.is_nan() => Ok(f as i64),"
+  },
+  {
+   "name": "null is treated as a string that fails to parse",
+   "file": "src/query.rs",
+   "old": "        _ => Err(IntError::Type),\n    }\n}\n\nfn parse_pydantic_int_str",
+   "new": "        _ => Err(IntError::Parsing),\n    }\n}\n\nfn parse_pydantic_int_str"
+  },
+  {
+   "name": "a decimal string is rejected",
+   "file": "src/query.rs",
+   "old": "    let (int_part, frac_part) = cleaned.split_once('.')?;",
+   "new": "    let (int_part, frac_part) = if cleaned.is_empty() { cleaned.split_once('.')? } else { return None };"
+  },
+  {
+   "name": "an explicit null is a missing field again",
+   "file": "src/query.rs",
+   "old": "        match body.get(field) {\n            None => {\n                self.missing(field, body);\n                String::new()\n            }",
+   "new": "        match body.get(field) {\n            None | Some(Value::Null) => {\n                self.missing(field, body);\n                String::new()\n            }"
+  },
+  {
+   "name": "a list index is dropped from the summary",
+   "file": "src/query.rs",
+   "old": "                    Value::Number(n) => Some(n.to_string()),",
+   "new": "                    Value::Number(_) => None,"
+  }
+ ]
+}

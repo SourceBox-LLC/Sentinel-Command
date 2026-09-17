@@ -379,3 +379,75 @@ VALUES
   -- a caller in that band, `count > 99` and `count > 50` agree on every
   -- request and a wrong threshold is invisible — which it was.
   ('local-member', 'self-host', now()::timestamp - interval '100 minutes', NULL);
+
+-- ---- sentinel agent keys + runs -------------------------------------
+--
+-- The agent data plane authenticates on X-Sentinel-Agent-Key: either
+-- the shared SENTINEL_AGENT_KEY (unset here, and deliberately so — an
+-- unset shared key must not disable the scoped path) or a row below,
+-- matched by SHA-256 of the presented bytes. The raw keys are
+--   osa_...0001  live, self-host
+--   osa_...0002  revoked
+--   osa_...0003  another tenant's
+DELETE FROM sentinel_agent_keys;
+ALTER SEQUENCE IF EXISTS sentinel_agent_keys_id_seq RESTART WITH 1;
+INSERT INTO sentinel_agent_keys
+  (org_id, key_hash, key_last4, name, created_at, created_by, last_used_at, revoked)
+VALUES
+  ('self-host', '09ac8c6b2b2c93693461f987c7eeee30a332606638b2b95de2479f0322d62d08',
+   '0001', 'Live Agent', timestamp '2026-09-01 10:00:00', 'user:local-admin',
+   timestamp '2026-09-10 09:00:00', false),
+  ('self-host', 'dd6d4c83fc5f5501a8f3b53847163680df4eb527d69dddd8934a108335fa5c16',
+   '0002', 'Revoked Agent', timestamp '2026-09-02 10:00:00', 'user:local-admin',
+   NULL, true),
+  ('other-org', 'e4e30ad9b553c9f0456588a064dbe606c7041b0cb1e408a8e7f301adeadb69a3',
+   '0003', 'Theirs', timestamp '2026-09-03 10:00:00', 'user:them', NULL, false);
+
+DELETE FROM sentinel_runs;
+INSERT INTO sentinel_runs
+  (id, org_id, triggered_at, trigger_type, camera_id, tool_call_count, outcome,
+   severity, incident_id, started_at, completed_at, manual_prompt, summary,
+   tool_trace, updated_at)
+VALUES
+  -- pending, oldest first: /runs/pending is FIFO and a scoped key must
+  -- see only its own org's queue
+  ('run0000000000000000000000000001', 'self-host', timestamp '2026-09-01 07:00:00',
+   'motion', 'cam-live', 0, 'pending', NULL, NULL, NULL, NULL, NULL, '', NULL,
+   timestamp '2026-09-01 07:00:00'),
+  ('run0000000000000000000000000002', 'self-host', timestamp '2026-09-01 08:00:00',
+   'scheduled', NULL, 0, 'pending', NULL, NULL, NULL, NULL, NULL, '', NULL,
+   timestamp '2026-09-01 08:00:00'),
+  -- another tenant's pending run: present in the shared queue, absent
+  -- from a scoped one
+  ('run0000000000000000000000000003', 'other-org', timestamp '2026-09-01 06:00:00',
+   'motion', 'cam-theirs', 0, 'pending', NULL, NULL, NULL, NULL, NULL, '', NULL,
+   timestamp '2026-09-01 06:00:00'),
+  -- already running: /start must answer claimed=false
+  ('run0000000000000000000000000004', 'self-host', timestamp '2026-09-02 09:00:00',
+   'manual', 'cam-live', 3, 'running', NULL, NULL, timestamp '2026-09-02 09:00:05',
+   NULL, 'have a look at the front door', '', NULL, timestamp '2026-09-02 09:00:05'),
+  -- terminal: error, which /complete may upgrade to a real outcome
+  ('run0000000000000000000000000005', 'self-host', timestamp '2026-09-03 09:00:00',
+   'motion', 'cam-live', 2, 'error', NULL, NULL, timestamp '2026-09-03 09:00:01',
+   timestamp '2026-09-03 09:04:31', NULL, 'timed out', NULL,
+   timestamp '2026-09-03 09:04:31'),
+  -- terminal: incident, which /complete must NOT downgrade to error
+  ('run0000000000000000000000000006', 'self-host', timestamp '2026-09-04 09:00:00',
+   'incident_opened', 'cam-live', 5, 'incident', 'high', 1,
+   timestamp '2026-09-04 09:00:01', timestamp '2026-09-04 09:02:00', NULL,
+   'filed one', '[{"tool": "get_camera", "args": {"camera_id": "cam-live"}, "result": "ok"}]',
+   timestamp '2026-09-04 09:02:00'),
+  -- terminal: no_action, with a tool_trace that is not valid JSON —
+  -- get_tool_trace() swallows the error and returns []
+  ('run0000000000000000000000000007', 'self-host', timestamp '2026-09-05 09:00:00',
+   'scheduled', NULL, 1, 'no_action', NULL, NULL, timestamp '2026-09-05 09:00:01',
+   timestamp '2026-09-05 09:00:30', NULL, 'nothing to report', 'not json at all',
+   timestamp '2026-09-05 09:00:30'),
+  -- a trace that parses but is not a list: also []
+  ('run0000000000000000000000000008', 'self-host', timestamp '2026-09-06 09:00:00',
+   'scheduled', NULL, 0, 'no_action', NULL, NULL, NULL, timestamp '2026-09-06 09:00:10',
+   NULL, '', '{"not": "a list"}', timestamp '2026-09-06 09:00:10'),
+  -- another tenant's terminal run, for the cross-org 404s
+  ('run0000000000000000000000000009', 'other-org', timestamp '2026-09-07 09:00:00',
+   'motion', 'cam-theirs', 0, 'pending', NULL, NULL, NULL, NULL, NULL, '', NULL,
+   timestamp '2026-09-07 09:00:00');
