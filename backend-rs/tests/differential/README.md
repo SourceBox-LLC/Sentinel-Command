@@ -201,6 +201,61 @@ and `"1e3"` is not, though JSON `1e3` is; `"1_000"` is fine and
 is `int_type` while `"abc"` is `int_parsing` and `2.7` is
 `int_from_float`. Each of those is a case.
 
+## When a rate limit is spent
+
+```bash
+tests/differential/ratelimit_order.py ADMIN_TOKEN MEMBER_TOKEN [route]
+```
+
+`ratelimit_parity.py` proves each ported route declares the budget its
+Python decorator does. It cannot see *which requests spend it*, and the
+two stacks disagreed.
+
+slowapi's `@limiter.limit` wraps the endpoint function, and FastAPI
+resolves every dependency before calling it — authentication, and path,
+query and body validation. So a request refused with 401, 403 or 422
+never reaches the limiter. An `HTTPException` raised inside the function
+does. Measured on the running service: six member 403s against the
+5/hour wipe-logs route and then an admin call — 200; twenty-one 422s
+against the 20/hour node create and then a valid one — 200; six
+in-handler 404s against the 5/minute rotate-key — the sixth was a 429.
+
+The Rust port checked the limit in an extractor that ran first, so it
+spent a slot on every refused request. On an admin route that let a
+member exhaust the whole organisation's budget and lock the admin out —
+in Rust only.
+
+For each rate-limited ported route the harness sends, to each tier:
+
+* **A.** `LIMIT + 1` requests Python refuses before its limiter, then one
+  that reaches the handler — which must not be a 429;
+* **B.** `LIMIT` requests that reach the handler, then one more — which
+  must be a 429 on both, so moving the check later cannot silently drop
+  it.
+
+It also refuses its own bad cases: a "refused" form that Python counts
+after all is reported, not scored. That caught two while writing it —
+`toggle_recording` and `motion-ingestion` read their bodies with `await
+request.json()` inside the function, so malformed JSON there *is*
+counted.
+
+## Mutation runs
+
+```bash
+tests/differential/mutate.py tests/differential/mutations/<slice>.json
+```
+
+Injects each bug in a spec, runs the named harnesses, restores. It
+refuses to start unless every file it will touch is clean in git, turns
+SIGTERM and SIGHUP into the same restoring path as SIGINT, and leaves
+`target/mutation-in-progress.json` while a mutation is applied.
+
+Stop a run by signalling the **Python process**, not a shell that
+launched it. That is how "a revoked agent key still authenticates" was
+once left in the source: the SIGINT went to a bash wrapper, the driver
+was orphaned mid-mutation, and the tier had already been rebuilt from
+the mutated file.
+
 ## Plan resolution (the blind spot)
 
 ```bash

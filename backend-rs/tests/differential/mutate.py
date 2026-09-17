@@ -97,10 +97,36 @@ def _interrupt(signum, _frame):
 
 
 def main() -> int:
+    """Run, and always leave the tier built from the restored source.
+
+    The rebuild used to follow the loop, so an interrupted run restored
+    the file but left :8000 running the last mutant's binary — the next
+    differential then reported that mutant's diffs as if they were real.
+    """
+    rebuild = False
+    try:
+        code, rebuild = _main()
+        return code
+    except KeyboardInterrupt:
+        rebuild = True
+        print("\ninterrupted — source restored, rebuilding the Rust tier", flush=True)
+        return 130
+    finally:
+        if rebuild:
+            restart_rust()
+
+
+def _main() -> tuple[int, bool]:
     if len(sys.argv) < 2:
         print(__doc__)
-        return 64
-    spec = json.loads(pathlib.Path(sys.argv[1]).read_text())
+        return 64, False
+    args = sys.argv[1:]
+    start_from = None
+    if "--from" in args:
+        i = args.index("--from")
+        start_from = args[i + 1]
+        del args[i:i + 2]
+    spec = json.loads(pathlib.Path(args[0]).read_text())
 
     if MARKER.exists():
         info = json.loads(MARKER.read_text())
@@ -108,22 +134,30 @@ def main() -> int:
               f"  {info['name']}\n  in {info['file']}\n"
               f"Restore it with `git checkout -- {info['file']}`, rebuild, "
               f"then delete {MARKER}.")
-        return 2
+        return 2, False
     files = sorted({m["file"] for m in spec["mutations"]})
     dirty = subprocess.run(["git", "diff", "--name-only", "--", *files],
                            capture_output=True, text=True, cwd=RS).stdout.split()
     if dirty:
         print("REFUSING: these files have uncommitted changes, so git could not "
               "restore them if this run were killed mid-mutation:\n  " + "\n  ".join(dirty))
-        return 2
+        return 2, False
 
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, _interrupt)
-    only = sys.argv[2] if len(sys.argv) > 2 else None
+    only = args[1] if len(args) > 1 else None
     env = spec.get("env", {})
     results = []
 
+    started = start_from is None
     for mut in spec["mutations"]:
+        # --from NAME resumes a stopped run at the first mutation whose
+        # name contains NAME, so a hang late in a run does not cost the
+        # whole run again.
+        if not started:
+            if start_from not in mut["name"]:
+                continue
+            started = True
         if only and only not in mut["name"]:
             continue
         path = RS / mut["file"]
@@ -147,9 +181,6 @@ def main() -> int:
             path.write_text(original)
             MARKER.unlink(missing_ok=True)
 
-    if spec.get("restart_rust"):
-        restart_rust()
-
     missed = 0
     print("\n=== summary ===")
     for mut, caught, notes in results:
@@ -161,7 +192,7 @@ def main() -> int:
         ok = isinstance(caught, int) and caught > 0
         missed += 0 if ok else 1
         print(f"{'OK   ' if ok else 'MISS '} {str(caught):>5}  {mut['name']}")
-    return 1 if missed else 0
+    return (1 if missed else 0), bool(spec.get("restart_rust"))
 
 
 if __name__ == "__main__":

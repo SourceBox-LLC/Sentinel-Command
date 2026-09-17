@@ -44,30 +44,55 @@ helps the caller already holding the loop.
 Fix directions: wrap the call in `asyncio.to_thread`, and give the SDK
 client a retry budget measured in seconds rather than an hour.
 
-## 2. `jsonable_encoder` missing in the 422 handler
+## 2. A list `audio_codec` is stored as `{a,b}` and bypasses validation
+
+`POST /api/cameras/{camera_id}/codec` checks
+`len(audio_codec) > 64 or "\n" in audio_codec or "\r" in audio_codec`.
+For a JSON list those are the list's own length and element membership,
+not the text that gets stored — then psycopg adapts the list to a
+Postgres array and the column receives its text form. Measured:
+`["a", "b"]` stores `{a,b}`, `["a b"]` stores `{"a b"}`, `[1, 2]`
+stores `{1,2}`.
+
+`audio_codec` is written into the HLS `CODECS` attribute, where a comma
+separates codecs — so this is a malformed-playlist injection past a
+check that exists specifically "to prevent playlist corruption". No
+CameraNode sends a list; any authenticated node key can. The Rust port
+refuses (500) rather than reproducing it, recorded in
+`tests/differential/expected_divergences.md`.
+
+## 3. The codec check allows 64 characters into a 50-character column
+
+The same handler accepts `video_codec` and `audio_codec` up to 64
+characters, and both columns are `String(50)`. A 51-64 character codec
+passes validation and 500s on commit with
+`value too long for type character varying(50)`. The port matches this
+(same column, same error) rather than tightening it.
+
+## 4. `jsonable_encoder` missing in the 422 handler
 
 Every custom Pydantic validator 500s instead of returning its 422.
 Reachable from the UI by typing `8:30` into the schedule field.
 
-## 3. `AuditLog.to_dict()` calls `.isoformat()` on a nullable column
+## 5. `AuditLog.to_dict()` calls `.isoformat()` on a nullable column
 
 One row with a NULL timestamp 500s a whole page of audit logs.
 
-## 4. `/settings/motion-ingestion` calls `.lower()` on `None`
+## 6. `/settings/motion-ingestion` calls `.lower()` on `None`
 
 500 rather than a 422.
 
-## 5. A JSON body sent with `Content-Type: text/plain` 500s
+## 7. A JSON body sent with `Content-Type: text/plain` 500s
 
 FastAPI reads the body for a declared Pydantic model but raises when the
 media type is not JSON.
 
-## 6. An out-of-range path integer 500s
+## 8. An out-of-range path integer 500s
 
 `incident_id` is unbounded in Python and `Integer` in the column, so
 anything past int32 is a `NumericValueOutOfRange` rather than a 404.
 
-## 7. `has_permission` is a substring test when `org_permissions` is a string
+## 9. `has_permission` is a substring test when `org_permissions` is a string
 
 `"org:sys_memberships:manage" in claims["org_permissions"]` is a
 substring match on a string, so a crafted single-permission claim can
@@ -76,7 +101,7 @@ satisfy an admin check. Only reachable if Clerk ever emits
 
 ---
 
-Cases 2-6 are reproduced every run by
+Cases 4-8 are reproduced every run by
 `tests/differential/latent_crashes.sh`, which asserts that Rust serves
 through each one. Case 1 has no harness — it is a concurrency property,
 not a response.

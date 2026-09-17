@@ -510,20 +510,40 @@ class FixtureError(RuntimeError):
     """The database did not end up in the state a case assumes."""
 
 
+def docker_psql(args, *, input=None, what):
+    """Run psql inside the test container, with a timeout and retries.
+
+    `docker exec -i` occasionally hangs in a futex wait before the
+    command ever reaches Postgres — observed once for 13 minutes, with
+    nothing in pg_stat_activity and every other `docker exec` working.
+    Without a timeout that stalls a whole mutation run silently. Three
+    attempts, then a FixtureError rather than a hang.
+    """
+    last = None
+    for attempt in range(3):
+        try:
+            r = subprocess.run(
+                ["docker", "exec", "-i", PG_CONTAINER, "psql", "-U", "cc", "-d", "cc",
+                 "-v", "ON_ERROR_STOP=1", *args],
+                input=input, capture_output=True, text=True, check=False, timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            last = f"{what}: docker exec timed out (attempt {attempt + 1}/3)"
+            print(f"  WARNING {last}", flush=True)
+            continue
+        if r.returncode != 0 or "ERROR" in r.stderr:
+            raise FixtureError(f"{what} failed ({r.returncode}): {r.stderr.strip()[:600]}")
+        return r.stdout
+    raise FixtureError(last or f"{what} failed")
+
+
 def psql(sql):
     # ON_ERROR_STOP plus a checked exit, not `check=False`. A failed
     # query used to return empty stdout, which `snapshot()` read as an
     # empty table — so a query error on one side and a real empty table
     # on the other compared as a side-effect diff, and a query error on
     # both compared as agreement.
-    r = subprocess.run(
-        ["docker", "exec", "-i", PG_CONTAINER, "psql", "-U", "cc", "-d", "cc",
-         "-v", "ON_ERROR_STOP=1", "-tAq", "-c", sql],
-        capture_output=True, text=True, check=False,
-    )
-    if r.returncode != 0:
-        raise FixtureError(f"psql failed ({r.returncode}): {r.stderr.strip()[:400]}\n  sql: {sql[:200]}")
-    return r.stdout
+    return docker_psql(["-tAq", "-c", sql], what=f"query {sql[:80]!r}")
 
 
 # The shared fixture seeds several timestamps relative to now() so the
@@ -568,13 +588,7 @@ def reseed():
     not kept) is what prompted making this loud.
     """
     seed = (HERE / "seed_cameras.sql").read_text() + FREEZE
-    r = subprocess.run(
-        ["docker", "exec", "-i", PG_CONTAINER, "psql", "-U", "cc", "-d", "cc",
-         "-v", "ON_ERROR_STOP=1", "-q"],
-        input=seed, capture_output=True, text=True, check=False,
-    )
-    if r.returncode != 0 or "ERROR" in r.stderr:
-        raise FixtureError(f"reseed failed ({r.returncode}): {r.stderr.strip()[:600]}")
+    docker_psql(["-q"], input=seed, what="reseed")
 
 
 def snapshot():

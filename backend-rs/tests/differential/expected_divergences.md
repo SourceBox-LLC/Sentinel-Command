@@ -215,3 +215,22 @@ absence, and copying the gap would mean writing code to strip them.
 
 The HTTP differential compares status and body on a 500 but not headers,
 for this reason.
+
+
+## `POST /api/cameras/{camera_id}/codec` with a list `audio_codec`
+
+| input | Python | Rust |
+| --- | --- | --- |
+| `{"video_codec": "avc1.64001f", "audio_codec": ["a", "b"]}` | 200, stores `{a,b}` | 500, stores nothing |
+
+Deliberate. Python's length and newline checks inspect the list rather
+than the text psycopg later derives from it, and the resulting array
+literal lands in a column that is written into an HLS `CODECS`
+attribute, where its comma splits one codec into two. See
+`PYTHON_BUGS.md` #2. Every other non-string `audio_codec` already 500s
+in Python (`len(5)` raises outside any `try`), so Rust extends that
+behaviour to lists instead of reproducing a corrupting write.
+
+Listed in `write_diff.py`'s `EXPECTED_DIVERGENCES`, so the run fails if
+the two ever start agreeing — a divergence that silently disappears is
+as untrustworthy as one that silently appears.
