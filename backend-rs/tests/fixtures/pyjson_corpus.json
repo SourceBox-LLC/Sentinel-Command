@@ -1,0 +1,394 @@
+[
+{
+"text": "{x",
+"ok": false,
+"msg": "Expecting property name enclosed in double quotes",
+"pos": 1
+},
+{
+"text": "{",
+"ok": false,
+"msg": "Expecting property name enclosed in double quotes",
+"pos": 1
+},
+{
+"text": "}",
+"ok": false,
+"msg": "Expecting value",
+"pos": 0
+},
+{
+"text": "[",
+"ok": false,
+"msg": "Expecting value",
+"pos": 1
+},
+{
+"text": "]",
+"ok": false,
+"msg": "Expecting value",
+"pos": 0
+},
+{
+"text": "[1,",
+"ok": false,
+"msg": "Expecting value",
+"pos": 3
+},
+{
+"text": "[1,]",
+"ok": false,
+"msg": "Expecting value",
+"pos": 3
+},
+{
+"text": "{\"a\":1,}",
+"ok": false,
+"msg": "Expecting property name enclosed in double quotes",
+"pos": 7
+},
+{
+"text": "{\"a\" 1}",
+"ok": false,
+"msg": "Expecting ':' delimiter",
+"pos": 5
+},
+{
+"text": "{\"a\":}",
+"ok": false,
+"msg": "Expecting value",
+"pos": 5
+},
+{
+"text": "{\"a\":1 \"b\":2}",
+"ok": false,
+"msg": "Expecting ',' delimiter",
+"pos": 7
+},
+{
+"text": "[1 2]",
+"ok": false,
+"msg": "Expecting ',' delimiter",
+"pos": 3
+},
+{
+"text": "\"abc",
+"ok": false,
+"msg": "Unterminated string starting at",
+"pos": 0
+},
+{
+"text": "\"a\\q\"",
+"ok": false,
+"msg": "Invalid \\escape",
+"pos": 2
+},
+{
+"text": "\"a\\u12\"",
+"ok": false,
+"msg": "Invalid \\uXXXX escape",
+"pos": 3
+},
+{
+"text": "\"a\\u12zz\"",
+"ok": false,
+"msg": "Invalid \\uXXXX escape",
+"pos": 3
+},
+{
+"text": "\"\\ud800\\u12\"",
+"ok": false,
+"msg": "Invalid \\uXXXX escape",
+"pos": 8
+},
+{
+"text": "\"a\nb\"",
+"ok": false,
+"msg": "Invalid control character at",
+"pos": 2
+},
+{
+"text": "\"a\tb\"",
+"ok": false,
+"msg": "Invalid control character at",
+"pos": 2
+},
+{
+"text": "tru",
+"ok": false,
+"msg": "Expecting value",
+"pos": 0
+},
+{
+"text": "nul",
+"ok": false,
+"msg": "Expecting value",
+"pos": 0
+},
+{
+"text": "fals",
+"ok": false,
+"msg": "Expecting value",
+"pos": 0
+},
+{
+"text": "true false",
+"ok": false,
+"msg": "Extra data",
+"pos": 5
+},
+{
+"text": "01",
+"ok": false,
+"msg": "Extra data",
+"pos": 1
+},
+{
+"text": "1.",
+"ok": false,
+"msg": "Extra data",
+"pos": 1
+},
+{
+"text": "1.e5",
+"ok": false,
+"msg": "Extra data",
+"pos": 1
+},
+{
+"text": "1e",
+"ok": false,
+"msg": "Extra data",
+"pos": 1
+},
+{
+"text": "1e+",
+"ok": false,
+"msg": "Extra data",
+"pos": 1
+},
+{
+"text": "-",
+"ok": false,
+"msg": "Expecting value",
+"pos": 0
+},
+{
+"text": "-a",
+"ok": false,
+"msg": "Expecting value",
+"pos": 0
+},
+{
+"text": "--1",
+"ok": false,
+"msg": "Expecting value",
+"pos": 0
+},
+{
+"text": "+1",
+"ok": false,
+"msg": "Expecting value",
+"pos": 0
+},
+{
+"text": ".5",
+"ok": false,
+"msg": "Expecting value",
+"pos": 0
+},
+{
+"text": "NaN",
+"ok": true
+},
+{
+"text": "Infinity",
+"ok": true
+},
+{
+"text": "-Infinity",
+"ok": true
+},
+{
+"text": "nan",
+"ok": false,
+"msg": "Expecting value",
+"pos": 0
+},
+{
+"text": "inf",
+"ok": false,
+"msg": "Expecting value",
+"pos": 0
+},
+{
+"text": "1 2",
+"ok": false,
+"msg": "Extra data",
+"pos": 2
+},
+{
+"text": "{} {}",
+"ok": false,
+"msg": "Extra data",
+"pos": 3
+},
+{
+"text": "[] x",
+"ok": false,
+"msg": "Extra data",
+"pos": 3
+},
+{
+"text": "   ",
+"ok": false,
+"msg": "Expecting value",
+"pos": 3
+},
+{
+"text": " x",
+"ok": false,
+"msg": "Expecting value",
+"pos": 1
+},
+{
+"text": "\ufeff{}",
+"ok": false,
+"msg": "Unexpected UTF-8 BOM (decode using utf-8-sig)",
+"pos": 0
+},
+{
+"text": "{\"a\":[1,2,}",
+"ok": false,
+"msg": "Expecting value",
+"pos": 10
+},
+{
+"text": "{\"a\":{\"b\":}}",
+"ok": false,
+"msg": "Expecting value",
+"pos": 10
+},
+{
+"text": "[\"a\",\"b\"",
+"ok": false,
+"msg": "Expecting ',' delimiter",
+"pos": 8
+},
+{
+"text": "{\"\u00e9\":x}",
+"ok": false,
+"msg": "Expecting value",
+"pos": 5
+},
+{
+"text": "\"\u00e9\\x\"",
+"ok": false,
+"msg": "Invalid \\escape",
+"pos": 2
+},
+{
+"text": "[1,2,3]]",
+"ok": false,
+"msg": "Extra data",
+"pos": 7
+},
+{
+"text": "{\"a\":1}}",
+"ok": false,
+"msg": "Extra data",
+"pos": 7
+},
+{
+"text": "{'a':1}",
+"ok": false,
+"msg": "Expecting property name enclosed in double quotes",
+"pos": 1
+},
+{
+"text": "[1,,2]",
+"ok": false,
+"msg": "Expecting value",
+"pos": 3
+},
+{
+"text": "[,1]",
+"ok": false,
+"msg": "Expecting value",
+"pos": 1
+},
+{
+"text": "{,}",
+"ok": false,
+"msg": "Expecting property name enclosed in double quotes",
+"pos": 1
+},
+{
+"text": "\"unterminated \\",
+"ok": false,
+"msg": "Unterminated string starting at",
+"pos": 0
+},
+{
+"text": "\"\\u00e9\"",
+"ok": true
+},
+{
+"text": "\"\u0001\"",
+"ok": false,
+"msg": "Invalid control character at",
+"pos": 1
+},
+{
+"text": "[\n1,\n2\n,]",
+"ok": false,
+"msg": "Expecting value",
+"pos": 8
+},
+{
+"text": "123abc",
+"ok": false,
+"msg": "Extra data",
+"pos": 3
+},
+{
+"text": "1.5.5",
+"ok": false,
+"msg": "Extra data",
+"pos": 3
+},
+{
+"text": "0x10",
+"ok": false,
+"msg": "Extra data",
+"pos": 1
+},
+{
+"text": "[true,]",
+"ok": false,
+"msg": "Expecting value",
+"pos": 6
+},
+{
+"text": "{\"a\"",
+"ok": false,
+"msg": "Expecting ':' delimiter",
+"pos": 4
+},
+{
+"text": "{\"a\":",
+"ok": false,
+"msg": "Expecting value",
+"pos": 5
+},
+{
+"text": "{\"a\":1",
+"ok": false,
+"msg": "Expecting ',' delimiter",
+"pos": 6
+},
+{
+"text": "[\"\\ud83c\\udfa5\"]",
+"ok": true
+}
+]

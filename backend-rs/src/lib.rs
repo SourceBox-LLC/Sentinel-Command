@@ -21,6 +21,7 @@ pub mod license;
 pub mod models;
 pub mod plans;
 pub mod proxy;
+pub mod pyjson;
 pub mod query;
 pub mod ratelimit;
 pub mod settings;

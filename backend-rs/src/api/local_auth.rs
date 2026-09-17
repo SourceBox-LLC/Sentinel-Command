@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use crate::app::AppState;
 use crate::auth::local;
 use crate::error::ApiError;
-use crate::query::{parse_body, BodyErrors};
+use crate::query::{BodyErrors, ModelBody};
 use crate::ratelimit::PerMinute;
 
 const NOT_CONFIGURED: &str = "Local authentication not configured. Set APP_SECRET_KEY, \
@@ -25,13 +25,13 @@ const NOT_CONFIGURED: &str = "Local authentication not configured. Set APP_SECRE
 pub async fn login(
     rate: PerMinute<10>,
     State(state): State<AppState>,
-    body: axum::body::Bytes,
+    ModelBody((), body): ModelBody<()>,
 ) -> Result<Json<Value>, ApiError> {
     // Python validates `payload: LoginRequest` before the decorator and
     // raises the 503 inside the function, after it. So a malformed body
     // is a free 422 even on an install with local auth unconfigured,
     // and the 503 spends a slot.
-    let body = parse_body(&body)?;
+
     let mut errors = BodyErrors::new();
     // No max_length on either field in the Python model, so none here.
     let username = errors.required_string(&body, "username", usize::MAX);
@@ -74,9 +74,8 @@ pub async fn login(
 pub async fn refresh(
     rate: PerMinute<30>,
     State(state): State<AppState>,
-    body: axum::body::Bytes,
+    ModelBody((), body): ModelBody<()>,
 ) -> Result<Json<Value>, ApiError> {
-    let body = parse_body(&body)?;
     let mut errors = BodyErrors::new();
     let token = errors.required_string(&body, "token", usize::MAX);
     errors.finish()?;

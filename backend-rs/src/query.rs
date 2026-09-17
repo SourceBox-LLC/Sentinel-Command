@@ -297,43 +297,146 @@ pub fn validation_error(errors: &[Value]) -> Result<(), ApiError> {
 /// single-element location, which is what makes the summary read
 /// "Field required" with no field name.
 pub fn parse_body(bytes: &[u8]) -> Result<Value, ApiError> {
-    if bytes.is_empty() {
-        return Err(validation_error(&[json!({
-            "type": "missing",
-            "loc": ["body"],
-            "msg": "Field required",
-            "input": Value::Null,
-        })])
-        .unwrap_err());
-    }
-    serde_json::from_slice(bytes).map_err(|err| {
-        // Python reports the character offset in `loc`; serde reports a
-        // line and column. The offset is recomputed from them so the
-        // shape matches, though the exact index can differ for some
-        // inputs — the SPA reads `type`, not the position.
-        let offset = byte_offset(bytes, err.line(), err.column());
-        validation_error(&[json!({
-            "type": "json_invalid",
-            "loc": ["body", offset],
-            "msg": "JSON decode error",
-            "input": {},
-            "ctx": {"error": err.to_string()},
-        })])
-        .unwrap_err()
-    })
+    decode_json_body(bytes)?.ok_or_else(missing_body)
 }
 
-fn byte_offset(bytes: &[u8], line: usize, column: usize) -> usize {
-    let mut current_line = 1;
-    for (i, &b) in bytes.iter().enumerate() {
-        if current_line == line {
-            return i + column;
-        }
-        if b == b'\n' {
-            current_line += 1;
-        }
+fn missing_body() -> ApiError {
+    validation_error(&[json!({
+        "type": "missing",
+        "loc": ["body"],
+        "msg": "Field required",
+        "input": Value::Null,
+    })])
+    .unwrap_err()
+}
+
+/// FastAPI's JSON decode step, which runs before any dependency.
+///
+/// `Ok(None)` for an empty body: FastAPI does not decode one at all, and
+/// its absence is reported later, as `missing`, after auth.
+pub fn decode_json_body(bytes: &[u8]) -> Result<Option<Value>, ApiError> {
+    if bytes.is_empty() {
+        return Ok(None);
     }
-    bytes.len()
+    // `json.loads(bytes)` detects a UTF-8 BOM and decodes as utf-8-sig,
+    // so a leading BOM is invisible to Python rather than an error.
+    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+    // Undecodable bytes raise UnicodeDecodeError, which FastAPI catches
+    // as a generic failure to parse rather than a validation error.
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Err(ApiError::bad_request("There was an error parsing the body"));
+    };
+    match crate::pyjson::python_decode_error(text) {
+        // Message and position are CPython's, not serde's. Both reach the
+        // client: `{x` used to come back as "key must be a string at line
+        // 1 column 2" at position 2, where FastAPI says "Expecting
+        // property name enclosed in double quotes" at position 1.
+        Some(crate::pyjson::DecodeError::Invalid { msg, pos }) => {
+            return Err(validation_error(&[json!({
+                "type": "json_invalid",
+                "loc": ["body", pos],
+                "msg": "JSON decode error",
+                "input": {},
+                "ctx": {"error": msg},
+            })])
+            .unwrap_err());
+        }
+        Some(crate::pyjson::DecodeError::TooDeep) => {
+            return Err(ApiError::bad_request("There was an error parsing the body"));
+        }
+        None => {}
+    }
+    // Python accepted it. serde refuses a few things Python takes — bare
+    // NaN and Infinity, a lone surrogate escape, an exponent past f64 —
+    // none of which fits a serde_json::Value. Those are refused as
+    // unparseable; see tests/differential/expected_divergences.md.
+    serde_json::from_str(text)
+        .map(Some)
+        .map_err(|_| ApiError::bad_request("There was an error parsing the body"))
+}
+
+/// The shape check for a declared model: after auth, unlike decoding.
+fn model_shape(decoded: Option<Value>) -> Result<Value, ApiError> {
+    match decoded {
+        Some(Value::Object(map)) => Ok(Value::Object(map)),
+        None | Some(Value::Null) => Err(missing_body()),
+        Some(other) => Err(validation_error(&[json!({
+            "type": "model_attributes_type",
+            "loc": ["body"],
+            "msg": "Input should be a valid dictionary or object to extract fields from",
+            "input": other,
+        })])
+        .unwrap_err()),
+    }
+}
+
+/// Read a body declared as a Pydantic model parameter, without auth.
+///
+/// `parse_body` accepts any JSON value, and a JSON list, string or
+/// `null` is not a model: a list or a string is `model_attributes_type`
+/// at `loc: ["body"]`, and `null` is the same `missing` as an empty
+/// body. Until this existed every model-body route read `[1]` as an
+/// object with no fields, so `POST /api/nodes` with a list body would
+/// have created a node.
+pub fn parse_model_body(bytes: &[u8]) -> Result<Value, ApiError> {
+    model_shape(decode_json_body(bytes)?)
+}
+
+/// A declared Pydantic body together with the route's auth, taken in
+/// FastAPI's order.
+///
+/// FastAPI decodes the JSON body *before* it resolves any dependency,
+/// and checks the decoded value against the model *after*. Measured:
+/// `POST /api/camera-groups` with no token and the body `{x` is a 422,
+/// while the body `[1]` with no token is a 401. On the agent routes it
+/// shows in the database too — a malformed body never reaches the
+/// dependency that stamps the key's `last_used_at`.
+///
+/// Axum runs every header extractor before the body extractor, so the
+/// order cannot be had by listing extractors. This one reads the body,
+/// decodes it, runs the auth extractor `A`, then checks the shape. Use
+/// `ModelBody<()>` on a route with no auth.
+pub struct ModelBody<A>(pub A, pub Value);
+
+impl<A> axum::extract::FromRequest<crate::app::AppState> for ModelBody<A>
+where
+    A: axum::extract::FromRequestParts<crate::app::AppState> + Send,
+    A::Rejection: axum::response::IntoResponse,
+{
+    type Rejection = axum::response::Response;
+
+    async fn from_request(
+        req: axum::extract::Request,
+        state: &crate::app::AppState,
+    ) -> Result<Self, Self::Rejection> {
+        use axum::response::IntoResponse;
+        let (mut parts, body) = req.into_parts();
+        let bytes = axum::body::to_bytes(body, 2 * 1024 * 1024)
+            .await
+            .map_err(|_| ApiError::bad_request("There was an error parsing the body").into_response())?;
+        let decoded = decode_json_body(&bytes).map_err(IntoResponse::into_response)?;
+        let auth = A::from_request_parts(&mut parts, state)
+            .await
+            .map_err(IntoResponse::into_response)?;
+        let body = model_shape(decoded).map_err(IntoResponse::into_response)?;
+        Ok(ModelBody(auth, body))
+    }
+}
+
+/// Read a body the way a handler does when it calls `await
+/// request.json()` itself rather than declaring a model.
+///
+/// There is no validation layer in front of that call: malformed JSON
+/// raises `JSONDecodeError`, and anything but an object raises
+/// `AttributeError` at the first `.get` — both unhandled, so both are a
+/// bare 500. Returning FastAPI's 422 here, as `parse_body` does, would
+/// be a response Python never gives.
+pub fn parse_handler_json(bytes: &[u8]) -> Result<serde_json::Map<String, Value>, ApiError> {
+    match serde_json::from_slice::<Value>(bytes) {
+        Ok(Value::Object(map)) => Ok(map),
+        Ok(_) => Err(ApiError::internal("request body is not a JSON object")),
+        Err(_) => Err(ApiError::internal("request body is not valid JSON")),
+    }
 }
 
 /// Accumulates Pydantic-shaped errors for a JSON request body.

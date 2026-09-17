@@ -38,6 +38,7 @@ HERE = Path(__file__).resolve().parent
 RUST = "http://127.0.0.1:8000"
 PYTHON = "http://127.0.0.1:8001"
 PG_CONTAINER = "cc-schema-test"
+REDIS_CONTAINER = "cc-redis-test"
 
 TOKEN = sys.argv[1]
 # A non-admin caller. The read differential gained one after a mutation
@@ -487,6 +488,52 @@ CASES += [
      "/api/sentinel/runs/run0000000000000000000000000001/complete",
      {"outcome": 5}, "agent:none"),
 
+    # --- bodies that are valid JSON but not an object -----------------
+    #
+    # Two behaviours, depending on how the Python route reads its body.
+    # A declared Pydantic model 422s before the handler runs: a list or
+    # a string is `model_attributes_type`, and `null` is `missing`. A
+    # handler that calls `await request.json()` itself has nothing in
+    # front of it, so malformed JSON and a non-object body are both an
+    # unhandled 500. parse_body accepted any JSON value, so every
+    # model-body route read `[1]` as an object with no fields.
+    *[(f"body shape: {label} {raw!r}", method, path, raw, who)
+      for label, method, path, who in [
+          ("create group", "POST", "/api/camera-groups", "admin"),
+          ("notification settings", "POST", "/api/settings/notifications", "admin"),
+          ("recording policy", "PATCH", "/api/cameras/cam-live/recording-settings", "admin"),
+          ("patch incident", "PATCH", "/api/incidents/1", "admin"),
+          ("email preferences", "POST", "/api/notifications/email/preferences", "admin"),
+          ("login", "POST", "/api/auth/local/login", "agent:none"),
+          ("refresh", "POST", "/api/auth/local/refresh", "agent:none"),
+          ("complete a run", "POST",
+           "/api/sentinel/runs/run0000000000000000000000000001/complete", "agent"),
+          ("toggle recording", "POST", "/api/cameras/cam-live/recording", "admin"),
+          ("motion ingestion", "POST", "/api/settings/motion-ingestion", "admin"),
+      ]
+      for raw in (b"[1]", b'"x"', b"null", b"{x", b"")],
+
+    # --- decode order: malformed JSON is refused before auth -----------
+    #
+    # FastAPI decodes a declared model body before resolving any
+    # dependency, and checks its shape after. So with no credentials,
+    # `{x` is a 422 but `[1]` and an empty body are a 401. On the agent
+    # routes the difference reaches the database: a malformed body never
+    # runs the dependency that stamps the key's last_used_at.
+    *[(f"body order: {label} {raw!r} as {who}", method, path, raw, who)
+      for label, method, path, whos in [
+          ("create group", "POST", "/api/camera-groups", ("agent:none", "member")),
+          ("patch incident", "PATCH", "/api/incidents/1", ("agent:none",)),
+          ("recording policy", "PATCH", "/api/cameras/cam-live/recording-settings", ("agent:none",)),
+          ("complete a run", "POST",
+           "/api/sentinel/runs/run0000000000000000000000000001/complete",
+           ("agent:none", "agent:revoked")),
+          # No declared model: the body is never decoded before auth.
+          ("toggle recording", "POST", "/api/cameras/cam-live/recording", ("agent:none",)),
+      ]
+      for who in whos
+      for raw in (b"{x", b"[1]", b"")],
+
     ("revoke integration key", "DELETE", "/api/integration/keys/5", None),
     # The audit row this writes carries the key's name in its details
     # JSON, and that name is non-ASCII on purpose — see seed row 11.
@@ -589,6 +636,14 @@ def reseed():
     """
     seed = (HERE / "seed_cameras.sql").read_text() + FREEZE
     docker_psql(["-q"], input=seed, what="reseed")
+    # Rate-limit counters too. Many cases hit one route with one
+    # credential, and past the limit both tiers 429 identically — which
+    # scores as agreement while testing nothing. Every case starts with
+    # an empty budget, and a 429 is reported as inconclusive below.
+    r = subprocess.run(["docker", "exec", REDIS_CONTAINER, "redis-cli", "FLUSHDB"],
+                       capture_output=True, text=True, check=False, timeout=60)
+    if r.returncode != 0:
+        raise FixtureError(f"could not flush rate limits: {r.stderr.strip()[:200]}")
 
 
 def snapshot():
@@ -643,8 +698,38 @@ def normalise(value, now):
     return value
 
 
+def row_diff(python_rows, rust_rows):
+    """Name the rows and fields that differ, instead of a truncated dump.
+
+    Rows are matched by their first column (the ORDER BY key). A flake
+    once showed only that a sentinel_runs row differed somewhere past the
+    240th character, which is no help at all.
+    """
+    def key(row):
+        return next(iter(row.values())) if row else None
+    py = {key(r): r for r in python_rows}
+    rs = {key(r): r for r in rust_rows}
+    out = []
+    for k in sorted(set(py) | set(rs), key=str):
+        if k not in rs:
+            out.append(f"row {k!r} only in python")
+        elif k not in py:
+            out.append(f"row {k!r} only in rust")
+        elif py[k] != rs[k]:
+            for field in sorted(set(py[k]) | set(rs[k])):
+                if py[k].get(field) != rs[k].get(field):
+                    out.append(f"row {k!r} field {field}: python={py[k].get(field)!r} "
+                               f"rust={rs[k].get(field)!r}"[:400])
+    return out or ["(rows equal but order differs)"]
+
+
 def fetch(base, method, path, body, who="admin"):
-    data = json.dumps(body).encode() if body is not None else None
+    # `bytes` is sent exactly as given — malformed JSON, an empty body,
+    # a bare `null` — and anything else is JSON-encoded.
+    if isinstance(body, bytes):
+        data = body
+    else:
+        data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(base + path, method=method, data=data)
     if who in AGENT_KEYS:
         # The agent data plane authenticates on its own header and
@@ -659,6 +744,11 @@ def fetch(base, method, path, body, who="admin"):
         req.add_header("X-Sentinel-Agent-Key", "osa_\u00ff")
     elif who == "agent:none":
         pass
+    elif who.startswith("node:"):
+        # A CameraNode API key. urllib encodes header values as latin-1,
+        # so a key containing U+00FF goes out as the single byte 0xFF —
+        # which is what makes the UTF-8-versus-raw hashing cases real.
+        req.add_header("X-Node-API-Key", who[len("node:"):])
     else:
         token = MEMBER_TOKEN if who == "member" else TOKEN
         req.add_header("Authorization", f"Bearer {token}")
@@ -704,6 +794,12 @@ def _main():
         py_status, py_body, py_db = run_case(PYTHON, method, path, body, who)
         rs_status, rs_body, rs_db = run_case(RUST, method, path, body, who)
 
+        if 429 in (py_status, rs_status):
+            bad += 1
+            print(f"  INCONCLUSIVE {name}: a 429 (rust={rs_status} python={py_status}) — "
+                  f"the budget was exhausted, so nothing was compared")
+            continue
+
         status_same = py_status == rs_status
         body_same = py_body == rs_body
         db_same = py_db == rs_db
@@ -735,8 +831,8 @@ def _main():
             for table in WATCHED:
                 if py_db[table] != rs_db[table]:
                     print(f"            SIDE EFFECT differs in `{table}`:")
-                    print(f"              rust  : {json.dumps(rs_db[table], sort_keys=True)[:240]}")
-                    print(f"              python: {json.dumps(py_db[table], sort_keys=True)[:240]}")
+                    for line in row_diff(py_db[table], rs_db[table]):
+                        print(f"              {line}")
 
     # A run where nothing was actually written proves nothing.
     reseed()

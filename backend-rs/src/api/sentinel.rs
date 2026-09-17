@@ -22,7 +22,7 @@ use crate::app::AppState;
 use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::{iso_naive, now_naive};
-use crate::query::{parse_body, BodyErrors, Query};
+use crate::query::{BodyErrors, ModelBody, Query};
 
 /// Who an authenticated agent request is acting as.
 ///
@@ -340,12 +340,10 @@ pub async fn post_run_start(
 /// terminal outcome.
 pub async fn post_run_complete(
     State(state): State<AppState>,
-    agent: AgentPrincipal,
     Path(run_id): Path<String>,
-    request: Request,
+    ModelBody(agent, body): ModelBody<AgentPrincipal>,
 ) -> Result<Json<Value>, ApiError> {
     let run_id = crate::query::path_segment(&run_id)?.to_string();
-    let body = read_body(request).await?;
 
     let mut errors = BodyErrors::new();
     let outcome = errors.required_string(&body, "outcome", usize::MAX);
@@ -479,13 +477,6 @@ async fn reload(state: &AppState, run_id: &str) -> Result<SentinelRunRow, ApiErr
         .fetch_one(&state.pool)
         .await
         .map_err(Into::into)
-}
-
-async fn read_body(request: Request) -> Result<Value, ApiError> {
-    let bytes = axum::body::to_bytes(request.into_body(), 2 * 1024 * 1024)
-        .await
-        .map_err(|_| ApiError::bad_request("could not read request body"))?;
-    parse_body(&bytes)
 }
 
 /// `repr()` of a Python string: single quotes unless the value contains

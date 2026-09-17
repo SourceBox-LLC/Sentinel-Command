@@ -20,7 +20,7 @@ use crate::audit::{audit_label, python_json, write_audit};
 use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::now_naive;
-use crate::query::{parse_body, BodyErrors, path_segment};
+use crate::query::{parse_handler_json, BodyErrors, ModelBody, path_segment};
 use crate::ratelimit::PerMinute;
 
 /// Fetch a camera's current recording fields, scoped to the caller's org.
@@ -59,7 +59,7 @@ pub async fn toggle_recording(
     // Before the body: toggle_recording reads it with `await
     // request.json()` inside the function, after the decorator.
     rate.check().await?;
-    let body = parse_body(&body)?;
+    let body = Value::Object(parse_handler_json(&body)?);
     // `bool(body.get("recording", False))` — Python truthiness over
     // whatever arrived, so a missing key is "stop recording".
     let recording = truthy(body.get("recording"));
@@ -122,14 +122,12 @@ fn truthy(value: Option<&Value>) -> bool {
 pub async fn update_recording_policy(
     rate: PerMinute<30>,
     State(state): State<AppState>,
-    RequireAdmin(user): RequireAdmin,
     Path(camera_id): Path<String>,
     headers: HeaderMap,
     ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
-    body: axum::body::Bytes,
+    ModelBody(RequireAdmin(user), body): ModelBody<RequireAdmin>,
 ) -> Result<Json<Value>, ApiError> {
     let camera_id = path_segment(&camera_id)?;
-    let body = parse_body(&body)?;
 
     let mut errors = BodyErrors::new();
     let continuous = errors.optional_bool(&body, "continuous_24_7");

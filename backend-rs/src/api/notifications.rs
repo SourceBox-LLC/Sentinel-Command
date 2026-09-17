@@ -18,7 +18,7 @@ use crate::audit::{python_json, write_audit};
 use crate::auth::{AuthUser, RequireAdmin, RequireView};
 use crate::error::ApiError;
 use crate::models::{iso_naive, now_naive};
-use crate::query::{parse_body, BodyErrors, Query};
+use crate::query::{BodyErrors, ModelBody, Query};
 use crate::settings;
 
 /// Unique setting keys and their defaults, in the order
@@ -324,12 +324,10 @@ pub async fn get_email_preferences(
 /// `POST /api/notifications/email/preferences`.
 pub async fn update_email_preferences(
     State(state): State<AppState>,
-    RequireAdmin(user): RequireAdmin,
     headers: HeaderMap,
     ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
-    body: axum::body::Bytes,
+    ModelBody(RequireAdmin(user), body): ModelBody<RequireAdmin>,
 ) -> Result<Json<Value>, ApiError> {
-    let body = parse_body(&body)?;
 
     let mut errors = BodyErrors::new();
     let mut changes: Vec<String> = Vec::new();

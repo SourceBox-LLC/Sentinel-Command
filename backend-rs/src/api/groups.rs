@@ -15,7 +15,7 @@ use crate::audit::{audit_label, python_json, write_audit};
 use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::now_naive;
-use crate::query::{parse_body, path_int, BodyErrors, Query, path_segment};
+use crate::query::{parse_handler_json, path_int, BodyErrors, ModelBody, Query, path_segment};
 use crate::ratelimit::PerMinute;
 use crate::settings;
 
@@ -27,10 +27,8 @@ const DEFAULT_ICON: &str = "📁";
 pub async fn create_camera_group(
     rate: PerMinute<20>,
     State(state): State<AppState>,
-    RequireAdmin(user): RequireAdmin,
-    body: axum::body::Bytes,
+    ModelBody(RequireAdmin(user), body): ModelBody<RequireAdmin>,
 ) -> Result<Json<Value>, ApiError> {
-    let body = parse_body(&body)?;
     // Field lengths come from CameraGroupCreate. They are enforced here
     // rather than left to the column widths, because a varchar overflow
     // is a 500 from the database where Pydantic returns a 422 naming the
@@ -204,7 +202,7 @@ pub async fn update_motion_ingestion(
     // Before the body: this handler reads it with `await request.json()`
     // inside the function, after the decorator.
     rate.check().await?;
-    let body = parse_body(&body)?;
+    let body = Value::Object(parse_handler_json(&body)?);
     // `bool(payload.get("enabled"))` — Python truthiness, so any
     // non-empty string, any non-zero number and any non-empty container
     // all mean enabled, and an absent key means disabled.
@@ -244,12 +242,10 @@ pub async fn update_motion_ingestion(
 pub async fn update_notification_settings(
     rate: PerMinute<30>,
     State(state): State<AppState>,
-    RequireAdmin(user): RequireAdmin,
     headers: HeaderMap,
     ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
-    body: axum::body::Bytes,
+    ModelBody(RequireAdmin(user), body): ModelBody<RequireAdmin>,
 ) -> Result<Json<Value>, ApiError> {
-    let body = parse_body(&body)?;
     // All three default to on, for back-compat with orgs that predate
     // the settings UI.
     let mut errors = BodyErrors::new();

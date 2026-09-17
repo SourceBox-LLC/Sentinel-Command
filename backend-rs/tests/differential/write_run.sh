@@ -54,4 +54,11 @@ print(jwt.encode({
 LAST="$HERE/../../target/last-write-diff.out"
 mkdir -p "$(dirname "$LAST")"
 "$PYTHON" "$HERE/write_diff.py" "$ADMIN" "$MEMBER" "$@" 2>&1 | tee "$LAST"
-exit "${PIPESTATUS[0]}"
+status="${PIPESTATUS[0]}"
+# A failing run is also kept under its own name, so the next run — say,
+# re-running the one case that differed to see if it reproduces — does
+# not overwrite the only record of a flake. That happened.
+if [[ "$status" != 0 ]]; then
+    cp "$LAST" "$(dirname "$LAST")/write-diff-failed-$(date +%Y%m%d-%H%M%S).out"
+fi
+exit "$status"
