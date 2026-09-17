@@ -1,0 +1,264 @@
+{
+ "_comment": "Shared by py_plan_probe.py and examples/plan_probe.rs. One list, so the two probes cannot drift into testing different things. `settings` rows are pre-seeded before each case; `@-Nd` expands to an ISO timestamp N days ago, with the suffixes `Z` and `naive` selecting the other two spellings Clerk emits.",
+ "org_id": "org_plan_probe",
+ "cases": [
+  {
+   "case": "live_active_pro",
+   "scenario": "active_pro",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "live_active_pro_plus",
+   "scenario": "active_pro_plus",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "live_active_free",
+   "scenario": "active_free",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "live_no_items",
+   "scenario": "no_items",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "live_canceled_future",
+   "scenario": "canceled_future",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "live_canceled_past",
+   "scenario": "canceled_past",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "live_canceled_no_end",
+   "scenario": "canceled_no_period_end",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "live_period_end_seconds",
+   "scenario": "canceled_period_end_seconds",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "live_active_after_canceled",
+   "scenario": "active_after_canceled",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "live_two_active_items",
+   "scenario": "two_active_items",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "live_first_canceled_wins",
+   "scenario": "first_canceled_wins",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "live_item_without_slug",
+   "scenario": "item_without_slug",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "live_item_without_plan",
+   "scenario": "item_without_plan",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "live_unknown_slug",
+   "scenario": "unknown_slug",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "live_error_500_no_cache",
+   "scenario": "error_500",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "live_error_500_free_cached",
+   "scenario": "error_500",
+   "settings": {
+    "org_plan": "free_org"
+   }
+  },
+  {
+   "case": "live_error_500_unknown_cached",
+   "scenario": "error_500",
+   "settings": {
+    "org_plan": "pro_trial"
+   }
+  },
+  {
+   "case": "live_malformed",
+   "scenario": "malformed",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "live_404",
+   "scenario": "error_404",
+   "settings": {
+    "org_plan": ""
+   }
+  },
+  {
+   "case": "cached_pro",
+   "scenario": "active_free",
+   "settings": {
+    "org_plan": "pro"
+   }
+  },
+  {
+   "case": "cached_pro_plus",
+   "scenario": "active_free",
+   "settings": {
+    "org_plan": "pro_plus"
+   }
+  },
+  {
+   "case": "cached_self_host",
+   "scenario": "active_free",
+   "settings": {
+    "org_plan": "self_host"
+   }
+  },
+  {
+   "case": "cached_free_goes_live",
+   "scenario": "active_pro",
+   "settings": {
+    "org_plan": "free_org"
+   }
+  },
+  {
+   "case": "cached_unknown_goes_live",
+   "scenario": "active_pro",
+   "settings": {
+    "org_plan": "nonsense"
+   }
+  },
+  {
+   "case": "past_due_inside_grace",
+   "scenario": "active_pro",
+   "settings": {
+    "org_plan": "pro",
+    "payment_past_due": "true",
+    "payment_past_due_at": "@-3d"
+   }
+  },
+  {
+   "case": "past_due_outside_grace",
+   "scenario": "active_pro",
+   "settings": {
+    "org_plan": "pro",
+    "payment_past_due": "true",
+    "payment_past_due_at": "@-8d"
+   }
+  },
+  {
+   "case": "past_due_just_inside_grace",
+   "scenario": "active_pro",
+   "settings": {
+    "org_plan": "pro",
+    "payment_past_due": "true",
+    "payment_past_due_at": "@-6.9d"
+   }
+  },
+  {
+   "case": "past_due_just_outside_grace",
+   "scenario": "active_pro",
+   "settings": {
+    "org_plan": "pro",
+    "payment_past_due": "true",
+    "payment_past_due_at": "@-7.1d"
+   }
+  },
+  {
+   "case": "past_due_no_timestamp",
+   "scenario": "active_pro",
+   "settings": {
+    "org_plan": "pro",
+    "payment_past_due": "true",
+    "payment_past_due_at": ""
+   }
+  },
+  {
+   "case": "past_due_unparseable",
+   "scenario": "active_pro",
+   "settings": {
+    "org_plan": "pro",
+    "payment_past_due": "true",
+    "payment_past_due_at": "not a date"
+   }
+  },
+  {
+   "case": "past_due_with_z_suffix",
+   "scenario": "active_pro",
+   "settings": {
+    "org_plan": "pro",
+    "payment_past_due": "true",
+    "payment_past_due_at": "@-8dZ"
+   }
+  },
+  {
+   "case": "past_due_naive_timestamp",
+   "scenario": "active_pro",
+   "settings": {
+    "org_plan": "pro",
+    "payment_past_due": "true",
+    "payment_past_due_at": "@-8dnaive"
+   }
+  },
+  {
+   "case": "past_due_flag_false",
+   "scenario": "active_pro",
+   "settings": {
+    "org_plan": "pro",
+    "payment_past_due": "false",
+    "payment_past_due_at": "@-8d"
+   }
+  },
+  {
+   "case": "past_due_free_org",
+   "scenario": "active_free",
+   "settings": {
+    "org_plan": "",
+    "payment_past_due": "true",
+    "payment_past_due_at": "@-8d"
+   }
+  }
+ ]
+}

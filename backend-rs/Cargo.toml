@@ -82,3 +82,9 @@ http-body-util = "0.1"
 opt-level = 3
 lto = true
 strip = "debuginfo"
+
+# The plan probe is an example rather than a bin so `cargo build` — which
+# the tier restart runs on every mutation — does not compile it.
+[[example]]
+name = "plan_probe"
+path = "examples/plan_probe.rs"
