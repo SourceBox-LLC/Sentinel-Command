@@ -59,6 +59,24 @@ PORTED = {
     "models",
 }
 
+# Modules only PART of which has a Rust equivalent. Importing one of the
+# listed names does not block a route; importing anything else from the
+# module still does. Module granularity alone would have to choose
+# between hiding `enforce_camera_cap` (unported) and flagging every
+# caller of `effective_plan_for_caps` (ported, and verified by
+# plan_run.sh).
+PORTED_FUNCTIONS = {
+    "core.plans": {
+        "effective_plan_for_caps", "resolve_org_plan", "get_plan_limits",
+        "get_plan_display_name", "invalidate_effective_plan_cache",
+        "PAID_PLAN_SLUGS", "PAYMENT_GRACE_DAYS", "PLAN_LIMITS",
+    },
+    "core.license_client": {
+        "is_sentinel_licensed", "is_sync_enabled", "sentinel_blocked_by_license",
+        "SENTINEL_LICENSE_GRACE_HOURS",
+    },
+}
+
 # A module whose *import alone* means the route cannot move yet, with the
 # reason. Keys are module prefixes under `app.`.
 BLOCKERS = {
@@ -91,6 +109,24 @@ JUST_WORK = {
     "core.codec": "codec negotiation",
 }
 
+# In-process state that lives as a module-level *variable* inside a
+# module that is otherwise portable — so neither a module-level blocker
+# nor the handler-lives-in-a-blocked-module rule can see it.
+#
+# Found the hard way: once plans and the licence gate were ported, this
+# script reported /api/motion/events/stream and /api/notifications/stream
+# as clear. Both subscribe to a broadcaster whose publishers — motion
+# ingestion and notification creation — are still in Python. Served
+# from Rust, those streams would accept the connection and never
+# deliver an event, which no status code and no differential would
+# show.
+BLOCKING_SYMBOLS = {
+    ("api.motion", "motion_broadcaster"): "in-process motion SSE broadcaster",
+    ("api.motion", "integration_motion_broadcaster"): "in-process motion SSE broadcaster",
+    ("api.notifications", "notification_broadcaster"): "in-process notification SSE broadcaster",
+    ("api.notifications", "_transition_debounce"): "in-process transition debounce",
+}
+
 # Standard-library imports that still need a Rust counterpart chosen.
 STDLIB_BLOCKERS = {"zoneinfo": "tzdata / chrono-tz"}
 
@@ -111,6 +147,7 @@ class ModuleIndex:
         self.imports: dict[str, dict[str, str]] = {}
         self.module_imports: dict[str, set[str]] = defaultdict(set)
         self.defs: dict[str, set[str]] = defaultdict(set)
+        self.globals: dict[str, set[str]] = defaultdict(set)
         for path in sorted(APP.rglob("*.py")):
             if "__pycache__" in path.parts:
                 continue
@@ -139,6 +176,18 @@ class ModuleIndex:
                     self.module_imports[mod].add(target)
                     local[alias.asname or alias.name] = target
         self.imports[mod] = local
+
+        # Module-level assignments, so a bare name used inside a function
+        # can be traced to a variable defined beside it.
+        for node in tree.body:
+            targets = []
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, ast.AnnAssign):
+                targets = [node.target]
+            for t in targets:
+                if isinstance(t, ast.Name):
+                    self.globals[mod].add(t.id)
 
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -175,10 +224,16 @@ class ModuleIndex:
                 found.add((prefix, why))
         local = self.imports.get(mod, {})
         for name in names:
+            home = local.get(name) or (mod if name in self.globals.get(mod, ()) else None)
+            if home and (home, name) in BLOCKING_SYMBOLS:
+                found.add((f"{home}:{name}", BLOCKING_SYMBOLS[(home, name)]))
+        for name in names:
             target = local.get(name)
             if target is None:
                 continue
             if any(target == m or target.startswith(m + ".") for m in PORTED):
+                continue
+            if name in PORTED_FUNCTIONS.get(target, ()):
                 continue
             for prefix, why in BLOCKERS.items():
                 if target == prefix or target.startswith(prefix + "."):
@@ -211,6 +266,8 @@ class ModuleIndex:
             # module is already ported and therefore a dead end.
             target = local.get(name)
             if target and any(target == m or target.startswith(m + ".") for m in PORTED):
+                continue
+            if target and name in PORTED_FUNCTIONS.get(target, ()):
                 continue
             if target and target in self.defs and name in self.defs[target]:
                 sub, subchain = self.walk(f"{target}:{name}", seen)

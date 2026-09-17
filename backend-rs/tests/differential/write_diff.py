@@ -578,16 +578,23 @@ def reseed():
 
 
 def snapshot():
-    """Table contents as JSON, ordered so the comparison is stable."""
-    out = {}
-    for table in WATCHED:
-        # row_to_json over an ordered select: deterministic, and it does
-        # not need to know the column list.
-        rows = psql(
-            f"SELECT row_to_json(t) FROM (SELECT * FROM {table} ORDER BY 1) t"
-        )
-        out[table] = [json.loads(line) for line in rows.splitlines() if line.strip()]
-    return out
+    """Table contents as JSON, ordered so the comparison is stable.
+
+    One query for every watched table, not one `docker exec` per table.
+    A case takes two snapshots per tier, and at eleven tables that was
+    forty-four process launches a case — about eight minutes per
+    mutation in a mutation run, which is slow enough that runs get
+    stopped half-way, and a stopped run is how a mutation once got left
+    in the source.
+    """
+    parts = [
+        f"'{table}', COALESCE((SELECT json_agg(t) FROM "
+        f"(SELECT * FROM {table} ORDER BY 1) t), '[]'::json)"
+        for table in WATCHED
+    ]
+    raw = psql("SELECT json_build_object(" + ", ".join(parts) + ")")
+    data = json.loads(raw)
+    return {table: data[table] for table in WATCHED}
 
 
 TS_FORMATS = ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S")

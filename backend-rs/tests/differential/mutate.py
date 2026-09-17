@@ -32,11 +32,24 @@ decision rather than a quiet MISS someone later "fixes" by adding a
 case that cannot fail.
 
 Exit status is 1 if any non-equivalent mutation was missed.
+
+Three safety nets, added after a stopped run left "a revoked agent key
+still authenticates" sitting in src/api/sentinel.rs — the SIGINT went
+to the bash wrapper, the Python process was orphaned mid-mutation, and
+its `finally` only ran when it was found and interrupted directly:
+
+* it refuses to start unless every file a spec mutates is unmodified
+  in git, so `git checkout -- <file>` is always a correct recovery;
+* SIGTERM and SIGHUP are converted into the same KeyboardInterrupt path
+  as SIGINT, so any ordinary kill still restores the source;
+* while a mutation is applied, target/mutation-in-progress.json names
+  it, and a later run refuses to start while that marker exists.
 """
 from __future__ import annotations
 
 import json
 import os
+import signal
 import pathlib
 import re
 import subprocess
@@ -76,11 +89,36 @@ def run_harness(cmds, env) -> tuple[int | None, str]:
     return total, "; ".join(notes)
 
 
+MARKER = RS / "target" / "mutation-in-progress.json"
+
+
+def _interrupt(signum, _frame):
+    raise KeyboardInterrupt(f"signal {signum}")
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__)
         return 64
     spec = json.loads(pathlib.Path(sys.argv[1]).read_text())
+
+    if MARKER.exists():
+        info = json.loads(MARKER.read_text())
+        print(f"REFUSING: a previous run was killed with a mutation applied:\n"
+              f"  {info['name']}\n  in {info['file']}\n"
+              f"Restore it with `git checkout -- {info['file']}`, rebuild, "
+              f"then delete {MARKER}.")
+        return 2
+    files = sorted({m["file"] for m in spec["mutations"]})
+    dirty = subprocess.run(["git", "diff", "--name-only", "--", *files],
+                           capture_output=True, text=True, cwd=RS).stdout.split()
+    if dirty:
+        print("REFUSING: these files have uncommitted changes, so git could not "
+              "restore them if this run were killed mid-mutation:\n  " + "\n  ".join(dirty))
+        return 2
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _interrupt)
     only = sys.argv[2] if len(sys.argv) > 2 else None
     env = spec.get("env", {})
     results = []
@@ -95,6 +133,8 @@ def main() -> int:
             print(f"  !!  patch did not apply: {mut['name']}", flush=True)
             continue
         try:
+            MARKER.parent.mkdir(parents=True, exist_ok=True)
+            MARKER.write_text(json.dumps({"name": mut["name"], "file": mut["file"]}))
             path.write_text(original.replace(mut["old"], mut["new"], 1))
             if spec.get("restart_rust") and not restart_rust():
                 results.append((mut, "DID NOT BUILD", ""))
@@ -105,6 +145,7 @@ def main() -> int:
             print(f"  {str(caught):>5}  {mut['name']}" + (f"   [{notes}]" if notes else ""), flush=True)
         finally:
             path.write_text(original)
+            MARKER.unlink(missing_ok=True)
 
     if spec.get("restart_rust"):
         restart_rust()
