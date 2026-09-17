@@ -106,10 +106,15 @@ ROUTES = [
       ("PATCH", "/api/incidents/abc", "admin", {"status": "open"})],
      ("PATCH", "/api/incidents/9999", "admin", {"status": "open"})),
     ("POST auth/local/login", 10,
-     [("POST", "/api/auth/local/login", None, b"")],
+     # Both 422 paths: an unparseable body, and a parseable one missing
+     # its fields. A check misplaced between the two is caught only by
+     # the second.
+     [("POST", "/api/auth/local/login", None, b""),
+      ("POST", "/api/auth/local/login", None, {})],
      ("POST", "/api/auth/local/login", None, {"username": "admin", "password": "wrong"})),
     ("POST auth/local/refresh", 30,
-     [("POST", "/api/auth/local/refresh", None, b"")],
+     [("POST", "/api/auth/local/refresh", None, b""),
+      ("POST", "/api/auth/local/refresh", None, {})],
      ("POST", "/api/auth/local/refresh", None, {"token": "not-a-token"})),
     ("POST camera-groups", 20,
      [("POST", "/api/camera-groups", "member", {"name": "x"}),
