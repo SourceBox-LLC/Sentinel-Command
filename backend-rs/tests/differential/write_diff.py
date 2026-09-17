@@ -663,6 +663,27 @@ CASES += [
     ("member: wipe logs", "POST", "/api/settings/danger/wipe-logs", None, "member"),
     ("anon: wipe logs", "POST", "/api/settings/danger/wipe-logs", None, "agent:none"),
 
+    # --- Home Assistant recording switch -------------------------------
+    *[(f"integration recording: {label}", "POST", path, body, who)
+      for label, path, body, who in [
+          ("on", "/api/integration/cameras/cam-live/recording", {"recording": True}, "bearer:osi_live_integration_key"),
+          # cam-live is seeded recording already; setting the same value
+          # emits no UPDATE, so updated_at must not move
+          ("unchanged", "/api/integration/cameras/cam-stale/recording", {"recording": False}, "bearer:osi_live_integration_key"),
+          ("off", "/api/integration/cameras/cam-live/recording", {"recording": False}, "bearer:osi_live_integration_key"),
+          ("no field", "/api/integration/cameras/cam-live/recording", {}, "bearer:osi_live_integration_key"),
+          ("truthy string", "/api/integration/cameras/cam-stale/recording", {"recording": "yes"}, "bearer:osi_live_integration_key"),
+          ("zero", "/api/integration/cameras/cam-live/recording", {"recording": 0}, "bearer:osi_live_integration_key"),
+          ("list body", "/api/integration/cameras/cam-live/recording", [1], "bearer:osi_live_integration_key"),
+          ("malformed body", "/api/integration/cameras/cam-live/recording", b"{x", "bearer:osi_live_integration_key"),
+          ("missing camera", "/api/integration/cameras/nope/recording", {"recording": True}, "bearer:osi_live_integration_key"),
+          ("another org's camera", "/api/integration/cameras/cam-theirs/recording", {"recording": True}, "bearer:osi_live_integration_key"),
+          ("revoked key", "/api/integration/cameras/cam-live/recording", {"recording": True}, "bearer:osi_revoked_integration"),
+          ("mcp key", "/api/integration/cameras/cam-live/recording", {"recording": True}, "bearer:osc_mcp_kind_key"),
+          ("no key", "/api/integration/cameras/cam-live/recording", {"recording": True}, "agent:none"),
+          ("session token", "/api/integration/cameras/cam-live/recording", {"recording": True}, "admin"),
+      ]],
+
     ("revoke integration key", "DELETE", "/api/integration/keys/5", None),
     # The audit row this writes carries the key's name in its details
     # JSON, and that name is non-ASCII on purpose — see seed row 11.
@@ -889,6 +910,8 @@ def fetch(base, method, path, body, who="admin"):
         req.add_header("X-Sentinel-Agent-Key", "osa_\u00ff")
     elif who == "agent:none":
         pass
+    elif who.startswith("bearer:"):
+        req.add_header("Authorization", f"Bearer {who[len('bearer:'):]}")
     elif who.startswith("node:"):
         # A CameraNode API key. urllib encodes header values as latin-1,
         # so a key containing U+00FF goes out as the single byte 0xFF —

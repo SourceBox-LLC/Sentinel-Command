@@ -49,6 +49,33 @@ export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:16379/0}"
 # tiers must read the same bytes or /install.sh diffs for a reason that
 # has nothing to do with the port.
 export SCRIPTS_DIR="$REPO/backend/scripts"
+
+# Python's background loops, pushed out of reach. Every one sleeps before
+# its first run, so a ten-year interval means it never fires during a
+# session. They write to the same tables the write differential
+# snapshots, on their own timer, and only the Python tier runs them:
+#
+#   offline sweep (30s)   flips `online` nodes with a stale last_seen to
+#                         offline and writes transition notifications —
+#                         and the write fixture freezes every last_seen
+#                         to January;
+#   sentinel reaper (5m)  marks pending runs older than 6h, and running
+#                         runs older than 20m, as errored — every seeded
+#                         run qualifies.
+#
+# A loop firing between one tier's reseed and its snapshot is a one-case
+# diff that is gone on the rerun. The reaper did exactly that: it was
+# caught red-handed rewriting run ...0001 to "Abandoned — agent never
+# claimed this run within 6 hours" during an unrelated integration case,
+# and it is the likeliest author of an earlier sentinel_runs flake that
+# never reproduced. The loops themselves are ported, and verified, with
+# the background-loop slice — not by racing them here.
+FOREVER=315360000
+export OFFLINE_SWEEP_INTERVAL_SECONDS=$FOREVER
+export SENTINEL_REAPER_INTERVAL_SECONDS=$FOREVER
+export MOTION_DIGEST_INTERVAL_SECONDS=$FOREVER
+export DISK_CHECK_INTERVAL_SECONDS=$FOREVER
+export RELEASE_CACHE_REFRESH_INTERVAL_SECONDS=$FOREVER
 export STATIC_DIR="$REPO/backend/static"
 
 

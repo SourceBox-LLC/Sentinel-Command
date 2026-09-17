@@ -192,6 +192,12 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/mcp/keys", ported(api::keys::list_mcp_keys))
         .route("/api/integration/keys", ported(api::keys::list_integration_keys))
+        .route("/api/integration/cameras", ported(api::integration::list_cameras))
+        .route(
+            "/api/integration/cameras/{camera_id}/recording",
+            served(axum::routing::post(api::integration::set_recording)),
+        )
+        .route("/api/integration/status", ported(api::integration::status))
         .route(
             "/api/integration/keys/{key_id}",
             served(axum::routing::delete(api::keys::revoke_integration_key)),

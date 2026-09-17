@@ -32,6 +32,22 @@ use crate::models::{iso_naive, now_naive};
 /// A node is offline after three missed heartbeats.
 const HEARTBEAT_GRACE_SECONDS: i64 = 90;
 
+/// `CameraNode.effective_status` as a function of its two columns.
+pub fn node_effective_status(status: Option<&str>, last_seen: Option<NaiveDateTime>) -> Option<String> {
+    let status = status.map(str::to_string);
+    let Some(last_seen) = last_seen else {
+        return Some(status.unwrap_or_else(|| "offline".to_string()));
+    };
+    if matches!(status.as_deref(), Some("offline") | Some("pending")) {
+        return Some(status.unwrap_or_else(|| "offline".to_string()));
+    }
+    let age = now_naive().signed_duration_since(last_seen);
+    if age.num_seconds() > HEARTBEAT_GRACE_SECONDS {
+        return Some("offline".to_string());
+    }
+    status
+}
+
 #[derive(Debug, sqlx::FromRow)]
 pub struct CameraNodeRow {
     pub node_id: String,
@@ -63,18 +79,7 @@ impl CameraNodeRow {
     /// registered but never heartbeated should read as pending rather
     /// than as something that went offline.
     pub fn effective_status(&self) -> Option<String> {
-        let status = self.status.clone();
-        let Some(last_seen) = self.last_seen else {
-            return Some(status.unwrap_or_else(|| "offline".to_string()));
-        };
-        if matches!(status.as_deref(), Some("offline") | Some("pending")) {
-            return Some(status.unwrap_or_else(|| "offline".to_string()));
-        }
-        let age = now_naive().signed_duration_since(last_seen);
-        if age.num_seconds() > HEARTBEAT_GRACE_SECONDS {
-            return Some("offline".to_string());
-        }
-        status
+        node_effective_status(self.status.as_deref(), self.last_seen)
     }
 
     pub fn to_json(&self) -> Value {

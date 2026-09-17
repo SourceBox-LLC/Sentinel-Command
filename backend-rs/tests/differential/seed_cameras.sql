@@ -108,16 +108,18 @@ SELECT * FROM (VALUES
 -- node-dddd4444 also already has a codec, so reporting one must not
 -- update the node (and must not move its updated_at). node-ffff6666 has
 -- an EMPTY codec, which `not node.video_codec` treats as unset.
-INSERT INTO camera_nodes (node_id, org_id, api_key_hash, name, status, video_codec, audio_codec) VALUES
+INSERT INTO camera_nodes (node_id, org_id, api_key_hash, name, status, video_codec, audio_codec, local_ip, http_port) VALUES
   ('node-dddd4444', 'self-host',
    '513ceeab86d874d7de558cef2a9f5b8d10659f3c162d0410d12ccb6c65dc1372',
-   'High Byte Key', 'online', 'avc1.640028', 'mp4a.40.2'),
+   'High Byte Key', 'online', 'avc1.640028', 'mp4a.40.2', '192.168.1.40', 8081),
   ('node-eeee5555', 'self-host',
    '48cec6821e84f2d39d3eab0b705ea046826b1f74862d81f71f4d7e2327ffb7ef',
-   'Raw Byte Decoy', 'online', NULL, NULL),
+   -- http_port 0: `node.http_port or 8080` makes that 8080
+   'Raw Byte Decoy', 'online', NULL, NULL, '10.0.0.5', 0),
   ('node-ffff6666', 'self-host',
    '5f04ce6f1784775a88a8b9f0a5dbfa7af121a27a5a4addce92bac3e1ac0e2aea',
-   'Empty Codec Node', 'online', '', NULL);
+   -- an empty local_ip is falsy: no LAN URL at all
+   'Empty Codec Node', 'online', '', NULL, '', NULL);
 
 INSERT INTO cameras (camera_id, org_id, node_id, name, node_type, capabilities, status,
                      disabled_by_plan, continuous_24_7, scheduled_recording)
@@ -362,7 +364,18 @@ VALUES
   --     string before, so the port stored "Café" where Python
   --     stored "Caf\u00e9" and every harness called it identical.
   ('self-host', 'hash_11', 'Café 🎥 — Terrasse', timestamp '2026-09-10 10:00:00',
-   NULL, false, 'all', NULL, 'integration');
+   NULL, false, 'all', NULL, 'integration'),
+  -- 12-14: integration keys with REAL hashes, for /api/integration/*.
+  --   12  osi_live_integration_key    authenticates
+  --   13  osi_revoked_integration     revoked, must not
+  --   14  osc_mcp_kind_key            an MCP key: right hash, wrong kind,
+  --                                   must not — kind is the boundary
+  ('self-host', '805ff9bd0d9fe483225995f3fcaa97b7b232084ed5f21e5452d5257fd009404c', 'Home Assistant Live',
+   timestamp '2026-09-11 10:00:00', NULL, false, 'all', NULL, 'integration'),
+  ('self-host', '5e136420d4db74b8fec00578900fbb7a3faf3043ca3526785b7041a336dd1b16', 'HA Revoked',
+   timestamp '2026-09-11 11:00:00', NULL, true, 'all', NULL, 'integration'),
+  ('self-host', '9e6a477e4b9c3ccd58cd8027d87d55c34fdb59c06d53f9bacceeb4aef5646cba', 'MCP Not Integration',
+   timestamp '2026-09-11 12:00:00', NULL, false, 'all', NULL, 'mcp');
 
 -- ---- notifications --------------------------------------------------
 DELETE FROM user_notification_state;

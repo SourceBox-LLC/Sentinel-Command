@@ -150,6 +150,17 @@ ROUTES = [
     ("POST settings/danger/wipe-logs", 5,
      [("POST", "/api/settings/danger/wipe-logs", "member", None)],
      ("POST", "/api/settings/danger/wipe-logs", "admin", None)),
+    # Integration auth is a dependency, so a bad key is free; the
+    # recording body is read inside the function, so it is not.
+    ("GET integration/cameras", 120,
+     [("GET", "/api/integration/cameras", "bearer:osi_revoked_integration", None)],
+     ("GET", "/api/integration/cameras", "bearer:osi_live_integration_key", None)),
+    ("GET integration/status", 120,
+     [("GET", "/api/integration/status", None, None)],
+     ("GET", "/api/integration/status", "bearer:osi_live_integration_key", None)),
+    ("POST integration recording", 60,
+     [("POST", "/api/integration/cameras/nope/recording", "bearer:osc_mcp_kind_key", {"recording": True})],
+     ("POST", "/api/integration/cameras/nope/recording", "bearer:osi_live_integration_key", {"recording": True})),
     # group_id is a query parameter, not a body field.
     ("PUT cameras/{id}/group", 60,
      [("PUT", "/api/cameras/does-not-exist/group", "member", None),
@@ -178,6 +189,8 @@ def send(port, req):
         headers["Authorization"] = f"Bearer {ADMIN}"
     elif auth == "member":
         headers["Authorization"] = f"Bearer {MEMBER}"
+    elif auth and auth.startswith("bearer:"):
+        headers["Authorization"] = f"Bearer {auth[len('bearer:'):]}"
     elif auth and auth.startswith("node:"):
         headers["X-Node-API-Key"] = auth[len("node:"):]
     data = None

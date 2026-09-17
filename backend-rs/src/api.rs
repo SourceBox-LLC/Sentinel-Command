@@ -9,6 +9,7 @@ pub mod cameras;
 pub mod groups;
 pub mod incidents;
 pub mod install;
+pub mod integration;
 pub mod keys;
 pub mod local_auth;
 pub mod mcp_activity;

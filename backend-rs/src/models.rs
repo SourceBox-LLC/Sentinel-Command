@@ -74,6 +74,25 @@ pub const CAMERA_SELECT: &str = r#"
 /// A camera is offline after three missed heartbeats.
 const HEARTBEAT_GRACE_SECONDS: i64 = 90;
 
+/// `Camera.effective_status`, as a function of the two columns it reads,
+/// so every route that reports a camera's status computes it one way.
+pub fn camera_effective_status(
+    status: Option<&str>,
+    last_seen: Option<NaiveDateTime>,
+) -> Option<String> {
+    let Some(last_seen) = last_seen else {
+        return Some("offline".to_string());
+    };
+    if status == Some("offline") {
+        return Some("offline".to_string());
+    }
+    let age = now_naive().signed_duration_since(last_seen);
+    if age.num_seconds() > HEARTBEAT_GRACE_SECONDS {
+        return Some("offline".to_string());
+    }
+    status.map(str::to_string)
+}
+
 impl CameraRow {
     /// Real-time status, derived from `last_seen` rather than trusted
     /// from the stored column — a node that dies without saying so
@@ -83,17 +102,7 @@ impl CameraRow {
     /// is otherwise live, which is what Python's attribute access yields
     /// for such a row.
     pub fn effective_status(&self) -> Option<String> {
-        let Some(last_seen) = self.last_seen else {
-            return Some("offline".to_string());
-        };
-        if self.status.as_deref() == Some("offline") {
-            return Some("offline".to_string());
-        }
-        let age = now_naive().signed_duration_since(last_seen);
-        if age.num_seconds() > HEARTBEAT_GRACE_SECONDS {
-            return Some("offline".to_string());
-        }
-        self.status.clone()
+        camera_effective_status(self.status.as_deref(), self.last_seen)
     }
 
     pub fn to_json(&self) -> Value {

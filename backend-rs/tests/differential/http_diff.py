@@ -295,6 +295,31 @@ CASES = [
     ("GET", "/api/sentinel/agent-keys", False),
     ("GET", "/api/sentinel/agent-keys", "member"),
 
+    # --- Home Assistant integration: Bearer integration keys -----------
+    #
+    # The key is hashed as UTF-8 of the latin-1-decoded header and trimmed
+    # with Python's str.strip(), which removes a trailing U+00A0 — one
+    # byte on the wire. kind='integration' is the boundary: an MCP key
+    # with a valid hash must not get in.
+    *[("GET", path, False, {"Authorization": auth})
+      for path in ("/api/integration/cameras", "/api/integration/status")
+      for auth in (
+          "Bearer osi_live_integration_key",
+          "bearer osi_live_integration_key",
+          "BEARER   osi_live_integration_key  ",
+          "Bearer osi_live_integration_key\u00a0",
+          "Bearer osi_revoked_integration",
+          "Bearer osc_mcp_kind_key",
+          "Bearer ",
+          "Bearer    ",
+          "Basic osi_live_integration_key",
+          "Bearer\tosi_live_integration_key",
+          "osi_live_integration_key",
+      )],
+    ("GET", "/api/integration/cameras", False),
+    # A dashboard session token is not an integration key.
+    ("GET", "/api/integration/cameras", True),
+
     # --- install + MCP setup scripts: public, header-heavy -------------
     #
     # The bodies are read straight off disk, so a diff here is almost

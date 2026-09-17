@@ -48,7 +48,7 @@ def rust_handler_limits():
     for f in sorted((BACKEND_RS / "src/api").glob("*.rs")):
         src = f.read_text()
         for m in re.finditer(r"pub async fn (\w+)\(", src):
-            name = m.group(1)
+            name = f"{f.stem}::{m.group(1)}"
             # take the argument list by balancing parentheses
             i = m.end() - 1
             depth, j = 0, i
@@ -98,7 +98,7 @@ def rust_routes():
             continue
         ported = re.search(r"ported\(\s*(?:api::)?([\w:]+)", body)
         if ported:
-            routes.append(("GET", path, ported.group(1).split("::")[-1]))
+            routes.append(("GET", path, "::".join(ported.group(1).split("::")[-2:])))
             continue
         for verb in ("get", "post", "put", "patch", "delete"):
             # Both `get(...)` and `axum::routing::delete(...)` are used in
@@ -109,7 +109,7 @@ def rust_routes():
             for h in re.finditer(
                 rf"(?:^|[^\w])(?:axum::routing::)?{verb}\(\s*(?:api::)?([\w:]+)", body
             ):
-                routes.append((verb.upper(), path, h.group(1).split("::")[-1]))
+                routes.append((verb.upper(), path, "::".join(h.group(1).split("::")[-2:])))
     return routes
 
 
