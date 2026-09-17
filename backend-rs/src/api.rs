@@ -14,6 +14,7 @@ pub mod local_auth;
 pub mod mcp_activity;
 pub mod motion;
 pub mod notifications;
+pub mod node_writes;
 pub mod nodes;
 pub mod recording;
 pub mod sentinel;

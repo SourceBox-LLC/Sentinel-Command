@@ -621,7 +621,8 @@ def main():
 
     bad = 0
     rate_limited = []
-    cases = [c for c in CASES if not DIFF_ONLY or DIFF_ONLY in c[1]]
+    wanted = [w for w in DIFF_ONLY.split("|") if w]
+    cases = [c for c in CASES if not wanted or any(w in c[1] for w in wanted)]
     for case in cases:
         method, path, auth = case[0], case[1], case[2]
         extra = case[3] if len(case) > 3 else None

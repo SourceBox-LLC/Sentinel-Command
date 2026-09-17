@@ -24,6 +24,7 @@ between the runs and must not be reported:
 Usage: write_diff.py <token> [-v]
 """
 
+import hashlib
 import json
 import os
 import re
@@ -63,6 +64,7 @@ RECENT_WINDOW = timedelta(minutes=10)
 DIFF_ONLY = os.environ.get("DIFF_ONLY", "")
 
 WATCHED = ["incidents", "incident_evidence", "audit_log", "settings",
+           "camera_nodes", "stream_access_logs", "mcp_activity_logs",
            "camera_groups", "cameras", "mcp_api_keys",
            "notifications", "user_notification_state",
            # sentinel_agent_keys is watched even though no case writes
@@ -230,6 +232,10 @@ EXPECTED_DIVERGENCES = {
     # written to produce. See expected_divergences.md.
     "policy: bad HH:MM",
     "policy: single-digit hour",
+    # Python stores a JSON list audio_codec as psycopg's array text,
+    # `{a,b}`, into a value written into an HLS CODECS attribute. Rust
+    # refuses. See expected_divergences.md and PYTHON_BUGS.md #2.
+    "codec: audio as a list",
 }
 
 CASES += [
@@ -534,6 +540,124 @@ CASES += [
       for who in whos
       for raw in (b"{x", b"[1]", b"")],
 
+    # --- CameraNode key routes: validate and codec --------------------
+    #
+    # Input no real CameraNode sends is here on purpose. These handlers
+    # read their body with `await request.json()` and branch on Python
+    # truthiness and `len()`, so a number where a string belongs is a
+    # 500 (len(5) raises outside any try), a list is a 404 whose message
+    # spells the list the way Python's str() does, and a mixed-type list
+    # is a 500 because psycopg cannot bind it.
+    *[(f"validate: {label}", "POST", "/api/nodes/validate", body, who)
+      for label, body, who in [
+          ("ok", {"node_id": "node-aaaa1111"}, "node:test-node-key"),
+          ("no key", {"node_id": "node-aaaa1111"}, "agent:none"),
+          ("empty key", {"node_id": "node-aaaa1111"}, "node:"),
+          ("wrong key records the error", {"node_id": "node-aaaa1111"}, "node:wrong"),
+          ("another org's node", {"node_id": "node-cccc3333"}, "node:test-node-key"),
+          ("high-byte key hashed as UTF-8", {"node_id": "node-dddd4444"}, "node:node-key-\u00ff"),
+          ("high-byte key against a raw-byte hash", {"node_id": "node-eeee5555"}, "node:node-key-\u00ff"),
+          ("missing node", {"node_id": "nope"}, "node:test-node-key"),
+          ("malformed json", b"{x", "node:test-node-key"),
+          ("empty body", b"", "node:test-node-key"),
+          ("list body", [1, 2], "node:test-node-key"),
+          ("string body", "x", "node:test-node-key"),
+          ("no node_id", {}, "node:test-node-key"),
+          ("node_id 0", {"node_id": 0}, "node:test-node-key"),
+          ("node_id false", {"node_id": False}, "node:test-node-key"),
+          ("node_id empty list", {"node_id": []}, "node:test-node-key"),
+          ("node_id int", {"node_id": 123}, "node:test-node-key"),
+          ("node_id float", {"node_id": 1.5}, "node:test-node-key"),
+          ("node_id true", {"node_id": True}, "node:test-node-key"),
+          ("node_id dict", {"node_id": {"a": 1}}, "node:test-node-key"),
+          ("node_id list", {"node_id": ["a"]}, "node:test-node-key"),
+          ("node_id list with null", {"node_id": ["a", None]}, "node:test-node-key"),
+          ("node_id list with a quote", {"node_id": ["it's"]}, "node:test-node-key"),
+          ("node_id list of ints", {"node_id": [1, 2]}, "node:test-node-key"),
+          ("node_id list of floats", {"node_id": [1.5]}, "node:test-node-key"),
+          ("node_id int and float", {"node_id": [1, 1.5]}, "node:test-node-key"),
+          ("node_id bool and int", {"node_id": [True, 1]}, "node:test-node-key"),
+          ("node_id ragged ints", {"node_id": [[1], [2, 3]]}, "node:test-node-key"),
+          ("node_id ragged strings", {"node_id": [["a"], "b"]}, "node:test-node-key"),
+          ("node_id nested strings", {"node_id": [["a"], ["b"]]}, "node:test-node-key"),
+          ("node_id list of dict", {"node_id": [{"a": 1}]}, "node:test-node-key"),
+      ]],
+    *[(f"codec: {label}", "POST", path, body, who)
+      for label, path, body, who in [
+          ("ok", "/api/cameras/cam-live/codec", {"video_codec": "avc1.64001f"}, "node:test-node-key"),
+          ("with audio", "/api/cameras/cam-live/codec",
+           {"video_codec": "avc1.64001f", "audio_codec": "opus"}, "node:test-node-key"),
+          ("no key", "/api/cameras/cam-live/codec", {"video_codec": "avc1.64001f"}, "agent:none"),
+          ("empty key", "/api/cameras/cam-live/codec", {"video_codec": "avc1.64001f"}, "node:"),
+          ("bad key", "/api/cameras/cam-live/codec", {"video_codec": "avc1.64001f"}, "node:wrong"),
+          ("another node's camera", "/api/cameras/cam-failed/codec", {"video_codec": "avc1.64001f"}, "node:test-node-key"),
+          ("missing camera", "/api/cameras/nope/codec", {"video_codec": "avc1.64001f"}, "node:test-node-key"),
+          ("missing camera and a bad body", "/api/cameras/nope/codec", b"{x", "node:test-node-key"),
+          ("malformed json", "/api/cameras/cam-live/codec", b"{x", "node:test-node-key"),
+          ("empty body", "/api/cameras/cam-live/codec", b"", "node:test-node-key"),
+          ("null body", "/api/cameras/cam-live/codec", b"null", "node:test-node-key"),
+          ("list body", "/api/cameras/cam-live/codec", [1], "node:test-node-key"),
+          ("no video", "/api/cameras/cam-live/codec", {"audio_codec": "mp4a.40.2"}, "node:test-node-key"),
+          ("video empty", "/api/cameras/cam-live/codec", {"video_codec": ""}, "node:test-node-key"),
+          ("video 0", "/api/cameras/cam-live/codec", {"video_codec": 0}, "node:test-node-key"),
+          ("video int", "/api/cameras/cam-live/codec", {"video_codec": 5}, "node:test-node-key"),
+          ("video list", "/api/cameras/cam-live/codec", {"video_codec": ["a"]}, "node:test-node-key"),
+          ("video list holding a newline", "/api/cameras/cam-live/codec", {"video_codec": ["\n"]}, "node:test-node-key"),
+          ("video list of 65", "/api/cameras/cam-live/codec", {"video_codec": ["a"] * 65}, "node:test-node-key"),
+          ("video dict keyed by newline", "/api/cameras/cam-live/codec", {"video_codec": {"\n": 1}}, "node:test-node-key"),
+          ("video dict", "/api/cameras/cam-live/codec", {"video_codec": {"a": 1}}, "node:test-node-key"),
+          ("video 65 chars", "/api/cameras/cam-live/codec", {"video_codec": "a" * 65}, "node:test-node-key"),
+          ("video 55 chars overflows the column", "/api/cameras/cam-live/codec", {"video_codec": "a" * 55}, "node:test-node-key"),
+          ("video newline", "/api/cameras/cam-live/codec", {"video_codec": "avc1\n"}, "node:test-node-key"),
+          ("video carriage return", "/api/cameras/cam-live/codec", {"video_codec": "avc1\r"}, "node:test-node-key"),
+          ("audio int", "/api/cameras/cam-live/codec", {"video_codec": "avc1.64001f", "audio_codec": 7}, "node:test-node-key"),
+          ("audio 0 takes the default", "/api/cameras/cam-live/codec", {"video_codec": "avc1.64001f", "audio_codec": 0}, "node:test-node-key"),
+          ("audio empty takes the default", "/api/cameras/cam-live/codec", {"video_codec": "avc1.64001f", "audio_codec": ""}, "node:test-node-key"),
+          ("audio empty list takes the default", "/api/cameras/cam-live/codec", {"video_codec": "avc1.64001f", "audio_codec": []}, "node:test-node-key"),
+          ("audio 65 chars", "/api/cameras/cam-live/codec", {"video_codec": "avc1.64001f", "audio_codec": "a" * 65}, "node:test-node-key"),
+          ("audio as a list", "/api/cameras/cam-live/codec", {"video_codec": "avc1.64001f", "audio_codec": ["a", "b"]}, "node:test-node-key"),
+          ("audio list holding a newline", "/api/cameras/cam-live/codec", {"video_codec": "avc1.64001f", "audio_codec": ["\n"]}, "node:test-node-key"),
+          ("audio format beats a bad video type", "/api/cameras/cam-live/codec", {"video_codec": ["a"], "audio_codec": "a" * 65}, "node:test-node-key"),
+          # sanitize_video_codec: level below 2.0 is upgraded to 3.0
+          ("level 1.0 upgraded", "/api/cameras/cam-live/codec", {"video_codec": "avc1.64000a"}, "node:test-node-key"),
+          ("negative level upgraded", "/api/cameras/cam-live/codec", {"video_codec": "avc1.6400-1"}, "node:test-node-key"),
+          ("space-padded level upgraded", "/api/cameras/cam-live/codec", {"video_codec": "avc1.6400 1"}, "node:test-node-key"),
+          ("uppercase level upgraded", "/api/cameras/cam-live/codec", {"video_codec": "avc1.64000A"}, "node:test-node-key"),
+          ("level exactly 2.0 kept", "/api/cameras/cam-live/codec", {"video_codec": "avc1.640014"}, "node:test-node-key"),
+          ("non-hex level kept", "/api/cameras/cam-live/codec", {"video_codec": "avc1.6400zz"}, "node:test-node-key"),
+          ("ten characters kept", "/api/cameras/cam-live/codec", {"video_codec": "avc1.6400a"}, "node:test-node-key"),
+          ("not avc1 kept", "/api/cameras/cam-live/codec", {"video_codec": "hvc1.1.6.L93"}, "node:test-node-key"),
+          # node inheritance
+          ("high-byte key, node already has a codec", "/api/cameras/cam-dddd/codec",
+           {"video_codec": "avc1.64001f"}, "node:node-key-\u00ff"),
+          ("high-byte key, the raw-byte node's camera", "/api/cameras/cam-eeee/codec",
+           {"video_codec": "avc1.64001f"}, "node:node-key-\u00ff"),
+          ("node with an empty codec inherits", "/api/cameras/cam-ffff/codec",
+           {"video_codec": "avc1.64001f"}, "node:node-key-empty-codec"),
+      ]],
+
+    # --- node management ---------------------------------------------
+    ("rotate key", "POST", "/api/nodes/node-aaaa1111/rotate-key", None),
+    ("rotate another org's key", "POST", "/api/nodes/node-cccc3333/rotate-key", None),
+    ("rotate a missing node's key", "POST", "/api/nodes/nope/rotate-key", None),
+    ("member: rotate key", "POST", "/api/nodes/node-aaaa1111/rotate-key", None, "member"),
+    ("anon: rotate key", "POST", "/api/nodes/node-aaaa1111/rotate-key", None, "agent:none"),
+    ("create node", "POST", "/api/nodes", {"name": "Garage"}),
+    ("create node, no name", "POST", "/api/nodes", {}),
+    ("create node, null name", "POST", "/api/nodes", {"name": None}),
+    ("create node, empty name", "POST", "/api/nodes", {"name": ""}),
+    ("create node, 100-char name", "POST", "/api/nodes", {"name": "x" * 100}),
+    ("create node, 101-char name", "POST", "/api/nodes", {"name": "x" * 101}),
+    ("create node, int name", "POST", "/api/nodes", {"name": 5}),
+    ("create node, list body", "POST", "/api/nodes", [1]),
+    ("create node, malformed json", "POST", "/api/nodes", b"{x"),
+    ("create node, empty body", "POST", "/api/nodes", b""),
+    ("member: create node", "POST", "/api/nodes", {"name": "x"}, "member"),
+    ("anon: create node, malformed json", "POST", "/api/nodes", b"{x", "agent:none"),
+    ("wipe logs", "POST", "/api/settings/danger/wipe-logs", None),
+    ("member: wipe logs", "POST", "/api/settings/danger/wipe-logs", None, "member"),
+    ("anon: wipe logs", "POST", "/api/settings/danger/wipe-logs", None, "agent:none"),
+
     ("revoke integration key", "DELETE", "/api/integration/keys/5", None),
     # The audit row this writes carries the key's name in its details
     # JSON, and that name is non-ASCII on purpose — see seed row 11.
@@ -620,6 +744,22 @@ UPDATE notifications
 UPDATE user_notification_state
    SET last_viewed_at = timestamp '2026-06-01 00:00:00'
  WHERE last_viewed_at IS NOT NULL;
+-- Fourth time: the log tables are seeded relative to now() for the read
+-- differential's time windows, and they only drifted into view here when
+-- wipe-logs put them in WATCHED. Re-based by rank rather than shifted by
+-- a now() delta — each seed statement gets its own now(), so a delta
+-- would leave millisecond drift. Order and distinctness are preserved,
+-- which is all a delete-and-compare needs.
+UPDATE stream_access_logs s
+   SET accessed_at = timestamp '2026-06-01 00:00:00' - (r.rn || ' seconds')::interval
+  FROM (SELECT id, row_number() OVER (ORDER BY accessed_at DESC, id) AS rn
+          FROM stream_access_logs) r
+ WHERE s.id = r.id;
+UPDATE mcp_activity_logs m
+   SET timestamp = timestamp '2026-06-01 00:00:00' - (r.rn || ' seconds')::interval
+  FROM (SELECT id, row_number() OVER (ORDER BY timestamp DESC, id) AS rn
+          FROM mcp_activity_logs) r
+ WHERE m.id = r.id;
 """
 
 
@@ -771,7 +911,48 @@ def run_case(base, method, path, body, who="admin"):
         parsed = json.loads(raw)
     except Exception:  # noqa: BLE001
         parsed = raw.decode("utf-8", "replace")
-    return status, normalise(parsed, now), normalise(snapshot(), now)
+    subs = issued_secrets(parsed)
+    return (status, substitute(normalise(parsed, now), subs),
+            substitute(normalise(snapshot(), now), subs))
+
+
+def issued_secrets(parsed):
+    """Tokens for the random values a response hands out.
+
+    Creating a node and rotating a key return a fresh uuid4 `api_key`,
+    and creating a node also a random eight-hex `node_id`. They differ
+    between the two tiers by construction, so they are replaced — but by
+    *exact value*, not by pattern: the stored `api_key_hash` is replaced
+    only if it really is sha256 of the key this response returned. A port
+    that stored any other hash leaves a random literal behind, and the
+    two tiers disagree.
+    """
+    subs = {}
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("api_key"), str):
+        return subs
+    key = parsed["api_key"]
+    subs[key] = "<issued-api-key>"
+    subs[hashlib.sha256(key.encode()).hexdigest()] = "<sha256-of-issued-key>"
+    node_id = parsed.get("node_id")
+    if isinstance(node_id, str) and re.fullmatch(r"[0-9a-f]{8}", node_id):
+        subs[node_id] = "<issued-node-id>"
+    return subs
+
+
+def substitute(value, subs):
+    if not subs:
+        return value
+    if isinstance(value, dict):
+        return {k: substitute(v, subs) for k, v in value.items()}
+    if isinstance(value, list):
+        return [substitute(v, subs) for v in value]
+    if isinstance(value, str):
+        # Longest first, so a node id inside "Node-<id>" or an audit
+        # details string is caught without disturbing the rest.
+        for secret in sorted(subs, key=len, reverse=True):
+            value = value.replace(secret, subs[secret])
+        return value
+    return value
 
 
 def main():
@@ -787,7 +968,8 @@ def main():
 
 def _main():
     bad = 0
-    cases = [c for c in CASES if not DIFF_ONLY or DIFF_ONLY in c[0] or DIFF_ONLY in c[2]]
+    wanted = [w for w in DIFF_ONLY.split("|") if w]
+    cases = [c for c in CASES if not wanted or any(w in c[0] or w in c[2] for w in wanted)]
     for case in cases:
         name, method, path, body = case[0], case[1], case[2], case[3]
         who = case[4] if len(case) > 4 else "admin"

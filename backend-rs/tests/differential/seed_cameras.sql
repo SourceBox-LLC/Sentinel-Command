@@ -96,6 +96,39 @@ SELECT * FROM (VALUES
      (SELECT id FROM camera_groups WHERE name='Their Group'), now()::timestamp, 'streaming', NULL, false, false, false, NULL, NULL)
 ) AS v;
 
+-- ---- node-key auth fixtures (nodes 4-6, cameras after the set above) --
+--
+-- CameraNode routes hash `api_key.encode()`: Starlette has decoded the
+-- header as latin-1, and .encode() then produces UTF-8. The agent-key
+-- path re-encodes latin-1 instead. So for the key "node-key-\u00ff",
+-- sent on the wire as the single byte 0xFF:
+--   node-dddd4444 stores sha256 of its UTF-8 form  -> Python authenticates it
+--   node-eeee5555 stores sha256 of the raw bytes   -> a port hashing raw
+--                                                     bytes would
+-- node-dddd4444 also already has a codec, so reporting one must not
+-- update the node (and must not move its updated_at). node-ffff6666 has
+-- an EMPTY codec, which `not node.video_codec` treats as unset.
+INSERT INTO camera_nodes (node_id, org_id, api_key_hash, name, status, video_codec, audio_codec) VALUES
+  ('node-dddd4444', 'self-host',
+   '513ceeab86d874d7de558cef2a9f5b8d10659f3c162d0410d12ccb6c65dc1372',
+   'High Byte Key', 'online', 'avc1.640028', 'mp4a.40.2'),
+  ('node-eeee5555', 'self-host',
+   '48cec6821e84f2d39d3eab0b705ea046826b1f74862d81f71f4d7e2327ffb7ef',
+   'Raw Byte Decoy', 'online', NULL, NULL),
+  ('node-ffff6666', 'self-host',
+   '5f04ce6f1784775a88a8b9f0a5dbfa7af121a27a5a4addce92bac3e1ac0e2aea',
+   'Empty Codec Node', 'online', '', NULL);
+
+INSERT INTO cameras (camera_id, org_id, node_id, name, node_type, capabilities, status,
+                     disabled_by_plan, continuous_24_7, scheduled_recording)
+VALUES
+  ('cam-dddd', 'self-host', (SELECT id FROM camera_nodes WHERE node_id='node-dddd4444'),
+   'High Byte Cam', 'rtsp', 'streaming', 'streaming', false, false, false),
+  ('cam-eeee', 'self-host', (SELECT id FROM camera_nodes WHERE node_id='node-eeee5555'),
+   'Decoy Cam', 'rtsp', 'streaming', 'streaming', false, false, false),
+  ('cam-ffff', 'self-host', (SELECT id FROM camera_nodes WHERE node_id='node-ffff6666'),
+   'Empty Codec Cam', 'rtsp', 'streaming', 'streaming', false, false, false);
+
 -- ---- settings -------------------------------------------------------
 DELETE FROM settings WHERE org_id IN ('self-host', 'other-org');
 INSERT INTO settings (org_id, key, value) VALUES

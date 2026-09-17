@@ -133,6 +133,23 @@ ROUTES = [
      [("POST", "/api/settings/notifications", "member", {"motion_notifications": True}),
       ("POST", "/api/settings/notifications", "admin", {"motion_notifications": "maybe"})],
      ("POST", "/api/settings/notifications", "admin", {"motion_notifications": True})),
+    # Node-key routes read everything inside the function, so there is
+    # nothing Python refuses before its limiter: every request counts.
+    ("POST nodes/validate", 10, [],
+     ("POST", "/api/nodes/validate", "node:test-node-key", {"node_id": "nope"})),
+    ("POST cameras/{id}/codec", 30, [],
+     ("POST", "/api/cameras/nope/codec", "node:test-node-key", {"video_codec": "avc1.64001f"})),
+    ("POST nodes/{id}/rotate-key", 5,
+     [("POST", "/api/nodes/nope/rotate-key", "member", None)],
+     ("POST", "/api/nodes/nope/rotate-key", "admin", None)),
+    ("POST nodes", 20,
+     [("POST", "/api/nodes", "member", {"name": "x"}),
+      ("POST", "/api/nodes", "admin", {"name": 5}),
+      ("POST", "/api/nodes", None, b"{x")],
+     ("POST", "/api/nodes", "admin", {"name": "rate probe"})),
+    ("POST settings/danger/wipe-logs", 5,
+     [("POST", "/api/settings/danger/wipe-logs", "member", None)],
+     ("POST", "/api/settings/danger/wipe-logs", "admin", None)),
     # group_id is a query parameter, not a body field.
     ("PUT cameras/{id}/group", 60,
      [("PUT", "/api/cameras/does-not-exist/group", "member", None),
@@ -161,6 +178,8 @@ def send(port, req):
         headers["Authorization"] = f"Bearer {ADMIN}"
     elif auth == "member":
         headers["Authorization"] = f"Bearer {MEMBER}"
+    elif auth and auth.startswith("node:"):
+        headers["X-Node-API-Key"] = auth[len("node:"):]
     data = None
     if body is not None:
         data = body if isinstance(body, bytes) else json.dumps(body).encode()

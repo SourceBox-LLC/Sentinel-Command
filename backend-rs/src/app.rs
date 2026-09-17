@@ -106,7 +106,10 @@ pub fn build_router(state: AppState) -> Router {
         // these the moment that route landed — including push-segment,
         // the hot video ingest path, which a 404 here would have taken
         // down. All still belong to Python.
-        .route("/api/cameras/{camera_id}/codec", still_python())
+        .route(
+            "/api/cameras/{camera_id}/codec",
+            served(axum::routing::post(api::node_writes::report_camera_codec)),
+        )
         .route("/api/cameras/{camera_id}/motion", still_python())
         .route("/api/cameras/{camera_id}/playlist", still_python())
         .route("/api/cameras/{camera_id}/push-segment", still_python())
@@ -154,12 +157,26 @@ pub fn build_router(state: AppState) -> Router {
         // answered them 404. FastAPI is saved from this by declaration
         // order; axum has no ordering between separately registered
         // paths, so the statics are pinned to the proxy explicitly.
-        .route("/api/nodes/validate", still_python())
+        .route(
+            "/api/nodes/validate",
+            served(axum::routing::post(api::node_writes::validate_node)),
+        )
         .route("/api/nodes/register", still_python())
         .route("/api/nodes/heartbeat", still_python())
         .route("/api/nodes/plan", still_python())
         .route("/api/nodes/ws-status", still_python())
         .route("/api/nodes/{node_id}", ported(api::nodes::get_node))
+        .route(
+            "/api/nodes/{node_id}/rotate-key",
+            served(axum::routing::post(api::node_writes::rotate_api_key)),
+        )
+        // POST only: GET /api/nodes adds the newest release from an
+        // in-process GitHub cache and stays on the proxy until that moves.
+        .route("/api/nodes", served(axum::routing::post(api::node_writes::create_node)))
+        .route(
+            "/api/settings/danger/wipe-logs",
+            served(axum::routing::post(api::node_writes::wipe_stream_logs)),
+        )
         // /counts must be declared here too: it is a static sibling of
         // /{incident_id} and would otherwise be swallowed. It is ported
         // rather than pinned, so it is a real route, not a proxy pin.

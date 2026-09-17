@@ -22,6 +22,7 @@ pub mod models;
 pub mod plans;
 pub mod proxy;
 pub mod pyjson;
+pub mod pyrepr;
 pub mod query;
 pub mod ratelimit;
 pub mod settings;

@@ -28,6 +28,9 @@ pub struct Config {
 
     // --- Clerk ---------------------------------------------------------
     pub clerk_secret_key: String,
+    /// Clerk Backend API base, including `/v1`. Overridable so the plan
+    /// harness can point both stacks at a fake.
+    pub clerk_api_url: String,
     pub clerk_publishable_key: String,
     /// Resolved from the publishable key; see `auth::issuer_from_publishable_key`.
     pub clerk_issuer: Option<String>,
@@ -86,6 +89,7 @@ fn var_or(key: &str, default: &str) -> String {
 impl Config {
     pub fn from_env() -> Self {
         let clerk_publishable_key = var_or("CLERK_PUBLISHABLE_KEY", "");
+        let clerk_api_url = var_or("CLERK_API_URL", "https://api.clerk.com/v1");
         Self {
             database_url: normalize_database_url(&var_or(
                 "DATABASE_URL",
@@ -99,6 +103,7 @@ impl Config {
             clerk_issuer: crate::auth::issuer_from_publishable_key(&clerk_publishable_key),
             clerk_secret_key: var_or("CLERK_SECRET_KEY", ""),
             clerk_publishable_key,
+            clerk_api_url,
             app_secret_key: var_or("APP_SECRET_KEY", ""),
             // "self-host", not "local" — this string is the org_id every
             // row in a self-hosted install is scoped by, so a different
@@ -151,6 +156,7 @@ mod tests {
             sentinel_agent_key: None,
             clerk_secret_key: secret.into(),
             clerk_publishable_key: publishable.into(),
+            clerk_api_url: String::new(),
             clerk_issuer: None,
             app_secret_key: String::new(),
             local_org_id: "self-host".into(),

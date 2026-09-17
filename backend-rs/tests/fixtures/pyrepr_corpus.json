@@ -1,0 +1,285 @@
+{
+"values": [
+{
+"value": null,
+"repr": "None",
+"str": "None"
+},
+{
+"value": true,
+"repr": "True",
+"str": "True"
+},
+{
+"value": false,
+"repr": "False",
+"str": "False"
+},
+{
+"value": 0,
+"repr": "0",
+"str": "0"
+},
+{
+"value": 7,
+"repr": "7",
+"str": "7"
+},
+{
+"value": -3,
+"repr": "-3",
+"str": "-3"
+},
+{
+"value": 1.5,
+"repr": "1.5",
+"str": "1.5"
+},
+{
+"value": 3.0,
+"repr": "3.0",
+"str": "3.0"
+},
+{
+"value": -0.0,
+"repr": "-0.0",
+"str": "-0.0"
+},
+{
+"value": 0.0,
+"repr": "0.0",
+"str": "0.0"
+},
+{
+"value": 1e+16,
+"repr": "1e+16",
+"str": "1e+16"
+},
+{
+"value": 1000000000000000.0,
+"repr": "1000000000000000.0",
+"str": "1000000000000000.0"
+},
+{
+"value": 123456789.0,
+"repr": "123456789.0",
+"str": "123456789.0"
+},
+{
+"value": 0.0001,
+"repr": "0.0001",
+"str": "0.0001"
+},
+{
+"value": 1e-05,
+"repr": "1e-05",
+"str": "1e-05"
+},
+{
+"value": 0.1,
+"repr": "0.1",
+"str": "0.1"
+},
+{
+"value": 2.5e-07,
+"repr": "2.5e-07",
+"str": "2.5e-07"
+},
+{
+"value": 1e+20,
+"repr": "1e+20",
+"str": "1e+20"
+},
+{
+"value": -1e+22,
+"repr": "-1e+22",
+"str": "-1e+22"
+},
+{
+"value": "",
+"repr": "''",
+"str": ""
+},
+{
+"value": "a",
+"repr": "'a'",
+"str": "a"
+},
+{
+"value": "it's",
+"repr": "\"it's\"",
+"str": "it's"
+},
+{
+"value": "say \"hi\"",
+"repr": "'say \"hi\"'",
+"str": "say \"hi\""
+},
+{
+"value": "both ' and \"",
+"repr": "'both \\' and \"'",
+"str": "both ' and \""
+},
+{
+"value": "back\\slash",
+"repr": "'back\\\\slash'",
+"str": "back\\slash"
+},
+{
+"value": "tab\there",
+"repr": "'tab\\there'",
+"str": "tab\there"
+},
+{
+"value": "nl\nx",
+"repr": "'nl\\nx'",
+"str": "nl\nx"
+},
+{
+"value": "caf\u00e9",
+"repr": "'caf\u00e9'",
+"str": "caf\u00e9"
+},
+{
+"value": "\u007f",
+"repr": "'\\x7f'",
+"str": "\u007f"
+},
+{
+"value": "\u0000",
+"repr": "'\\x00'",
+"str": "\u0000"
+},
+{
+"value": [
+"a",
+null
+],
+"repr": "['a', None]",
+"str": "['a', None]"
+},
+{
+"value": [
+1,
+2
+],
+"repr": "[1, 2]",
+"str": "[1, 2]"
+},
+{
+"value": [
+[
+1
+],
+"b"
+],
+"repr": "[[1], 'b']",
+"str": "[[1], 'b']"
+},
+{
+"value": [
+true,
+1.5
+],
+"repr": "[True, 1.5]",
+"str": "[True, 1.5]"
+},
+{
+"value": {
+"a": 1,
+"b": [
+null
+]
+},
+"repr": "{'a': 1, 'b': [None]}",
+"str": "{'a': 1, 'b': [None]}"
+},
+{
+"value": {
+"it's": "x"
+},
+"repr": "{\"it's\": 'x'}",
+"str": "{\"it's\": 'x'}"
+},
+{
+"value": [],
+"repr": "[]",
+"str": "[]"
+},
+{
+"value": {},
+"repr": "{}",
+"str": "{}"
+}
+],
+"codecs": [
+{
+"in": "avc1.64001f",
+"out": "avc1.64001f"
+},
+{
+"in": "avc1.64000a",
+"out": "avc1.64001e"
+},
+{
+"in": "avc1.6400-1",
+"out": "avc1.64001e"
+},
+{
+"in": "avc1.6400 1",
+"out": "avc1.64001e"
+},
+{
+"in": "avc1.64000A",
+"out": "avc1.64001e"
+},
+{
+"in": "avc1.640014",
+"out": "avc1.640014"
+},
+{
+"in": "avc1.640013",
+"out": "avc1.64001e"
+},
+{
+"in": "avc1.6400zz",
+"out": "avc1.6400zz"
+},
+{
+"in": "avc1.6400a",
+"out": "avc1.6400a"
+},
+{
+"in": "hvc1.1.6.L93",
+"out": "hvc1.1.6.L93"
+},
+{
+"in": "",
+"out": ""
+},
+{
+"in": "avc1.6400+1",
+"out": "avc1.64001e"
+},
+{
+"in": "avc1.6400_1",
+"out": "avc1.6400_1"
+},
+{
+"in": "avc1.64001_",
+"out": "avc1.64001_"
+},
+{
+"in": "avc1.6400\t1",
+"out": "avc1.64001e"
+},
+{
+"in": "avc1.64000x",
+"out": "avc1.64000x"
+},
+{
+"in": "AVC1.64000a",
+"out": "AVC1.64000a"
+}
+]
+}

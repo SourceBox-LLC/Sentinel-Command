@@ -67,6 +67,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 anyhow = "1"
 sha2 = "0.11"
+uuid = { version = "1", features = ["v4"] }
 
 # Local (self-hosted) admin login. The stored hash is a PHC string
 # written by python-argon2's PasswordHasher, so the parameters travel
