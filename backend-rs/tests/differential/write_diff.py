@@ -608,6 +608,11 @@ CASES += [
           ("video dict", "/api/cameras/cam-live/codec", {"video_codec": {"a": 1}}, "node:test-node-key"),
           ("video 65 chars", "/api/cameras/cam-live/codec", {"video_codec": "a" * 65}, "node:test-node-key"),
           ("video 55 chars overflows the column", "/api/cameras/cam-live/codec", {"video_codec": "a" * 55}, "node:test-node-key"),
+          # len() counts characters. 40 "\u00e9" is 80 bytes: past 64 as bytes,
+          # well within it as characters, so only a byte-counting port 400s it.
+          ("video 40 accented chars", "/api/cameras/cam-live/codec", {"video_codec": "\u00e9" * 40}, "node:test-node-key"),
+          ("audio 40 accented chars", "/api/cameras/cam-live/codec",
+           {"video_codec": "avc1.64001f", "audio_codec": "\u00e9" * 40}, "node:test-node-key"),
           ("video newline", "/api/cameras/cam-live/codec", {"video_codec": "avc1\n"}, "node:test-node-key"),
           ("video carriage return", "/api/cameras/cam-live/codec", {"video_codec": "avc1\r"}, "node:test-node-key"),
           ("audio int", "/api/cameras/cam-live/codec", {"video_codec": "avc1.64001f", "audio_codec": 7}, "node:test-node-key"),
