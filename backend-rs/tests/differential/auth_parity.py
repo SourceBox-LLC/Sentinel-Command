@@ -51,6 +51,9 @@ EQUIVALENT = {
 INLINE_AUTH = {
     ("POST", "/api/nodes/validate"),
     ("POST", "/api/cameras/{camera_id}/codec"),
+    # A Svix signature, verified in the handler; covered by the Resend
+    # cases run against the Clerk-mode pair.
+    ("POST", "/api/webhooks/resend"),
 }
 
 
@@ -161,7 +164,7 @@ def main():
                   f"expects {want_rust or 'no extractor'}, rust has {got or 'none'}")
             bad += 1
         else:
-            label = want or ("inline key check" if (method, path) in INLINE_AUTH else "open")
+            label = want or ("inline credential check" if (method, path) in INLINE_AUTH else "open")
             print(f"  ok    {method:<6} {path:<46} {label}")
 
     print(f"\n{bad} mismatch(es)")

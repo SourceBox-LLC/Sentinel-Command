@@ -528,3 +528,31 @@ VALUES
   ('run0000000000000000000000000009', 'other-org', timestamp '2026-09-07 09:00:00',
    'motion', 'cam-theirs', 0, 'pending', NULL, NULL, NULL, NULL, NULL, '', NULL,
    timestamp '2026-09-07 09:00:00');
+
+-- ---- email: outbox, suppression list, processed webhook ids ---------
+--
+-- For POST /api/webhooks/resend. A bounce or complaint suppresses the
+-- recipients and marks the originating outbox row — but only a row still
+-- 'sent', so em_pending must stay as it is. One address is already
+-- suppressed (a duplicate insert is swallowed, not an error), and one
+-- message id has already been processed (a retried delivery answers
+-- "duplicate" and changes nothing).
+DELETE FROM email_outbox;
+DELETE FROM email_suppression;
+DELETE FROM processed_webhooks;
+ALTER SEQUENCE IF EXISTS email_outbox_id_seq RESTART WITH 1;
+ALTER SEQUENCE IF EXISTS email_suppression_id_seq RESTART WITH 1;
+ALTER SEQUENCE IF EXISTS processed_webhooks_id_seq RESTART WITH 1;
+INSERT INTO email_outbox (org_id, recipient_email, subject, body_text, body_html, kind,
+                          status, attempts, sent_at, resend_message_id, created_at)
+VALUES
+  ('self-host', 'bounce@example.com', 'Motion', 't', '<p>t</p>', 'motion',
+   'sent', 1, timestamp '2026-09-01 10:00:00', 'em_sent', timestamp '2026-09-01 10:00:00'),
+  ('self-host', 'queued@example.com', 'Motion', 't', '<p>t</p>', 'motion',
+   'pending', 0, NULL, 'em_pending', timestamp '2026-09-01 11:00:00'),
+  ('other-org', 'theirs@example.com', 'Motion', 't', '<p>t</p>', 'motion',
+   'sent', 1, timestamp '2026-09-01 12:00:00', 'em_theirs', timestamp '2026-09-01 12:00:00');
+INSERT INTO email_suppression (address, reason, source, created_at)
+VALUES ('already@example.com', 'bounce', 'resend_webhook', timestamp '2026-08-01 00:00:00');
+INSERT INTO processed_webhooks (svix_msg_id, event_type, processed_at)
+VALUES ('msg_already_seen', 'email.bounced', timestamp '2026-08-01 00:00:00');

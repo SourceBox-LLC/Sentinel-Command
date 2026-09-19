@@ -81,12 +81,28 @@ export SCRIPTS_DIR="$REPO/backend/scripts"
 export SENTINEL_LICENSE_KEY="${SENTINEL_LICENSE_KEY:-harness-licence-key}"
 export SENTINEL_LICENSE_SERVICE_URL="${SENTINEL_LICENSE_SERVICE_URL:-http://127.0.0.1:18090}"
 
+# The same Svix secret for both tiers, so write_diff can sign one
+# webhook delivery with the svix library and send it to each.
+export RESEND_WEBHOOK_SECRET="${RESEND_WEBHOOK_SECRET:-whsec_aGFybmVzcy13ZWJob29rLXNlY3JldC0xMjM0NTY=}"
+
 FOREVER=315360000
 export OFFLINE_SWEEP_INTERVAL_SECONDS=$FOREVER
 export SENTINEL_REAPER_INTERVAL_SECONDS=$FOREVER
 export MOTION_DIGEST_INTERVAL_SECONDS=$FOREVER
 export DISK_CHECK_INTERVAL_SECONDS=$FOREVER
 export RELEASE_CACHE_REFRESH_INTERVAL_SECONDS=$FOREVER
+# Every 5s it "sends" any pending email_outbox row — which the fixture
+# has had only since the Resend webhook cases, so it raced the harness
+# only from then on, alternating which tier's snapshot it landed in.
+export EMAIL_WORKER_INTERVAL_SECONDS=$FOREVER
+#
+# Loops with a hardcoded interval, left running because none touches a
+# watched table: the viewer-usage flush (60s, writes org_monthly_usage
+# only after Python has served HLS segments), segment-cache eviction
+# (60s, in memory), log cleanup (24h, sleeps first) and, under Clerk,
+# the plan reconcile (hourly, sleeps first). The licence reconcile is
+# handled by fake_license.py. Watch one of their tables and this list
+# has to be revisited.
 export STATIC_DIR="$REPO/backend/static"
 
 
@@ -182,6 +198,32 @@ case "${1:-status}" in
         wait_healthy 8001
         wait_healthy 8000
         ;;
+    start-clerk|stop-clerk)
+        # A second pair in Clerk mode, on 8100 (Rust) and 8101 (Python),
+        # for behaviour that exists only there. main.py mounts the
+        # webhook router only under Clerk, so a local-auth pair can
+        # confirm the path is absent but never exercise it. Placeholder
+        # keys: nothing these tiers are used for reaches Clerk, and the
+        # Rust JWKS cache is fetched lazily. The two pairs share the
+        # database, so run their harnesses one at a time.
+        stop_one 8100
+        stop_one 8101
+        [[ "$1" == "stop-clerk" ]] && exit 0
+        mkdir -p "$LOGS"
+        (cd "$RS" && cargo build 2>&1 | tail -1)
+        export AUTH_PROVIDER=clerk
+        export CLERK_SECRET_KEY=sk_test_harness_placeholder
+        export CLERK_PUBLISHABLE_KEY=pk_test_aGFybmVzcy5jbGVyay5hY2NvdW50cy5kZXYk
+        cd "$REPO/backend"
+        DATABASE_URL="postgresql+psycopg://cc:cc@127.0.0.1:15434/cc" \
+            spawn "$LOGS/8101.log" "$PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port 8101
+        cd "$RS"
+        DATABASE_URL="postgresql://cc:cc@127.0.0.1:15434/cc" \
+            PYTHON_UPSTREAM="http://127.0.0.1:8101" PORT=8100 \
+            spawn "$LOGS/8100.log" "$RS/target/debug/sentinel-command"
+        wait_healthy 8101
+        wait_healthy 8100
+        ;;
     status)
         for port in 8000 8001; do
             pid="$(port_pid "$port" || true)"
@@ -189,7 +231,7 @@ case "${1:-status}" in
         done
         ;;
     *)
-        echo "usage: $0 start|stop|restart|restart-rust|status" >&2
+        echo "usage: $0 start|stop|restart|restart-rust|start-clerk|stop-clerk|status" >&2
         exit 64
         ;;
 esac

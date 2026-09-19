@@ -209,6 +209,7 @@ pub fn build_router(state: AppState) -> Router {
             served(axum::routing::post(api::integration::set_recording)),
         )
         .route("/api/integration/status", ported(api::integration::status))
+
         .route(
             "/api/integration/keys/{key_id}",
             served(axum::routing::delete(api::keys::revoke_integration_key)),
@@ -261,6 +262,16 @@ pub fn build_router(state: AppState) -> Router {
     // under Clerk these paths do not exist. Claiming them here would
     // answer 503 where Python answers 404 — and would advertise a
     // self-hosted login on a hosted deployment.
+    if !local_auth {
+        // The mirror image: main.py mounts the webhooks router only
+        // under Clerk. A self-hosted install has no Clerk account to
+        // send webhooks and no secret to verify them, so the path does
+        // not exist there — Python answers 404, and so does the proxy.
+        router = router.route(
+            "/api/webhooks/resend",
+            served(axum::routing::post(api::webhooks::resend_webhook)),
+        );
+    }
     if local_auth {
         router = router
             .route(

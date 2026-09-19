@@ -15,7 +15,11 @@ PYTHON="${PYTHON:-$REPO/backend/.venv/bin/python}"
 REDIS_CONTAINER="${REDIS_CONTAINER:-cc-redis-test}"
 APP_SECRET_KEY="${APP_SECRET_KEY:-differential-test-secret-not-a-real-key}"
 
-for port in 8000 8001; do
+# RUST_URL / PYTHON_URL point the run at another pair — the Clerk-mode
+# tiers on 8100/8101, for instance.
+RUST_PORT="${RUST_URL:-http://127.0.0.1:8000}"; RUST_PORT="${RUST_PORT##*:}"
+PYTHON_PORT="${PYTHON_URL:-http://127.0.0.1:8001}"; PYTHON_PORT="${PYTHON_PORT##*:}"
+for port in "$RUST_PORT" "$PYTHON_PORT"; do
     if ! curl -fsS -m 3 "http://127.0.0.1:$port/api/health" >/dev/null 2>&1; then
         echo "nothing healthy on :$port — start both tiers first" >&2
         exit 1

@@ -34,6 +34,10 @@ pub struct Config {
     pub sentinel_global_monthly_run_cap: i64,
     /// Where to nudge the agent after queueing a run.
     pub sentinel_agent_webhook_url: Option<String>,
+    /// Svix signing secret for Resend's webhooks (`whsec_...`). Without
+    /// it every delivery is refused: an unverified bounce could
+    /// suppress any address.
+    pub resend_webhook_secret: Option<String>,
 
     // --- Clerk ---------------------------------------------------------
     pub clerk_secret_key: String,
@@ -116,6 +120,7 @@ impl Config {
             sentinel_global_monthly_run_cap: var_or("SENTINEL_GLOBAL_MONTHLY_RUN_CAP", "0")
                 .parse()
                 .unwrap_or(0),
+            resend_webhook_secret: std::env::var("RESEND_WEBHOOK_SECRET").ok().filter(|v| !v.is_empty()),
             sentinel_agent_webhook_url: std::env::var("SENTINEL_AGENT_WEBHOOK_URL")
                 .ok()
                 .filter(|v| !v.is_empty()),
@@ -177,6 +182,7 @@ mod tests {
             sentinel_dispatch_enabled: true,
             sentinel_global_monthly_run_cap: 0,
             sentinel_agent_webhook_url: None,
+            resend_webhook_secret: None,
             clerk_secret_key: secret.into(),
             clerk_publishable_key: publishable.into(),
             clerk_api_url: String::new(),

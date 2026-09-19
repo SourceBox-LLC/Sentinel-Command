@@ -36,8 +36,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-RUST = "http://127.0.0.1:8000"
-PYTHON = "http://127.0.0.1:8001"
+RUST = os.environ.get("RUST_URL", "http://127.0.0.1:8000")
+PYTHON = os.environ.get("PYTHON_URL", "http://127.0.0.1:8001")
 PG_CONTAINER = "cc-schema-test"
 REDIS_CONTAINER = "cc-redis-test"
 
@@ -66,6 +66,7 @@ DIFF_ONLY = os.environ.get("DIFF_ONLY", "")
 WATCHED = ["incidents", "incident_evidence", "audit_log", "settings",
            "camera_nodes", "stream_access_logs", "mcp_activity_logs",
            "camera_groups", "cameras", "mcp_api_keys", "sentinel_config",
+           "email_outbox", "email_suppression", "processed_webhooks",
            "notifications", "user_notification_state",
            # sentinel_agent_keys is watched even though no case writes
            # to it deliberately: every agent-authenticated request
@@ -760,6 +761,59 @@ CASES += [
           ("monthly cap reached", {"prompt": "x"}, "admin", "INSERT INTO sentinel_runs (id, org_id, triggered_at, trigger_type, tool_call_count, outcome, summary, updated_at) SELECT md5(g::text), 'self-host', now()::timestamp, 'motion', 0, 'no_action', '', now()::timestamp FROM generate_series(1, 500) g;"),
       ]],
 
+    # --- Resend delivery webhook ---------------------------------------
+    #
+    # The Svix signature is the whole security boundary: an unverified
+    # bounce could suppress any address. A bounce or complaint
+    # suppresses its recipients — lowercased and stripped, duplicates
+    # swallowed — and marks the originating outbox row, but only one
+    # still 'sent'. A retried delivery is answered "duplicate".
+    *[(f"resend: {label}", "POST", "/api/webhooks/resend", body, who)
+      for label, body, who in [
+          ("bounce", {"type": "email.bounced",
+                      "data": {"email_id": "em_sent", "to": ["new@example.com"]}}, "svix:msg_1"),
+          ("complaint, to as a string", {"type": "email.complained",
+                      "data": {"email_id": "em_sent", "to": "angry@example.com"}}, "svix:msg_2"),
+          ("bounce of an address already suppressed",
+           {"type": "email.bounced", "data": {"to": ["already@example.com", "fresh@example.com"]}},
+           "svix:msg_3"),
+          ("bounce normalises the address",
+           {"type": "email.bounced", "data": {"to": ["  Mixed@Example.COM "]}}, "svix:msg_4"),
+          ("bounce with junk recipients",
+           {"type": "email.bounced", "data": {"to": ["nope", 5, None, "ok@example.com"]}}, "svix:msg_5"),
+          ("bounce with no recipients", {"type": "email.bounced", "data": {}}, "svix:msg_6"),
+          ("bounce of a row still pending",
+           {"type": "email.bounced", "data": {"email_id": "em_pending"}}, "svix:msg_7"),
+          ("bounce of an unknown message", {"type": "email.bounced", "data": {"email_id": "em_nope"}}, "svix:msg_8"),
+          ("bounce of another org's message",
+           {"type": "email.bounced", "data": {"email_id": "em_theirs"}}, "svix:msg_9"),
+          ("bounce with a numeric email_id",
+           {"type": "email.bounced", "data": {"email_id": 5, "to": ["n@example.com"]}}, "svix:msg_10"),
+          ("delivered", {"type": "email.delivered", "data": {"email_id": "em_sent"}}, "svix:msg_11"),
+          ("an unknown event", {"type": "email.opened", "data": {"email_id": "em_sent"}}, "svix:msg_12"),
+          ("no type", {"data": {"email_id": "em_sent"}}, "svix:msg_13"),
+          ("a numeric type", {"type": 5, "data": {}}, "svix:msg_14"),
+          ("a boolean type", {"type": True}, "svix:msg_15"),
+          ("a list type", {"type": ["email.bounced"]}, "svix:msg_16"),
+          ("bounce with data as a list", {"type": "email.bounced", "data": [1]}, "svix:msg_17"),
+          ("bounce with data empty list", {"type": "email.bounced", "data": []}, "svix:msg_18"),
+          ("delivered with data as a string", {"type": "email.delivered", "data": "x"}, "svix:msg_19"),
+          ("an unknown event with data as a list", {"type": "email.opened", "data": [1]}, "svix:msg_20"),
+          ("a retried delivery", {"type": "email.bounced", "data": {"to": ["dup@example.com"]}},
+           "svix:msg_already_seen"),
+          ("webhook-* header spelling", {"type": "email.bounced", "data": {"to": ["w@example.com"]}},
+           "svix-webhook:msg_21"),
+          ("one of two signatures valid", {"type": "email.delivered", "data": {}}, "svix-rotated:msg_22"),
+          ("a bad signature", {"type": "email.bounced", "data": {"to": ["x@example.com"]}}, "svix-bad:msg_23"),
+          ("a stale timestamp", {"type": "email.bounced", "data": {"to": ["x@example.com"]}}, "svix-stale:msg_24"),
+          ("a future timestamp", {"type": "email.bounced", "data": {"to": ["x@example.com"]}}, "svix-future:msg_25"),
+          ("no signature header", {"type": "email.bounced", "data": {"to": ["x@example.com"]}}, "svix-nosig:msg_26"),
+          ("no svix headers at all", {"type": "email.bounced", "data": {"to": ["x@example.com"]}}, "agent:none"),
+          ("signed malformed json", b"{x", "svix:msg_27"),
+          ("signed list body", [1, 2], "svix:msg_28"),
+          ("signed empty body", b"", "svix:msg_29"),
+      ]],
+
     ("revoke integration key", "DELETE", "/api/integration/keys/5", None),
     # The audit row this writes carries the key's name in its details
     # JSON, and that name is non-ASCII on purpose — see seed row 11.
@@ -965,6 +1019,34 @@ def row_diff(python_rows, rust_rows):
     return out or ["(rows equal but order differs)"]
 
 
+RESEND_SECRET = os.environ.get(
+    "RESEND_WEBHOOK_SECRET", "whsec_aGFybmVzcy13ZWJob29rLXNlY3JldC0xMjM0NTY=")
+
+
+def sign_svix(req, variant, msg_id, data):
+    from datetime import timedelta  # noqa: PLC0415
+
+    from svix.webhooks import Webhook  # noqa: PLC0415
+
+    when = datetime.now(timezone.utc)
+    if variant == "svix-stale":
+        when -= timedelta(minutes=10)
+    elif variant == "svix-future":
+        when += timedelta(minutes=10)
+    signature = Webhook(RESEND_SECRET).sign(msg_id, when, data.decode("utf-8", "replace"))
+    if variant == "svix-bad":
+        signature = "v1," + "A" * 43 + "="
+    elif variant == "svix-rotated":
+        # Two signatures, the first from a retired secret: any one
+        # matching must be enough.
+        signature = "v1," + "B" * 43 + "= " + signature
+    prefix = "webhook" if variant == "svix-webhook" else "svix"
+    req.add_header(f"{prefix}-id", msg_id)
+    req.add_header(f"{prefix}-timestamp", str(int(when.timestamp())))
+    if variant != "svix-nosig":
+        req.add_header(f"{prefix}-signature", signature)
+
+
 def fetch(base, method, path, body, who="admin"):
     # `bytes` is sent exactly as given — malformed JSON, an empty body,
     # a bare `null` — and anything else is JSON-encoded.
@@ -986,6 +1068,13 @@ def fetch(base, method, path, body, who="admin"):
         req.add_header("X-Sentinel-Agent-Key", "osa_\u00ff")
     elif who == "agent:none":
         pass
+    elif who.startswith("svix"):
+        # A Resend delivery, signed by the svix library itself at send
+        # time — the timestamp is part of what is signed and must be
+        # within five minutes. `svix:<id>` is a good delivery; the
+        # variants each break one thing.
+        variant, _, msg_id = who.partition(":")
+        sign_svix(req, variant, msg_id, data or b"")
     elif who.startswith("bearer:"):
         req.add_header("Authorization", f"Bearer {who[len('bearer:'):]}")
     elif who.startswith("node:"):
