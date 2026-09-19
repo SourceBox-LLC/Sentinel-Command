@@ -468,6 +468,18 @@ VALUES
   ('other-org', 'e4e30ad9b553c9f0456588a064dbe606c7041b0cb1e408a8e7f301adeadb69a3',
    '0003', 'Theirs', timestamp '2026-09-03 10:00:00', 'user:them', NULL, false);
 
+-- Another org's config, so sentinel_config is never empty in the
+-- write differential's snapshot — while self-host's own row is still
+-- absent, and created lazily by the case under test.
+DELETE FROM sentinel_config;
+ALTER SEQUENCE IF EXISTS sentinel_config_id_seq RESTART WITH 1;
+INSERT INTO sentinel_config (org_id, enabled, motion_enabled, incident_opened_enabled,
+    motion_cooldown_min, schedule_mode, schedule_start, schedule_end, active_days,
+    camera_scope, created_at, updated_at)
+VALUES ('other-org', false, true, true, 9, 'scheduled', '21:00', '07:00',
+        '["mon"]', '{"cam-theirs": true}', timestamp '2026-09-01 00:00:00',
+        timestamp '2026-09-01 00:00:00');
+
 DELETE FROM sentinel_runs;
 INSERT INTO sentinel_runs
   (id, org_id, triggered_at, trigger_type, camera_id, tool_call_count, outcome,

@@ -65,7 +65,8 @@
    "name": "the audit uses audit_label",
    "file": "src/api/sentinel_config.rs",
    "old": "            &python_or(&user.email, &user.username),\n            Some(python_json(&[(\n                \"changes\",",
-   "new": "            &crate::audit::audit_label(&user),\n            Some(python_json(&[(\n                \"changes\","
+   "new": "            &crate::audit::audit_label(&user),\n            Some(python_json(&[(\n                \"changes\",",
+   "equivalent": "audit_label and `email or username` differ only when both are empty, which no local-auth token is; reachable only with a Clerk token carrying neither."
   },
   {
    "name": "a single-digit hour is accepted",
@@ -83,13 +84,15 @@
    "name": "the prompt is not truncated",
    "file": "src/api/sentinel_config.rs",
    "old": ".bind(truncate_chars(&prompt, 2000))",
-   "new": ".bind(prompt.clone())"
+   "new": ".bind(prompt.clone())",
+   "equivalent": "Pydantic's max_length=2000 refuses a longer prompt before the handler runs, so the [:2000] slice never cuts anything."
   },
   {
    "name": "the cap check is off by one",
    "file": "src/api/sentinel_config.rs",
    "old": "    if cap - runs_used_this_month(&state, &user.org_id).await? <= 0 {",
-   "new": "    if cap - runs_used_this_month(&state, &user.org_id).await? < 0 {"
+   "new": "    if cap - runs_used_this_month(&state, &user.org_id).await? < 0 {",
+   "equivalent": "the count-after-insert is a second, independent cap check: a run slipped past the pre-check is inserted, recounted at cap+1 and rolled back, with the same 429 and no side effect."
   },
   {
    "name": "a manual run is recorded as scheduled",

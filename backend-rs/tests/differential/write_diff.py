@@ -65,7 +65,7 @@ DIFF_ONLY = os.environ.get("DIFF_ONLY", "")
 
 WATCHED = ["incidents", "incident_evidence", "audit_log", "settings",
            "camera_nodes", "stream_access_logs", "mcp_activity_logs",
-           "camera_groups", "cameras", "mcp_api_keys",
+           "camera_groups", "cameras", "mcp_api_keys", "sentinel_config",
            "notifications", "user_notification_state",
            # sentinel_agent_keys is watched even though no case writes
            # to it deliberately: every agent-authenticated request
@@ -712,6 +712,11 @@ CASES += [
           ("schedule start single digit", {"schedule_start": "8:30"}, "admin", None),
           ("schedule start space padded", {"schedule_start": " 8:30"}, "admin", None),
           ("schedule start out of range", {"schedule_start": "24:00"}, "admin", None),
+          # Only the length check refuses these: "08:3" would otherwise
+          # parse as 08 and 3, and "08:300" as a minute out of range —
+          # a different message.
+          ("schedule start too short", {"schedule_start": "08:3"}, "admin", None),
+          ("schedule start too long", {"schedule_start": "08:300"}, "admin", None),
           ("schedule end out of range", {"schedule_end": "12:60"}, "admin", None),
           ("schedule end non-numeric", {"schedule_end": "aa:bb"}, "admin", None),
           ("active days", {"active_days": ["mon", "tue"]}, "admin", None),
@@ -731,8 +736,11 @@ CASES += [
           ("anon", {"enabled": False}, "agent:none", None),
           ("unlicensed", {"enabled": False}, "admin", "DELETE FROM settings WHERE org_id='self-host' AND key LIKE 'sentinel_license%';"),
       ]],
-    ("sentinel config: unlicensed GET still creates the row", "PATCH",
-     "/api/sentinel/config", {"enabled": False}, "admin", "DELETE FROM settings WHERE org_id='self-host' AND key LIKE 'sentinel_license%';"),
+    # The gated view: 200, not 402, with plan_gated set, the reason, and
+    # a cap of zero even though self_host nominally carries one. The
+    # read differential has no per-case setup, so it is run from here.
+    ("sentinel config: unlicensed GET", "GET", "/api/sentinel/config", None, "admin",
+     "DELETE FROM settings WHERE org_id='self-host' AND key LIKE 'sentinel_license%';"),
 
     # --- Run now --------------------------------------------------------
     *[(f"manual run: {label}", "POST", "/api/sentinel/runs/manual", body, who, setup)
