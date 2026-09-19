@@ -1,0 +1,107 @@
+{
+ "_comment": "Mutations for Sentinel config and the manual run.",
+ "restart_rust": true,
+ "env": {
+  "DIFF_ONLY": "sentinel config:|manual run:|/api/sentinel/config"
+ },
+ "harness": [
+  [
+   "tests/differential/http_run.sh"
+  ],
+  [
+   "tests/differential/write_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "an unlicensed install is refused as plan_required",
+   "file": "src/api/sentinel_config.rs",
+   "old": "return Ok((false, json!({\"error\": \"license_required\"})));",
+   "new": "return Ok((false, json!({\"error\": \"plan_required\", \"plan\": \"pro\"})));"
+  },
+  {
+   "name": "the licence gate is skipped",
+   "file": "src/api/sentinel_config.rs",
+   "old": "    if sentinel_blocked_by_license(&license_ctx(state), &plan).await {\n        return Ok((false, json!({\"error\": \"license_required\"})));\n    }",
+   "new": ""
+  },
+  {
+   "name": "a gated org still sees its cap",
+   "file": "src/api/sentinel_config.rs",
+   "old": "\"monthly_cap\": if has_access { cap_for_plan(&plan) } else { 0 },",
+   "new": "\"monthly_cap\": cap_for_plan(&plan),"
+  },
+  {
+   "name": "self_host gets the Pro cap",
+   "file": "src/api/sentinel_config.rs",
+   "old": "\"pro_plus\" | \"self_host\" => 500,",
+   "new": "\"pro_plus\" => 500,\n        \"self_host\" => 100,"
+  },
+  {
+   "name": "unknown day keys are kept",
+   "file": "src/api/sentinel_config.rs",
+   "old": "            .filter(|d| VALID_DAY_KEYS.contains(&d.as_str()))\n",
+   "new": ""
+  },
+  {
+   "name": "camera scope values are not coerced",
+   "file": "src/api/sentinel_config.rs",
+   "old": "        .map(|(k, val)| (k.clone(), json!(pyrepr::truthy(val))))",
+   "new": "        .map(|(k, val)| (k.clone(), val.clone()))"
+  },
+  {
+   "name": "an empty patch still writes",
+   "file": "src/api/sentinel_config.rs",
+   "old": "    if !changes.is_empty() {",
+   "new": "    if true {"
+  },
+  {
+   "name": "the audit records JSON spelling",
+   "file": "src/api/sentinel_config.rs",
+   "old": "        changes.push(format!(\"enabled={}\", pyrepr::str_value(&json!(v))));",
+   "new": "        changes.push(format!(\"enabled={v}\"));"
+  },
+  {
+   "name": "the audit uses audit_label",
+   "file": "src/api/sentinel_config.rs",
+   "old": "            &python_or(&user.email, &user.username),\n            Some(python_json(&[(\n                \"changes\",",
+   "new": "            &crate::audit::audit_label(&user),\n            Some(python_json(&[(\n                \"changes\","
+  },
+  {
+   "name": "a single-digit hour is accepted",
+   "file": "src/api/sentinel_config.rs",
+   "old": "    if chars.len() != 5 || chars[2] != ':' {",
+   "new": "    if chars.len() < 4 || !value.contains(':') {"
+  },
+  {
+   "name": "the invalid-mode message drops the quotes",
+   "file": "src/api/sentinel_config.rs",
+   "old": "                pyrepr::repr_str(v)",
+   "new": "                v"
+  },
+  {
+   "name": "the prompt is not truncated",
+   "file": "src/api/sentinel_config.rs",
+   "old": ".bind(truncate_chars(&prompt, 2000))",
+   "new": ".bind(prompt.clone())"
+  },
+  {
+   "name": "the cap check is off by one",
+   "file": "src/api/sentinel_config.rs",
+   "old": "    if cap - runs_used_this_month(&state, &user.org_id).await? <= 0 {",
+   "new": "    if cap - runs_used_this_month(&state, &user.org_id).await? < 0 {"
+  },
+  {
+   "name": "a manual run is recorded as scheduled",
+   "file": "src/api/sentinel_config.rs",
+   "old": "'manual', $4, 0, 'pending'",
+   "new": "'scheduled', $4, 0, 'pending'"
+  },
+  {
+   "name": "the schedule bounds are not checked",
+   "file": "src/api/sentinel_config.rs",
+   "old": "    if !(0..=23).contains(&h) || !(0..=59).contains(&m) {",
+   "new": "    if false {"
+  }
+ ]
+}
