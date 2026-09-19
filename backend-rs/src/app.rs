@@ -83,6 +83,17 @@ pub fn build_router(state: AppState) -> Router {
             served(axum::routing::post(api::sentinel::post_run_complete)),
         )
         .route("/api/sentinel/agent-keys", ported(api::sentinel::list_agent_keys))
+        .route(
+            "/api/sentinel/config",
+            served(
+                axum::routing::get(api::sentinel_config::get_config)
+                    .patch(api::sentinel_config::patch_config),
+            ),
+        )
+        .route(
+            "/api/sentinel/runs/manual",
+            served(axum::routing::post(api::sentinel_config::post_manual_run)),
+        )
         // Read-only camera routes (slice 2). Writes on these same paths
         // are slice 4 and must still reach Python — hence `ported`
         // rather than a bare `get`.

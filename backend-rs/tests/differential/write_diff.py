@@ -684,6 +684,74 @@ CASES += [
           ("session token", "/api/integration/cameras/cam-live/recording", {"recording": True}, "admin"),
       ]],
 
+    # --- Sentinel configuration ----------------------------------------
+    #
+    # PATCH applies fields in Pydantic's declaration order, not the
+    # body's, so that order decides which 400 comes back and how the
+    # audit's `changes` list reads. Unknown day keys are dropped rather
+    # than rejected, camera_scope values go through Python's bool(), and
+    # a field sent as null is skipped rather than written.
+    *[(f"sentinel config: {label}", "PATCH", "/api/sentinel/config", body, who, setup)
+      for label, body, who, setup in [
+          ("disable", {"enabled": False}, "admin", None),
+          ("motion off", {"motion_enabled": False}, "admin", None),
+          ("incident off", {"incident_opened_enabled": False}, "admin", None),
+          ("cooldown", {"motion_cooldown_min": 10}, "admin", None),
+          ("cooldown at the floor", {"motion_cooldown_min": 1}, "admin", None),
+          ("cooldown at the ceiling", {"motion_cooldown_min": 60}, "admin", None),
+          ("cooldown below the floor", {"motion_cooldown_min": 0}, "admin", None),
+          ("cooldown above the ceiling", {"motion_cooldown_min": 61}, "admin", None),
+          ("cooldown not a number", {"motion_cooldown_min": "abc"}, "admin", None),
+          ("cooldown as a numeric string", {"motion_cooldown_min": "10"}, "admin", None),
+          ("schedule mode", {"schedule_mode": "scheduled"}, "admin", None),
+          ("schedule mode off", {"schedule_mode": "off"}, "admin", None),
+          ("invalid schedule mode", {"schedule_mode": "sometimes"}, "admin", None),
+          ("schedule mode with a quote", {"schedule_mode": "it's"}, "admin", None),
+          ("schedule mode not a string", {"schedule_mode": 5}, "admin", None),
+          ("schedule start", {"schedule_start": "08:30"}, "admin", None),
+          ("schedule start single digit", {"schedule_start": "8:30"}, "admin", None),
+          ("schedule start space padded", {"schedule_start": " 8:30"}, "admin", None),
+          ("schedule start out of range", {"schedule_start": "24:00"}, "admin", None),
+          ("schedule end out of range", {"schedule_end": "12:60"}, "admin", None),
+          ("schedule end non-numeric", {"schedule_end": "aa:bb"}, "admin", None),
+          ("active days", {"active_days": ["mon", "tue"]}, "admin", None),
+          ("active days with an unknown key", {"active_days": ["mon", "xyz"]}, "admin", None),
+          ("active days empty", {"active_days": []}, "admin", None),
+          ("active days not a list", {"active_days": "mon"}, "admin", None),
+          ("active days with a number", {"active_days": ["mon", 3]}, "admin", None),
+          ("camera scope", {"camera_scope": {"cam-live": True}}, "admin", None),
+          ("camera scope truthiness", {"camera_scope": {"cam-live": 1, "cam-stale": ""}}, "admin", None),
+          ("camera scope not an object", {"camera_scope": ["cam-live"]}, "admin", None),
+          ("several fields", {"enabled": False, "schedule_mode": "off", "motion_cooldown_min": 7}, "admin", None),
+          ("a bad field after a good one", {"enabled": False, "schedule_mode": "nope"}, "admin", None),
+          ("empty patch writes nothing", {}, "admin", None),
+          ("explicit nulls are skipped", {"enabled": None, "schedule_mode": None}, "admin", None),
+          ("unknown fields are ignored", {"nope": 1}, "admin", None),
+          ("member", {"enabled": False}, "member", None),
+          ("anon", {"enabled": False}, "agent:none", None),
+          ("unlicensed", {"enabled": False}, "admin", "DELETE FROM settings WHERE org_id='self-host' AND key LIKE 'sentinel_license%';"),
+      ]],
+    ("sentinel config: unlicensed GET still creates the row", "PATCH",
+     "/api/sentinel/config", {"enabled": False}, "admin", "DELETE FROM settings WHERE org_id='self-host' AND key LIKE 'sentinel_license%';"),
+
+    # --- Run now --------------------------------------------------------
+    *[(f"manual run: {label}", "POST", "/api/sentinel/runs/manual", body, who, setup)
+      for label, body, who, setup in [
+          ("ok", {"prompt": "check the door"}, "admin", None),
+          ("no body fields", {}, "admin", None),
+          ("with a camera", {"prompt": "look", "camera_id": "cam-live"}, "admin", None),
+          ("camera that does not exist", {"prompt": "look", "camera_id": "nope"}, "admin", None),
+          ("prompt at the cap", {"prompt": "x" * 2000}, "admin", None),
+          ("prompt past the cap", {"prompt": "x" * 2001}, "admin", None),
+          ("prompt null", {"prompt": None}, "admin", None),
+          ("prompt not a string", {"prompt": 5}, "admin", None),
+          ("camera_id not a string", {"camera_id": 5}, "admin", None),
+          ("member", {"prompt": "x"}, "member", None),
+          ("anon", {"prompt": "x"}, "agent:none", None),
+          ("unlicensed", {"prompt": "x"}, "admin", "DELETE FROM settings WHERE org_id='self-host' AND key LIKE 'sentinel_license%';"),
+          ("monthly cap reached", {"prompt": "x"}, "admin", "INSERT INTO sentinel_runs (id, org_id, triggered_at, trigger_type, tool_call_count, outcome, summary, updated_at) SELECT md5(g::text), 'self-host', now()::timestamp, 'motion', 0, 'no_action', '', now()::timestamp FROM generate_series(1, 500) g;"),
+      ]],
+
     ("revoke integration key", "DELETE", "/api/integration/keys/5", None),
     # The audit row this writes carries the key's name in its details
     # JSON, and that name is non-ASCII on purpose — see seed row 11.
@@ -931,15 +999,20 @@ def fetch(base, method, path, body, who="admin"):
         return None, str(e).encode()
 
 
-def run_case(base, method, path, body, who="admin"):
+def run_case(base, method, path, body, who="admin", setup=None):
     reseed()
+    if setup:
+        # Per-case SQL, run after the reseed and before the request.
+        # Some states cannot be reached any other way: an unlicensed
+        # install, or an org that has already spent its monthly run cap.
+        docker_psql(["-q"], input=setup, what="case setup")
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     status, raw = fetch(base, method, path, body, who)
     try:
         parsed = json.loads(raw)
     except Exception:  # noqa: BLE001
         parsed = raw.decode("utf-8", "replace")
-    subs = issued_secrets(parsed)
+    subs = {**issued_secrets(parsed), **issued_ids(parsed)}
     return (status, substitute(normalise(parsed, now), subs),
             substitute(normalise(snapshot(), now), subs))
 
@@ -965,6 +1038,17 @@ def issued_secrets(parsed):
     if isinstance(node_id, str) and re.fullmatch(r"[0-9a-f]{8}", node_id):
         subs[node_id] = "<issued-node-id>"
     return subs
+
+
+def issued_ids(parsed):
+    """A freshly minted run id — uuid4().hex — differs by construction.
+
+    Seeded run ids spell "run0000...", which is not hex, so only a
+    generated one matches.
+    """
+    if isinstance(parsed, dict) and re.fullmatch(r"[0-9a-f]{32}", str(parsed.get("id", ""))):
+        return {parsed["id"]: "<issued-run-id>"}
+    return {}
 
 
 def substitute(value, subs):
@@ -1001,10 +1085,17 @@ def _main():
     for case in cases:
         name, method, path, body = case[0], case[1], case[2], case[3]
         who = case[4] if len(case) > 4 else "admin"
-        py_status, py_body, py_db = run_case(PYTHON, method, path, body, who)
-        rs_status, rs_body, rs_db = run_case(RUST, method, path, body, who)
+        setup = case[5] if len(case) > 5 else None
+        py_status, py_body, py_db = run_case(PYTHON, method, path, body, who, setup)
+        rs_status, rs_body, rs_db = run_case(RUST, method, path, body, who, setup)
 
-        if 429 in (py_status, rs_status):
+        # Only the *limiter's* 429 is inconclusive. A route can answer
+        # 429 deliberately — the Sentinel monthly cap does — and that is
+        # a result to compare, not an exhausted budget.
+        rate_limited_429 = 429 in (py_status, rs_status) and any(
+            "rate_limit_exceeded" in json.dumps(b) for b in (py_body, rs_body)
+        )
+        if rate_limited_429:
             bad += 1
             print(f"  INCONCLUSIVE {name}: a 429 (rust={rs_status} python={py_status}) — "
                   f"the budget was exhausted, so nothing was compared")

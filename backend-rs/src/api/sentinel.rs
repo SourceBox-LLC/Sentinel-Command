@@ -132,7 +132,7 @@ pub struct SentinelRunRow {
     pub tool_trace: Option<String>,
 }
 
-const RUN_SELECT: &str = r#"
+pub const RUN_SELECT: &str = r#"
     SELECT id, org_id, triggered_at, trigger_type, camera_id, tool_call_count,
            outcome, severity, incident_id, started_at, completed_at,
            manual_prompt, summary, tool_trace

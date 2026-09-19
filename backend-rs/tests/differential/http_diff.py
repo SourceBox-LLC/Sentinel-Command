@@ -291,6 +291,11 @@ CASES = [
     # this asserts it end to end.
     ("GET", "/api/sentinel/runs/manual", True),
 
+    # GET /config is a read that writes: it creates the org's row on
+    # first call. require_view, so a member sees it too.
+    ("GET", "/api/sentinel/config", True),
+    ("GET", "/api/sentinel/config", "member"),
+    ("GET", "/api/sentinel/config", False),
     ("GET", "/api/sentinel/agent-keys", True),
     ("GET", "/api/sentinel/agent-keys", False),
     ("GET", "/api/sentinel/agent-keys", "member"),

@@ -19,6 +19,7 @@ pub mod node_writes;
 pub mod nodes;
 pub mod recording;
 pub mod sentinel;
+pub mod sentinel_config;
 pub mod settings;
 pub mod well_known;
 pub mod stream_logs;

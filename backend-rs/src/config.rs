@@ -25,6 +25,15 @@ pub struct Config {
     /// disable the per-org scoped keys, since that deployment is
     /// exactly the one that issues them.
     pub sentinel_agent_key: Option<String>,
+    /// The self-hosted Sentinel licence key. Absent means unlicensed,
+    /// which is a different refusal from an ineligible plan.
+    pub sentinel_license_key: Option<String>,
+    /// Fleet-wide kill switch for agent dispatch.
+    pub sentinel_dispatch_enabled: bool,
+    /// Fleet-wide monthly run ceiling; 0 disables the ceiling.
+    pub sentinel_global_monthly_run_cap: i64,
+    /// Where to nudge the agent after queueing a run.
+    pub sentinel_agent_webhook_url: Option<String>,
 
     // --- Clerk ---------------------------------------------------------
     pub clerk_secret_key: String,
@@ -100,6 +109,16 @@ impl Config {
             static_dir: var_or("STATIC_DIR", "/app/static"),
             scripts_dir: var_or("SCRIPTS_DIR", "/app/scripts"),
             sentinel_agent_key: std::env::var("SENTINEL_AGENT_KEY").ok().filter(|v| !v.is_empty()),
+            sentinel_license_key: std::env::var("SENTINEL_LICENSE_KEY").ok().filter(|v| !v.is_empty()),
+            // Python reads this as `.lower() == "true"`, so anything
+            // else — including "1" — is false.
+            sentinel_dispatch_enabled: var_or("SENTINEL_DISPATCH_ENABLED", "true").to_lowercase() == "true",
+            sentinel_global_monthly_run_cap: var_or("SENTINEL_GLOBAL_MONTHLY_RUN_CAP", "0")
+                .parse()
+                .unwrap_or(0),
+            sentinel_agent_webhook_url: std::env::var("SENTINEL_AGENT_WEBHOOK_URL")
+                .ok()
+                .filter(|v| !v.is_empty()),
             clerk_issuer: crate::auth::issuer_from_publishable_key(&clerk_publishable_key),
             clerk_secret_key: var_or("CLERK_SECRET_KEY", ""),
             clerk_publishable_key,
@@ -154,6 +173,10 @@ mod tests {
             static_dir: String::new(),
             scripts_dir: String::new(),
             sentinel_agent_key: None,
+            sentinel_license_key: None,
+            sentinel_dispatch_enabled: true,
+            sentinel_global_monthly_run_cap: 0,
+            sentinel_agent_webhook_url: None,
             clerk_secret_key: secret.into(),
             clerk_publishable_key: publishable.into(),
             clerk_api_url: String::new(),

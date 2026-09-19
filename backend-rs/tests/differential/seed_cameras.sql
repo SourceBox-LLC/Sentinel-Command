@@ -136,6 +136,23 @@ VALUES
 -- ---- settings -------------------------------------------------------
 DELETE FROM settings WHERE org_id IN ('self-host', 'other-org');
 INSERT INTO settings (org_id, key, value) VALUES
+  -- Self-hosted licence state, matching what a check-in against
+  -- fake_license.py writes: valid, reachable, sync off. The two
+  -- timestamps are relative to now so the write differential
+  -- normalises them to <recent> — the same token the loop's own write
+  -- would produce, which is what makes its fifteen-minute tick a
+  -- no-op here rather than a flake. install_id is seeded so
+  -- _get_or_create_install_id returns it instead of minting one.
+  ('self-host', 'sentinel_install_id', 'aaaaaaaabbbbbbbbccccccccdddddddd'),
+  ('self-host', 'sentinel_license_valid', 'true'),
+  ('self-host', 'sentinel_license_last_check_reachable', 'true'),
+  -- Fixed, not now(): the two reseeds happen seconds apart and these
+  -- are Text values, so a relative one drifts and every case diffs.
+  -- The gate ignores them while the last check was reachable — the
+  -- grace window is only consulted when it was not.
+  ('self-host', 'sentinel_license_last_check_at', '2026-09-01T00:00:00.000000+00:00'),
+  ('self-host', 'sentinel_license_last_ok_at', '2026-09-01T00:00:00.000000+00:00'),
+  ('self-host', 'sentinel_data_sync_enabled', 'false'),
   ('self-host', 'motion_notifications', 'true'),
   ('self-host', 'camera_transition_notifications', 'false'),
   -- deliberately mixed case: the notification toggles compare with a

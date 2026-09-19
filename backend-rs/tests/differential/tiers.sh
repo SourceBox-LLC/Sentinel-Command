@@ -31,6 +31,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
 RS="$REPO/backend-rs"
 LOGS="${TIER_LOGS:-$RS/target/tier-logs}"
+PYTHON="${PYTHON:-$REPO/backend/.venv/bin/python}"
 
 export APP_SECRET_KEY="${APP_SECRET_KEY:-differential-test-secret-not-a-real-key}"
 export AUTH_PROVIDER=local
@@ -70,6 +71,16 @@ export SCRIPTS_DIR="$REPO/backend/scripts"
 # and it is the likeliest author of an earlier sentinel_runs flake that
 # never reproduced. The loops themselves are ported, and verified, with
 # the background-loop slice — not by racing them here.
+# A licence key, so the three states beyond "unlicensed" are reachable
+# at all: without it every Sentinel route answers 402 license_required
+# and the licensed paths cannot be compared. The reconcile loop's
+# interval is a module constant and cannot be pushed out like the
+# others, so it is pointed at fake_license.py, which answers exactly
+# what the seeded licence state says — a tick mid-run then rewrites the
+# same values instead of moving the gate underneath a case.
+export SENTINEL_LICENSE_KEY="${SENTINEL_LICENSE_KEY:-harness-licence-key}"
+export SENTINEL_LICENSE_SERVICE_URL="${SENTINEL_LICENSE_SERVICE_URL:-http://127.0.0.1:18090}"
+
 FOREVER=315360000
 export OFFLINE_SWEEP_INTERVAL_SECONDS=$FOREVER
 export SENTINEL_REAPER_INTERVAL_SECONDS=$FOREVER
@@ -142,6 +153,16 @@ case "${1:-status}" in
     start|restart)
         [[ "${1}" == "restart" ]] && { stop_one 8000; stop_one 8001; }
         mkdir -p "$LOGS"
+
+        # The fake licence service, if it is not already listening.
+        if ! curl -fsS -m 2 -X POST "$SENTINEL_LICENSE_SERVICE_URL/v1/licenses/check-in" >/dev/null 2>&1; then
+            spawn "$LOGS/fake-license.log" "$PYTHON" "$HERE/fake_license.py" --port 18090
+            for _ in $(seq 25); do
+                curl -fsS -m 1 -X POST "$SENTINEL_LICENSE_SERVICE_URL/v1/licenses/check-in" \
+                    >/dev/null 2>&1 && break
+                sleep 0.2
+            done
+        fi
 
         echo "building rust..."
         (cd "$RS" && cargo build 2>&1 | tail -3)

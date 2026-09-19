@@ -702,6 +702,102 @@ impl BodyErrors {
         }
     }
 
+    /// An `Optional[int]` with `ge` and `le` bounds, as
+    /// `Field(None, ge=1, le=60)` declares them. Pydantic reports the
+    /// bound violation with its own error type and a `ctx` naming the
+    /// limit, distinct from a value that is not an integer at all.
+    pub fn optional_int_in_range(
+        &mut self,
+        body: &Value,
+        field: &str,
+        min: i64,
+        max: i64,
+    ) -> Option<i64> {
+        let value = self.optional_int(body, field)?;
+        let input = body.get(field).cloned().unwrap_or(Value::Null);
+        if value < min {
+            self.push(
+                "greater_than_equal",
+                field,
+                &format!("Input should be greater than or equal to {min}"),
+                input,
+                Some(json!({ "ge": min })),
+            );
+            return None;
+        }
+        if value > max {
+            self.push(
+                "less_than_equal",
+                field,
+                &format!("Input should be less than or equal to {max}"),
+                input,
+                Some(json!({ "le": max })),
+            );
+            return None;
+        }
+        Some(value)
+    }
+
+    /// An `Optional[list[str]]`: a non-list is `list_type`, and every
+    /// element that is not a string is its own `string_type` at that
+    /// index.
+    pub fn optional_list_of_strings(&mut self, body: &Value, field: &str) -> Option<Vec<String>> {
+        let value = match body.get(field) {
+            None | Some(Value::Null) => return None,
+            Some(value) => value,
+        };
+        let Some(items) = value.as_array() else {
+            self.list_type(field, value);
+            return None;
+        };
+        let mut out = Vec::with_capacity(items.len());
+        let mut bad = false;
+        for (i, item) in items.iter().enumerate() {
+            match item {
+                Value::String(s) => out.push(s.clone()),
+                other => {
+                    self.push_at(
+                        "string_type",
+                        &[json!(field), json!(i)],
+                        "Input should be a valid string",
+                        other.clone(),
+                        None,
+                    );
+                    bad = true;
+                }
+            }
+        }
+        if bad {
+            return None;
+        }
+        Some(out)
+    }
+
+    /// An `Optional[dict]`: anything but an object is `dict_type`.
+    pub fn optional_object(
+        &mut self,
+        body: &Value,
+        field: &str,
+    ) -> Option<serde_json::Map<String, Value>> {
+        let value = match body.get(field) {
+            None | Some(Value::Null) => return None,
+            Some(value) => value,
+        };
+        match value {
+            Value::Object(map) => Some(map.clone()),
+            other => {
+                self.push(
+                    "dict_type",
+                    field,
+                    "Input should be a valid dictionary",
+                    other.clone(),
+                    None,
+                );
+                None
+            }
+        }
+    }
+
     /// An `int` field with a default, read with Pydantic's lax rules.
     pub fn int_with_default(&mut self, body: &Value, field: &str, default: i64) -> i64 {
         match body.get(field) {
