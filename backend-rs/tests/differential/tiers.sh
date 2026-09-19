@@ -85,6 +85,10 @@ export SENTINEL_LICENSE_SERVICE_URL="${SENTINEL_LICENSE_SERVICE_URL:-http://127.
 # webhook delivery with the svix library and send it to each.
 export RESEND_WEBHOOK_SECRET="${RESEND_WEBHOOK_SECRET:-whsec_aGFybmVzcy13ZWJob29rLXNlY3JldC0xMjM0NTY=}"
 
+# Placeholder Clerk keys for the Clerk-mode pair: base64 of a made-up
+# Frontend API host. Nothing that pair is used for reaches Clerk.
+CLERK_PK_PLACEHOLDER=pk_test_aGFybmVzcy5jbGVyay5hY2NvdW50cy5kZXYk
+
 FOREVER=315360000
 export OFFLINE_SWEEP_INTERVAL_SECONDS=$FOREVER
 export SENTINEL_REAPER_INTERVAL_SECONDS=$FOREVER
@@ -198,6 +202,20 @@ case "${1:-status}" in
         wait_healthy 8001
         wait_healthy 8000
         ;;
+    restart-rust-clerk)
+        # The Clerk-mode Rust tier only, for mutation runs against it.
+        stop_one 8100
+        mkdir -p "$LOGS"
+        (cd "$RS" && cargo build 2>&1 | tail -1)
+        export AUTH_PROVIDER=clerk
+        export CLERK_SECRET_KEY=sk_test_harness_placeholder
+        export CLERK_PUBLISHABLE_KEY="$CLERK_PK_PLACEHOLDER"
+        cd "$RS"
+        DATABASE_URL="postgresql://cc:cc@127.0.0.1:15434/cc" \
+            PYTHON_UPSTREAM="http://127.0.0.1:8101" PORT=8100 \
+            spawn "$LOGS/8100.log" "$RS/target/debug/sentinel-command"
+        wait_healthy 8100
+        ;;
     start-clerk|stop-clerk)
         # A second pair in Clerk mode, on 8100 (Rust) and 8101 (Python),
         # for behaviour that exists only there. main.py mounts the
@@ -213,7 +231,7 @@ case "${1:-status}" in
         (cd "$RS" && cargo build 2>&1 | tail -1)
         export AUTH_PROVIDER=clerk
         export CLERK_SECRET_KEY=sk_test_harness_placeholder
-        export CLERK_PUBLISHABLE_KEY=pk_test_aGFybmVzcy5jbGVyay5hY2NvdW50cy5kZXYk
+        export CLERK_PUBLISHABLE_KEY="$CLERK_PK_PLACEHOLDER"
         cd "$REPO/backend"
         DATABASE_URL="postgresql+psycopg://cc:cc@127.0.0.1:15434/cc" \
             spawn "$LOGS/8101.log" "$PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port 8101

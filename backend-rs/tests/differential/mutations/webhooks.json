@@ -1,0 +1,95 @@
+{
+ "_comment": "Mutations for the Resend webhook, scored against the Clerk-mode pair (start it with tiers.sh start-clerk).",
+ "tier": "clerk",
+ "restart_rust": true,
+ "env": {
+  "DIFF_ONLY": "resend:",
+  "RUST_URL": "http://127.0.0.1:8100",
+  "PYTHON_URL": "http://127.0.0.1:8101"
+ },
+ "harness": [
+  [
+   "tests/differential/write_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "the timestamp is not checked",
+   "file": "src/api/webhooks.rs",
+   "old": "    if (now - ts).abs() > TOLERANCE_SECONDS {",
+   "new": "    if false {"
+  },
+  {
+   "name": "a future timestamp is accepted",
+   "file": "src/api/webhooks.rs",
+   "old": "    if (now - ts).abs() > TOLERANCE_SECONDS {",
+   "new": "    if now - ts > TOLERANCE_SECONDS {"
+  },
+  {
+   "name": "only the first signature is tried",
+   "file": "src/api/webhooks.rs",
+   "old": "    signature.split(' ').any(|part| {",
+   "new": "    signature.split(' ').take(1).any(|part| {"
+  },
+  {
+   "name": "only svix-* headers are read",
+   "file": "src/api/webhooks.rs",
+   "old": "    let id = header(\"svix-id\", \"webhook-id\");",
+   "new": "    let id = header(\"svix-id\", \"svix-id\");"
+  },
+  {
+   "name": "the signature is not checked",
+   "file": "src/api/webhooks.rs",
+   "old": "    if !verify_svix(secret, &headers, &body, chrono::Utc::now().timestamp()) {",
+   "new": "    if false {"
+  },
+  {
+   "name": "a retried delivery is processed again",
+   "file": "src/api/webhooks.rs",
+   "old": "        if let Some((previous,)) = seen {",
+   "new": "        if let Some((previous,)) = seen.filter(|_| false) {"
+  },
+  {
+   "name": "addresses are not normalised",
+   "file": "src/api/webhooks.rs",
+   "old": "    let addr = address.trim().to_lowercase();",
+   "new": "    let addr = address.to_string();"
+  },
+  {
+   "name": "a pending outbox row is marked too",
+   "file": "src/api/webhooks.rs",
+   "old": "WHERE resend_message_id = $2 AND status = 'sent'",
+   "new": "WHERE resend_message_id = $2"
+  },
+  {
+   "name": "a complaint is recorded as a bounce",
+   "file": "src/api/webhooks.rs",
+   "old": "\"email.complained\" => Some(\"complaint\"),",
+   "new": "\"email.complained\" => Some(\"bounce\"),"
+  },
+  {
+   "name": "a string recipient is ignored",
+   "file": "src/api/webhooks.rs",
+   "old": "        Some(Value::String(s)) if s.contains('@') => vec![s.clone()],",
+   "new": ""
+  },
+  {
+   "name": "a truthy non-object data is treated as empty",
+   "file": "src/api/webhooks.rs",
+   "old": "        let Some(data) = data.as_ref() else {\n            return Err(ApiError::internal(\"resend event data is not an object\"));\n        };\n        for address",
+   "new": "        let empty = serde_json::Map::new();\n        let data = data.as_ref().unwrap_or(&empty);\n        for address"
+  },
+  {
+   "name": "an unhashable type is accepted",
+   "file": "src/api/webhooks.rs",
+   "old": "    if matches!(type_value, Value::Array(_) | Value::Object(_)) && crate::pyrepr::truthy(&type_value) {",
+   "new": "    if false {"
+  },
+  {
+   "name": "the delivery is not recorded",
+   "file": "src/api/webhooks.rs",
+   "old": "            \"INSERT INTO processed_webhooks (svix_msg_id, event_type, processed_at)\n             VALUES ($1, $2, $3)\",",
+   "new": "            \"SELECT $1::text, $2::text, $3::timestamp\","
+  }
+ ]
+}

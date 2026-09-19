@@ -62,10 +62,18 @@ COUNT = re.compile(r"(\d+)/(\d+) identical[^\n]*?(\d+) differing")
 GUARDS = ("COVERAGE TOO THIN", "REFUSING", "FIXTURE TOO THIN", "WATCHED TABLES WITH NO ROWS")
 
 
+TIER = {"action": "restart-rust", "port": 8000}
+
+
 def restart_rust() -> bool:
-    r = subprocess.run([str(HERE / "tiers.sh"), "restart-rust"],
+    """Rebuild and restart the Rust tier the spec targets.
+
+    `"tier": "clerk"` in a spec means the Clerk-mode pair on 8100/8101,
+    for behaviour that exists only under Clerk.
+    """
+    r = subprocess.run([str(HERE / "tiers.sh"), TIER["action"]],
                        capture_output=True, text=True, cwd=RS, timeout=900)
-    return ":8000 healthy" in r.stdout
+    return f":{TIER['port']} healthy" in r.stdout
 
 
 def run_harness(cmds, env) -> tuple[int | None, str]:
@@ -127,6 +135,8 @@ def _main() -> tuple[int, bool]:
         start_from = args[i + 1]
         del args[i:i + 2]
     spec = json.loads(pathlib.Path(args[0]).read_text())
+    if spec.get("tier") == "clerk":
+        TIER.update(action="restart-rust-clerk", port=8100)
 
     if MARKER.exists():
         info = json.loads(MARKER.read_text())
