@@ -26,14 +26,16 @@ DELETE FROM cameras;
 DELETE FROM camera_groups;
 DELETE FROM camera_nodes;
 
-INSERT INTO camera_nodes (node_id, org_id, api_key_hash, name, status) VALUES
+INSERT INTO camera_nodes (node_id, org_id, api_key_hash, name, status, local_ip, http_port) VALUES
   -- sha256("test-node-key"). A real hash, so streaming_diff.py can open an
   -- authenticated WebSocket; the other two keep a placeholder.
   ('node-aaaa1111', 'self-host',
    'f3702f9692e7bce4e7dc0b10fe460daf0bdc6c2c741d4c2fabcdb6df44dbb4c9',
-   'Front Yard Pi', 'online'),
-  ('node-bbbb2222', 'self-host', 'x', 'Garage Pi',     'offline'),
-  ('node-cccc3333', 'other-org', 'x', 'Someone Else',  'online');
+   'Front Yard Pi', 'online', NULL, NULL),
+  -- a LAN address on an OFFLINE node: the integration list must build
+  -- no local_url for it, which is invisible unless some node has both
+  ('node-bbbb2222', 'self-host', 'x', 'Garage Pi',     'offline', '192.168.1.22', 8080),
+  ('node-cccc3333', 'other-org', 'x', 'Someone Else',  'online', NULL, NULL);
 
 INSERT INTO camera_groups (org_id, name, color, icon) VALUES
   ('self-host', 'Outdoor', '#22c55e', '🌳'),
