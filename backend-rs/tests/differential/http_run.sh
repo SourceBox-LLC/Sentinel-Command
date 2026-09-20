@@ -103,4 +103,15 @@ print(jwt.encode({
 ")"
 
 echo
-exec "$PYTHON" "$HERE/http_diff.py" "$TOKEN" "$MEMBER_TOKEN" "$@"
+# Every run's output is kept, as the write harness already keeps its
+# own. A run of this one reported eleven differences and the output went
+# to the terminal and nowhere else; the next run was green and there was
+# nothing left to diagnose from.
+LAST="$HERE/../../target/last-http-diff.out"
+mkdir -p "$(dirname "$LAST")"
+"$PYTHON" "$HERE/http_diff.py" "$TOKEN" "$MEMBER_TOKEN" "$@" 2>&1 | tee "$LAST"
+status="${PIPESTATUS[0]}"
+if [[ "$status" != 0 ]]; then
+    cp "$LAST" "$(dirname "$LAST")/http-diff-failed-$(date +%Y%m%d-%H%M%S).out"
+fi
+exit "$status"

@@ -110,6 +110,11 @@ def main() -> int:
     The rebuild used to follow the loop, so an interrupted run restored
     the file but left :8000 running the last mutant's binary — the next
     differential then reported that mutant's diffs as if they were real.
+
+    On the normal path the rebuild now happens before the summary is
+    printed, so that line means the tier is back up on restored source
+    and a script waiting for it is not racing a restart. This stays for
+    the interrupted path, where nothing else will do it.
     """
     rebuild = False
     try:
@@ -191,6 +196,14 @@ def _main() -> tuple[int, bool]:
             path.write_text(original)
             MARKER.unlink(missing_ok=True)
 
+    # Leave the tier built from the restored source *before* the
+    # summary, not after: the summary is what a watching script waits
+    # for, and printing it while :8000 is still being restarted means
+    # the next differential races the restart. One read run reported
+    # eleven differences that way and the next four were green.
+    if spec.get("restart_rust"):
+        restart_rust()
+
     missed = 0
     print("\n=== summary ===")
     for mut, caught, notes in results:
@@ -202,7 +215,9 @@ def _main() -> tuple[int, bool]:
         ok = isinstance(caught, int) and caught > 0
         missed += 0 if ok else 1
         print(f"{'OK   ' if ok else 'MISS '} {str(caught):>5}  {mut['name']}")
-    return (1 if missed else 0), bool(spec.get("restart_rust"))
+    # Already rebuilt above, so `main`'s finally has nothing left to do
+    # on the normal path — it stays for the interrupted one.
+    return (1 if missed else 0), False
 
 
 if __name__ == "__main__":

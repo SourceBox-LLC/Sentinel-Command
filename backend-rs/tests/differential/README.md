@@ -268,6 +268,12 @@ HTTP differentials for structural reasons, not for want of cases.
 The corpora and unit tests pin the clock and the filesystem, which is
 where properties like these can be held at all.
 
+The summary is printed **after** the tier has been rebuilt from the
+restored source, so a script that waits for that line is not racing a
+restart. It used to print first, and a read run started on the strength
+of it reported eleven differences that no later run could reproduce —
+the tier was simply mid-restart underneath it.
+
 Stop a run by signalling the **Python process**, not a shell that
 launched it. That is how "a revoked agent key still authenticates" was
 once left in the source: the SIGINT went to a bash wrapper, the driver

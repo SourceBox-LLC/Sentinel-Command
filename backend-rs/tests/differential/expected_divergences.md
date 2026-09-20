@@ -178,26 +178,27 @@ fixed.
 **The fix is one line in `main.py`**: run the error list through
 `fastapi.encoders.jsonable_encoder` before handing it to `JSONResponse`.
 
-## An out-of-range path integer 500s instead of 422
+## ~~An out-of-range path integer 500s instead of 422~~ (closed)
 
-```
-GET /api/incidents/99999999999999   ->  python 500, rust 422
-GET /api/incidents/2147483648       ->  python 500, rust 422
-```
-
-`incident_id: int` is unbounded in Python, so the value reaches the query
-and Postgres rejects it:
+Rust used to answer 422 here, on the reasoning that a value no
+`incidents.id` could hold is not a valid id for the column and deserved
+the same shape a non-numeric one gets. That was wrong as a *port*: the
+Python accepts the value — `incident_id: int` is unbounded — and it is
+Postgres that refuses it, because SQLAlchemy types the bind from the
+column:
 
 ```
 psycopg.errors.NumericValueOutOfRange: integer out of range
 sqlalchemy.exc.DataError
 ```
 
-The column is `Integer`, so anything outside int32 can never match a row.
-Rust rejects it at the path-parameter boundary with the same 422 shape a
-non-numeric id gets, which is what the value *is* — not a valid id for
-this column. Fifth latent crash; the least consequential of them, since
-it takes a deliberately silly URL.
+Both stacks now 500. The same shape reaches `camera_groups.id`,
+`mcp_api_keys.id` and the agent's `tool_call_count`, and all of them are
+matched rather than diverged; `query::int4` is where each one narrows,
+at the query and not at the parameter, so everything Python checks in
+between still comes first. It stays recorded as a Python bug — see
+`PYTHON_BUGS.md` #8 — and the read differential sends the values on
+either side of the boundary.
 
 ## A 500 carries the security headers (slice 4 audit)
 

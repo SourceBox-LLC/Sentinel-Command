@@ -90,7 +90,11 @@ echo
 echo "4. An out-of-range path integer reaches the query and Postgres"
 echo "   rejects it: incident_id is unbounded in python, the column is"
 echo "   Integer, so anything past int32 is a DataError rather than a 404."
-check "GET /api/incidents/99999999999999" "/api/incidents/99999999999999" 422 500
+echo "   Rust answered 422 here until the port reproduced it instead —"
+echo "   the value is one FastAPI accepts, so refusing it early was a"
+echo "   divergence, not a fix. Both 500 now; the read differential"
+echo "   sends the values on either side of the boundary."
+check "GET /api/incidents/99999999999999" "/api/incidents/99999999999999" 500 500
 
 echo
 if (( fails )); then
@@ -99,4 +103,4 @@ if (( fails )); then
     echo "expected_divergences.md rather than leaving a stale claim."
     exit 1
 fi
-echo "all four latent crashes reproduced; Rust serves through them"
+echo "all four reproduced: Rust serves through the first three, and reproduces the fourth"
