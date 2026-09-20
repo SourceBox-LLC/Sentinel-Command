@@ -13,6 +13,13 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 CASES = [
+    # Days a zone changes offset, where midnight's offset and now's are
+    # not the same — the case the differentials cannot reach, because
+    # they run against the real clock.
+    ("America/Los_Angeles", "2026-03-08T20:00:00Z"),
+    ("America/Los_Angeles", "2026-11-01T20:00:00Z"),
+    ("Europe/London", "2026-03-29T15:00:00Z"),
+    ("Australia/Lord_Howe", "2026-04-05T06:00:00Z"),
     ("UTC", "2026-05-07T15:00:00Z"),
     ("America/Los_Angeles", "2026-05-07T15:00:00Z"),
     ("America/Los_Angeles", "2026-05-07T06:00:00Z"),

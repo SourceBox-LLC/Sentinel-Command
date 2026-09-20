@@ -574,8 +574,20 @@ async fn org_midnight_utc(state: &AppState, org_id: &str) -> Result<NaiveDateTim
         .await?
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| "UTC".to_string());
+    midnight_in_zone(&name, jiff::Timestamp::now())
+}
 
-    let tz = match crate::zoneinfo::load(&name) {
+/// The half of it that does not need the database: a zone name and an
+/// instant, to the naive UTC timestamp `triggered_at` is compared
+/// against.
+///
+/// Split out so it can be tested against a fixed clock. The route's own
+/// composition — which zone, and which instant's midnight — is only
+/// wrong on a day the zone changes offset, and both differentials run
+/// against the real one, so they can only see it on the two or three
+/// days a year a transition lands mid-fixture.
+fn midnight_in_zone(name: &str, now: jiff::Timestamp) -> Result<NaiveDateTime, ApiError> {
+    let tz = match crate::zoneinfo::load(name) {
         Ok(tz) => tz,
         Err(crate::zoneinfo::LoadError::NotFound) => crate::zoneinfo::load("UTC")
             .map_err(|_| ApiError::internal("no UTC zone on this machine"))?,
@@ -583,7 +595,7 @@ async fn org_midnight_utc(state: &AppState, org_id: &str) -> Result<NaiveDateTim
             return Err(ApiError::internal("Is a directory"))
         }
     };
-    Ok(crate::zoneinfo::local_midnight_utc(&tz, jiff::Timestamp::now()))
+    Ok(crate::zoneinfo::local_midnight_utc(&tz, now))
 }
 
 /// `POST /api/sentinel/runs/manual` — the operator's "Run now".
@@ -837,5 +849,43 @@ mod tests {
         assert_eq!(cap_for_plan("self_host"), 500);
         assert_eq!(cap_for_plan("free_org"), 0);
         assert!(!plan_has_sentinel("free_org"));
+    }
+
+    /// What the route makes of a stored zone name at a fixed instant.
+    ///
+    /// The values are CPython's, from
+    /// `tests/differential/midnight_probe.py`, and the first four are
+    /// days a zone changes offset — where midnight's offset is not
+    /// now's, and using the wrong one moves the whole "today" window by
+    /// an hour. Neither differential can send those: both run against
+    /// the real clock, so a transition has to fall on the day the
+    /// harness happens to run.
+    #[test]
+    fn midnight_is_read_in_the_org_zone_at_a_fixed_instant() {
+        fn naive(s: &str) -> NaiveDateTime {
+            NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").unwrap()
+        }
+        for (zone, now, want) in [
+            ("America/Los_Angeles", "2026-03-08T20:00:00Z", "2026-03-08 08:00:00"),
+            ("America/Los_Angeles", "2026-11-01T20:00:00Z", "2026-11-01 07:00:00"),
+            ("Europe/London", "2026-03-29T15:00:00Z", "2026-03-29 00:00:00"),
+            ("Australia/Lord_Howe", "2026-04-05T06:00:00Z", "2026-04-04 13:00:00"),
+            ("UTC", "2026-05-07T15:00:00Z", "2026-05-07 00:00:00"),
+            ("Asia/Kolkata", "2026-05-07T20:00:00Z", "2026-05-07 18:30:00"),
+            ("America/Havana", "2026-11-01T05:30:00Z", "2026-11-01 05:00:00"),
+            // Not a zone: Python catches the lookup and uses UTC, so
+            // this is the UTC answer for the same instant.
+            ("Mars/Olympus_Mons", "2026-05-07T15:00:00Z", "2026-05-07 00:00:00"),
+            ("../etc/passwd", "2026-05-07T15:00:00Z", "2026-05-07 00:00:00"),
+            ("", "2026-05-07T15:00:00Z", "2026-05-07 00:00:00"),
+        ] {
+            let got = midnight_in_zone(zone, now.parse().unwrap()).unwrap();
+            assert_eq!(got, naive(want), "{zone} at {now}");
+        }
+
+        // A directory of the tzdata package is the one name that is not
+        // a fallback: IsADirectoryError, which nothing catches.
+        let err = midnight_in_zone("America", "2026-05-07T15:00:00Z".parse().unwrap()).unwrap_err();
+        assert_eq!(err.status, axum::http::StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

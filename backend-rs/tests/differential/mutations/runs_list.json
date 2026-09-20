@@ -91,8 +91,8 @@
   {
    "name": "today starts at UTC midnight regardless of the org's zone",
    "file": "src/api/sentinel_config.rs",
-   "old": "    Ok(crate::zoneinfo::local_midnight_utc(&tz, jiff::Timestamp::now()))",
-   "new": "    let _ = tz;\n    Ok(crate::models::now_naive().date().and_hms_opt(0, 0, 0).unwrap())"
+   "old": "    Ok(crate::zoneinfo::local_midnight_utc(&tz, now))",
+   "new": "    let _ = (tz, now);\n    Ok(crate::models::now_naive().date().and_hms_opt(0, 0, 0).unwrap())"
   },
   {
    "name": "the org's timezone setting is not read",
@@ -133,8 +133,8 @@
   {
    "name": "now's own offset is used for midnight",
    "file": "src/api/sentinel_config.rs",
-   "old": "    Ok(crate::zoneinfo::local_midnight_utc(&tz, jiff::Timestamp::now()))",
-   "new": "    let now = jiff::Timestamp::now();\n    let wall = tz.to_offset(now).to_datetime(now);\n    let midnight = wall.date().to_datetime(jiff::civil::Time::midnight());\n    let secs = midnight.to_zoned(jiff::tz::TimeZone::fixed(tz.to_offset(now))).unwrap().timestamp().as_second();\n    Ok(chrono::DateTime::from_timestamp(secs, 0).unwrap().naive_utc())"
+   "old": "    Ok(crate::zoneinfo::local_midnight_utc(&tz, now))",
+   "new": "    let wall = tz.to_offset(now).to_datetime(now);\n    let midnight = wall.date().to_datetime(jiff::civil::Time::midnight());\n    let secs = midnight\n        .to_zoned(jiff::tz::TimeZone::fixed(tz.to_offset(now)))\n        .unwrap()\n        .timestamp()\n        .as_second();\n    Ok(chrono::DateTime::from_timestamp(secs, 0).unwrap().naive_utc())"
   },
   {
    "name": "the zone name is not trimmed",
