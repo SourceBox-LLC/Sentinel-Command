@@ -27,7 +27,7 @@ use crate::audit::{audit_label, python_json, write_audit};
 use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::iso_naive;
-use crate::query::path_int;
+use crate::query::{int4, path_int};
 use crate::ratelimit::PerHour;
 
 #[derive(Debug, sqlx::FromRow)]
@@ -198,6 +198,7 @@ pub async fn revoke_integration_key(
 ) -> Result<Json<Value>, ApiError> {
     let key_id = path_int("key_id", &key_id)?;
     rate.check().await?;
+    let key_id = int4(key_id)?;
     revoke(
         &state,
         &user,

@@ -22,7 +22,7 @@ use crate::app::AppState;
 use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::{iso_naive, now_naive};
-use crate::query::{path_int, ModelBody, Query};
+use crate::query::{int4, path_int, ModelBody, Query};
 use crate::ratelimit::PerMinute;
 
 const SEVERITIES: [&str; 4] = ["low", "medium", "high", "critical"];
@@ -144,8 +144,8 @@ pub async fn list_incidents(
     let status = q.optional_str("status");
     let severity = q.optional_str("severity");
     let camera_id = q.optional_str("camera_id");
-    let limit = q.int("limit", 50, Some(1), Some(200));
-    let offset = q.int("offset", 0, Some(0), Some(1_000_000));
+    let limit = q.int("limit", 50, 1, 200);
+    let offset = q.int("offset", 0, 0, 1_000_000);
     q.finish()?;
 
     // These two are validated in the handler body rather than by
@@ -229,7 +229,7 @@ pub async fn get_incident(
     RequireAdmin(user): RequireAdmin,
     Path(incident_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    let incident_id = path_int("incident_id", &incident_id)?;
+    let incident_id = int4(path_int("incident_id", &incident_id)?)?;
     let row = owned_incident(&state.pool, &user.org_id, incident_id).await?;
     let mut out = row.to_json();
     out["evidence"] = Value::Array(evidence_for(&state.pool, incident_id).await?);
@@ -302,6 +302,7 @@ pub async fn get_evidence_blob(
     let incident_id = path_int("incident_id", &incident_id)?;
     let evidence_id = path_int("evidence_id", &evidence_id)?;
     rate.check().await?;
+    let (incident_id, evidence_id) = (int4(incident_id)?, int4(evidence_id)?);
 
     // `not evidence.data` in Python is falsy for zero bytes as well as
     // for NULL, so an observation row and an empty blob are both 404.
@@ -353,6 +354,7 @@ pub async fn get_evidence_playlist(
     let incident_id = path_int("incident_id", &incident_id)?;
     let evidence_id = path_int("evidence_id", &evidence_id)?;
     rate.check().await?;
+    let (incident_id, evidence_id) = (int4(incident_id)?, int4(evidence_id)?);
 
     let evidence = owned_evidence(&state.pool, &user.org_id, incident_id, evidence_id).await?;
     let Some(EvidenceBlobRow {
@@ -506,6 +508,7 @@ pub async fn update_incident(
         .unwrap_or_default();
     let incident_id = path_int("incident_id", &incident_id)?;
     rate.check().await?;
+    let incident_id = int4(incident_id)?;
     let incident = owned_incident(&state.pool, &user.org_id, incident_id).await?;
 
     let mut status = incident.status.clone();
@@ -604,6 +607,7 @@ pub async fn delete_incident(
 ) -> Result<Json<Value>, ApiError> {
     let incident_id = path_int("incident_id", &incident_id)?;
     rate.check().await?;
+    let incident_id = int4(incident_id)?;
     // Fetched first so a missing or other-tenant incident 404s before
     // anything is deleted.
     owned_incident(&state.pool, &user.org_id, incident_id).await?;

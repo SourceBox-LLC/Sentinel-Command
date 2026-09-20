@@ -12,13 +12,14 @@
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
-use chrono::{Duration, NaiveDate, NaiveDateTime};
+use chrono::{NaiveDate, NaiveDateTime};
 use serde_json::{json, Value};
 
 use crate::app::AppState;
 use crate::auth::RequireAdmin;
 use crate::error::ApiError;
-use crate::models::{iso_naive, now_naive};
+use crate::models::{iso_naive, python_window_start};
+use crate::pyint::PyInt;
 use crate::query::Query;
 use crate::ratelimit::PerMinute;
 
@@ -63,8 +64,8 @@ pub async fn list_mcp_logs(
     let tool_name = q.optional_str("tool_name");
     let key_name = q.optional_str("key_name");
     let status = q.optional_str("status");
-    let limit = q.int("limit", 100, Some(1), Some(500));
-    let offset = q.int("offset", 0, Some(0), Some(1_000_000));
+    let limit = q.int("limit", 100, 1, 500);
+    let offset = q.int("offset", 0, 0, 1_000_000);
     let format = q.pattern("format", "json", "^(json|csv)$", &["json", "csv"]);
     q.finish()?;
     rate.check().await?;
@@ -139,11 +140,14 @@ pub async fn mcp_log_stats(
     request: Request,
 ) -> Result<axum::Json<Value>, ApiError> {
     let mut q = Query::parse(request.uri().query());
-    let days = q.int("days", 7, None, Some(30));
+    let days = q.big_int("days", PyInt::Small(7), None, Some(30));
     q.finish()?;
     rate.check().await?;
 
-    let since = now_naive() - Duration::days(days);
+    let since = python_window_start(days, 86_400)?;
+    // `python_window_start` refused anything that does not fit, so the
+    // value echoed back is the one Python echoes.
+    let days = days.small().unwrap_or_default();
 
     let total: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM mcp_activity_logs WHERE org_id = $1 AND timestamp >= $2",

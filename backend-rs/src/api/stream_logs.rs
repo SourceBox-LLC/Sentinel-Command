@@ -6,13 +6,14 @@
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
-use chrono::{Duration, NaiveDate, NaiveDateTime};
+use chrono::{NaiveDate, NaiveDateTime};
 use serde_json::{json, Value};
 
 use crate::app::AppState;
 use crate::auth::RequireAdmin;
 use crate::error::ApiError;
-use crate::models::{iso_naive, now_naive};
+use crate::models::{iso_naive, python_window_start};
+use crate::pyint::PyInt;
 use crate::query::Query;
 use crate::ratelimit::PerMinute;
 use crate::AuthUser;
@@ -73,8 +74,8 @@ pub async fn list_stream_logs(
     let mut q = Query::parse(request.uri().query());
     let camera_id = q.optional_str("camera_id");
     let user_filter = q.optional_str("user_id");
-    let limit = q.int("limit", 100, Some(1), Some(500));
-    let offset = q.int("offset", 0, Some(0), Some(1_000_000));
+    let limit = q.int("limit", 100, 1, 500);
+    let offset = q.int("offset", 0, 0, 1_000_000);
     let format = q.pattern("format", "json", "^(json|csv)$", &["json", "csv"]);
     q.finish()?;
     // Query parameters are validated before the decorator runs; the
@@ -153,12 +154,15 @@ pub async fn stream_log_stats(
     request: Request,
 ) -> Result<axum::Json<Value>, ApiError> {
     let mut q = Query::parse(request.uri().query());
-    let days = q.int("days", 7, None, Some(30));
+    let days = q.big_int("days", PyInt::Small(7), None, Some(30));
     q.finish()?;
     rate.check().await?;
     require_admin_feature(&user)?;
 
-    let since = now_naive() - Duration::days(days);
+    let since = python_window_start(days, 86_400)?;
+    // `python_window_start` refused anything that does not fit, so the
+    // value echoed back is the one Python echoes.
+    let days = days.small().unwrap_or_default();
 
     let total: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM stream_access_logs WHERE org_id = $1 AND accessed_at >= $2",

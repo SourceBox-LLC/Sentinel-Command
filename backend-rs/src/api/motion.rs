@@ -11,7 +11,8 @@ use serde_json::{json, Value};
 use crate::app::AppState;
 use crate::auth::RequireView;
 use crate::error::ApiError;
-use crate::models::{iso_naive, now_naive};
+use crate::models::{iso_naive, now_naive, python_window_start};
+use crate::pyint::PyInt;
 use crate::query::Query;
 
 #[derive(Debug, sqlx::FromRow)]
@@ -47,9 +48,9 @@ pub async fn list_motion_events(
 ) -> Result<axum::Json<Value>, ApiError> {
     let mut q = Query::parse(request.uri().query());
     let camera_id = q.optional_str("camera_id");
-    let hours = q.int("hours", 24, Some(1), Some(168));
-    let limit = q.int("limit", 100, Some(1), Some(500));
-    let offset = q.int("offset", 0, Some(0), Some(1_000_000));
+    let hours = q.int("hours", 24, 1, 168);
+    let limit = q.int("limit", 100, 1, 500);
+    let offset = q.int("offset", 0, 0, 1_000_000);
     q.finish()?;
 
     let since = now_naive() - Duration::hours(hours);
@@ -105,10 +106,13 @@ pub async fn motion_stats(
     request: Request,
 ) -> Result<axum::Json<Value>, ApiError> {
     let mut q = Query::parse(request.uri().query());
-    let hours = q.int("hours", 24, None, Some(168));
+    let hours = q.big_int("hours", PyInt::Small(24), None, Some(168));
     q.finish()?;
 
-    let since = now_naive() - Duration::hours(hours);
+    let since = python_window_start(hours, 3_600)?;
+    // `python_window_start` refused anything that does not fit, so the
+    // value echoed back is the one Python echoes.
+    let hours = hours.small().unwrap_or_default();
 
     // No ORDER BY, matching the Python's bare `.group_by(...).all()`.
     let rows: Vec<(String, i64, Option<i32>, Option<NaiveDateTime>)> = sqlx::query_as(

@@ -78,8 +78,8 @@ pub async fn list_audit_logs(
     // order the Python signature declares them.
     let event = q.optional_str("event");
     let username = q.optional_str("username");
-    let limit = q.int("limit", 100, Some(1), Some(500));
-    let offset = q.int("offset", 0, Some(0), Some(1_000_000));
+    let limit = q.int("limit", 100, 1, 500);
+    let offset = q.int("offset", 0, 0, 1_000_000);
     let format = q.pattern("format", "json", "^(json|csv)$", &["json", "csv"]);
     q.finish()?;
     rate.check().await?;

@@ -21,6 +21,7 @@ pub mod license;
 pub mod models;
 pub mod plans;
 pub mod proxy;
+pub mod pyint;
 pub mod pyjson;
 pub mod pyrepr;
 pub mod query;

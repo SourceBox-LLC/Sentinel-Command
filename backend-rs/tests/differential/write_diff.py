@@ -152,6 +152,18 @@ CASES = [
     ("assign missing camera", "PUT", "/api/cameras/nope/group?group_id=1", None),
     ("assign another org's camera", "PUT", "/api/cameras/cam-theirs/group?group_id=1", None),
     ("assign, non-integer group_id", "PUT", "/api/cameras/cam-live/group?group_id=abc", None),
+    # `group_id` has no bounds in the Python signature, so these all get
+    # through validation and reach the query. 4294967297 is the one that
+    # mattered: narrowed to the column's own width it wraps to 1 and
+    # assigns the camera to a real group.
+    ("assign, group_id past int4", "PUT", "/api/cameras/cam-live/group?group_id=4294967297", None),
+    ("assign, group_id at int4 max", "PUT", "/api/cameras/cam-live/group?group_id=2147483647", None),
+    ("assign, group_id past int4 negative", "PUT",
+     "/api/cameras/cam-live/group?group_id=-4294967297", None),
+    ("assign, group_id past i64", "PUT",
+     "/api/cameras/cam-live/group?group_id=99999999999999999999", None),
+    ("assign, group_id of 4300 digits", "PUT",
+     "/api/cameras/cam-live/group?group_id=1" + "0" * 4300, None),
 
     # --- settings writes (each also writes an audit row) --------------
     ("motion ingestion off", "POST", "/api/settings/motion-ingestion", {"enabled": False}),
@@ -430,6 +442,31 @@ CASES += [
     ("complete, count in exponent form", "POST",
      "/api/sentinel/runs/run0000000000000000000000000001/complete",
      {"outcome": "no_action", "tool_call_count": "1e3"}, "agent"),
+    # Past the column: SQLAlchemy binds the count as an `integer`, so
+    # Postgres refuses it and the request is a 500 — not a row quietly
+    # clamped to 2147483647. A large *negative* count is different:
+    # `max(0, ...)` in the handler turns it into 0 first.
+    ("complete, count past int4", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_call_count": 3000000000}, "agent"),
+    ("complete, count past int4 as a string", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_call_count": "3000000000"}, "agent"),
+    ("complete, count past i64 as a string", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_call_count": "99999999999999999999"}, "agent"),
+    ("complete, count negative past i64", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_call_count": "-99999999999999999999"}, "agent"),
+    ("complete, count of 4300 digits", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "tool_call_count": "1" + "0" * 4300}, "agent"),
+    ("complete, incident_id past int4", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "incident", "incident_id": 3000000000}, "agent"),
+    ("complete, incident_id past i64", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "incident", "incident_id": "99999999999999999999"}, "agent"),
     ("complete, count a bool", "POST",
      "/api/sentinel/runs/run0000000000000000000000000001/complete",
      {"outcome": "no_action", "tool_call_count": True}, "agent"),

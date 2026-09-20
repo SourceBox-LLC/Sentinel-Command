@@ -5,12 +5,45 @@
 //! these keys, so a renamed or reshaped field is a client-visible break.
 
 use chrono::{NaiveDateTime, Utc};
+
+use crate::error::ApiError;
 use serde_json::{json, Value};
 
 /// Timestamps are stored and served naive (no offset) throughout, because
 /// the Python service writes `datetime.now(tz=UTC).replace(tzinfo=None)`.
 pub fn now_naive() -> NaiveDateTime {
     Utc::now().naive_utc()
+}
+
+/// `datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(<unit>=n)`,
+/// with Python's limits rather than chrono's.
+///
+/// Several routes take a `hours` or `days` window that Python caps on
+/// one side only, so a large negative value asks for a window reaching
+/// into the future — and past the year 9999 that a `datetime` stops at,
+/// where Python raises OverflowError and the request becomes a 500.
+/// `timedelta` gives out earlier still, at a magnitude of 10^9 days, and
+/// an integer too large for i64 never reaches it at all. chrono would
+/// answer all three happily (it reaches year 262143), and
+/// `Duration::days` panics somewhere further out again — so the range
+/// has to be applied deliberately, or the two stacks disagree exactly
+/// where the Python breaks.
+pub fn python_window_start(n: crate::pyint::PyInt, unit_seconds: i64) -> Result<NaiveDateTime, ApiError> {
+    let overflow = || ApiError::internal("date value out of range");
+    let n = n.small().ok_or_else(overflow)?;
+
+    let shift = i128::from(n) * i128::from(unit_seconds) * 1_000_000;
+    let start = i128::from(now_naive().and_utc().timestamp_micros()) - shift;
+
+    // datetime.min .. datetime.max, in microseconds from the epoch.
+    const MIN: i128 = -62_135_596_800_000_000;
+    const MAX: i128 = 253_402_300_799_999_999;
+    if !(MIN..=MAX).contains(&start) {
+        return Err(overflow());
+    }
+    chrono::DateTime::from_timestamp_micros(start as i64)
+        .map(|dt| dt.naive_utc())
+        .ok_or_else(overflow)
 }
 
 /// Format a timestamp the way Python's `datetime.isoformat()` does.

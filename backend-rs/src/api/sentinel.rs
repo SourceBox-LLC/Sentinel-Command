@@ -22,7 +22,7 @@ use crate::app::AppState;
 use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::{iso_naive, now_naive};
-use crate::query::{BodyErrors, ModelBody, Query};
+use crate::query::{int4, BodyErrors, ModelBody, Query};
 
 /// Who an authenticated agent request is acting as.
 ///
@@ -194,7 +194,7 @@ pub async fn list_pending_runs(
     request: Request,
 ) -> Result<Json<Value>, ApiError> {
     let mut query = Query::parse(request.uri().query());
-    let limit = query.int("limit", 20, Some(1), Some(100));
+    let limit = query.int("limit", 20, 1, 100);
     query.finish()?;
 
     // A scoped key sees only its own org's queue. Without this filter a
@@ -395,9 +395,14 @@ pub async fn post_run_complete(
     // deep-link in that org's run drawer.
     if outcome == "incident" {
         if let Some(incident_id) = incident_id {
+            // Narrowed to the column's own width, because SQLAlchemy
+            // types the bind from the column: an id no `incidents.id`
+            // could hold is the 500 Postgres raises, not a miss. Nor is
+            // it a clamp — that would let a caller's 3000000000 match
+            // incident 2147483647.
             let owned: Option<(i32,)> =
                 sqlx::query_as("SELECT id FROM incidents WHERE id = $1 AND org_id = $2")
-                    .bind(i32::try_from(incident_id).unwrap_or(i32::MAX))
+                    .bind(int4(incident_id)?)
                     .bind(&row.org_id)
                     .fetch_optional(&state.pool)
                     .await?;
@@ -412,6 +417,20 @@ pub async fn post_run_complete(
     let now = now_naive();
     let is_incident = outcome == "incident";
     let stored_trace = tool_trace.as_ref().map(|t| serialise_tool_trace(t));
+
+    // A Python int beyond i64 cannot be bound at all, and would have
+    // been refused by the column anyway; `max(0)` is the Python's own
+    // clamp of a negative count.
+    let incident_bind = match incident_id {
+        Some(v) => Some(int4(v)?),
+        None => None,
+    };
+    let tool_call_bind = i32::try_from(
+        tool_call_count
+            .max_zero()
+            .ok_or_else(|| ApiError::internal("integer out of range"))?,
+    )
+    .map_err(|_| ApiError::internal("integer out of range"))?;
 
     sqlx::query(
         "UPDATE sentinel_runs
@@ -428,13 +447,12 @@ pub async fn post_run_complete(
     )
     .bind(&outcome)
     .bind(if is_incident { severity.as_deref() } else { None })
-    .bind(if is_incident {
-        incident_id.map(|v| i32::try_from(v).unwrap_or(i32::MAX))
-    } else {
-        None
-    })
+    // Both of these are bigints on the way in, so a value too large for
+    // the `integer` column is the "integer out of range" Postgres raises
+    // for the Python too — a 500, not a silently clamped row.
+    .bind(if is_incident { incident_bind } else { None })
     .bind(truncate_chars(&summary, 8000))
-    .bind(i32::try_from(tool_call_count.max(0)).unwrap_or(i32::MAX))
+    .bind(tool_call_bind)
     .bind(stored_trace)
     .bind(now)
     .bind(&row.id)

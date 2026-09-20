@@ -10,14 +10,15 @@
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::HeaderMap;
 use axum::Json;
-use chrono::{Duration, NaiveDateTime};
+use chrono::{NaiveDateTime};
 use serde_json::{json, Map, Value};
 
 use crate::app::AppState;
 use crate::audit::{python_json, write_audit};
 use crate::auth::{AuthUser, RequireAdmin, RequireView};
 use crate::error::ApiError;
-use crate::models::{iso_naive, now_naive};
+use crate::models::{iso_naive, now_naive, python_window_start};
+use crate::pyint::PyInt;
 use crate::query::{BodyErrors, ModelBody, Query};
 use crate::settings;
 
@@ -153,15 +154,15 @@ pub async fn list_notifications(
     request: Request,
 ) -> Result<Json<Value>, ApiError> {
     let mut q = Query::parse(request.uri().query());
-    let limit = q.int("limit", 50, Some(1), Some(200));
-    let offset = q.int("offset", 0, Some(0), Some(1_000_000));
+    let limit = q.int("limit", 50, 1, 200);
+    let offset = q.int("offset", 0, 0, 1_000_000);
     // `le=720` with no lower bound in the Python signature.
-    let hours = q.int("hours", 168, None, Some(720));
+    let hours = q.big_int("hours", PyInt::Small(168), None, Some(720));
     q.finish()?;
 
     let (last_viewed, cleared_at) =
         get_or_init_state(&state.pool, &user.user_id, &user.org_id).await?;
-    let since = now_naive() - Duration::hours(hours);
+    let since = python_window_start(hours, 3_600)?;
 
     let mut where_sql = String::from(" WHERE org_id = $1 AND created_at >= $2");
     if cleared_at.is_some() {

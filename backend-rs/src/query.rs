@@ -22,6 +22,7 @@ use axum::http::StatusCode;
 use serde_json::{json, Value};
 
 use crate::error::ApiError;
+use crate::pyint::{self, PyInt, StrIntError};
 
 pub struct Query {
     params: Vec<(String, String)>,
@@ -66,39 +67,60 @@ impl Query {
         self.errors.push(err);
     }
 
-    /// An integer parameter with optional inclusive bounds.
+    /// An integer parameter with inclusive bounds on both sides.
     ///
     /// Returns the default when absent, and on any failure returns the
     /// default too — the caller runs on regardless, because FastAPI
     /// collects *every* parameter's errors before rejecting, and the
     /// order of that list is part of the response.
-    pub fn int(&mut self, name: &str, default: i64, ge: Option<i64>, le: Option<i64>) -> i64 {
+    ///
+    /// An integer too large for i64 is a perfectly good Python int, but
+    /// it cannot pass two bounds: it fails whichever side it is on. So
+    /// with both bounds present the value handed back always fits, and
+    /// [`Query::big_int`] is for the parameters Python leaves open.
+    pub fn int(&mut self, name: &str, default: i64, ge: i64, le: i64) -> i64 {
+        self.big_int(name, PyInt::Small(default), Some(ge), Some(le))
+            .small()
+            .unwrap_or(default)
+    }
+
+    /// The same, for a parameter Python bounds on one side or not at
+    /// all — where a value beyond i64 reaches the handler and has to be
+    /// dealt with there, as Python deals with it.
+    pub fn big_int(&mut self, name: &str, default: PyInt, ge: Option<i64>, le: Option<i64>) -> PyInt {
         let Some(raw) = self.last(name).map(str::to_string) else {
             return default;
         };
 
-        let Some(value) = parse_python_int(&raw) else {
-            self.push_error(
-                "int_parsing",
-                name,
-                "Input should be a valid integer, unable to parse string as an integer".into(),
-                &raw,
-                None,
-            );
-            return default;
+        let value = match pyint::str_as_int(&raw) {
+            Ok(value) => value,
+            Err(err) => {
+                let (kind, msg) = match err {
+                    StrIntError::Parsing => (
+                        "int_parsing",
+                        "Input should be a valid integer, unable to parse string as an integer",
+                    ),
+                    StrIntError::ParsingSize => (
+                        "int_parsing_size",
+                        "Unable to parse input string as an integer, exceeded maximum size",
+                    ),
+                };
+                self.push_error(kind, name, msg.into(), &raw, None);
+                return default;
+            }
         };
 
         // Both bounds are checked, but Pydantic stops at the first
         // failing constraint per field, so this returns after either.
         if let Some(ge) = ge {
-            if value < ge {
+            if !value.ge(ge) {
                 let msg = format!("Input should be greater than or equal to {ge}");
                 self.push_error("greater_than_equal", name, msg, &raw, Some(json!({"ge": ge})));
                 return default;
             }
         }
         if let Some(le) = le {
-            if value > le {
+            if !value.le(le) {
                 let msg = format!("Input should be less than or equal to {le}");
                 self.push_error("less_than_equal", name, msg, &raw, Some(json!({"le": le})));
                 return default;
@@ -151,6 +173,8 @@ impl Query {
 pub enum IntError {
     /// A string that does not spell one.
     Parsing,
+    /// A string of more than 4,300 digits.
+    ParsingSize,
     /// A number with a fractional part.
     FromFloat,
     /// The wrong JSON type entirely.
@@ -171,74 +195,34 @@ pub enum IntError {
 /// not as a string; `"7."` and `".5"`, which need digits on both sides;
 /// `"0x10"`, `"inf"`, `"nan"`, `""`; and Arabic-Indic digits, which
 /// Python's own `int()` would accept.
-pub fn parse_pydantic_int(value: &Value) -> Result<i64, IntError> {
+pub fn parse_pydantic_int(value: &Value) -> Result<PyInt, IntError> {
     match value {
-        Value::Bool(b) => Ok(i64::from(*b)),
+        Value::Bool(b) => Ok(PyInt::Small(i64::from(*b))),
         Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                return Ok(i);
+                return Ok(PyInt::Small(i));
             }
             match n.as_f64() {
-                Some(f) if f.fract() == 0.0 => Ok(f as i64),
+                // Saturating is deliberate. serde_json has already
+                // collapsed any literal beyond i64 to an f64, so the
+                // exact value is gone either way; what every caller
+                // then does with it — fail a bound, overflow a column —
+                // turns on its size and sign, which survive.
+                Some(f) if f.fract() == 0.0 => Ok(PyInt::Small(f as i64)),
                 Some(_) => Err(IntError::FromFloat),
                 None => Err(IntError::Type),
             }
         }
-        Value::String(s) => parse_pydantic_int_str(s).ok_or(IntError::Parsing),
+        Value::String(s) => match pyint::str_as_int(s) {
+            Ok(value) => Ok(value),
+            Err(StrIntError::Parsing) => Err(IntError::Parsing),
+            Err(StrIntError::ParsingSize) => Err(IntError::ParsingSize),
+        },
         _ => Err(IntError::Type),
     }
 }
 
-fn parse_pydantic_int_str(raw: &str) -> Option<i64> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    // Underscores group digits and must have a digit on each side.
-    if trimmed.contains('_') {
-        let b = trimmed.as_bytes();
-        for (i, c) in b.iter().enumerate() {
-            if *c != b'_' {
-                continue;
-            }
-            let before = i.checked_sub(1).map(|j| b[j]);
-            let after = b.get(i + 1).copied();
-            if !matches!((before, after), (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit())
-            {
-                return None;
-            }
-        }
-    }
-    let cleaned = trimmed.replace('_', "");
 
-    // `str::parse` accepts a leading `+` and rejects everything else
-    // here — notably `0x10`, `inf` and non-ASCII digits.
-    if let Ok(n) = cleaned.parse::<i64>() {
-        return Some(n);
-    }
-
-    // The one non-integer spelling accepted: a decimal point with
-    // digits on both sides and nothing but zeros after it. Exponent
-    // notation is deliberately not handled — "1e3" is rejected as a
-    // string even though JSON `1e3` is accepted as a number.
-    let (int_part, frac_part) = cleaned.split_once('.')?;
-    let digits = int_part.strip_prefix(['+', '-']).unwrap_or(int_part);
-    if digits.is_empty()
-        || !digits.bytes().all(|c| c.is_ascii_digit())
-        || frac_part.is_empty()
-        || !frac_part.bytes().all(|c| c.is_ascii_digit())
-    {
-        return None;
-    }
-    if frac_part.bytes().any(|c| c != b'0') {
-        return None;
-    }
-    digits_to_i64(int_part)
-}
-
-fn digits_to_i64(s: &str) -> Option<i64> {
-    s.parse::<i64>().ok()
-}
 
 /// Build the 422 envelope `main.py`'s handler produces, or `Ok` when
 /// there is nothing to report.
@@ -492,6 +476,18 @@ impl BodyErrors {
         );
     }
 
+    /// A string of more than 4,300 digits, which Pydantic refuses
+    /// before it ever builds the integer.
+    pub fn int_parsing_size(&mut self, field: &str, input: &Value) {
+        self.push(
+            "int_parsing_size",
+            field,
+            "Unable to parse input string as an integer, exceeded maximum size",
+            input.clone(),
+            None,
+        );
+    }
+
     pub fn int_type(&mut self, field: &str, input: &Value) {
         self.push(
             "int_type",
@@ -715,7 +711,7 @@ impl BodyErrors {
     ) -> Option<i64> {
         let value = self.optional_int(body, field)?;
         let input = body.get(field).cloned().unwrap_or(Value::Null);
-        if value < min {
+        if !value.ge(min) {
             self.push(
                 "greater_than_equal",
                 field,
@@ -725,7 +721,7 @@ impl BodyErrors {
             );
             return None;
         }
-        if value > max {
+        if !value.le(max) {
             self.push(
                 "less_than_equal",
                 field,
@@ -735,7 +731,9 @@ impl BodyErrors {
             );
             return None;
         }
-        Some(value)
+        // Inside both bounds, so it fits — a value beyond i64 failed
+        // one of them above.
+        value.small()
     }
 
     /// An `Optional[list[str]]`: a non-list is `list_type`, and every
@@ -799,11 +797,19 @@ impl BodyErrors {
     }
 
     /// An `int` field with a default, read with Pydantic's lax rules.
-    pub fn int_with_default(&mut self, body: &Value, field: &str, default: i64) -> i64 {
+    ///
+    /// The field has no range here, so a value beyond i64 is one the
+    /// handler has to answer for, exactly as the Python handler does.
+    pub fn int_with_default(&mut self, body: &Value, field: &str, default: i64) -> PyInt {
+        let default = PyInt::Small(default);
         match body.get(field) {
             None => default,
             Some(value) => match parse_pydantic_int(value) {
                 Ok(n) => n,
+                Err(IntError::ParsingSize) => {
+                    self.int_parsing_size(field, value);
+                    default
+                }
                 Err(IntError::Parsing) => {
                     self.int_parsing(field, value);
                     default
@@ -822,11 +828,15 @@ impl BodyErrors {
 
     /// An `Optional[int]` field: absent or JSON null is `None`, and only
     /// a present non-null value is coerced.
-    pub fn optional_int(&mut self, body: &Value, field: &str) -> Option<i64> {
+    pub fn optional_int(&mut self, body: &Value, field: &str) -> Option<PyInt> {
         match body.get(field) {
             None | Some(Value::Null) => None,
             Some(value) => match parse_pydantic_int(value) {
                 Ok(n) => Some(n),
+                Err(IntError::ParsingSize) => {
+                    self.int_parsing_size(field, value);
+                    None
+                }
                 Err(IntError::Parsing) => {
                     self.int_parsing(field, value);
                     None
@@ -939,20 +949,28 @@ pub fn path_segment(raw: &str) -> Result<&str, ApiError> {
 /// SPA parses that envelope, so the difference is client-visible.
 ///
 /// Handlers therefore take `Path<String>` and call this.
-pub fn path_int(name: &str, raw: &str) -> Result<i32, ApiError> {
-    if let Some(v) = parse_python_int(raw) {
-        if let Ok(v) = i32::try_from(v) {
-            return Ok(v);
-        }
-    }
-    let msg = "Input should be a valid integer, unable to parse string as an integer";
+pub fn path_int(name: &str, raw: &str) -> Result<PyInt, ApiError> {
+    let (kind, msg) = match pyint::str_as_int(raw) {
+        // Declared `int` with no bounds, so any size passes validation —
+        // what the column makes of it is [`int4`]'s problem, later, at
+        // the query, which is where Python finds out too.
+        Ok(value) => return Ok(value),
+        Err(StrIntError::Parsing) => (
+            "int_parsing",
+            "Input should be a valid integer, unable to parse string as an integer",
+        ),
+        Err(StrIntError::ParsingSize) => (
+            "int_parsing_size",
+            "Unable to parse input string as an integer, exceeded maximum size",
+        ),
+    };
     Err(ApiError::new(
         StatusCode::UNPROCESSABLE_ENTITY,
         json!({
             "error": "validation_failed",
             "message": format!("{msg} (path.{name})"),
             "errors": [{
-                "type": "int_parsing",
+                "type": kind,
                 "loc": ["path", name],
                 "msg": msg,
                 "input": raw,
@@ -961,66 +979,28 @@ pub fn path_int(name: &str, raw: &str) -> Result<i32, ApiError> {
     ))
 }
 
-/// Parse an integer the way Python's `int()` plus Pydantic's string
-/// coercion does.
+/// Narrow an integer to the `integer` column it is about to be compared
+/// against or written to.
 ///
-/// Accepts surrounding whitespace, a sign, underscore digit separators,
-/// and a decimal point followed only by zeros. Rejects scientific
-/// notation, hex, and any real fraction — all measured against the
-/// running service.
-fn parse_python_int(raw: &str) -> Option<i64> {
-    let s = raw.trim();
-    if s.is_empty() {
-        return None;
-    }
-
-    let (digits, fraction) = match s.split_once('.') {
-        Some((d, f)) => (d, Some(f)),
-        None => (s, None),
-    };
-
-    // A fraction is allowed only when it is entirely zeros: "5.0" is 5,
-    // "5.5" is not an integer.
-    if let Some(f) = fraction {
-        if f.is_empty() || !f.bytes().all(|b| b == b'0') {
-            return None;
-        }
-    }
-
-    // Underscores separate digits and are not allowed at either end or
-    // doubled up, matching Python's own rule.
-    let cleaned = strip_digit_separators(digits)?;
-    cleaned.parse::<i64>().ok()
+/// SQLAlchemy types a bind parameter from the column, so psycopg sends
+/// an `integer` and Postgres refuses anything that does not fit —
+/// `NumericValueOutOfRange`, which nothing catches, so the request is a
+/// 500. It is emphatically not a miss: raw psycopg would send a bigint
+/// and Postgres would compare the two happily and find no row, and a
+/// port that bound it that way would answer 404 where the service
+/// answers 500.
+///
+/// Called at the point the value reaches the database, not where it is
+/// parsed, because everything Python checks in between — the rate limit,
+/// the body — still comes first.
+pub fn int4(value: PyInt) -> Result<i32, ApiError> {
+    value
+        .small()
+        .and_then(|v| i32::try_from(v).ok())
+        .ok_or_else(|| ApiError::internal("integer out of range"))
 }
 
-fn strip_digit_separators(s: &str) -> Option<String> {
-    let (sign, rest) = match s.strip_prefix(['+', '-']) {
-        Some(rest) => (&s[..1], rest),
-        None => ("", s),
-    };
-    if rest.is_empty() {
-        return None;
-    }
 
-    let mut out = String::with_capacity(rest.len());
-    let bytes = rest.as_bytes();
-    for (i, &b) in bytes.iter().enumerate() {
-        if b == b'_' {
-            // Must sit between two digits.
-            let prev_ok = i > 0 && bytes[i - 1].is_ascii_digit();
-            let next_ok = i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit();
-            if !prev_ok || !next_ok {
-                return None;
-            }
-            continue;
-        }
-        if !b.is_ascii_digit() {
-            return None;
-        }
-        out.push(b as char);
-    }
-    Some(format!("{sign}{out}"))
-}
 
 #[cfg(test)]
 mod tests {
@@ -1033,25 +1013,25 @@ mod tests {
         // than Python's int() in different places.
         use IntError::*;
         for (input, expected) in [
-            (json!(7), Ok(7)),
-            (json!(-2), Ok(-2)),
-            (json!(3.0), Ok(3)),
-            (json!(1e3), Ok(1000)),
+            (json!(7), Ok(PyInt::Small(7))),
+            (json!(-2), Ok(PyInt::Small(-2))),
+            (json!(3.0), Ok(PyInt::Small(3))),
+            (json!(1e3), Ok(PyInt::Small(1000))),
             (json!(2.7), Err(FromFloat)),
-            (json!(true), Ok(1)),
-            (json!(false), Ok(0)),
+            (json!(true), Ok(PyInt::Small(1))),
+            (json!(false), Ok(PyInt::Small(0))),
             (json!(null), Err(Type)),
             (json!([]), Err(Type)),
             (json!({}), Err(Type)),
-            (json!("7"), Ok(7)),
-            (json!("  7  "), Ok(7)),
-            (json!("+7"), Ok(7)),
-            (json!("-7"), Ok(-7)),
-            (json!("0007"), Ok(7)),
-            (json!("1_000"), Ok(1000)),
+            (json!("7"), Ok(PyInt::Small(7))),
+            (json!("  7  "), Ok(PyInt::Small(7))),
+            (json!("+7"), Ok(PyInt::Small(7))),
+            (json!("-7"), Ok(PyInt::Small(-7))),
+            (json!("0007"), Ok(PyInt::Small(7))),
+            (json!("1_000"), Ok(PyInt::Small(1000))),
             // A whole decimal string is accepted; a fractional one is not.
-            (json!("7.0"), Ok(7)),
-            (json!("7.00"), Ok(7)),
+            (json!("7.0"), Ok(PyInt::Small(7))),
+            (json!("7.00"), Ok(PyInt::Small(7))),
             (json!("7.5"), Err(Parsing)),
             (json!("7."), Err(Parsing)),
             (json!(".5"), Err(Parsing)),
@@ -1107,33 +1087,21 @@ mod tests {
 
 
     #[test]
-    fn parses_the_integer_forms_python_accepts() {
-        for (raw, expected) in [
-            ("5", 5),
-            (" 5 ", 5),
-            ("05", 5),
-            ("+5", 5),
-            ("-5", -5),
-            ("5.0", 5),
-            ("5.00", 5),
-            ("1_000", 1000),
-            ("-0", 0),
-        ] {
-            assert_eq!(parse_python_int(raw), Some(expected), "{raw:?}");
-        }
-    }
+    fn integers_come_from_the_pydantic_port() {
+        // The forms themselves are held to pydantic by
+        // `pyint::tests::matches_pydantic_corpus`; this is only that the
+        // query layer asks it.
+        let mut q = Query::parse(Some("limit=+1_0&offset=07.00"));
+        assert_eq!(q.int("limit", 0, 0, 500), 10);
+        assert_eq!(q.int("offset", 0, 0, 500), 7);
+        assert!(q.finish().is_ok());
 
-    #[test]
-    fn rejects_the_forms_python_rejects() {
-        // 1e3 and 0x10 are the interesting ones: both are valid Rust
-        // float/int literals and neither is accepted here, because
-        // Pydantic does not accept them either.
-        for raw in [
-            "", " ", "abc", "true", "5.5", "1e3", "0x10", "_5", "5_", "1__0", "+", "-", ".",
-            "5.", "٥",
-        ] {
-            assert_eq!(parse_python_int(raw), None, "{raw:?}");
-        }
+        let mut q = Query::parse(Some("limit=1e3"));
+        assert_eq!(q.int("limit", 42, 0, 5000), 42);
+        assert_eq!(
+            q.finish().unwrap_err().detail["errors"][0]["type"],
+            "int_parsing"
+        );
     }
 
     #[test]
@@ -1186,24 +1154,32 @@ mod tests {
 
     #[test]
     fn a_path_parameter_accepts_what_python_accepts() {
-        assert_eq!(path_int("id", "42").unwrap(), 42);
-        assert_eq!(path_int("id", "042").unwrap(), 42);
-        assert_eq!(path_int("id", "-1").unwrap(), -1);
-        // out of i32 range is a parse failure, not a wrap
-        assert!(path_int("id", "99999999999999").is_err());
+        use crate::pyint::PyInt;
+        assert_eq!(path_int("id", "42").unwrap(), PyInt::Small(42));
+        assert_eq!(path_int("id", "042").unwrap(), PyInt::Small(42));
+        assert_eq!(path_int("id", "-1").unwrap(), PyInt::Small(-1));
+        // A value past the column is not a parse failure: FastAPI took
+        // it, and the database is what refuses it.
+        assert_eq!(path_int("id", "99999999999999").unwrap(), PyInt::Small(99999999999999));
+        assert_eq!(
+            int4(path_int("id", "99999999999999").unwrap()).unwrap_err().status,
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(int4(path_int("id", "-2147483648").unwrap()).unwrap(), i32::MIN);
+        assert!(path_int("id", "abc").is_err());
     }
 
     #[test]
     fn a_repeated_parameter_takes_the_last_value() {
         let mut q = Query::parse(Some("limit=1&limit=2"));
-        assert_eq!(q.int("limit", 100, Some(1), Some(500)), 2);
+        assert_eq!(q.int("limit", 100, 1, 500), 2);
         assert!(q.finish().is_ok());
     }
 
     #[test]
     fn absent_parameters_take_the_default_without_erroring() {
         let mut q = Query::parse(None);
-        assert_eq!(q.int("limit", 100, Some(1), Some(500)), 100);
+        assert_eq!(q.int("limit", 100, 1, 500), 100);
         assert_eq!(q.pattern("format", "json", "^(json|csv)$", &["json", "csv"]), "json");
         assert_eq!(q.optional_str("event"), None);
         assert!(q.finish().is_ok());
@@ -1220,7 +1196,7 @@ mod tests {
     #[test]
     fn a_bound_violation_produces_pydantics_exact_error() {
         let mut q = Query::parse(Some("limit=0"));
-        q.int("limit", 100, Some(1), Some(500));
+        q.int("limit", 100, 1, 500);
         let err = q.finish().unwrap_err();
         assert_eq!(err.status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(
@@ -1245,8 +1221,8 @@ mod tests {
         // order follows the handler signature, not the query string —
         // so this must be driven by the order the validators run.
         let mut q = Query::parse(Some("offset=-1&limit=0"));
-        q.int("limit", 100, Some(1), Some(500));
-        q.int("offset", 0, Some(0), Some(1_000_000));
+        q.int("limit", 100, 1, 500);
+        q.int("offset", 0, 0, 1_000_000);
         let err = q.finish().unwrap_err();
         let errors = err.detail["errors"].as_array().unwrap();
         assert_eq!(errors.len(), 2);

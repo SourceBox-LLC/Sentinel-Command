@@ -15,7 +15,8 @@ use crate::audit::{audit_label, python_json, write_audit};
 use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::now_naive;
-use crate::query::{parse_handler_json, path_int, BodyErrors, ModelBody, Query, path_segment};
+use crate::pyint::PyInt;
+use crate::query::{int4, parse_handler_json, path_int, BodyErrors, ModelBody, Query, path_segment};
 use crate::ratelimit::PerMinute;
 use crate::settings;
 
@@ -82,6 +83,7 @@ pub async fn delete_camera_group(
 ) -> Result<Json<Value>, ApiError> {
     let group_id = path_int("group_id", &group_id)?;
     rate.check().await?;
+    let group_id = int4(group_id)?;
 
     let group: Option<(String,)> =
         sqlx::query_as("SELECT name FROM camera_groups WHERE id = $1 AND org_id = $2")
@@ -127,10 +129,14 @@ pub async fn assign_camera_group(
 ) -> Result<Json<Value>, ApiError> {
     let camera_id = path_segment(&camera_id)?;
     let mut q = Query::parse(request.uri().query());
-    // No bounds in the Python signature, so no bounds here.
+    // No bounds in the Python signature, so no bounds here — and with
+    // none, a value beyond i64 gets through validation the way it does
+    // in Python, to be answered for below.
     let raw_group_id = q.optional_str("group_id");
     let group_id = match raw_group_id {
-        Some(ref raw) if !raw.is_empty() => Some(q.int("group_id", 0, None, None)),
+        Some(ref raw) if !raw.is_empty() => {
+            Some(q.big_int("group_id", PyInt::Small(0), None, None))
+        }
         Some(_) => None,
         None => None,
     };
@@ -151,17 +157,23 @@ pub async fn assign_camera_group(
     // so `?group_id=0` clears the group rather than looking for group 0.
     // The response still echoes the value that was sent.
     let assign = match group_id {
-        Some(id) if id != 0 => {
+        Some(id) if id.truthy() => {
+            // Narrowed to the column, which is what SQLAlchemy binds:
+            // `group_id=4294967297` is a 500 from Postgres, not a miss.
+            // Narrowing it here in Rust instead would wrap it round to
+            // group 1 and quietly reassign the camera to a real group.
             let group: Option<(i32,)> =
                 sqlx::query_as("SELECT id FROM camera_groups WHERE id = $1 AND org_id = $2")
-                    .bind(id as i32)
+                    .bind(int4(id)?)
                     .bind(&user.org_id)
                     .fetch_optional(&state.pool)
                     .await?;
-            if group.is_none() {
+            let Some((group_id,)) = group else {
                 return Err(ApiError::not_found("Group not found"));
-            }
-            Some(id as i32)
+            };
+            // The id the row actually has, so what is written back is
+            // whatever the lookup matched.
+            Some(group_id)
         }
         _ => None,
     };
@@ -186,7 +198,9 @@ pub async fn assign_camera_group(
     Ok(Json(json!({
         "success": true,
         "camera_id": camera_id,
-        "group_id": group_id,
+        // A value beyond i64 never reaches here: it is truthy, so it
+        // took the lookup above and found no group.
+        "group_id": group_id.and_then(PyInt::small),
     })))
 }
 

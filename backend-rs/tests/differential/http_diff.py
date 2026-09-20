@@ -462,6 +462,45 @@ CASES = [
     # the four routes registered by hand kept answering HEAD with 200
     # while this reported 218/218.
 
+    # --- integers at the edges ---------------------------------------
+    # Every one of these was a real difference. The window routes cap
+    # `days`/`hours` on one side only, so a large negative value asks for
+    # a window past year 9999, where Python's datetime overflows into a
+    # 500 — chrono reaches year 262143 and answered 200, and further out
+    # `Duration::days` panicked and dropped the connection. Beyond i64,
+    # Pydantic still parses a Python int and reports the *bound* it
+    # broke, and past 4,300 digits reports a size error, where a naive
+    # i64 parse says "not an integer". And an id too large for an
+    # `integer` column is a 500 from Postgres, because SQLAlchemy types
+    # the bind from the column — not the 404 that comparing it as a
+    # bigint would give.
+    *[("GET", f"/api/mcp/activity/logs/stats?days={v}", True) for v in [
+        "-1000000000000", "-3000000", "-2000000", "-2914000",
+        "-99999999999999999999", "99999999999999999999",
+        "9223372036854775807", "-9223372036854775808",
+        "1" + "0" * 4300, "1_" + "0" * 4300, "0" * 4300 + "5",
+    ]],
+    *[("GET", f"/api/audit/stream-logs/stats?days={v}", True) for v in [
+        "-1000000000000", "-3000000", "-99999999999999999999",
+    ]],
+    *[("GET", f"/api/motion/events/stats?hours={v}", True) for v in [
+        "-100000000000000", "-70000000", "-99999999999999999999",
+    ]],
+    *[("GET", f"/api/notifications?hours={v}", True) for v in [
+        "-99999999999999999999", "-100000000000000",
+    ]],
+    *[("GET", f"/api/audit-logs?{q}", True) for q in [
+        "offset=99999999999999999999", "limit=-99999999999999999999",
+        "limit=9223372036854775808", "offset=" + "1" + "0" * 4300,
+    ]],
+    *[("GET", f"/api/incidents/{v}", True) for v in [
+        "3000000000", "-3000000000", "2147483648", "-2147483649",
+        "2147483647", "99999999999999999999", "1" + "0" * 4300,
+    ]],
+    *[("GET", f"/api/incidents/1/evidence/{v}", True) for v in [
+        "3000000000", "99999999999999999999",
+    ]],
+
     # methods Rust has NOT ported on a path it HAS — these must still
     # reach Python rather than being answered with 405 by axum.
     ("POST", "/api/cameras", True),
