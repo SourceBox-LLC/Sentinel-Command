@@ -128,7 +128,13 @@ BLOCKING_SYMBOLS = {
 }
 
 # Standard-library imports that still need a Rust counterpart chosen.
-STDLIB_BLOCKERS = {"zoneinfo": "tzdata / chrono-tz"}
+#
+# `zoneinfo` is no longer one: `src/zoneinfo.rs` reproduces its lookup —
+# the tzdata package's name list plus a walk of the system directories,
+# the system copy preferred, and the three different ways it fails —
+# over jiff's bundled database, pinned to the same IANA release. It is
+# what `GET /api/sentinel/runs` computes "today" with.
+STDLIB_BLOCKERS: dict[str, str] = {}
 
 
 def module_name(path: pathlib.Path) -> str:

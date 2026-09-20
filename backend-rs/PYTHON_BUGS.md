@@ -92,6 +92,15 @@ media type is not JSON.
 `incident_id` is unbounded in Python and `Integer` in the column, so
 anything past int32 is a `NumericValueOutOfRange` rather than a 404.
 
+SQLAlchemy types the bind parameter from the column, which is what makes
+this a database error rather than a query that finds no row — raw
+psycopg sends a bigint for the same value and Postgres compares the two
+happily. The same shape reaches `camera_groups.id` through
+`PUT /api/cameras/{camera_id}/group?group_id=…`, `mcp_api_keys.id`
+through the key revoke routes, and `sentinel_runs.tool_call_count` and
+`incidents.id` through the agent's run-complete body. A `ge=0` /
+`le=<int32>` on each would turn all of them into 422s.
+
 ## 9. `has_permission` is a substring test when `org_permissions` is a string
 
 `"org:sys_memberships:manage" in claims["org_permissions"]` is a
@@ -99,9 +108,33 @@ substring match on a string, so a crafted single-permission claim can
 satisfy an admin check. Only reachable if Clerk ever emits
 `org_permissions` as a string rather than a list.
 
+## 10. A negative `days` or `hours` window 500s
+
+`GET /api/audit/stream-logs/stats`, `/api/mcp/activity/logs/stats`,
+`/api/motion/events/stats` and `/api/notifications` all declare their
+window with an upper bound and no lower one:
+
+```python
+days: int = Query(7, le=30)
+...
+since = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(days=days)
+```
+
+A negative value subtracts backwards, so `?days=-3000000` lands past
+year 9999 and `datetime` raises OverflowError — an unhandled 500. Larger
+magnitudes fail earlier, inside `timedelta`, and anything past i64 never
+gets that far. `?days=-2000000` is fine and simply returns an empty
+window, so the boundary moves with the clock.
+
+A `ge=0` on each of the four would make it a 422. Reproduced by the read
+differential, which sends the values on either side of the boundary.
+
 ---
 
 Cases 4-8 are reproduced every run by
 `tests/differential/latent_crashes.sh`, which asserts that Rust serves
-through each one. Case 1 has no harness — it is a concurrency property,
-not a response.
+through each one. Cases 8 and 10 are also sent by the read differential,
+where Rust is required to 500 in exactly the same places — porting the
+fault deliberately, because the whole method rests on the two stacks
+agreeing. Case 1 has no harness — it is a concurrency property, not a
+response.

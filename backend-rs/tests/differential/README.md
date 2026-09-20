@@ -395,8 +395,92 @@ Pydantic docs, which turned up several things worth knowing:
   `message` summarises only the first.
 
 The differential covers all of these plus every failure mode
-(`int_parsing`, `greater_than_equal`, `less_than_equal`,
-`string_pattern_mismatch`) and both single- and multi-error responses.
+(`int_parsing`, `int_parsing_size`, `greater_than_equal`,
+`less_than_equal`, `string_pattern_mismatch`) and both single- and
+multi-error responses.
+
+### The integer parse is a port, not a rule of thumb
+
+The list above was how the parse was written first, and it was wrong at
+the edges. `str_as_int` in pydantic-core tries the string twice — once
+exactly as sent, as a strict JSON integer, then once cleaned up (trimmed,
+`+` dropped, leading zeros and a `.000` tail stripped, underscores
+removed) — and any failure on the second pass is a plain `int_parsing`
+whatever went wrong on the first. So:
+
+* an integer beyond i64 is an ordinary Python int. `?limit=1e20` is not
+  "unparseable"; it is a number that fails `le=500`, and the response
+  names the bound. `src/pyint::PyInt::Big` keeps the sign, which is all
+  a bound needs;
+* past 4,300 digits there is `int_parsing_size` — but only when the
+  *first* pass gets that far. `1_` and 4,300 zeros is `int_parsing`,
+  while the same digits without the underscore are `int_parsing_size`;
+* leading zeros never count toward that limit, however many there are.
+
+`src/pyint.rs` ports it, over jiter's integer parser, and
+`gen_pyint_corpus.py` generates 5,108 cases from the library to hold it
+there. Seven injected bugs in that file are all caught by the corpus;
+two survive and are provably equivalent (past 4,300 characters the digit
+count is necessarily ≥ 19, and the "nothing changed" guard only skips a
+retry that fails identically).
+
+### Two limits that are not the parser's
+
+A parsed value can still be refused by what it is handed to, and both
+had to be reproduced deliberately:
+
+* **Python's calendar.** `days` and `hours` are capped on one side only,
+  so a large negative window reaches past year 9999, where `datetime`
+  raises OverflowError — a 500. chrono reaches year 262143 and answered
+  200, and further out `Duration::days` *panicked*, dropping the
+  connection with no response at all. `models::python_window_start`
+  applies Python's range.
+* **The column.** SQLAlchemy types a bind parameter from the column it
+  is compared against, so an id too large for `integer` is
+  `NumericValueOutOfRange` — a 500, not a miss. Raw psycopg would send a
+  bigint and Postgres would compare the two happily and find no row, so
+  a port that binds it that way answers 404 where the service answers
+  500. `query::int4` narrows at the point the value reaches the
+  database, after the rate limit and the body, because that is where
+  Python finds out too.
+
+## Dates and time zones
+
+Two pieces of the standard library are ported rather than approximated,
+because the routes that use them are visible to the second.
+
+**`datetime.fromisoformat`** (`src/pydatetime.rs`) follows the C in
+`Modules/_datetimemodule.c`, which is what actually runs —
+`_pydatetime.py` is only the fallback and disagrees with it. The C takes
+a colon after the seconds (`15:00:00:00`), reads `15.00` as a fraction,
+never checks the character in the separator position, parses ASCII
+digits only where `int()` would take `١`, stops at an embedded NUL as
+though the string ended there, and range-checks only an offset's total,
+so `+05:99` is a real zone and a zero offset is UTC even when it carries
+microseconds. `gen_fromisoformat_corpus.py` runs 4,121 inputs through
+the interpreter twice — through `fromisoformat` alone and through the
+whole `since` pipeline of `GET /api/sentinel/runs`, where a ValueError
+is a 400 and the OverflowError from `astimezone` is an uncaught 500.
+
+**`zoneinfo`** (`src/zoneinfo.rs`) answers the two questions the backend
+asks. `available_timezones()` is not a fixed list — it is the tzdata
+package's `zones` file plus a walk of the system directories, so the
+Debian image accepts `localtime`, a symlink the package does not list.
+`ZoneInfo(key)` prefers the system copy, and production pairs Debian's
+tzdata 2026b with the pip package's 2026c. Its failures split three
+ways: not found and malformed fall back to UTC, while a key naming a
+package *directory* raises IsADirectoryError, which nothing catches — a
+500. The name list is embedded from the package (`gen_tz_names.py`);
+zone data for that half comes from jiff's bundled database, which a test
+pins to the same IANA release.
+
+Midnight follows PEP 495: `replace()` keeps `fold`, so when now is the
+second pass through a repeated hour, midnight is read the same way —
+which changes the answer in America/Havana, where midnight itself
+repeats. The expectations come from CPython (`midnight_probe.py`), and
+the write differential sets an org timezone per case to check that the
+counts actually move (Kiritimati at +14 and Niue at -11 sit either side
+of the UTC day).
 
 ## Latent crashes found in the Python
 
@@ -564,6 +648,12 @@ ownership check itself is the mutation that matters, and it is caught.
 returns its 422 envelope with `loc: ["path", "<name>"]`. The SPA parses
 that envelope. Handlers therefore take `Path<String>` and call
 `query::path_int`, and the differential covers `abc`, `1.5` and `-1`.
+
+An `int` path parameter carries no bounds, so `path_int` returns
+whatever Pydantic parsed — including values no `integer` column can
+hold. Narrowing there would answer 422 where FastAPI accepted the value
+and the database refused it; the call sites narrow with `query::int4`
+instead, at the query.
 
 ## Body parsing
 
