@@ -94,6 +94,9 @@ pub fn build_router(state: AppState) -> Router {
             "/api/sentinel/runs/manual",
             served(axum::routing::post(api::sentinel_config::post_manual_run)),
         )
+        // Registered after the two literal paths above, as in the
+        // Python, so `/runs/manual` and `/runs/pending` keep winning.
+        .route("/api/sentinel/runs", ported(api::sentinel_config::list_runs))
         // Read-only camera routes (slice 2). Writes on these same paths
         // are slice 4 and must still reach Python — hence `ported`
         // rather than a bare `get`.
@@ -141,6 +144,10 @@ pub fn build_router(state: AppState) -> Router {
                 get(api::settings::get_notification_settings)
                     .post(api::groups::update_notification_settings),
             ),
+        )
+        .route(
+            "/api/settings/timezone",
+            served(axum::routing::post(api::timezone::update_org_timezone)),
         )
         .route(
             "/api/settings/motion-ingestion",

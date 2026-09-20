@@ -13,7 +13,8 @@ freshly-reseeded database — once per stack — and compares the response
 Normalisation is the whole difficulty. Two things legitimately differ
 between the runs and must not be reported:
 
-* wall-clock timestamps written as "now". Any timestamp within
+* wall-clock timestamps written as "now", with or without an offset.
+  Any timestamp within
   RECENT_WINDOW of the request is replaced with "<recent>". A timestamp
   that is *supposed* to be preserved (an older created_at) falls outside
   the window and is still compared exactly, so "handler wrongly reset
@@ -780,6 +781,77 @@ CASES += [
     ("sentinel config: unlicensed GET", "GET", "/api/sentinel/config", None, "admin",
      "DELETE FROM settings WHERE org_id='self-host' AND key LIKE 'sentinel_license%';"),
 
+    # --- org timezone ---------------------------------------------------
+    # The name is checked against `zoneinfo.available_timezones()`, which
+    # is the tzdata package's list plus a walk of the system directories
+    # — not a fixed list, and not a Rust crate's idea of one.
+    *[(f"timezone: {label}", "POST", "/api/settings/timezone", body, who, None)
+      for label, body, who in [
+          ("ok", {"timezone": "America/Los_Angeles"}, "admin"),
+          ("UTC", {"timezone": "UTC"}, "admin"),
+          ("a link name", {"timezone": "US/Pacific"}, "admin"),
+          ("Factory", {"timezone": "Factory"}, "admin"),
+          ("surrounding whitespace", {"timezone": "  UTC  "}, "admin"),
+          ("inner whitespace", {"timezone": "America/Los Angeles"}, "admin"),
+          ("wrong case", {"timezone": "utc"}, "admin"),
+          ("made up", {"timezone": "Mars/Olympus_Mons"}, "admin"),
+          # A directory of the tzdata package, which `available_timezones`
+          # does not list.
+          ("a zone directory", {"timezone": "America"}, "admin"),
+          ("posixrules", {"timezone": "posixrules"}, "admin"),
+          ("a pruned directory", {"timezone": "right/UTC"}, "admin"),
+          ("path traversal", {"timezone": "../etc/passwd"}, "admin"),
+          ("absolute path", {"timezone": "/etc/passwd"}, "admin"),
+          ("empty", {"timezone": ""}, "admin"),
+          ("missing", {}, "admin"),
+          ("null", {"timezone": None}, "admin"),
+          ("not a string", {"timezone": 5}, "admin"),
+          ("a list", {"timezone": ["UTC"]}, "admin"),
+          ("member", {"timezone": "UTC"}, "member"),
+          ("anon", {"timezone": "UTC"}, "agent:none"),
+      ]],
+
+    # --- runs list, whose "today" is midnight in the org's zone ---------
+    # Read cases, here rather than in the read differential, because each
+    # needs its own timezone row first. Kiritimati (+14) and Niue (-11)
+    # put local midnight on either side of the UTC one, so a port that
+    # used UTC midnight regardless reports a different `runs_today`.
+    #
+    # The runs are anchored to `current_date`, not to `now()`: each case
+    # is seeded once per stack, so a `now()` here would give the two
+    # passes different rows and the side-effect snapshot would differ on
+    # every case. The odd minute offsets keep them clear of any zone's
+    # local midnight, which is what the two stacks compute milliseconds
+    # apart.
+    *[(f"runs list: {label}", "GET", "/api/sentinel/runs", None, "admin",
+       ("DELETE FROM settings WHERE org_id='self-host' AND key='timezone';"
+        "INSERT INTO settings (id, org_id, key, value, updated_at) "
+        f"VALUES (9001, 'self-host', 'timezone', '{tz}', timestamp '2026-06-01 00:00:00');"
+        "INSERT INTO sentinel_runs (id, org_id, triggered_at, trigger_type, tool_call_count,"
+        " outcome, summary, updated_at) VALUES"
+        " (md5('h1'), 'self-host', current_date + interval '3 hours 17 minutes', 'motion', 0, 'no_action', '', timestamp '2026-06-01 00:00:00'),"
+        " (md5('h2'), 'self-host', current_date + interval '9 hours 43 minutes', 'motion', 0, 'no_action', '', timestamp '2026-06-01 00:00:00'),"
+        " (md5('h3'), 'self-host', current_date + interval '15 hours 7 minutes', 'motion', 0, 'no_action', '', timestamp '2026-06-01 00:00:00'),"
+        " (md5('h4'), 'self-host', current_date + interval '21 hours 31 minutes', 'motion', 0, 'no_action', '', timestamp '2026-06-01 00:00:00'),"
+        " (md5('h5'), 'self-host', current_date - interval '5 hours 23 minutes', 'motion', 0, 'no_action', '', timestamp '2026-06-01 00:00:00'),"
+        " (md5('h6'), 'self-host', current_date - interval '13 hours 11 minutes', 'motion', 0, 'no_action', '', timestamp '2026-06-01 00:00:00');"))
+      for label, tz in [
+          ("UTC", "UTC"),
+          ("Los Angeles", "America/Los_Angeles"),
+          ("Kolkata, a half-hour zone", "Asia/Kolkata"),
+          ("Kiritimati, +14", "Pacific/Kiritimati"),
+          ("Niue, -11", "Pacific/Niue"),
+          ("Havana, whose midnight repeats", "America/Havana"),
+          ("Santiago, whose midnight is skipped", "America/Santiago"),
+          # Not a zone: falls back to UTC rather than erroring.
+          ("an unknown name", "Mars/Olympus_Mons"),
+          ("an empty name", ""),
+          ("a traversal attempt", "../etc/passwd"),
+          # A directory of the tzdata package — the one name that is a
+          # 500 rather than a fallback.
+          ("a zone directory", "America"),
+      ]],
+
     # --- Run now --------------------------------------------------------
     *[(f"manual run: {label}", "POST", "/api/sentinel/runs/manual", body, who, setup)
       for label, body, who, setup in [
@@ -979,6 +1051,30 @@ def reseed():
         raise FixtureError(f"could not flush rate limits: {r.stderr.strip()[:200]}")
 
 
+# Rows a watched table holds that no case can compare, because
+# something outside the request writes them on its own clock.
+#
+# `core/license_client.py`'s check-in is reconciled by a loop in
+# `main.py` every 15 minutes. That interval is a literal, not an env
+# var, so unlike the other background loops the harness cannot stretch
+# it out of the way, and the Python is held unmodified. When it fires it
+# rewrites these keys — in whichever of the two passes it lands in, and
+# the other pass has only the seeded value, so one unrelated case per
+# quarter of an hour reported a side effect and the direction flipped
+# between runs.
+#
+# Excluding them is safe *today* because the Rust licence module only
+# reads: `src/license.rs` has no writer at all, so there is nothing on
+# the Rust side these rows could be hiding. The licence gate's actual
+# behaviour is asserted through responses instead — the "unlicensed"
+# cases above. When the background loops are ported and Rust starts
+# writing these keys, this exclusion has to go and the two loops have to
+# be compared some other way.
+SNAPSHOT_FILTER = {
+    "settings": " WHERE key NOT LIKE 'sentinel\\_license\\_%'",
+}
+
+
 def snapshot():
     """Table contents as JSON, ordered so the comparison is stable.
 
@@ -991,7 +1087,7 @@ def snapshot():
     """
     parts = [
         f"'{table}', COALESCE((SELECT json_agg(t) FROM "
-        f"(SELECT * FROM {table} ORDER BY 1) t), '[]'::json)"
+        f"(SELECT * FROM {table}{SNAPSHOT_FILTER.get(table, '')} ORDER BY 1) t), '[]'::json)"
         for table in WATCHED
     ]
     raw = psql("SELECT json_build_object(" + ", ".join(parts) + ")")
@@ -999,7 +1095,19 @@ def snapshot():
     return {table: data[table] for table in WATCHED}
 
 
-TS_FORMATS = ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S")
+TS_FORMATS = ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
+              # Offset-bearing, as `core/license_client.py` writes into
+              # `settings.value`. Without these the licence heartbeat is
+              # compared literally, and Python's 15-minute reconcile loop
+              # — a hardcoded interval, so unlike the other loops the
+              # harness cannot stretch it — rewrites those rows whenever
+              # it happens to fire, in whichever pass it lands in. That
+              # reported a side-effect difference on an unrelated case,
+              # and flipped direction between runs depending on which
+              # pass the timer caught. A stack that did *not* write still
+              # holds the seeded value, which is old, so a real
+              # difference is still a difference.
+              "%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z")
 
 
 JWT = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
@@ -1019,12 +1127,16 @@ def normalise(value, now):
         return [normalise(v, now) for v in value]
     if isinstance(value, str) and JWT.match(value):
         return "<jwt>"
-    if isinstance(value, str) and 19 <= len(value) <= 26 and value[4] == "-":
+    if isinstance(value, str) and 19 <= len(value) <= 32 and value[4] == "-":
         for fmt in TS_FORMATS:
             try:
                 ts = datetime.strptime(value, fmt)
             except ValueError:
                 continue
+            # `now` is naive UTC; an offset-bearing value is compared in
+            # the same terms.
+            if ts.tzinfo is not None:
+                ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
             if abs(now - ts) < RECENT_WINDOW:
                 return "<recent>"
             return value

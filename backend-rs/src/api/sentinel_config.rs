@@ -19,6 +19,7 @@ use axum::Json;
 use chrono::{Datelike, NaiveDateTime, TimeZone, Utc};
 use serde_json::{json, Map, Value};
 
+use crate::api::sentinel::{SentinelRunRow, RUN_SELECT};
 use crate::app::AppState;
 use crate::audit::{python_json, write_audit};
 use crate::auth::{RequireAdmin, RequireView};
@@ -27,7 +28,8 @@ use crate::license::{sentinel_blocked_by_license, LicenseContext};
 use crate::models::{iso_naive, now_naive};
 use crate::plans::{effective_plan_for_caps, get_plan_display_name, PlanContext};
 use crate::pyrepr;
-use crate::query::{BodyErrors, ModelBody};
+use crate::pyint::PyInt;
+use crate::query::{BodyErrors, ModelBody, Query};
 
 /// Monthly run cap by plan. Sentinel is available on both paid tiers;
 /// the cap is the differentiator. Absent from this table means no
@@ -417,6 +419,171 @@ async fn runs_used_this_month(state: &AppState, org_id: &str) -> Result<i64, Api
     .fetch_one(&state.pool)
     .await?;
     Ok(n)
+}
+
+/// `GET /api/sentinel/runs` — the run history behind the dashboard,
+/// with the small stats block that sits above it.
+///
+/// Three things here are more delicate than they look.
+///
+/// **`since`** is parsed by `datetime.fromisoformat`, whose C
+/// implementation accepts a good deal more than ISO 8601 — see
+/// `crate::pydatetime`. A ValueError from it is the 400 below; an
+/// OverflowError from the `astimezone` that follows is *not* caught by
+/// the Python and is a 500.
+///
+/// **"Today"** is midnight in the org's own timezone, so the window
+/// depends on tzdata and on PEP 495's fold rules; `crate::zoneinfo`
+/// resolves the name the way `ZoneInfo` does, including which failures
+/// fall back to UTC and which are a 500.
+///
+/// **`offset`** has a lower bound and no upper one, so a value past i64
+/// reaches Postgres and is refused there — a 500, after the count query
+/// has already run.
+pub async fn list_runs(
+    State(state): State<AppState>,
+    RequireView(user): RequireView,
+    request: axum::extract::Request,
+) -> Result<Json<Value>, ApiError> {
+    let mut q = Query::parse(request.uri().query());
+    let limit = q.int("limit", 50, 1, 200);
+    let offset = q.big_int("offset", PyInt::Small(0), Some(0), None);
+    let trigger = q.optional_str("trigger");
+    let since = q.optional_str("since");
+    q.finish()?;
+
+    // `if since:` — an empty value is no filter at all.
+    let since = match since {
+        Some(raw) => Some(parse_since(&raw)?),
+        None => None,
+    };
+
+    // The filtered query the list and its total share, and the
+    // unfiltered one every stat below is counted from.
+    let mut filters = String::from(" WHERE org_id = $1");
+    if trigger.is_some() {
+        filters.push_str(" AND trigger_type = $2");
+    }
+    if since.is_some() {
+        let n = if trigger.is_some() { 3 } else { 2 };
+        filters.push_str(&format!(" AND triggered_at >= ${n}"));
+    }
+    macro_rules! bind_filters {
+        ($q:expr) => {{
+            let mut query = $q.bind(&user.org_id);
+            if let Some(ref trigger) = trigger {
+                query = query.bind(trigger);
+            }
+            if let Some(since) = since {
+                query = query.bind(since);
+            }
+            query
+        }};
+    }
+
+    let count_sql = format!("SELECT COUNT(*) FROM sentinel_runs{filters}");
+    let total: i64 = bind_filters!(sqlx::query_scalar(&count_sql))
+        .fetch_one(&state.pool)
+        .await?;
+
+    // Python hands the offset straight to Postgres, which takes a
+    // bigint and nothing wider.
+    let offset = offset
+        .small()
+        .ok_or_else(|| ApiError::internal("bigint out of range"))?;
+    let list_sql =
+        format!("{RUN_SELECT}{filters} ORDER BY triggered_at DESC OFFSET {offset} LIMIT {limit}");
+    let rows: Vec<SentinelRunRow> = bind_filters!(sqlx::query_as(&list_sql))
+        .fetch_all(&state.pool)
+        .await?;
+
+    let today_start = org_midnight_utc(&state, &user.org_id).await?;
+    let runs_today: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sentinel_runs WHERE org_id = $1 AND triggered_at >= $2",
+    )
+    .bind(&user.org_id)
+    .bind(today_start)
+    .fetch_one(&state.pool)
+    .await?;
+
+    let runs_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sentinel_runs WHERE org_id = $1")
+        .bind(&user.org_id)
+        .fetch_one(&state.pool)
+        .await?;
+    let incident_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sentinel_runs WHERE org_id = $1 AND outcome = 'incident'",
+    )
+    .bind(&user.org_id)
+    .fetch_one(&state.pool)
+    .await?;
+    let pending_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sentinel_runs \
+          WHERE org_id = $1 AND outcome IN ('pending', 'running')",
+    )
+    .bind(&user.org_id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    let runs_month = runs_used_this_month(&state, &user.org_id).await?;
+    let plan = effective_plan_for_caps(&plan_ctx(&state), &user.org_id, true).await;
+    let cap = cap_for_plan(&plan);
+
+    Ok(Json(json!({
+        "runs": rows.iter().map(|r| r.to_json(false)).collect::<Vec<_>>(),
+        "total": total,
+        "stats": {
+            "runs_today": runs_today,
+            "runs_total": runs_total,
+            "runs_this_month": runs_month,
+            "incidents_filed": incident_count,
+            "pending": pending_count,
+            "monthly_cap": cap,
+            "remaining_this_month": (cap - runs_month).max(0),
+        },
+    })))
+}
+
+/// `datetime.fromisoformat(since.replace("Z", "+00:00"))`, then
+/// `astimezone(UTC)` for an aware result.
+///
+/// Python catches ValueError and answers 400. It does not catch the
+/// OverflowError that `astimezone` raises when the shifted value leaves
+/// the calendar, so that one stays a 500.
+fn parse_since(raw: &str) -> Result<NaiveDateTime, ApiError> {
+    crate::pydatetime::fromisoformat(&raw.replace('Z', "+00:00"))
+        .and_then(crate::pydatetime::to_naive_utc)
+        .map_err(|err| match err {
+            crate::pydatetime::PyDateError::Value => {
+                ApiError::bad_request("invalid `since` — expected ISO datetime")
+            }
+            crate::pydatetime::PyDateError::Overflow => {
+                ApiError::internal("date value out of range")
+            }
+        })
+}
+
+/// Midnight today in the org's configured timezone, as the naive UTC
+/// timestamp the `triggered_at` column is compared against.
+///
+/// An unknown or malformed zone name falls back to UTC, because the
+/// Python catches exactly `ZoneInfoNotFoundError` and `ValueError`. A
+/// name that happens to be a *directory* of the tzdata package raises
+/// IsADirectoryError instead, which nothing catches — a 500.
+async fn org_midnight_utc(state: &AppState, org_id: &str) -> Result<NaiveDateTime, ApiError> {
+    let name = crate::settings::get(&state.pool, org_id, "timezone", Some("UTC"))
+        .await?
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "UTC".to_string());
+
+    let tz = match crate::zoneinfo::load(&name) {
+        Ok(tz) => tz,
+        Err(crate::zoneinfo::LoadError::NotFound) => crate::zoneinfo::load("UTC")
+            .map_err(|_| ApiError::internal("no UTC zone on this machine"))?,
+        Err(crate::zoneinfo::LoadError::IsADirectory) => {
+            return Err(ApiError::internal("Is a directory"))
+        }
+    };
+    Ok(crate::zoneinfo::local_midnight_utc(&tz, jiff::Timestamp::now()))
 }
 
 /// `POST /api/sentinel/runs/manual` — the operator's "Run now".

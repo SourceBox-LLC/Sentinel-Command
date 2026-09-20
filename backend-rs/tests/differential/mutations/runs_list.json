@@ -1,0 +1,187 @@
+{
+ "_comment": "Mutations for the runs list, the org timezone, and the three ports they lean on: CPython's fromisoformat, zoneinfo's lookup, and pydantic's integer parsing.",
+ "restart_rust": true,
+ "env": {
+  "DIFF_ONLY": "/api/sentinel/runs|timezone:|runs list:|/api/settings/timezone|days=|hours=|offset=|limit=|/api/incidents/"
+ },
+ "harness": [
+  [
+   "tests/differential/http_run.sh"
+  ],
+  [
+   "tests/differential/write_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "the since filter is ignored",
+   "file": "src/api/sentinel_config.rs",
+   "old": "        filters.push_str(&format!(\" AND triggered_at >= ${n}\"));",
+   "new": "        let _ = n;"
+  },
+  {
+   "name": "since is compared without converting to UTC",
+   "file": "src/api/sentinel_config.rs",
+   "old": "    crate::pydatetime::fromisoformat(&raw.replace('Z', \"+00:00\"))\n        .and_then(crate::pydatetime::to_naive_utc)",
+   "new": "    crate::pydatetime::fromisoformat(&raw.replace('Z', \"+00:00\"))\n        .map(|dt| dt.naive)"
+  },
+  {
+   "name": "a Z is not read as UTC",
+   "file": "src/api/sentinel_config.rs",
+   "old": "&raw.replace('Z', \"+00:00\")",
+   "new": "raw"
+  },
+  {
+   "name": "an overflowing since is a 400 like any other bad value",
+   "file": "src/api/sentinel_config.rs",
+   "old": "            crate::pydatetime::PyDateError::Overflow => {\n                ApiError::internal(\"date value out of range\")\n            }",
+   "new": "            crate::pydatetime::PyDateError::Overflow => {\n                ApiError::bad_request(\"invalid `since` \u2014 expected ISO datetime\")\n            }"
+  },
+  {
+   "name": "the trigger filter is ignored",
+   "file": "src/api/sentinel_config.rs",
+   "old": "        filters.push_str(\" AND trigger_type = $2\");",
+   "new": ""
+  },
+  {
+   "name": "the total counts every run, not the filtered set",
+   "file": "src/api/sentinel_config.rs",
+   "old": "    let count_sql = format!(\"SELECT COUNT(*) FROM sentinel_runs{filters}\");",
+   "new": "    let count_sql = String::from(\"SELECT COUNT(*) FROM sentinel_runs WHERE org_id = $1\");"
+  },
+  {
+   "name": "runs are listed oldest first",
+   "file": "src/api/sentinel_config.rs",
+   "old": "ORDER BY triggered_at DESC OFFSET {offset} LIMIT {limit}",
+   "new": "ORDER BY triggered_at ASC OFFSET {offset} LIMIT {limit}"
+  },
+  {
+   "name": "the tool trace is included in the list",
+   "file": "src/api/sentinel_config.rs",
+   "old": "rows.iter().map(|r| r.to_json(false))",
+   "new": "rows.iter().map(|r| r.to_json(true))"
+  },
+  {
+   "name": "stats count across every org",
+   "file": "src/api/sentinel_config.rs",
+   "old": "    let runs_total: i64 = sqlx::query_scalar(\"SELECT COUNT(*) FROM sentinel_runs WHERE org_id = $1\")",
+   "new": "    let runs_total: i64 = sqlx::query_scalar(\"SELECT COUNT(*) FROM sentinel_runs WHERE $1 = $1\")"
+  },
+  {
+   "name": "running runs are not counted as pending",
+   "file": "src/api/sentinel_config.rs",
+   "old": "WHERE org_id = $1 AND outcome IN ('pending', 'running')",
+   "new": "WHERE org_id = $1 AND outcome = 'pending'"
+  },
+  {
+   "name": "remaining can go negative",
+   "file": "src/api/sentinel_config.rs",
+   "old": "\"remaining_this_month\": (cap - runs_month).max(0),",
+   "new": "\"remaining_this_month\": cap - runs_month,"
+  },
+  {
+   "name": "an offset past i64 is quietly clamped",
+   "file": "src/api/sentinel_config.rs",
+   "old": "    let offset = offset\n        .small()\n        .ok_or_else(|| ApiError::internal(\"bigint out of range\"))?;",
+   "new": "    let offset = offset.small().unwrap_or(i64::MAX);"
+  },
+  {
+   "name": "today starts at UTC midnight regardless of the org's zone",
+   "file": "src/api/sentinel_config.rs",
+   "old": "    Ok(crate::zoneinfo::local_midnight_utc(&tz, jiff::Timestamp::now()))",
+   "new": "    let _ = tz;\n    Ok(crate::models::now_naive().date().and_hms_opt(0, 0, 0).unwrap())"
+  },
+  {
+   "name": "the org's timezone setting is not read",
+   "file": "src/api/sentinel_config.rs",
+   "old": "    let name = crate::settings::get(&state.pool, org_id, \"timezone\", Some(\"UTC\"))\n        .await?\n        .filter(|v| !v.is_empty())\n        .unwrap_or_else(|| \"UTC\".to_string());",
+   "new": "    let name = String::from(\"UTC\");"
+  },
+  {
+   "name": "an unknown zone is an error rather than UTC",
+   "file": "src/api/sentinel_config.rs",
+   "old": "        Err(crate::zoneinfo::LoadError::NotFound) => crate::zoneinfo::load(\"UTC\")\n            .map_err(|_| ApiError::internal(\"no UTC zone on this machine\"))?,",
+   "new": "        Err(crate::zoneinfo::LoadError::NotFound) => return Err(ApiError::internal(\"unknown zone\")),"
+  },
+  {
+   "name": "a zone directory falls back to UTC instead of failing",
+   "file": "src/api/sentinel_config.rs",
+   "old": "        Err(crate::zoneinfo::LoadError::IsADirectory) => {\n            return Err(ApiError::internal(\"Is a directory\"))\n        }",
+   "new": "        Err(crate::zoneinfo::LoadError::IsADirectory) => crate::zoneinfo::load(\"UTC\").unwrap(),"
+  },
+  {
+   "name": "the tzdata package's directories are not recognised",
+   "file": "src/zoneinfo.rs",
+   "old": "    if is_package_dir(&canonical) {\n        return Err(LoadError::IsADirectory);\n    }",
+   "new": ""
+  },
+  {
+   "name": "a zone name is not validated as a relative path",
+   "file": "src/zoneinfo.rs",
+   "old": "    if !valid_key(key) {\n        return Err(LoadError::NotFound);\n    }",
+   "new": ""
+  },
+  {
+   "name": "midnight ignores which side of a fold now is on",
+   "file": "src/zoneinfo.rs",
+   "old": "    let fold = matches!(\n        tz.to_ambiguous_timestamp(wall_now).offset(),\n        AmbiguousOffset::Fold { after, .. } if after == now_offset\n    );",
+   "new": "    let fold = false;"
+  },
+  {
+   "name": "now's own offset is used for midnight",
+   "file": "src/api/sentinel_config.rs",
+   "old": "    Ok(crate::zoneinfo::local_midnight_utc(&tz, jiff::Timestamp::now()))",
+   "new": "    let now = jiff::Timestamp::now();\n    let wall = tz.to_offset(now).to_datetime(now);\n    let midnight = wall.date().to_datetime(jiff::civil::Time::midnight());\n    let secs = midnight.to_zoned(jiff::tz::TimeZone::fixed(tz.to_offset(now))).unwrap().timestamp().as_second();\n    Ok(chrono::DateTime::from_timestamp(secs, 0).unwrap().naive_utc())"
+  },
+  {
+   "name": "the zone name is not trimmed",
+   "file": "src/api/timezone.rs",
+   "old": "        python_strip(s).to_string()",
+   "new": "        s.to_string()"
+  },
+  {
+   "name": "any name is accepted",
+   "file": "src/api/timezone.rs",
+   "old": "    if !crate::zoneinfo::is_available(&tz_name) {",
+   "new": "    if false {"
+  },
+  {
+   "name": "only the package's list is accepted, without the system walk",
+   "file": "src/zoneinfo.rs",
+   "old": "    tzpath().iter().any(|root| walk_reaches(root, name))",
+   "new": "    false",
+   "equivalent": "On this host the system directories add no name the tzdata package does not already list, so the walk changes no answer here. It is what makes `localtime` work on the Debian image, which this harness does not run on."
+  },
+  {
+   "name": "posixrules is offered as a zone",
+   "file": "src/zoneinfo.rs",
+   "old": "    if name == \"posixrules\" {\n        return false;\n    }",
+   "new": "",
+   "equivalent": "posixrules is not in the package list either, and reaching it needs the system walk to find /usr/share/zoneinfo/posixrules \u2014 which it does on this host, but the route refuses the name for the same reason Python does only when the walk runs. Kept for the Debian image, where the file exists."
+  },
+  {
+   "name": "an integer beyond i64 is a parse failure",
+   "file": "src/query.rs",
+   "old": "        let value = match pyint::str_as_int(&raw) {",
+   "new": "        let value = match pyint::str_as_int(&raw).and_then(|v| v.small().map(PyInt::Small).ok_or(StrIntError::Parsing)) {"
+  },
+  {
+   "name": "an overlong integer is an ordinary parse failure",
+   "file": "src/pyint.rs",
+   "old": "    if digit_count >= 19 && digits_end > MAX_INT_CHARS {\n        return Err(JiterError::OutOfRange);\n    }",
+   "new": ""
+  },
+  {
+   "name": "a window past year 9999 is allowed",
+   "file": "src/models.rs",
+   "old": "    if !(MIN..=MAX).contains(&start) {\n        return Err(overflow());\n    }",
+   "new": ""
+  },
+  {
+   "name": "an id past the column is a miss rather than an error",
+   "file": "src/query.rs",
+   "old": "    value\n        .small()\n        .and_then(|v| i32::try_from(v).ok())\n        .ok_or_else(|| ApiError::internal(\"integer out of range\"))",
+   "new": "    Ok(value.small().map_or(i32::MAX, |v| i32::try_from(v).unwrap_or(i32::MAX)))"
+  }
+ ]
+}

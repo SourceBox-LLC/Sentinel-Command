@@ -129,6 +129,12 @@ ROUTES = [
     ("POST settings/motion-ingestion", 30,
      [("POST", "/api/settings/motion-ingestion", "member", {"enabled": True})],
      ("POST", "/api/settings/motion-ingestion", "admin", {"enabled": True})),
+    # `update_org_timezone` reads its body with `await request.json()`
+    # inside the function, so a malformed body is refused *after* the
+    # limiter and counts — only auth is refused before it.
+    ("POST settings/timezone", 30,
+     [("POST", "/api/settings/timezone", "member", {"timezone": "UTC"})],
+     ("POST", "/api/settings/timezone", "admin", {"timezone": "UTC"})),
     ("POST settings/notifications", 30,
      [("POST", "/api/settings/notifications", "member", {"motion_notifications": True}),
       ("POST", "/api/settings/notifications", "admin", {"motion_notifications": "maybe"})],

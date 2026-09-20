@@ -462,6 +462,41 @@ CASES = [
     # the four routes registered by hand kept answering HEAD with 200
     # while this reported 218/218.
 
+    # --- sentinel runs -----------------------------------------------
+    # `since` goes through `datetime.fromisoformat`, whose C parser takes
+    # a good deal more than ISO 8601 — a colon after the seconds, a bare
+    # `.` for the fraction, any character at all in the separator
+    # position, and offsets whose minutes run past 59. A ValueError there
+    # is a 400; the OverflowError from the `astimezone` that follows is
+    # not caught and is a 500. The org-timezone cases need a settings row
+    # and so live in the write differential, which has per-case setup.
+    ("GET", "/api/sentinel/runs", True),
+    ("GET", "/api/sentinel/runs", False),
+    *[("GET", f"/api/sentinel/runs?{q}", True) for q in [
+        "limit=3", "limit=2&offset=1", "offset=7", "limit=200", "limit=1",
+        "trigger=manual", "trigger=motion", "trigger=scheduled",
+        "trigger=incident_opened", "trigger=nope", "trigger=",
+        "limit=0", "limit=201", "offset=-1", "limit=abc", "offset=1.5",
+        "limit=9223372036854775807", "offset=9223372036854775807",
+        "offset=9223372036854775808", "offset=99999999999999999999",
+        # what fromisoformat takes
+        "since=2026-05-07T15:00:00", "since=2026-05-07T15:00:00Z",
+        "since=2026-05-07T15:00:00%2B00:00", "since=2026-05-07T15:00-05:00",
+        "since=2026-05-07T15:00:00.123456", "since=2026-05-07",
+        "since=20260507", "since=20260507T150000", "since=2026-W19-4",
+        "since=2026-05-07%2015:00:00", "since=2026-05-07T15:00:00:00",
+        "since=2026-05-07T15.00", "since=2026-05-07X15:00:00",
+        "since=2026-05-07T15:00%2B05:99", "since=2026-05-07T15:00%2B00:00:00.5",
+        "since=2026-05-07T15:00:00.123456%00junk",
+        # and what it does not
+        "since=bogus", "since=", "since=2026-13-01", "since=2026-02-30",
+        "since=2026-05-07T24:00", "since=2026-05-07T15:00%2B24:00",
+        "since=%D9%A2%D9%A0%D9%A2%D9%A6-05-07",
+        # overflow in astimezone, which the route does not catch
+        "since=0001-01-01T00:00%2B01:00", "since=9999-12-31T23:00-01:00",
+        "since=2026-05-07T15:00:00&trigger=manual&limit=2&offset=1",
+    ]],
+
     # --- integers at the edges ---------------------------------------
     # Every one of these was a real difference. The window routes cap
     # `days`/`hours` on one side only, so a large negative value asks for
