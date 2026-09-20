@@ -250,6 +250,24 @@ refuses to start unless every file it will touch is clean in git, turns
 SIGTERM and SIGHUP into the same restoring path as SIGINT, and leaves
 `target/mutation-in-progress.json` while a mutation is applied.
 
+A spec's `harness` list can include `unit_run.sh`, which runs
+`cargo test` and reports in the same counting format. That is not
+belt-and-braces: three mutations in the runs-list spec survived both
+HTTP differentials for structural reasons, not for want of cases.
+
+* Deleting the key validation in `zoneinfo::load` changes no response —
+  a traversing name resolves to nothing either way and the route falls
+  back to UTC. What it changes is that the lookup will read a TZif file
+  from anywhere on disk.
+* Two midnight bugs — ignoring `fold`, and using *now's* offset for
+  midnight — are only wrong on a DST transition day, and only for the
+  hours around it. Both differentials run against the real clock, so
+  they can only catch those on the two or three days a year the fixture
+  happens to fall on.
+
+The corpora and unit tests pin the clock and the filesystem, which is
+where properties like these can be held at all.
+
 Stop a run by signalling the **Python process**, not a shell that
 launched it. That is how "a revoked agent key still authenticates" was
 once left in the source: the SIGINT went to a bash wrapper, the driver

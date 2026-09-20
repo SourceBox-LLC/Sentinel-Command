@@ -333,6 +333,27 @@ mod tests {
         assert_eq!(load("../etc/passwd").unwrap_err(), LoadError::NotFound);
     }
 
+    /// Key validation is not decoration: without it an absolute key
+    /// joins straight over the root and `load` reads whatever TZif file
+    /// it names, anywhere on disk. No response changes — the route
+    /// answers UTC either way — so this is the only place it can be
+    /// held.
+    #[test]
+    fn a_key_cannot_escape_tzpath() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/zoneinfo-escape");
+        std::fs::create_dir_all(&dir).unwrap();
+        let outside = dir.join("Somewhere");
+        std::fs::write(&outside, jiff_tzdb::get("UTC").unwrap().1).unwrap();
+
+        // A real, loadable zone file — by absolute path, and by a
+        // relative one that climbs out of every TZPATH root.
+        assert_eq!(load(outside.to_str().unwrap()).unwrap_err(), LoadError::NotFound);
+        let climb = format!("{}{}", "../".repeat(12), outside.strip_prefix("/").unwrap().display());
+        assert_eq!(load(&climb).unwrap_err(), LoadError::NotFound);
+
+        std::fs::remove_file(&outside).unwrap();
+    }
+
     #[test]
     fn a_dotted_package_path_reaches_the_zone() {
         // Python joins the directories with dots to import them, so this

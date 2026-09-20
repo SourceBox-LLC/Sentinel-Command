@@ -421,7 +421,10 @@ pub async fn post_run_complete(
     // A Python int beyond i64 cannot be bound at all, and would have
     // been refused by the column anyway; `max(0)` is the Python's own
     // clamp of a negative count.
-    let incident_bind = match incident_id {
+    // Narrowed only on the branch that stores it: any other outcome
+    // discards `incident_id` before it reaches the column, so a value
+    // too large for one is not an error there.
+    let incident_bind = match incident_id.filter(|_| is_incident) {
         Some(v) => Some(int4(v)?),
         None => None,
     };
@@ -450,7 +453,7 @@ pub async fn post_run_complete(
     // Both of these are bigints on the way in, so a value too large for
     // the `integer` column is the "integer out of range" Postgres raises
     // for the Python too — a 500, not a silently clamped row.
-    .bind(if is_incident { incident_bind } else { None })
+    .bind(incident_bind)
     .bind(truncate_chars(&summary, 8000))
     .bind(tool_call_bind)
     .bind(stored_trace)

@@ -488,6 +488,11 @@ CASES = [
         "since=2026-05-07T15.00", "since=2026-05-07X15:00:00",
         "since=2026-05-07T15:00%2B05:99", "since=2026-05-07T15:00%2B00:00:00.5",
         "since=2026-05-07T15:00:00.123456%00junk",
+        # Where `.replace("Z", "+00:00")` is not the no-op it looks
+        # like: a Z outside the zone position changes what parses at
+        # all, in both directions. Without these the replacement can be
+        # deleted and every case still passes.
+        "since=2026-W01Z", "since=2026-05-07Z15:00", "since=20260507Z1500",
         # and what it does not
         "since=bogus", "since=", "since=2026-13-01", "since=2026-02-30",
         "since=2026-05-07T24:00", "since=2026-05-07T15:00%2B24:00",

@@ -1,5 +1,5 @@
 {
- "_comment": "Mutations for the runs list, the org timezone, and the three ports they lean on: CPython's fromisoformat, zoneinfo's lookup, and pydantic's integer parsing. DIFF_ONLY is deliberately narrow: the write harness reseeds per case, and a filter matching the agent's own /api/sentinel/runs/<id> paths pulled in forty cases no mutation here can move, at minutes apiece.",
+ "_comment": "Mutations for the runs list, the org timezone, and the three ports they lean on: CPython's fromisoformat, zoneinfo's lookup, and pydantic's integer parsing. DIFF_ONLY is deliberately narrow: the write harness reseeds per case, and a filter matching the agent's own /api/sentinel/runs/<id> paths pulled in forty cases no mutation here can move, at minutes apiece. The unit harness is here because a mutation survived that neither differential could see: deleting the key validation in zoneinfo::load changes no response, only whether the lookup will read a TZif file from outside TZPATH. Properties like that live in the corpora.",
  "restart_rust": true,
  "env": {
   "DIFF_ONLY": "/api/sentinel/runs?|logs/stats?days=|stream-logs/stats?days=|events/stats?hours=|notifications?hours=|audit-logs?offset=|audit-logs?limit=|/api/incidents/3000000000|/api/incidents/99999999999999999999|timezone:|runs list:|group_id past|count past|incident_id past"
@@ -10,6 +10,9 @@
   ],
   [
    "tests/differential/write_run.sh"
+  ],
+  [
+   "tests/differential/unit_run.sh"
   ]
  ],
  "mutations": [
@@ -156,8 +159,7 @@
    "name": "posixrules is offered as a zone",
    "file": "src/zoneinfo.rs",
    "old": "    if name == \"posixrules\" {\n        return false;\n    }",
-   "new": "",
-   "equivalent": "posixrules is not in the package list either, and reaching it needs the system walk to find /usr/share/zoneinfo/posixrules \u2014 which it does on this host, but the route refuses the name for the same reason Python does only when the walk runs. Kept for the Debian image, where the file exists."
+   "new": ""
   },
   {
    "name": "an integer beyond i64 is a parse failure",

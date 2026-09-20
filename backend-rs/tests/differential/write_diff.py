@@ -468,6 +468,12 @@ CASES += [
     ("complete, incident_id past i64", "POST",
      "/api/sentinel/runs/run0000000000000000000000000001/complete",
      {"outcome": "incident", "incident_id": "99999999999999999999"}, "agent"),
+    # The same value on an outcome that does not store it: Python drops
+    # `incident_id` before it reaches the column, so this is a 200 and
+    # not the 500 the two cases above are.
+    ("complete, incident_id past int4 but no incident", "POST",
+     "/api/sentinel/runs/run0000000000000000000000000001/complete",
+     {"outcome": "no_action", "incident_id": 3000000000}, "agent"),
     ("complete, count a bool", "POST",
      "/api/sentinel/runs/run0000000000000000000000000001/complete",
      {"outcome": "no_action", "tool_call_count": True}, "agent"),
@@ -851,6 +857,15 @@ CASES += [
           # 500 rather than a fallback.
           ("a zone directory", "America"),
       ]],
+
+    # Past the monthly cap, which is the only way to tell `max(0, cap -
+    # used)` from a bare subtraction: the fixture's org has seven runs
+    # against a cap of five hundred.
+    ("runs list: past the monthly cap", "GET", "/api/sentinel/runs", None, "admin",
+     "INSERT INTO sentinel_runs (id, org_id, triggered_at, trigger_type, tool_call_count,"
+     " outcome, summary, updated_at) SELECT md5('cap' || g::text), 'self-host',"
+     " date_trunc('month', now())::timestamp + (g || ' seconds')::interval, 'motion', 0,"
+     " 'no_action', '', timestamp '2026-06-01 00:00:00' FROM generate_series(1, 501) g;"),
 
     # --- Run now --------------------------------------------------------
     *[(f"manual run: {label}", "POST", "/api/sentinel/runs/manual", body, who, setup)
