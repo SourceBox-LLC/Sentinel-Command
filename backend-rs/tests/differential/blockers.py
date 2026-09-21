@@ -94,7 +94,7 @@ BLOCKERS = {
     "core.sync_client": "Sentinel Sync Service client",
     "core.sentinel_dispatch": "sentinel dispatch (DB-backed, portable)",
     "core.versions": "node version check (reads release cache)",
-    "api.hls": "in-process HLS segment + playlist caches",
+    "api.hls": "in-process HLS segment + playlist caches",  # now Rust's — see PORTED_STATE
     "api.ws": "in-process WebSocket connection manager",
     "mcp": "MCP server (fastmcp -> rmcp)",
 }
@@ -125,6 +125,17 @@ BLOCKING_SYMBOLS = {
     ("api.motion", "integration_motion_broadcaster"): "in-process motion SSE broadcaster",
     ("api.notifications", "notification_broadcaster"): "in-process notification SSE broadcaster",
     ("api.notifications", "_transition_debounce"): "in-process transition debounce",
+}
+
+# In-process state the port has already taken over. A route whose only
+# remaining blockers are in here is not blocked at all — it is *overdue*,
+# because the Python copy of that state is no longer the live one. The
+# plan panel is the example that made this worth distinguishing: it reads
+# the viewer-second counter, and once segments were served from Rust, the
+# Python route answered zero hours used for every org. That looks like a
+# counter reset, not like a port boundary.
+PORTED_STATE = {
+    "api.hls": "the HLS caches and the viewer-second counter are Rust's",
 }
 
 # Routes nothing blocks and nobody should port: FastAPI generates them
@@ -382,6 +393,13 @@ def main() -> int:
     deliberate = [(p, m) for p, m in clear if p in NOT_A_PORT]
     clear = [(p, m) for p, m in clear if p not in NOT_A_PORT]
 
+    # Split out the routes whose only blockers have already moved.
+    overdue = {}
+    for key in list(groups):
+        reasons = {BLOCKERS.get(mod, mod) for mod in PORTED_STATE}
+        if key and set(key) <= reasons:
+            overdue[key] = groups.pop(key)
+
     print(f"== clear: nothing in the way ({len(clear)}) ==")
     for path, methods in sorted(clear):
         print(f"   {methods:12} {path}")
@@ -389,6 +407,11 @@ def main() -> int:
         print(f"\n== not a port, by decision ({len(deliberate)}) ==")
         for path, methods in sorted(deliberate):
             print(f"   {methods:12} {path:28} {NOT_A_PORT[path]}")
+    for key, paths in sorted(overdue.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        print(f"\n== overdue: reads state the port already owns ({len(paths)}) ==")
+        print(f"   {', '.join(key)} — the Python copy is no longer the live one")
+        for path, methods in sorted(paths):
+            print(f"   {methods:12} {path}")
     for key in sorted(groups, key=lambda k: (-len(groups[k]), k)):
         print(f"\n== blocked by {', '.join(key)} ({len(groups[key])}) ==")
         for path, methods in sorted(groups[key]):

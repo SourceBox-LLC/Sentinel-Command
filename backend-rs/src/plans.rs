@@ -40,6 +40,22 @@ pub struct PlanLimits {
     pub log_retention_days: i64,
 }
 
+impl PlanLimits {
+    /// The dict `get_plan_limits` returns, in its key order — this is a
+    /// response body, not a struct dump, and `/api/nodes/plan` hands it
+    /// to the dashboard whole.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "max_cameras": self.max_cameras,
+            "max_nodes": self.max_nodes,
+            "max_seats": self.max_seats,
+            "max_viewer_hours_per_month": self.max_viewer_hours_per_month,
+            "max_sse_subscribers": self.max_sse_subscribers,
+            "log_retention_days": self.log_retention_days,
+        })
+    }
+}
+
 /// Hardware caps are sized as abuse rails rather than product
 /// differentiators — almost no legitimate customer hits them. The
 /// binding constraint for an upgrade decision is

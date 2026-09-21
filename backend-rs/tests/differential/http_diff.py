@@ -464,6 +464,14 @@ CASES = [
     # the four routes registered by hand kept answering HEAD with 200
     # while this reported 218/218.
 
+    # --- the plan panel ----------------------------------------------
+    # `usage.viewer_hours_used` is normalised away: it reads the
+    # in-process counter, which is Rust's now, so the two answers are
+    # not comparable by construction. Everything else here is.
+    ("GET", "/api/nodes/plan", True),
+    ("GET", "/api/nodes/plan", False),
+    ("GET", "/api/nodes/plan", "member"),
+
     # --- sentinel runs -----------------------------------------------
     # `since` goes through `datetime.fromisoformat`, whose C parser takes
     # a good deal more than ISO 8601 — a colon after the seconds, a bare
@@ -654,8 +662,17 @@ def _headers(msg):
     return out
 
 
-def normalise(body):
+def normalise(body, path=""):
     """Parse JSON if possible; sort lists by a stable key.
+
+    `/api/nodes/plan` reports one field this harness cannot compare:
+    `usage.viewer_hours_used` comes from the in-memory counter the
+    segment route maintains, and that counter lives in whichever
+    process serves segments. Since that became Rust, Python's copy only
+    ever reads zero — which is precisely why the route had to move, and
+    precisely why the two answers are not comparable. The counter is
+    covered by tests/hls_db.rs against a real database, and the
+    arithmetic around it by `round_two_places_like_python`.
 
     security.txt is plain text with an `Expires` field regenerated on
     every request, so the two stacks differ by however many seconds
@@ -672,6 +689,10 @@ def normalise(body):
         v = json.loads(body)
     except Exception:  # noqa: BLE001
         return body.decode("utf-8", "replace")
+    if path.startswith("/api/nodes/plan") and isinstance(v, dict):
+        usage = v.get("usage")
+        if isinstance(usage, dict) and "viewer_hours_used" in usage:
+            usage["viewer_hours_used"] = "<in-process counter>"
     if isinstance(v, list):
         def key(item):
             if isinstance(item, dict):
@@ -739,7 +760,7 @@ def main():
         extra = case[3] if len(case) > 3 else None
         rs_status, rs_body, rs_head = fetch(RUST, method, path, auth, extra)
         py_status, py_body, py_head = fetch(PYTHON, method, path, auth, extra)
-        rs, py = normalise(rs_body), normalise(py_body)
+        rs, py = normalise(rs_body, path), normalise(py_body, path)
 
         same = (rs_status == py_status) and (rs == py) and (rs_head == py_head)
         label = f"{method} {path}" + ("" if auth else "  (no auth)")

@@ -158,9 +158,34 @@ pub fn contains_str(value: &Value, needle: &str) -> Option<bool> {
     }
 }
 
+/// `round(x, 2)`.
+///
+/// Python rounds to the nearest representable double of the correctly
+/// rounded decimal, ties to even — not the `(x * 100).round() / 100`
+/// that rounds halves away from zero. Formatting to two places and
+/// reading it back gives the same double, because both sides round the
+/// exact binary value the same way.
+pub fn round_half_even(x: f64) -> f64 {
+    format!("{x:.2}").parse().unwrap_or(x)
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn round_two_places_like_python() {
+        // Values where half-away-from-zero and Python's round() differ.
+        // `round(2.675, 2)` is 2.67 because the double nearest 2.675 is
+        // a hair below it.
+        assert_eq!(round_half_even(2.675), 2.67);
+        assert_eq!(round_half_even(0.125), 0.12);
+        assert_eq!(round_half_even(0.135), 0.14);
+        assert_eq!(round_half_even(1.0 / 3.0), 0.33);
+        assert_eq!(round_half_even(0.0), 0.0);
+        assert_eq!(round_half_even(2.0), 2.0);
+    }
 
     fn corpus() -> Value {
         serde_json::from_str(include_str!("../tests/fixtures/pyrepr_corpus.json")).unwrap()

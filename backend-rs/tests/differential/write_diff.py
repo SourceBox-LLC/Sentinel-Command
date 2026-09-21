@@ -80,6 +80,24 @@ WATCHED = ["incidents", "incident_evidence", "audit_log", "settings",
            # perfect in the response.
            "sentinel_runs", "sentinel_agent_keys"]
 
+# Past-due anchors for the grace-countdown cases, fixed at import so
+# both passes of a case seed the identical value. Seven days is
+# PAYMENT_GRACE_DAYS.
+_PAST_DUE_NOW = datetime.now(timezone.utc)
+PAST_DUE_DAYS_LEFT = (_PAST_DUE_NOW - timedelta(days=2)).isoformat()
+PAST_DUE_HOURS_LEFT = (_PAST_DUE_NOW - timedelta(days=6, hours=20)).isoformat()
+PAST_DUE_EXPIRED = (_PAST_DUE_NOW - timedelta(days=9)).isoformat()
+
+
+def past_due_setup(stamp: str) -> str:
+    """Mark the org past due, with `payment_past_due_at` set to `stamp`."""
+    return (
+        "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
+        " (9201,'self-host','payment_past_due','true',timestamp '2026-06-01'),"
+        f" (9202,'self-host','payment_past_due_at','{stamp}',timestamp '2026-06-01');"
+    )
+
+
 # The raw agent keys behind seed rows 1-3. Hashes are in
 # seed_cameras.sql; these are the values a caller presents.
 AGENT_KEYS = {
@@ -790,6 +808,50 @@ CASES += [
     # read differential has no per-case setup, so it is run from here.
     ("sentinel config: unlicensed GET", "GET", "/api/sentinel/config", None, "admin",
      "DELETE FROM settings WHERE org_id='self-host' AND key LIKE 'sentinel_license%';"),
+
+    # --- the plan panel's grace countdown --------------------------------
+    # Read cases, here rather than in the read differential, because each
+    # needs its own past-due settings. The countdown is
+    # `timedelta.days`, which floors: twenty hours of grace left is zero
+    # days, and an hour past is minus one, shown as zero.
+    #
+    # The timestamps are literals computed once, at import — not `now()`
+    # in the setup SQL. Each case is seeded separately for each tier, so
+    # a `now()` there gives the two passes different values and the
+    # expiry they echo back differs by the reseed delta. Third time this
+    # shape has bitten.
+    *[(f"plan: {label}", "GET", "/api/nodes/plan", None, "admin",
+       "DELETE FROM settings WHERE org_id='self-host'"
+       " AND key IN ('payment_past_due','payment_past_due_at','plan_cancel_pending');"
+       + setup)
+      for label, setup in [
+          ("not past due", ""),
+          ("past due, days left", past_due_setup(PAST_DUE_DAYS_LEFT)),
+          ("past due, hours left", past_due_setup(PAST_DUE_HOURS_LEFT)),
+          ("past due, grace expired", past_due_setup(PAST_DUE_EXPIRED)),
+          ("past due, a naive timestamp", past_due_setup("2026-09-01T00:00:00")),
+          ("past due, an offset timestamp", past_due_setup("2026-09-01T00:00:00-05:00")),
+          ("past due, a Z timestamp", past_due_setup("2026-09-01T00:00:00Z")),
+          ("past due, an unparseable timestamp", past_due_setup("not a date")),
+          ("past due, an empty timestamp", past_due_setup("")),
+          ("past due, no timestamp at all",
+           "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
+           " (9201,'self-host','payment_past_due','true',timestamp '2026-06-01');"),
+          ("cancellation pending",
+           "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
+           " (9203,'self-host','plan_cancel_pending','true',timestamp '2026-06-01');"),
+      ]],
+
+    # --- a node decommissioning itself -----------------------------------
+    # The node asks, by key, and its cameras go with it. Watched tables
+    # show both the cascade and the audit row that records who did it.
+    ("decommission self", "POST", "/api/nodes/self/decommission", None, "node:test-node-key", None),
+    ("decommission self, no key", "POST", "/api/nodes/self/decommission", None, "agent:none", None),
+    ("decommission self, unknown key", "POST", "/api/nodes/self/decommission", None,
+     "node:not-a-real-key", None),
+    ("decommission self, a node with no cameras", "POST", "/api/nodes/self/decommission", None,
+     "node:test-node-key", "DELETE FROM cameras WHERE node_id ="
+     " (SELECT id FROM camera_nodes WHERE node_id = 'node-aaaa1111');"),
 
     # --- GDPR Article 20 export -----------------------------------------
     # The archive is compared by contents, not bytes: member names in

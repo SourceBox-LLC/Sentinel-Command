@@ -18,15 +18,19 @@
 //!
 //! This route touches none of it: one row, one `to_dict()`.
 
-use axum::extract::{Path, State};
+use axum::extract::{ConnectInfo, Path, State};
+use axum::http::HeaderMap;
 use axum::Json;
 use chrono::NaiveDateTime;
 use serde_json::{json, Value};
 
 use crate::app::AppState;
-use crate::auth::RequireAdmin;
+use crate::audit::{python_json, write_audit};
+use crate::auth::{AuthUser, RequireAdmin};
 use crate::error::ApiError;
+use crate::plans;
 use crate::query::path_segment;
+use crate::ratelimit::PerHour;
 use crate::models::{iso_naive, now_naive};
 
 /// A node is offline after three missed heartbeats.
@@ -145,6 +149,185 @@ pub async fn get_node(
 
     let row = row.ok_or_else(|| ApiError::not_found("Node not found"))?;
     Ok(Json(row.to_json()))
+}
+
+
+/// `GET /api/nodes/plan` — what the dashboard's plan panel reads.
+///
+/// Two halves that come from different places. The caps and the plan
+/// name come from the *token's* claim, not from a database lookup:
+/// this is a display route, and `user.plan` is what the rest of the
+/// session is being served under. The usage half is live — node and
+/// camera counts from the database, and viewer-hours from the in-memory
+/// counter the segment route maintains.
+///
+/// That counter is why this route had to move when the video path did.
+/// It lives in whichever process serves segments, and Python's copy has
+/// been empty since that became Rust: this route reading it there would
+/// have shown every org zero hours used, which looks exactly like a
+/// reset rather than a port.
+pub async fn get_plan_info(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> Result<Json<Value>, ApiError> {
+    let limits = plans::get_plan_limits(&user.plan);
+
+    let (nodes,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM camera_nodes WHERE org_id = $1")
+        .bind(&user.org_id)
+        .fetch_one(&state.pool)
+        .await?;
+    let (cameras,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cameras WHERE org_id = $1")
+        .bind(&user.org_id)
+        .fetch_one(&state.pool)
+        .await?;
+
+    let past_due = crate::settings::get(&state.pool, &user.org_id, "payment_past_due", Some("false"))
+        .await?
+        .as_deref()
+        == Some("true");
+    let cancel_pending =
+        crate::settings::get(&state.pool, &user.org_id, "plan_cancel_pending", Some("false"))
+            .await?
+            .as_deref()
+            == Some("true");
+
+    // The grace countdown, so the banner can say how long is left
+    // rather than repeating the static seven days the terms promise.
+    let mut grace_days_remaining = Value::Null;
+    let mut grace_expires_at = Value::Null;
+    if past_due {
+        let raw = crate::settings::get(&state.pool, &user.org_id, "payment_past_due_at", Some(""))
+            .await?
+            .unwrap_or_default();
+        if !raw.is_empty() {
+            // Same `fromisoformat` the rest of the service uses, and an
+            // unparseable value leaves both fields null — the Python
+            // catches ValueError and TypeError here and keeps the
+            // nominal plan rather than guessing.
+            if let Ok(parsed) = crate::pydatetime::fromisoformat(&raw.replace('Z', "+00:00")) {
+                // A naive value is read as UTC, which is what
+                // `.replace(tzinfo=UTC)` does to it.
+                let offset_us = parsed.offset_us.unwrap_or(0);
+                let expires = parsed.naive + chrono::Duration::days(plans::PAYMENT_GRACE_DAYS)
+                    - chrono::Duration::microseconds(offset_us);
+                let remaining = expires - now_naive();
+                // `timedelta.days` floors, so a remainder of minus one
+                // hour is minus one day, and `max(0, ...)` shows it as
+                // suspended rather than as a negative countdown.
+                grace_days_remaining = json!(remaining.num_days().max(0));
+                grace_expires_at = json!(iso_aware(expires, offset_us));
+            }
+        }
+    }
+
+    let viewer_seconds = state.hls.warm_viewer_seconds(&state.pool, &user.org_id).await;
+    Ok(Json(json!({
+        "plan": user.plan,
+        "plan_name": plans::get_plan_display_name(&user.plan),
+        "features": user.features,
+        "limits": limits.to_json(),
+        "usage": {
+            "nodes": nodes,
+            "cameras": cameras,
+            "viewer_hours_used": crate::pyrepr::round_half_even(viewer_seconds as f64 / 3600.0),
+            "viewer_hours_limit": limits.max_viewer_hours_per_month,
+        },
+        "payment_past_due": past_due,
+        "grace_days_remaining": grace_days_remaining,
+        "grace_expires_at": grace_expires_at,
+        "grace_window_days": plans::PAYMENT_GRACE_DAYS,
+        "plan_cancel_pending": cancel_pending,
+    })))
+}
+
+/// `datetime.isoformat()` for the aware value the grace maths produced.
+///
+/// The offset is carried through from whatever `payment_past_due_at`
+/// was stored with, because that is the value Python added the grace
+/// window to and then printed.
+fn iso_aware(naive_utc: NaiveDateTime, offset_us: i64) -> String {
+    let local = naive_utc + chrono::Duration::microseconds(offset_us);
+    let total_minutes = offset_us / 60_000_000;
+    let sign = if total_minutes < 0 { '-' } else { '+' };
+    let (hours, minutes) = (total_minutes.abs() / 60, total_minutes.abs() % 60);
+    format!("{}{sign}{hours:02}:{minutes:02}", iso_naive(local))
+}
+
+/// `POST /api/nodes/self/decommission` — the node asking to be removed.
+///
+/// Run from the CameraNode's own `/wipe confirm`, so a factory reset is
+/// one action rather than two. Unlike the admin delete it sends no
+/// `wipe_data` command back: the node is the one asking, and is already
+/// committed to wiping itself whether or not this answer arrives.
+///
+/// It authenticates by key rather than by naming itself in the URL — a
+/// stolen key could already heartbeat as that node, so there is no new
+/// exposure, and it keeps working for a node that has forgotten its own
+/// id part-way through a reset.
+pub async fn decommission_self(
+    rate: PerHour<10>,
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    // The key is read inside the function in Python, so the limiter has
+    // already counted the request.
+    rate.check().await?;
+    let Some(key) = headers.get("x-node-api-key") else {
+        return Err(ApiError::unauthorized("API key required"));
+    };
+
+    let node: Option<(i32, String, String, String)> = sqlx::query_as(
+        "SELECT id, node_id, name, org_id FROM camera_nodes WHERE api_key_hash = $1",
+    )
+    .bind(crate::api::node_writes::node_key_hash(key.as_bytes()))
+    .fetch_optional(&state.pool)
+    .await?;
+    let Some((node_pk, node_id, node_name, org_id)) = node else {
+        return Err(ApiError::not_found("Node not found"));
+    };
+
+    // The same cache cleanup the admin delete does, so a camera's
+    // segments do not outlive the node that was pushing them.
+    let cameras: Vec<(String,)> = sqlx::query_as("SELECT camera_id FROM cameras WHERE node_id = $1")
+        .bind(node_pk)
+        .fetch_all(&state.pool)
+        .await?;
+    for (camera_id,) in &cameras {
+        state.hls.cleanup_camera(camera_id);
+    }
+
+    // SQLAlchemy cascades the cameras through the relationship; the
+    // foreign key itself is NO ACTION, so the rows go first here.
+    sqlx::query("DELETE FROM cameras WHERE node_id = $1")
+        .bind(node_pk)
+        .execute(&state.pool)
+        .await?;
+    sqlx::query("DELETE FROM camera_nodes WHERE id = $1")
+        .bind(node_pk)
+        .execute(&state.pool)
+        .await?;
+
+    // Nobody is acting but the node itself, which is why the row names
+    // it as the user and says who initiated it: a node disappearing is
+    // security-relevant however it happened.
+    write_audit(
+        &state.pool,
+        &org_id,
+        "node_decommissioned",
+        "",
+        &format!("node:{node_id}"),
+        Some(python_json(&[
+            ("node_id", json!(node_id)),
+            ("name", json!(node_name)),
+            ("initiated_by", json!("node")),
+        ])),
+        &headers,
+        Some(&peer.ip().to_string()),
+    )
+    .await;
+
+    Ok(Json(json!({ "success": true, "deleted": node_id })))
 }
 
 #[cfg(test)]

@@ -200,8 +200,16 @@ pub fn build_router(state: AppState) -> Router {
             served(axum::routing::post(api::node_writes::validate_node)),
         )
         .route("/api/nodes/register", still_python())
+        // Same reason: it clears the caches for the node's cameras.
+        .route(
+            "/api/nodes/self/decommission",
+            served(axum::routing::post(api::nodes::decommission_self)),
+        )
         .route("/api/nodes/heartbeat", still_python())
-        .route("/api/nodes/plan", still_python())
+        // Moved with the video path, not before it: this reads the
+        // viewer-second counter, which lives in whichever process
+        // serves segments.
+        .route("/api/nodes/plan", ported(api::nodes::get_plan_info))
         .route("/api/nodes/ws-status", still_python())
         .route("/api/nodes/{node_id}", ported(api::nodes::get_node))
         .route(

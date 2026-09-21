@@ -387,21 +387,10 @@ impl OrgMonthlyUsageRow {
             "org_id": self.org_id,
             "year_month": self.year_month,
             "viewer_seconds": self.viewer_seconds,
-            "viewer_hours": round_half_even(f64::from(self.viewer_seconds) / 3600.0),
+            "viewer_hours": crate::pyrepr::round_half_even(f64::from(self.viewer_seconds) / 3600.0),
             "updated_at": self.updated_at.map(iso_naive),
         })
     }
-}
-
-/// `round(x, 2)`.
-///
-/// Python rounds to the nearest representable double of the correctly
-/// rounded decimal, ties to even — not the `(x * 100).round() / 100`
-/// that rounds halves away from zero. Formatting to two places and
-/// reading it back gives the same double, because both sides round the
-/// exact binary value the same way.
-fn round_half_even(x: f64) -> f64 {
-    format!("{x:.2}").parse().unwrap_or(x)
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -515,16 +504,6 @@ mod tests {
         // `str.replace` replaces every occurrence, including one the org
         // id brought with it.
         assert_eq!(export_filename("a.csvb", now), "gdpr-export-a.zipb-20260919.zip");
-    }
-
-    #[test]
-    fn viewer_hours_round_like_python() {
-        // Values where half-away-from-zero and Python's round() differ.
-        assert_eq!(round_half_even(2.675), 2.67);
-        assert_eq!(round_half_even(0.125), 0.12);
-        assert_eq!(round_half_even(0.135), 0.14);
-        assert_eq!(round_half_even(1.0 / 3.0), 0.33);
-        assert_eq!(round_half_even(0.0), 0.0);
     }
 
     #[test]
