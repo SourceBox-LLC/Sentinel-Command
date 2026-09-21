@@ -42,8 +42,20 @@ def python_limits():
     return out
 
 
+bodies = {}
+
+
 def rust_handler_limits():
-    """handler fn name -> (n, window) or None."""
+    """handler fn name -> (n, window) or None.
+
+    Also records whether the handler ever calls `check()`. The
+    extractor deliberately spends nothing — `RateLimit::check` goes
+    where slowapi's decorator runs, after auth, so a 401 or a 422 does
+    not cost the org its budget — which means a handler that takes the
+    extractor and forgets the call has *no limit at all*. Reading the
+    declaration alone scored exactly that as correct once, on the
+    notification stream.
+    """
     out = {}
     for f in sorted((BACKEND_RS / "src/api").glob("*.rs")):
         src = f.read_text()
@@ -61,6 +73,15 @@ def rust_handler_limits():
                         break
                 j += 1
             args = src[i:j]
+            # The handler body, for the `check()` scan below: from the
+            # end of the signature to the start of the next item at
+            # column zero.
+            rest = src[j:]
+            end = rest.find("\npub ")
+            nxt = rest.find("\n#[cfg(test)]")
+            if nxt != -1 and (end == -1 or nxt < end):
+                end = nxt
+            bodies[name] = rest if end == -1 else rest[:end]
             per_minute = re.search(r"PerMinute<(\d+)>", args)
             per_hour = re.search(r"PerHour<(\d+)>", args)
             raw = re.search(r"RateLimit<(\d+),\s*(\d+)>", args)
@@ -74,6 +95,15 @@ def rust_handler_limits():
             else:
                 out[name] = None
     return out
+
+
+def unspent_limits(handlers):
+    """Handlers that take a RateLimit and never call check() on it."""
+    return sorted(
+        name
+        for name, limit in handlers.items()
+        if limit is not None and ".check().await" not in bodies.get(name, "")
+    )
 
 
 def rust_routes():
@@ -158,6 +188,10 @@ def main():
     print(f"python declares {len(py)} routes; rust serves {len(routes)} "
           f"method+path pairs across {len(seen)} paths\n")
     bad = 0
+    for name in unspent_limits(handlers):
+        print(f"  FAIL  {name}: takes a RateLimit and never calls check() "
+              f"— the limit is declared but not in force")
+        bad += 1
     for method, path, handler in sorted(set(routes)):
         if handler == "health":
             continue

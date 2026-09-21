@@ -25,6 +25,7 @@ between the runs and must not be reported:
 Usage: write_diff.py <token> [-v]
 """
 
+import base64
 import hashlib
 import io
 import json
@@ -1226,6 +1227,38 @@ TS_FORMATS = ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
 
 JWT = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
 
+# The unsubscribe link in every email footer, which is a JWT *inside* a
+# larger string — one per recipient, substituted into `body_text` and
+# `body_html`. The bare-JWT rule above cannot see it.
+UNSUB_LINK = re.compile(
+    r"(/api/notifications/email/unsubscribe\?t=)"
+    r"([A-Za-z0-9_-]+\.([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]+)"
+)
+
+
+def _unsub_claims(match):
+    """Replace the token with its own claims, minus the two that move.
+
+    Not a blanket `<jwt>`: `org_id`, `kind`, `rcpt` and `sub` are the
+    whole content of the link and have to be compared. Only `iat` and
+    `exp` differ between the two runs, and only when they straddle a
+    second boundary.
+
+    The signature bytes go uncompared, which is sound because they are a
+    function of the header, these claims and the derived secret — and
+    that derivation is held to PyJWT's exact output by a unit test, not
+    inferred here.
+    """
+    raw = match.group(3)
+    try:
+        payload = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+        claims = json.loads(payload)
+    except Exception:  # noqa: BLE001 — an unparseable token is itself the difference
+        return match.group(1) + "<unparseable-jwt>"
+    claims.pop("iat", None)
+    claims.pop("exp", None)
+    return match.group(1) + "<jwt:" + json.dumps(claims, sort_keys=True) + ">"
+
 
 def normalise(value, now):
     """Replace just-written timestamps with a token, recursively.
@@ -1241,6 +1274,8 @@ def normalise(value, now):
         return [normalise(v, now) for v in value]
     if isinstance(value, str) and JWT.match(value):
         return "<jwt>"
+    if isinstance(value, str) and "/api/notifications/email/unsubscribe?t=" in value:
+        value = UNSUB_LINK.sub(_unsub_claims, value)
     if isinstance(value, str) and 19 <= len(value) <= 32 and value[4] == "-":
         for fmt in TS_FORMATS:
             try:

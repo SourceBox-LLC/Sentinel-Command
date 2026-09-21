@@ -200,8 +200,24 @@ mod tests {
         Broadcaster::new("test")
     }
 
+    /// The next event, or `None` if none arrives promptly.
+    ///
+    /// **Every read in these tests goes through this.** A bare
+    /// `recv().await` cannot fail here, only hang: the subscription
+    /// holds its own sender on purpose, so a subscriber the broadcaster
+    /// has dropped waits forever rather than seeing the channel close.
+    /// `cargo test` has no timeout, so one such await stalls the whole
+    /// run — which is exactly what happened, and it took a mutation
+    /// run wedged for twenty minutes to show it. Bounded, the same
+    /// case fails in fifty milliseconds and names itself.
+    async fn next(sub: &mut Subscription<'_>) -> Option<String> {
+        tokio::time::timeout(Duration::from_millis(50), sub.recv())
+            .await
+            .unwrap_or(None)
+    }
+
     async fn idle(sub: &mut Subscription<'_>) -> bool {
-        tokio::time::timeout(Duration::from_millis(50), sub.recv()).await.is_err()
+        next(sub).await.is_none()
     }
 
     #[tokio::test]
@@ -212,8 +228,8 @@ mod tests {
         let mut other = b.subscribe("org_b", true, 10).unwrap();
 
         b.notify("org_a", "all", r#"{"n":1}"#);
-        assert_eq!(a1.recv().await.as_deref(), Some(r#"{"n":1}"#));
-        assert_eq!(a2.recv().await.as_deref(), Some(r#"{"n":1}"#));
+        assert_eq!(next(&mut a1).await.as_deref(), Some(r#"{"n":1}"#));
+        assert_eq!(next(&mut a2).await.as_deref(), Some(r#"{"n":1}"#));
         // Tenant isolation: the other org's stream saw nothing.
         assert!(idle(&mut other).await);
         assert_eq!(b.counts(), (2, 3));
@@ -226,11 +242,11 @@ mod tests {
         let mut admin = b.subscribe("org_a", true, 10).unwrap();
 
         b.notify("org_a", "admin", r#"{"secret":1}"#);
-        assert_eq!(admin.recv().await.as_deref(), Some(r#"{"secret":1}"#));
+        assert_eq!(next(&mut admin).await.as_deref(), Some(r#"{"secret":1}"#));
         // The viewer was skipped, not dropped, so the next public event
         // still reaches it.
         b.notify("org_a", "all", r#"{"public":1}"#);
-        assert_eq!(viewer.recv().await.as_deref(), Some(r#"{"public":1}"#));
+        assert_eq!(next(&mut viewer).await.as_deref(), Some(r#"{"public":1}"#));
         assert_eq!(b.counts(), (1, 2));
     }
 
@@ -247,12 +263,12 @@ mod tests {
         // slow subscriber its place.
         for i in 0..=QUEUE_DEPTH {
             b.notify("org_a", "all", &format!(r#"{{"n":{i}}}"#));
-            assert!(keeping_up.recv().await.is_some());
+            assert!(next(&mut keeping_up).await.is_some(), "event {i} was not delivered");
         }
         assert_eq!(b.counts(), (1, 1));
         // And the one that kept up is still being fed.
         b.notify("org_a", "all", r#"{"n":"after"}"#);
-        assert_eq!(keeping_up.recv().await.as_deref(), Some(r#"{"n":"after"}"#));
+        assert_eq!(next(&mut keeping_up).await.as_deref(), Some(r#"{"n":"after"}"#));
     }
 
     #[tokio::test]
@@ -269,7 +285,7 @@ mod tests {
 
         // Everything that was queued before the drop is still readable.
         for _ in 0..QUEUE_DEPTH {
-            assert!(slow.recv().await.is_some());
+            assert!(next(&mut slow).await.is_some());
         }
         // Then it idles forever instead of returning None.
         assert!(idle(&mut slow).await, "the stream ended instead of idling");
@@ -298,7 +314,7 @@ mod tests {
         let mut second = b.subscribe("org_a", false, 10).unwrap();
         drop(first);
         b.notify("org_a", "all", r#"{"n":1}"#);
-        assert_eq!(second.recv().await.as_deref(), Some(r#"{"n":1}"#));
+        assert_eq!(next(&mut second).await.as_deref(), Some(r#"{"n":1}"#));
         assert_eq!(b.counts(), (1, 1));
     }
 }
