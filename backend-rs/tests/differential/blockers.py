@@ -127,6 +127,16 @@ BLOCKING_SYMBOLS = {
     ("api.notifications", "_transition_debounce"): "in-process transition debounce",
 }
 
+# Routes nothing blocks and nobody should port: FastAPI generates them
+# from its own route table, so there is no handler to port and no
+# response to hold to a differential.
+NOT_A_PORT = {
+    "/api/openapi.json": "FastAPI generates this from its own routes",
+    "/api-docs": "Swagger UI over that schema",
+    "/api-redoc": "ReDoc over that schema",
+    "/docs/oauth2-redirect": "Swagger UI's OAuth callback page",
+}
+
 # Standard-library imports that still need a Rust counterpart chosen.
 #
 # `zoneinfo` is no longer one: `src/zoneinfo.rs` reproduces its lookup —
@@ -360,9 +370,25 @@ def main() -> int:
     clear = groups.pop((), [])
     total = sum(len(v) for v in groups.values()) + len(clear)
     print(f"{total} route(s) considered\n")
+
+    # Nothing blocks these, and none of them is a port: they are
+    # FastAPI's own generated schema and the two pages that render it.
+    # Reproducing that JSON from Rust would be re-deriving it from a
+    # different framework's idea of the same routes, which is not the
+    # same exercise as porting a handler and cannot be held to the
+    # differential the way a handler can. They stay on the proxy while
+    # the Python is there; when it goes, the question is what Rust
+    # should generate, or whether to serve them at all.
+    deliberate = [(p, m) for p, m in clear if p in NOT_A_PORT]
+    clear = [(p, m) for p, m in clear if p not in NOT_A_PORT]
+
     print(f"== clear: nothing in the way ({len(clear)}) ==")
     for path, methods in sorted(clear):
         print(f"   {methods:12} {path}")
+    if deliberate:
+        print(f"\n== not a port, by decision ({len(deliberate)}) ==")
+        for path, methods in sorted(deliberate):
+            print(f"   {methods:12} {path:28} {NOT_A_PORT[path]}")
     for key in sorted(groups, key=lambda k: (-len(groups[k]), k)):
         print(f"\n== blocked by {', '.join(key)} ({len(groups[key])}) ==")
         for path, methods in sorted(groups[key]):

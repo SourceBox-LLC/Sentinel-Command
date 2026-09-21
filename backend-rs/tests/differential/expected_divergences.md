@@ -200,6 +200,32 @@ between still comes first. It stays recorded as a Python bug — see
 `PYTHON_BUGS.md` #8 — and the read differential sends the values on
 either side of the boundary.
 
+## The GDPR export's bytes differ; its contents do not
+
+```
+POST /api/gdpr/export  ->  both 200, both application/zip, same members,
+                           same JSON in each — different bytes
+```
+
+Two reasons, neither about what the export *says*. Python compresses
+with zlib and this with a Rust DEFLATE, and two conforming compressors
+need not emit the same stream for the same input. Every member also
+carries a modification time, which `zipfile.writestr` takes from the
+local clock at the moment it is written.
+
+So the differential compares the archive's contents: the member list in
+order, each member's parsed JSON, and the three headers that make it a
+download. That is what a reader of the export receives.
+
+Row order *within* a table is not compared either, and that one is not a
+divergence at all — `export_org_data` runs
+`db.query(Model).filter_by(org_id=...)` with no `order_by`, so Python's
+own order is whatever the sequential scan returns, and it flips between
+runs on the same stack as the fixture's updates move rows. Requiring
+equality there would be testing the storage engine. The part that is
+not arbitrary — each cascade parent's rows contiguous, parents in the
+order the parent table was exported — is compared explicitly.
+
 ## A 500 carries the security headers (slice 4 audit)
 
 Python's 500 responses have **no** `X-Content-Type-Options`,
