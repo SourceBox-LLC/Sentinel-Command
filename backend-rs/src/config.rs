@@ -33,6 +33,11 @@ pub struct Config {
     pub playlist_push_max_bytes: usize,
     /// Playlist pushes between opportunistic cache sweeps.
     pub cleanup_interval: u64,
+    /// The CameraNode build below which a node is refused outright.
+    pub min_supported_node_version: String,
+    /// The newest CameraNode release, as a fallback for when the
+    /// GitHub cache is cold — a first boot, or a sustained outage.
+    pub latest_node_version: String,
     /// The shared, multi-tenant key SourceBox's own Sentinel agent
     /// presents. Unset on a self-hosted install — which must NOT
     /// disable the per-org scoped keys, since that deployment is
@@ -141,6 +146,8 @@ impl Config {
                 .parse()
                 .unwrap_or(64 * 1024),
             cleanup_interval: var_or("CLEANUP_INTERVAL", "20").parse().unwrap_or(20),
+            min_supported_node_version: var_or("MIN_SUPPORTED_NODE_VERSION", "0.1.0"),
+            latest_node_version: var_or("LATEST_NODE_VERSION", "0.1.77"),
             sentinel_agent_key: std::env::var("SENTINEL_AGENT_KEY").ok().filter(|v| !v.is_empty()),
             sentinel_license_key: std::env::var("SENTINEL_LICENSE_KEY").ok().filter(|v| !v.is_empty()),
             // Python reads this as `.lower() == "true"`, so anything
@@ -211,6 +218,8 @@ mod tests {
             segment_push_max_bytes: 2 * 1024 * 1024,
             playlist_push_max_bytes: 64 * 1024,
             cleanup_interval: 20,
+            min_supported_node_version: "0.1.0".into(),
+            latest_node_version: "0.1.77".into(),
             sentinel_agent_key: None,
             sentinel_license_key: None,
             sentinel_dispatch_enabled: true,

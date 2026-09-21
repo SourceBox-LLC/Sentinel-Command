@@ -133,6 +133,48 @@ pub const NODE_SELECT: &str = r#"
       FROM camera_nodes n
 "#;
 
+/// `GET /api/nodes` — every node, each decorated with what its build
+/// compares to.
+///
+/// The decoration is why this could not move earlier: `check_node_version`
+/// reads the release cache, and a port without one would answer from
+/// the environment fallback while Python answered from a fetched tag.
+/// Both are cold in a test environment, so the differential would pass
+/// and production would not — see `in_process_state.md`. The cache is
+/// Rust's now, refreshed by the same background loop on the same
+/// cadence.
+pub async fn list_nodes(
+    State(state): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+) -> Result<Json<Vec<Value>>, ApiError> {
+    let rows: Vec<CameraNodeRow> =
+        sqlx::query_as(&format!("{NODE_SELECT} WHERE n.org_id = $1"))
+            .bind(&user.org_id)
+            .fetch_all(&state.pool)
+            .await?;
+
+    let latest = crate::versions::latest_node_version(&state.config.latest_node_version);
+    Ok(Json(
+        rows.iter()
+            .map(|row| {
+                let mut out = row.to_json();
+                let check = crate::versions::check_node_version(
+                    row.node_version.as_deref(),
+                    &state.config.min_supported_node_version,
+                    &latest,
+                );
+                // Four keys mixed into the row, in the order the Python
+                // assigns them.
+                out["update_available"] = check["update_available"].clone();
+                out["latest_node_version"] = check["latest"].clone();
+                out["min_supported_node_version"] = check["min_supported"].clone();
+                out["version_supported"] = check["supported"].clone();
+                out
+            })
+            .collect(),
+    ))
+}
+
 /// `GET /api/nodes/{node_id}`.
 pub async fn get_node(
     State(state): State<AppState>,

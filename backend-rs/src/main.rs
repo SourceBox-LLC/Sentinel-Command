@@ -69,6 +69,9 @@ async fn main() -> anyhow::Result<()> {
     // pushing. Both belong to whichever process owns the caches, and
     // that is now this one.
     sentinel_command::hls::spawn_loops(state.clone());
+    // And the one that keeps the newest CameraNode release known, so
+    // the heartbeat path never waits on GitHub.
+    sentinel_command::versions::spawn_refresh_loop(state.http.clone());
 
     let upstream = state.config.upstream.clone();
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;

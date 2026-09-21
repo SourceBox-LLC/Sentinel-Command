@@ -216,9 +216,12 @@ pub fn build_router(state: AppState) -> Router {
             "/api/nodes/{node_id}/rotate-key",
             served(axum::routing::post(api::node_writes::rotate_api_key)),
         )
-        // POST only: GET /api/nodes adds the newest release from an
-        // in-process GitHub cache and stays on the proxy until that moves.
-        .route("/api/nodes", served(axum::routing::post(api::node_writes::create_node)))
+        .route(
+            "/api/nodes",
+            served(
+                get(api::nodes::list_nodes).post(api::node_writes::create_node),
+            ),
+        )
         .route(
             "/api/settings/danger/wipe-logs",
             served(axum::routing::post(api::node_writes::wipe_stream_logs)),

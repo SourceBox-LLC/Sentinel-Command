@@ -464,6 +464,15 @@ CASES = [
     # the four routes registered by hand kept answering HEAD with 200
     # while this reported 218/218.
 
+    # --- the node list -------------------------------------------------
+    # Each row carries what its build compares to. Both stacks answer
+    # from the environment fallback here, because neither has fetched
+    # GitHub — that agreement is worth exactly as much as it sounds, and
+    # the cache itself is covered by unit tests instead.
+    ("GET", "/api/nodes", True),
+    ("GET", "/api/nodes", False),
+    ("GET", "/api/nodes", "member"),
+
     # --- the plan panel ----------------------------------------------
     # `usage.viewer_hours_used` is normalised away: it reads the
     # in-process counter, which is Rust's now, so the two answers are

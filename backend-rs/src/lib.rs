@@ -31,6 +31,7 @@ pub mod query;
 pub mod ratelimit;
 pub mod settings;
 pub mod tz_names;
+pub mod versions;
 pub mod zoneinfo;
 
 pub use app::{build_router, AppState, VERSION};
