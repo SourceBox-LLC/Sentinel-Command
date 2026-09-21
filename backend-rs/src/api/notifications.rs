@@ -22,31 +22,6 @@ use crate::pyint::PyInt;
 use crate::query::{BodyErrors, ModelBody, Query};
 use crate::settings;
 
-/// Unique setting keys and their defaults, in the order
-/// `_EMAIL_KIND_TO_SETTING` first mentions each one.
-///
-/// The Python map is keyed by *notification kind*, and several kinds
-/// share a setting — `camera_offline` and `camera_online` are one
-/// toggle, as are the three member-lifecycle events. Building the
-/// response walks that map and overwrites, so what comes out is one
-/// entry per setting key in first-appearance order. This list is that
-/// result, extracted from the map rather than retyped from the parts of
-/// it that happen to be readable in one screen: `email_welcome` sits at
-/// the end and is easy to miss.
-const EMAIL_PREF_KEYS: [(&str, bool); 8] = [
-    ("email_camera_offline", true),
-    ("email_node_offline", true),
-    ("email_incident_created", true),
-    ("email_mcp_key_audit", true),
-    ("email_cameranode_disk_low", true),
-    ("email_member_audit", true),
-    // Deliberately off. Motion volume varies wildly per install, and
-    // opting everyone in risks day-one spam marks that would damage the
-    // Resend sender reputation for every kind, for every customer.
-    ("email_motion", false),
-    ("email_welcome", true),
-];
-
 /// The subset `EmailPreferences` accepts on the write side.
 ///
 /// `email_welcome` is readable but not settable — the POST model has
@@ -62,22 +37,22 @@ const WRITABLE_PREF_KEYS: [&str; 7] = [
 ];
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct NotificationRow {
-    pub(crate) id: i32,
-    pub(crate) kind: String,
-    pub(crate) audience: String,
-    pub(crate) title: String,
-    pub(crate) body: String,
-    pub(crate) severity: String,
-    pub(crate) link: Option<String>,
-    pub(crate) camera_id: Option<String>,
-    pub(crate) node_id: Option<String>,
-    pub(crate) meta_json: Option<String>,
-    pub(crate) created_at: Option<NaiveDateTime>,
+pub struct NotificationRow {
+    pub id: i32,
+    pub kind: String,
+    pub audience: String,
+    pub title: String,
+    pub body: String,
+    pub severity: String,
+    pub link: Option<String>,
+    pub camera_id: Option<String>,
+    pub node_id: Option<String>,
+    pub meta_json: Option<String>,
+    pub created_at: Option<NaiveDateTime>,
 }
 
 impl NotificationRow {
-    pub(crate) fn to_json(&self) -> Value {
+    pub fn to_json(&self) -> Value {
         // Unparseable meta is null, not an error: the column is free-form
         // and a bad row must not take down the whole inbox.
         let meta = self
@@ -296,7 +271,7 @@ async fn current_email_prefs(
     org_id: &str,
 ) -> Result<Map<String, Value>, ApiError> {
     let mut out = Map::new();
-    for (key, default) in EMAIL_PREF_KEYS {
+    for (key, default) in crate::notifications::email_pref_keys() {
         // An absent row reads as the default ON/OFF state, not as
         // "unset" — the toggle UI has no third state.
         let value = match settings::get(pool, org_id, key, None).await? {

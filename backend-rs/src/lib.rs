@@ -23,6 +23,7 @@ pub mod headers;
 pub mod hls;
 pub mod license;
 pub mod models;
+pub mod notifications;
 pub mod plans;
 pub mod proxy;
 pub mod pydatetime;
