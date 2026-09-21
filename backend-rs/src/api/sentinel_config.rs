@@ -785,21 +785,9 @@ fn wakeup_payload(ts: i64) -> String {
 }
 
 fn wakeup_signature(body: &[u8], secret: &str) -> String {
-    use sha2::Digest;
-    // HMAC-SHA256 by hand rather than another dependency: block size 64,
-    // the two pads, and the key hashed first when it is longer.
-    let mut key = secret.as_bytes().to_vec();
-    if key.len() > 64 {
-        key = sha2::Sha256::digest(&key).to_vec();
-    }
-    key.resize(64, 0);
-    let ipad: Vec<u8> = key.iter().map(|b| b ^ 0x36).collect();
-    let opad: Vec<u8> = key.iter().map(|b| b ^ 0x5c).collect();
-    let inner = sha2::Sha256::digest([&ipad[..], body].concat());
-    let outer = sha2::Sha256::digest([&opad[..], &inner[..]].concat());
     format!(
         "sha256={}",
-        outer.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        crate::crypto::hex(&crate::crypto::hmac_sha256(secret.as_bytes(), body))
     )
 }
 

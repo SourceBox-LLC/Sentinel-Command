@@ -59,6 +59,10 @@ SHAPES = [
     ("plain", {}),
     ("no camera", {"camera_id": None}),
     ("no link", {"link": None}),
+    # Python tests the link for falsiness, so an empty string is as
+    # absent as None — a port that tests only for None links to the
+    # bare dashboard URL.
+    ("empty link", {"link": ""}),
     ("empty body", {"body": ""}),
     ("critical", {"severity": "critical"}),
     ("info", {"severity": "info"}),
@@ -100,6 +104,11 @@ SHAPES = [
     # A camera name is operator-controlled and an incident title is
     # agent-written, so a subject can carry a CR/LF the renderer has to
     # scrub before a future SMTP provider reads it as a header.
+    # The subject is stripped before the CR/LF scrub.  Nothing else
+    # reaches that strip: a template's own trailing newline is already
+    # gone by the time it renders, since neither Jinja2 nor minijinja
+    # keeps it.
+    ("title with surrounding whitespace", {"title": "  Driveway went offline  "}),
     ("title with a header injection", {
         "title": "Driveway\r\nBcc: attacker@example.com went offline",
     }),

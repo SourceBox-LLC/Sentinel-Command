@@ -9,10 +9,10 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 use crate::app::AppState;
+use crate::crypto::{base64_standard, base64_standard_decode, hmac_sha256};
 use crate::error::ApiError;
 use crate::models::now_naive;
 use crate::ratelimit::PerMinute;
@@ -65,8 +65,8 @@ pub fn verify_svix(secret: &str, headers: &HeaderMap, body: &[u8], now: i64) -> 
     }
 
     let key = match secret.strip_prefix("whsec_") {
-        Some(rest) => base64_decode(rest),
-        None => base64_decode(secret),
+        Some(rest) => base64_standard_decode(rest),
+        None => base64_standard_decode(secret),
     };
     let Some(key) = key else { return false };
 
@@ -76,7 +76,7 @@ pub fn verify_svix(secret: &str, headers: &HeaderMap, body: &[u8], now: i64) -> 
     signed.extend_from_slice(timestamp.as_bytes());
     signed.push(b'.');
     signed.extend_from_slice(body);
-    let expected = base64_encode(&hmac_sha256(&key, &signed));
+    let expected = base64_standard(&hmac_sha256(&key, &signed));
 
     signature.split(' ').any(|part| {
         part.strip_prefix("v1,")
@@ -84,53 +84,6 @@ pub fn verify_svix(secret: &str, headers: &HeaderMap, body: &[u8], now: i64) -> 
     })
 }
 
-fn hmac_sha256(key: &[u8], message: &[u8]) -> Vec<u8> {
-    let mut key = key.to_vec();
-    if key.len() > 64 {
-        key = Sha256::digest(&key).to_vec();
-    }
-    key.resize(64, 0);
-    let ipad: Vec<u8> = key.iter().map(|b| b ^ 0x36).collect();
-    let opad: Vec<u8> = key.iter().map(|b| b ^ 0x5c).collect();
-    let inner = Sha256::digest([&ipad[..], message].concat());
-    Sha256::digest([&opad[..], &inner[..]].concat()).to_vec()
-}
-
-const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-fn base64_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
-        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
-        for i in 0..4 {
-            if i <= chunk.len() {
-                out.push(B64[((n >> (18 - 6 * i)) & 0x3f) as usize] as char);
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
-}
-
-fn base64_decode(input: &str) -> Option<Vec<u8>> {
-    let mut out = Vec::with_capacity(input.len() * 3 / 4);
-    let (mut buf, mut bits) = (0u32, 0u32);
-    for ch in input.bytes() {
-        if ch == b'=' {
-            break;
-        }
-        let val = B64.iter().position(|&c| c == ch)? as u32;
-        buf = (buf << 6) | val;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buf >> bits) as u8);
-        }
-    }
-    Some(out)
-}
 
 /// `POST /api/webhooks/resend` — delivery events.
 pub async fn resend_webhook(
@@ -407,14 +360,6 @@ mod tests {
             ("svix-signature", SIG),
         ]);
         assert!(!verify_svix(SECRET, &bad, BODY, 1_700_000_000));
-    }
-
-    #[test]
-    fn base64_round_trips() {
-        for raw in [&b""[..], b"a", b"ab", b"abc", b"abcd", &[0u8, 255, 16][..]] {
-            let encoded = base64_encode(raw);
-            assert_eq!(base64_decode(&encoded).as_deref(), Some(raw), "{encoded}");
-        }
     }
 
     #[test]
