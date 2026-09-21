@@ -15,6 +15,7 @@ pub mod audit;
 pub mod auth;
 pub mod config;
 pub mod cors;
+pub mod email_templates;
 pub mod error;
 pub mod headers;
 pub mod hls;
