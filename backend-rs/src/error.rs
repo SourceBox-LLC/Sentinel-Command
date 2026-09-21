@@ -14,6 +14,13 @@ use axum::{
 };
 use serde_json::{json, Value};
 
+/// Wrapped in a struct rather than boxed directly as a `Vec` so the
+/// pointer is the only thing `ApiError` carries: every handler in the
+/// crate returns this type by value, and almost none of them set a
+/// header.
+#[derive(Debug, Default)]
+struct ExtraHeaders(Vec<(&'static str, String)>);
+
 #[derive(Debug)]
 pub struct ApiError {
     pub status: StatusCode,
@@ -31,6 +38,11 @@ pub struct ApiError {
     /// A slowapi 429, which has its own body shape and `Retry-After`
     /// rather than the `{"detail": ...}` envelope.
     rate_limit: Option<(u32, u64)>,
+    /// Headers an `HTTPException(..., headers=...)` carries. Distinct
+    /// from the slowapi 429 above, which builds its own. Boxed because
+    /// almost no error has any, and every handler in the crate returns
+    /// this type by value.
+    headers: Option<Box<ExtraHeaders>>,
 }
 
 impl ApiError {
@@ -40,6 +52,7 @@ impl ApiError {
             detail: detail.into(),
             opaque: false,
             rate_limit: None,
+            headers: None,
         }
     }
 
@@ -68,7 +81,21 @@ impl ApiError {
             detail: detail.into(),
             opaque: true,
             rate_limit: None,
+            headers: None,
         }
+    }
+
+    /// Add a header the Python passes to `HTTPException(headers=...)`.
+    ///
+    /// Starlette puts those on the error response itself, so the caller
+    /// sees them alongside the `{"detail": ...}` body — which is how a
+    /// viewer-cap 429 carries its `Retry-After`.
+    pub fn with_header(mut self, name: &'static str, value: impl Into<String>) -> Self {
+        self.headers
+            .get_or_insert_with(Box::default)
+            .0
+            .push((name, value.into()));
+        self
     }
 
     pub fn rate_limited(limit: u32, window_secs: u64) -> Self {
@@ -77,6 +104,7 @@ impl ApiError {
             detail: Value::Null,
             opaque: false,
             rate_limit: Some((limit, window_secs)),
+            headers: None,
         }
     }
 }
@@ -96,7 +124,16 @@ impl IntoResponse for ApiError {
             )
                 .into_response();
         }
-        (self.status, Json(json!({ "detail": self.detail }))).into_response()
+        let mut response = (self.status, Json(json!({ "detail": self.detail }))).into_response();
+        for (name, value) in self.headers.iter().flat_map(|h| h.0.iter()) {
+            if let (Ok(name), Ok(value)) = (
+                axum::http::HeaderName::from_bytes(name.as_bytes()),
+                axum::http::HeaderValue::from_str(value),
+            ) {
+                response.headers_mut().insert(name, value);
+            }
+        }
+        response
     }
 }
 

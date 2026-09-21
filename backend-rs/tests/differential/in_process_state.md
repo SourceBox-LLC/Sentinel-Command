@@ -60,6 +60,43 @@ production would diverge** — the worst shape of bug this project can
 produce. Ported routes must be checked for this class of dependency by
 reading, not by testing.
 
+## What happened next: option 2, started (2026-09-20)
+
+The four cache routes are Rust's now — `push-segment`, `playlist`,
+`stream.m3u8` and `segment/{filename}` — along with the caches
+themselves (`src/hls.rs`) and the two background loops that keep them
+honest. `POST /motion` stays behind, because it shares `hls.py` with
+them but not their state: it reaches the WebSocket module's motion
+handling instead.
+
+That is option 2 from the list below, and it commits this branch to
+finishing it. **From this commit the branch is not deployable as a
+strangler**, and that is not a regression — it is the shape the slice
+was always going to have. Rust owns the segment bytes, so every other
+reader of them is now reading the wrong process's memory:
+
+| still in Python | what it does to the cache | what breaks until it moves |
+| --- | --- | --- |
+| `mcp/server.py` `attach_clip` | `snapshot_recent_segment_bytes` | clips attach from an empty cache: "stream must be live" |
+| `cameras.py` delete camera | `cleanup_camera_cache` | a deleted camera keeps serving until the stale sweep |
+| `nodes.py` delete, decommission, register | `cleanup_camera_cache` | same |
+| `webhooks.py` `organization.deleted` | `cleanup_camera_cache` | same |
+| `settings.py` full reset | `cleanup_camera_cache` | same |
+| `nodes.py` `/plan` | `get_viewer_seconds_used` | the usage gauge reads zero while Rust counts |
+
+None of that is hypothetical and none of it is visible to a
+differential, because both processes' caches are cold in a test
+environment — which is exactly the failure mode this document was
+written about. The order out is: the MCP surface (which is what
+`attach_clip` needs), then the WebSocket manager, then the routes in the
+table, then the loops in `main.py`.
+
+What *is* verified is the part that moved:
+`tests/differential/hls_diff.py` compares scenarios rather than
+requests, because a segment is only readable from the process that was
+pushed it. Forty-seven of them, covering the round trip, all three
+eviction policies, the playlist rewriter, and every refusal.
+
 ## Options for unblocking `hls.py`
 
 Listed in the order I would consider them, not recommended blindly:

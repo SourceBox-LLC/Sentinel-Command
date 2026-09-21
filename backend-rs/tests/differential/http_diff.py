@@ -23,6 +23,8 @@ HERE = Path(__file__).resolve().parent
 import urllib.error
 import urllib.request
 
+from diffutil import value_diff
+
 RUST = "http://127.0.0.1:8000"
 PYTHON = "http://127.0.0.1:8001"
 
@@ -768,8 +770,12 @@ def main():
                 print(f"            headers rust  : {json.dumps(rs_head, sort_keys=True)}")
                 print(f"            headers python: {json.dumps(py_head, sort_keys=True)}")
             if rs_status == py_status and rs != py:
-                print(f"            rust  : {json.dumps(rs, sort_keys=True)[:300]}")
-                print(f"            python: {json.dumps(py, sort_keys=True)[:300]}")
+                # The paths that differ, not two dumps with the same
+                # first three hundred characters — a list of twenty-one
+                # cameras differing in one field printed as two
+                # identical prefixes eleven times over.
+                for line in value_diff(py, rs):
+                    print(f"            {line}")
 
     if rate_limited:
         print(f"\nINCONCLUSIVE: {len(rate_limited)} case(s) hit a rate limit and were "

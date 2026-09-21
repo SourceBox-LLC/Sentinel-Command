@@ -8,6 +8,7 @@ pub mod audit;
 pub mod cameras;
 pub mod gdpr;
 pub mod groups;
+pub mod hls;
 pub mod incidents;
 pub mod install;
 pub mod integration;

@@ -31,6 +31,10 @@ pub struct AppState {
     pub proxy: proxy::ProxyClient,
     /// Per-tenant rate limiting for ported routes.
     pub limiter: Arc<crate::ratelimit::Limiter>,
+    /// The live video caches. One process owns these: the moment Rust
+    /// serves `push-segment`, Python's copy is no longer the one with
+    /// the segments in it. See `crate::hls`.
+    pub hls: Arc<crate::hls::HlsCache>,
     /// Allowed origins for routes Rust serves; see `cors.rs`.
     pub cors: crate::cors::CorsConfig,
     pub started_at: Instant,
@@ -124,9 +128,18 @@ pub fn build_router(state: AppState) -> Router {
             "/api/cameras/{camera_id}/codec",
             served(axum::routing::post(api::node_writes::report_camera_codec)),
         )
+        // Motion stays: it shares hls.py with the two below but not
+        // their caches — it reaches the WebSocket module's motion
+        // handling, which has not moved.
         .route("/api/cameras/{camera_id}/motion", still_python())
-        .route("/api/cameras/{camera_id}/playlist", still_python())
-        .route("/api/cameras/{camera_id}/push-segment", still_python())
+        .route(
+            "/api/cameras/{camera_id}/playlist",
+            served(axum::routing::post(api::hls::update_hls_playlist)),
+        )
+        .route(
+            "/api/cameras/{camera_id}/push-segment",
+            served(axum::routing::post(api::hls::push_segment)),
+        )
         .route(
             "/api/cameras/{camera_id}/recording",
             served(axum::routing::post(api::recording::toggle_recording)),
@@ -136,7 +149,14 @@ pub fn build_router(state: AppState) -> Router {
             served(axum::routing::patch(api::recording::update_recording_policy)),
         )
         .route("/api/cameras/{camera_id}/snapshot", still_python())
-        .route("/api/cameras/{camera_id}/stream.m3u8", still_python())
+        .route(
+            "/api/cameras/{camera_id}/stream.m3u8",
+            ported(api::hls::get_hls_playlist),
+        )
+        .route(
+            "/api/cameras/{camera_id}/segment/{filename}",
+            ported(api::hls::get_hls_segment),
+        )
         .route("/api/settings", ported(api::settings::get_all_settings))
         .route(
             "/api/settings/notifications",

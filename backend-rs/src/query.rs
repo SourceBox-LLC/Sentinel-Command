@@ -162,6 +162,28 @@ impl Query {
             .map(str::to_string)
     }
 
+    /// A required `str` query parameter.
+    ///
+    /// Missing is `{"type": "missing", "input": null}` at
+    /// `["query", <name>]`, which is the same envelope a missing body
+    /// field gets and a different `input` — measured, not assumed.
+    /// Present but empty is the empty string, because the annotation is
+    /// `str` with no constraint.
+    pub fn required_str(&mut self, name: &str) -> String {
+        match self.last(name) {
+            Some(value) => value.to_string(),
+            None => {
+                self.errors.push(json!({
+                    "type": "missing",
+                    "loc": ["query", name],
+                    "msg": "Field required",
+                    "input": Value::Null,
+                }));
+                String::new()
+            }
+        }
+    }
+
     /// Turn any accumulated errors into the 422 FastAPI would return.
     pub fn finish(&self) -> Result<(), ApiError> {
         validation_error(&self.errors)

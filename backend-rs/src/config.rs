@@ -20,6 +20,19 @@ pub struct Config {
     pub static_dir: String,
     /// Install and MCP-setup scripts, served verbatim.
     pub scripts_dir: String,
+    /// Segments held per camera before the oldest are dropped. One
+    /// second of video each, so the default is a minute of history.
+    pub segment_cache_max_per_camera: usize,
+    /// Ceiling on the sum of every camera's cache. The per-camera cap
+    /// alone bounds nothing when five hundred cameras are live.
+    pub segment_cache_max_total_bytes: i64,
+    /// Largest single pushed segment, checked against Content-Length
+    /// before any bytes are read.
+    pub segment_push_max_bytes: usize,
+    /// Largest pushed playlist, same check.
+    pub playlist_push_max_bytes: usize,
+    /// Playlist pushes between opportunistic cache sweeps.
+    pub cleanup_interval: u64,
     /// The shared, multi-tenant key SourceBox's own Sentinel agent
     /// presents. Unset on a self-hosted install — which must NOT
     /// disable the per-org scoped keys, since that deployment is
@@ -112,6 +125,22 @@ impl Config {
             upstream: var_or("PYTHON_UPSTREAM", "http://127.0.0.1:8001"),
             static_dir: var_or("STATIC_DIR", "/app/static"),
             scripts_dir: var_or("SCRIPTS_DIR", "/app/scripts"),
+            segment_cache_max_per_camera: var_or("SEGMENT_CACHE_MAX_PER_CAMERA", "60")
+                .parse()
+                .unwrap_or(60),
+            segment_cache_max_total_bytes: var_or(
+                "SEGMENT_CACHE_MAX_TOTAL_BYTES",
+                &(384 * 1024 * 1024).to_string(),
+            )
+            .parse()
+            .unwrap_or(384 * 1024 * 1024),
+            segment_push_max_bytes: var_or("SEGMENT_PUSH_MAX_BYTES", &(2 * 1024 * 1024).to_string())
+                .parse()
+                .unwrap_or(2 * 1024 * 1024),
+            playlist_push_max_bytes: var_or("PLAYLIST_PUSH_MAX_BYTES", &(64 * 1024).to_string())
+                .parse()
+                .unwrap_or(64 * 1024),
+            cleanup_interval: var_or("CLEANUP_INTERVAL", "20").parse().unwrap_or(20),
             sentinel_agent_key: std::env::var("SENTINEL_AGENT_KEY").ok().filter(|v| !v.is_empty()),
             sentinel_license_key: std::env::var("SENTINEL_LICENSE_KEY").ok().filter(|v| !v.is_empty()),
             // Python reads this as `.lower() == "true"`, so anything
@@ -177,6 +206,11 @@ mod tests {
             upstream: String::new(),
             static_dir: String::new(),
             scripts_dir: String::new(),
+            segment_cache_max_per_camera: 60,
+            segment_cache_max_total_bytes: 384 * 1024 * 1024,
+            segment_push_max_bytes: 2 * 1024 * 1024,
+            playlist_push_max_bytes: 64 * 1024,
+            cleanup_interval: 20,
             sentinel_agent_key: None,
             sentinel_license_key: None,
             sentinel_dispatch_enabled: true,

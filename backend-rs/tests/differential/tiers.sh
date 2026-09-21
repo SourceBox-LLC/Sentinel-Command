@@ -81,6 +81,22 @@ export SCRIPTS_DIR="$REPO/backend/scripts"
 export SENTINEL_LICENSE_KEY="${SENTINEL_LICENSE_KEY:-harness-licence-key}"
 export SENTINEL_LICENSE_SERVICE_URL="${SENTINEL_LICENSE_SERVICE_URL:-http://127.0.0.1:18090}"
 
+# The HLS caches, shrunk so their eviction paths are reachable from a
+# test at all. The real ceilings are 60 segments per camera and 384 MB
+# across all of them; filling either honestly would mean pushing
+# hundreds of megabytes through both tiers for one case. The policies
+# are what the differential is for — which segment goes, and when — and
+# those are the same at five as at sixty.
+export SEGMENT_CACHE_MAX_PER_CAMERA="${SEGMENT_CACHE_MAX_PER_CAMERA:-5}"
+# Three megabytes, not the real 384: small enough that four pushes fill
+# it, large enough that a single realistic segment (upload_diff pushes
+# 300 KB of real bytes) is not evicted the instant it lands.
+export SEGMENT_CACHE_MAX_TOTAL_BYTES="${SEGMENT_CACHE_MAX_TOTAL_BYTES:-3000000}"
+# Likewise the sweep cadence: every third playlist push rather than
+# every twentieth.
+export CLEANUP_INTERVAL="${CLEANUP_INTERVAL:-3}"
+
+
 # The same Svix secret for both tiers, so write_diff can sign one
 # webhook delivery with the svix library and send it to each.
 export RESEND_WEBHOOK_SECRET="${RESEND_WEBHOOK_SECRET:-whsec_aGFybmVzcy13ZWJob29rLXNlY3JldC0xMjM0NTY=}"
@@ -91,6 +107,17 @@ CLERK_PK_PLACEHOLDER=pk_test_aGFybmVzcy5jbGVyay5hY2NvdW50cy5kZXYk
 
 FOREVER=315360000
 export OFFLINE_SWEEP_INTERVAL_SECONDS=$FOREVER
+# The Rust tier's two HLS loops are pushed out of the way, like the
+# other background loops. The viewer-usage flush is the one that
+# matters: it writes org_monthly_usage, which the GDPR export reads, so
+# a tick landing between the two passes of a write case would report a
+# difference that is a timer rather than a port. Python's copy of this
+# loop is a literal 60 seconds and cannot be stretched — but its
+# pending counters are only non-empty just after an HLS run, so the
+# exposure is one-sided and narrow. Rust's flush is covered by
+# tests/hls_db.rs instead, against a real database.
+export VIEWER_USAGE_FLUSH_INTERVAL_SECONDS=$FOREVER
+export SEGMENT_CACHE_EVICT_INTERVAL_SECONDS=$FOREVER
 export SENTINEL_REAPER_INTERVAL_SECONDS=$FOREVER
 export MOTION_DIGEST_INTERVAL_SECONDS=$FOREVER
 export DISK_CHECK_INTERVAL_SECONDS=$FOREVER

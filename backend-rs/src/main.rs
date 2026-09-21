@@ -54,6 +54,7 @@ async fn main() -> anyhow::Result<()> {
             &config.frontend_url,
             &config.cors_allowed_origins,
         ),
+        hls: Arc::new(sentinel_command::hls::HlsCache::new()),
         limiter: Arc::new(
             sentinel_command::ratelimit::Limiter::from_env(&config.redis_url).await,
         ),
@@ -62,6 +63,12 @@ async fn main() -> anyhow::Result<()> {
         pool,
         started_at: Instant::now(),
     };
+
+    // The loops that keep the video caches honest: flushing viewer
+    // seconds to the database, and reaping cameras that stopped
+    // pushing. Both belong to whichever process owns the caches, and
+    // that is now this one.
+    sentinel_command::hls::spawn_loops(state.clone());
 
     let upstream = state.config.upstream.clone();
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;

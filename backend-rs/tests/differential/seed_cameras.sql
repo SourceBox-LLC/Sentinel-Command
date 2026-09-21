@@ -53,9 +53,16 @@ SELECT * FROM (VALUES
   -- stale heartbeat -> effective_status must flip to offline
   ('cam-stale',     'self-host', (SELECT id FROM camera_nodes WHERE node_id='node-aaaa1111'), 'Side Gate', 'rtsp', 'streaming',
      (SELECT id FROM camera_groups WHERE name='Outdoor'), now()::timestamp - interval '200 seconds', 'streaming', NULL, false, false, false, NULL, NULL),
-  -- just inside the 90s window (comparison is `> 90`, so this stays live)
+  -- Inside the 90s window, with room to stay there for the length of a
+  -- run. It was 85 seconds, which left five: a run slower than that
+  -- crossed the threshold mid-flight and the two tiers, answering
+  -- milliseconds apart, landed on opposite sides of it. That is a
+  -- fixture racing the clock, not a port difference, and it reported
+  -- eleven of them in one read run. The exclusive `> 90` comparison
+  -- itself is pinned by `the_grace_boundary_is_exclusive` in
+  -- src/models.rs, where the clock is an argument rather than the wall.
   ('cam-boundary',  'self-host', (SELECT id FROM camera_nodes WHERE node_id='node-aaaa1111'), 'Boundary', 'rtsp', 'streaming',
-     NULL, now()::timestamp - interval '85 seconds', 'streaming', NULL, false, false, false, NULL, NULL),
+     NULL, now()::timestamp - interval '30 seconds', 'streaming', NULL, false, false, false, NULL, NULL),
   -- broken and recent: last_error must be surfaced
   ('cam-failed',    'self-host', (SELECT id FROM camera_nodes WHERE node_id='node-bbbb2222'), 'Garage', 'usb', 'streaming',
      (SELECT id FROM camera_groups WHERE name='Indoor'), now()::timestamp - interval '3 seconds', 'failed', 'ffmpeg exited 1', false, false, true, '22:00', '06:00'),

@@ -145,6 +145,17 @@ ROUTES = [
      ("POST", "/api/nodes/validate", "node:test-node-key", {"node_id": "nope"})),
     ("POST cameras/{id}/codec", 30, [],
      ("POST", "/api/cameras/nope/codec", "node:test-node-key", {"video_codec": "avc1.64001f"})),
+    # The two video-ingest routes, whose limits are the largest in the
+    # service: a node pushes up to twenty segments a second. Both read
+    # their key inside the function, so a push with no key at all still
+    # spends a slot — which is the property worth pinning, because
+    # getting it wrong lets an unauthenticated caller exhaust a real
+    # node's budget.
+    ("POST cameras/{id}/push-segment", 1200, [],
+     ("POST", "/api/cameras/nope/push-segment?filename=segment_00001.ts",
+      "node:test-node-key", b"x")),
+    ("POST cameras/{id}/playlist", 600, [],
+     ("POST", "/api/cameras/nope/playlist", "node:test-node-key", b"#EXTM3U")),
     ("POST nodes/{id}/rotate-key", 5,
      [("POST", "/api/nodes/nope/rotate-key", "member", None)],
      ("POST", "/api/nodes/nope/rotate-key", "admin", None)),
