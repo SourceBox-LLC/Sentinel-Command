@@ -126,6 +126,11 @@ pub fn email_pref_keys() -> Vec<(&'static str, bool)> {
     distinct
 }
 
+/// `notification_broadcaster` — the module-level singleton the Python
+/// has, for the same reason: every emitter in the app reaches the same
+/// set of open bell streams.
+pub static BROADCASTER: crate::sse::Broadcaster = crate::sse::Broadcaster::new("notifications");
+
 /// The placeholder the templates render, substituted per recipient at
 /// enqueue time. Rendering once and substituting is not only cheaper
 /// than rendering per recipient — the token binds the address, so there
@@ -422,6 +427,9 @@ pub async fn create_notification(
                 row.id = id;
                 row.created_at = Some(created_at);
                 persisted = true;
+                // After the insert, never before: a subscriber must
+                // not see a row that could still be rolled back.
+                BROADCASTER.notify(org_id, audience, &broadcast_payload(&row));
             }
             Err(err) => {
                 tracing::error!(error = %err, org_id, kind = %row.kind, "[Notifications] Failed to create notification");
@@ -447,6 +455,19 @@ pub async fn create_notification(
     }
 
     persisted.then_some(row)
+}
+
+/// `notif.to_dict()` plus `type`, serialised the way `json.dumps`
+/// would.
+///
+/// The Python sets `payload["audience"]` after `to_dict()`, which
+/// already has that key — so the assignment overwrites in place and
+/// does not move it. `type` is new, so it goes last. The order is
+/// visible in the frame the browser receives.
+fn broadcast_payload(row: &NotificationRow) -> String {
+    let mut payload = row.to_json();
+    payload["type"] = Value::String("notification".to_string());
+    python_json_value(&payload)
 }
 
 /// Python's truthiness for the `meta` argument: `None`, `{}`, `[]`,
@@ -814,6 +835,43 @@ mod tests {
         }
         // And what is stored is `json.dumps`-shaped, with the spaces.
         assert_eq!(python_json_value(&json!({"score": 87})), r#"{"score": 87}"#);
+    }
+
+    /// The frame the bell receives: `to_dict()`'s keys in order, with
+    /// `type` appended and `audience` left where it already was, and
+    /// `json.dumps` spacing throughout.
+    #[test]
+    fn the_broadcast_payload_is_json_dumps_shaped() {
+        let row = NotificationRow {
+            id: 7,
+            kind: "camera_offline".into(),
+            audience: "all".into(),
+            title: "Café went offline".into(),
+            body: String::new(),
+            severity: "warning".into(),
+            link: Some("/dashboard?camera=cam-1".into()),
+            camera_id: Some("cam-1".into()),
+            node_id: None,
+            meta_json: Some(r#"{"score": 87}"#.into()),
+            created_at: Some(
+                chrono::NaiveDate::from_ymd_opt(2026, 9, 21)
+                    .unwrap()
+                    .and_hms_opt(4, 5, 6)
+                    .unwrap(),
+            ),
+        };
+        assert_eq!(
+            broadcast_payload(&row),
+            concat!(
+                r#"{"id": 7, "kind": "camera_offline", "audience": "all", "#,
+                // Non-ASCII escaped, because json.dumps defaults to
+                // ensure_ascii.
+                r#""title": "Caf\u00e9 went offline", "body": "", "#,
+                r#""severity": "warning", "link": "/dashboard?camera=cam-1", "#,
+                r#""camera_id": "cam-1", "node_id": null, "meta": {"score": 87}, "#,
+                r#""created_at": "2026-09-21T04:05:06", "type": "notification"}"#
+            )
+        );
     }
 
     #[test]

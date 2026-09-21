@@ -4,8 +4,6 @@
 //! three writes that touch nothing but the database.
 //!
 //! `POST /request-admin-promotion` is **not** ported: it sends email.
-//! Neither is `/stream`, which is Server-Sent Events over an in-process
-//! broadcaster.
 
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::HeaderMap;
@@ -20,6 +18,7 @@ use crate::error::ApiError;
 use crate::models::{iso_naive, now_naive, python_window_start};
 use crate::pyint::PyInt;
 use crate::query::{BodyErrors, ModelBody, Query};
+use crate::ratelimit::PerMinute;
 use crate::settings;
 
 /// The subset `EmailPreferences` accepts on the write side.
@@ -190,6 +189,79 @@ pub async fn list_notifications(
         "last_viewed_at": last_viewed.map(iso_naive),
         "notifications": items,
     })))
+}
+
+/// `GET /api/notifications/stream` — the bell's live feed.
+///
+/// The audience filter is applied at broadcast time, not here, so an
+/// admin-only event never reaches a viewer's socket at all.
+///
+/// Rate-limited on *connects*. The per-org subscriber cap already stops
+/// streams accumulating, but without a connect limit a hostile client
+/// could churn open → cap-hit → reject and burn a JWT verification on
+/// every cycle. A browser tab reconnects on the order of seconds to
+/// minutes, so sixty a minute is far above any real usage.
+pub async fn stream_notifications(
+    _rate: PerMinute<60>,
+    RequireView(user): RequireView,
+) -> Result<axum::response::Response, ApiError> {
+    let cap = crate::plans::get_plan_limits(&user.plan).max_sse_subscribers.max(0) as usize;
+    let Some(subscription) =
+        crate::notifications::BROADCASTER.subscribe(&user.org_id, user.is_admin(), cap)
+    else {
+        return Err(ApiError::new(
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            format!(
+                "Too many open notification streams for this org (cap: {cap} on your \
+                 current plan). Close unused tabs and retry, or upgrade for a higher cap."
+            ),
+        ));
+    };
+
+    // The first frame goes out before anything is awaited, so a client
+    // knows it is connected rather than waiting up to 25 seconds for
+    // the first keepalive to prove it.
+    let hello = format!(
+        "data: {}\n\n",
+        python_json(&[
+            ("type", json!("connected")),
+            ("org_id", json!(user.org_id)),
+        ])
+    );
+
+    let stream = futures_util::stream::unfold(
+        (Some(hello), subscription),
+        |(hello, mut subscription)| async move {
+            if let Some(hello) = hello {
+                return Some((Ok::<_, std::io::Error>(hello), (None, subscription)));
+            }
+            // A quiet stream still has to say something, or an
+            // intermediary will time the connection out.
+            let frame = match tokio::time::timeout(
+                std::time::Duration::from_secs(25),
+                subscription.recv(),
+            )
+            .await
+            {
+                Ok(Some(event)) => format!("data: {event}\n\n"),
+                // Unreachable while the subscription holds its own
+                // sender — see `sse::Subscription::keepalive`.
+                Ok(None) => return None,
+                Err(_) => ": keepalive\n\n".to_string(),
+            };
+            Some((Ok(frame), (None, subscription)))
+        },
+    );
+
+    axum::response::Response::builder()
+        .header("content-type", "text/event-stream; charset=utf-8")
+        .header("cache-control", "no-cache")
+        .header("connection", "keep-alive")
+        // Without this nginx buffers the whole response and the stream
+        // never arrives.
+        .header("x-accel-buffering", "no")
+        .body(axum::body::Body::from_stream(stream))
+        .map_err(|err| ApiError::internal(err.to_string()))
 }
 
 /// `GET /api/notifications/unread-count` — the bell badge.

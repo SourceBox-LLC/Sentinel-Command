@@ -272,6 +272,10 @@ pub fn build_router(state: AppState) -> Router {
             ported(api::notifications::unread_count),
         )
         .route(
+            "/api/notifications/stream",
+            ported(api::notifications::stream_notifications),
+        )
+        .route(
             "/api/notifications/mark-viewed",
             served(axum::routing::post(api::notifications::mark_viewed)),
         )
