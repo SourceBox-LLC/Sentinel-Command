@@ -303,10 +303,18 @@ HEADERS_OF_INTEREST = {
 }
 
 
+# One id per run, so a camera cannot carry state from an earlier run of
+# the same scenario. Both tiers sweep idle cameras after a minute, but
+# depending on that is depending on a timer: a second run inside the
+# minute found segments already cached and read them as the port's
+# doing.
+RUN_ID = f"{os.getpid():x}"
+
+
 def scenario_camera(name):
-    """A stable per-scenario camera id, the same on both tiers."""
-    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40]
-    return f"cam-hls-{slug}"
+    """A per-scenario, per-run camera id, the same on both tiers."""
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:30]
+    return f"cam-hls-{RUN_ID}-{slug}"
 
 
 def run_scenario(base, steps, camera):

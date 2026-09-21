@@ -117,7 +117,13 @@ export OFFLINE_SWEEP_INTERVAL_SECONDS=$FOREVER
 # exposure is one-sided and narrow. Rust's flush is covered by
 # tests/hls_db.rs instead, against a real database.
 export VIEWER_USAGE_FLUSH_INTERVAL_SECONDS=$FOREVER
-export SEGMENT_CACHE_EVICT_INTERVAL_SECONDS=$FOREVER
+# The eviction loop is NOT stretched: it touches only memory, and
+# Python's copy of it runs every sixty seconds whatever this does.
+# Stretching Rust's made the two tiers disagree about a camera that an
+# earlier run had left in the cache — Python had swept it and Rust had
+# not, which looked exactly like a port difference on the first push of
+# a scenario.
+export SEGMENT_CACHE_EVICT_INTERVAL_SECONDS="${SEGMENT_CACHE_EVICT_INTERVAL_SECONDS:-60}"
 export SENTINEL_REAPER_INTERVAL_SECONDS=$FOREVER
 export MOTION_DIGEST_INTERVAL_SECONDS=$FOREVER
 export DISK_CHECK_INTERVAL_SECONDS=$FOREVER
