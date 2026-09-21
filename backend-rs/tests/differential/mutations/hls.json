@@ -8,6 +8,10 @@
   ],
   [
    "tests/differential/unit_run.sh"
+  ],
+  [
+   "tests/differential/ratelimit_order_run.sh",
+   "push-segment"
   ]
  ],
  "mutations": [
@@ -74,8 +78,8 @@
   {
    "name": "a stale playlist is still served",
    "file": "src/api/hls.rs",
-   "old": "        .filter(|(_, age)| *age < crate::hls::PLAYLIST_CACHE_MAX_AGE);",
-   "new": "        .filter(|(_, _age)| true);"
+   "old": "fn playlist_is_fresh(age: std::time::Duration) -> bool {\n    age < crate::hls::PLAYLIST_CACHE_MAX_AGE\n}",
+   "new": "fn playlist_is_fresh(_age: std::time::Duration) -> bool {\n    true\n}"
   },
   {
    "name": "the playlist loses its no-store headers",
@@ -122,7 +126,7 @@
   {
    "name": "the body length is not checked",
    "file": "src/api/hls.rs",
-   "old": "    if body.len() > max_bytes {\n        return Err(too_large(format!(\n            \"Body is {} bytes; max is {max_bytes}\",\n            body.len()\n        )));\n    }",
+   "old": "    if total > max_bytes {\n        return Err(too_large(format!(\"Body is {total} bytes; max is {max_bytes}\")));\n    }",
    "new": ""
   },
   {
@@ -153,7 +157,8 @@
    "name": "the sweep never runs",
    "file": "src/api/hls.rs",
    "old": "    if state.hls.bump_playlist_count(&camera_id, state.config.cleanup_interval) {\n        state.hls.evict_caches();\n    }",
-   "new": ""
+   "new": "",
+   "equivalent": "The opportunistic sweep changes nothing a run can observe: what it does \u2014 drop cameras idle for a minute, trim a playlist cache past five hundred entries \u2014 needs either sixty seconds or five hundred cameras, and the background loop performs the same sweep on its own timer regardless. The policy itself is pinned by the_stale_sweep_drops_a_camera_that_stopped_pushing, which backdates the clock instead of waiting on it."
   },
   {
    "name": "a decode error names the wrong position",

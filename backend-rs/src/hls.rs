@@ -187,6 +187,19 @@ impl HlsCache {
         self.first_stream_get_logged.lock().expect("log set poisoned").remove(camera_id);
     }
 
+    /// Age every one of a camera's segments, for tests that need the
+    /// stale sweep to have something to sweep. The sweep's cutoff is a
+    /// minute, which is longer than any test should take.
+    #[cfg(test)]
+    fn backdate(&self, camera_id: &str, by: Duration) {
+        let mut store = self.segments.lock().expect("segment cache poisoned");
+        if let Some(bucket) = store.cameras.get_mut(camera_id) {
+            for (_, ts) in bucket.values_mut() {
+                *ts -= by;
+            }
+        }
+    }
+
     /// `_evict_stale_cameras`, including the counter reconciliation the
     /// Python does on the same sweep.
     pub fn evict_stale_cameras(&self) {
@@ -651,6 +664,30 @@ mod tests {
         assert!(cache.playlist("cam").is_none());
         // The one-shot log flags reset with it, so a reconnect relogs.
         assert!(cache.first_playlist_push("cam"));
+    }
+
+    #[test]
+    fn the_stale_sweep_drops_a_camera_that_stopped_pushing() {
+        let cache = HlsCache::new();
+        let (name, body) = seg(1, 10);
+        cache.push_segment("quiet", &name, body, 60, i64::MAX);
+        cache.set_playlist("quiet", "#EXTM3U".into());
+        let (name, body) = seg(1, 10);
+        cache.push_segment("busy", &name, body, 60, i64::MAX);
+
+        // Still inside the minute: nothing goes.
+        cache.backdate("quiet", Duration::from_secs(59));
+        cache.evict_stale_cameras();
+        assert_eq!(cache.segment_count("quiet"), 1);
+
+        cache.backdate("quiet", Duration::from_secs(2));
+        cache.evict_stale_cameras();
+        assert_eq!(cache.segment_count("quiet"), 0);
+        // Its siblings go with it, and the byte total follows.
+        assert!(cache.playlist("quiet").is_none());
+        assert_eq!(cache.total_bytes(), 10);
+        // The camera still pushing is untouched.
+        assert_eq!(cache.segment_count("busy"), 1);
     }
 
     #[test]

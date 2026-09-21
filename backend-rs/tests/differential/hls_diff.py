@@ -81,8 +81,15 @@ def reseed() -> None:
                    capture_output=True, timeout=60, check=False)
 
 
-def request(base, method, path, *, body=None, key=None, token=False, headers=None):
+def request(base, method, path, *, body=None, chunks=None, key=None, token=False, headers=None):
+    if chunks is not None:
+        # An iterable body with Transfer-Encoding set is how http.client
+        # sends chunked; there is no Content-Length for the handler to
+        # check.
+        body = iter(chunks)
     req = urllib.request.Request(base + path, method=method, data=body)
+    if chunks is not None:
+        req.add_header("Transfer-Encoding", "chunked")
     if key is not None:
         req.add_header("X-Node-API-Key", key)
     if token:
@@ -139,6 +146,12 @@ SCENARIOS = [
         ("playlist", f"/api/cameras/{CAMERA}/playlist", {
             "body": b"#EXTM3U\n/var/hls/segment_00001.ts\nC:\\hls\\segment_00002.ts\n"
                     b"segment_00003.ts  \r\n#EXT-X-CODECS:avc1\n#segment_00004.ts\n"
+                    # A comment line that the URI pattern would otherwise
+                    # match: it has a path prefix and ends in a segment
+                    # name. Python's `(?!#)` is the only thing stopping
+                    # it, and without this line dropping that lookahead
+                    # changes nothing anywhere.
+                    b"#EXT-X-MAP:URI=/var/hls/segment_00009.ts\n"
                     b"not_a_segment.ts\nsegment_x.ts\n",
             "key": NODE_KEY}),
         ("m3u8", f"/api/cameras/{CAMERA}/stream.m3u8", {"token": True}),
@@ -217,6 +230,20 @@ SCENARIOS = [
     ]],
     # The cap is on the declared length first, so an honest oversized
     # client is refused before its bytes are read.
+    # Chunked: no Content-Length, so the pre-read check has nothing to
+    # look at and the post-read one is what refuses it. Without this the
+    # second half of `_read_capped_body` can be deleted outright and
+    # every other case still passes.
+    ("push over the size cap, chunked", [
+        ("push", f"/api/cameras/{CAMERA}/push-segment?filename=segment_00001.ts",
+         {"body_chunks": [b"x" * 600_000] * 4, "key": NODE_KEY}),
+        segment_get(1),
+    ]),
+    ("push under the size cap, chunked", [
+        ("push", f"/api/cameras/{CAMERA}/push-segment?filename=segment_00001.ts",
+         {"body_chunks": [b"x" * 1000], "key": NODE_KEY}),
+        segment_get(1),
+    ]),
     ("push over the size cap", [
         ("push", f"/api/cameras/{CAMERA}/push-segment?filename=segment_00001.ts",
          {"body": b"x" * (2 * 1024 * 1024 + 1), "key": NODE_KEY}),
@@ -346,7 +373,8 @@ def run_scenario(base, steps, camera):
         method = "GET" if kind in ("m3u8", "get") else "POST"
         status, raw, headers = request(
             base, method, target,
-            body=options.get("body"), key=options.get("key"),
+            body=options.get("body"), chunks=options.get("body_chunks"),
+            key=options.get("key"),
             token=options.get("token", False), headers=options.get("headers"),
         )
         transcript.append(summarise(status, raw, headers, HEADERS_OF_INTEREST[kind]))

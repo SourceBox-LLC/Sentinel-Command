@@ -34,6 +34,7 @@ use axum::extract::{ConnectInfo, Path, Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use futures_util::StreamExt;
 use regex::Regex;
 use serde_json::{json, Value};
 
@@ -124,19 +125,29 @@ async fn read_capped_body(request: Request, max_bytes: usize) -> Result<Bytes, A
         }
     }
 
-    // The post-read check covers a chunked body that declared nothing.
-    // `to_bytes` needs a ceiling of its own; one byte past the cap is
-    // enough to fail the same check the Python fails.
-    let body = axum::body::to_bytes(request.into_body(), max_bytes + 1)
-        .await
-        .map_err(|_| too_large(format!("Body is over {max_bytes} bytes; max is {max_bytes}")))?;
-    if body.len() > max_bytes {
-        return Err(too_large(format!(
-            "Body is {} bytes; max is {max_bytes}",
-            body.len()
-        )));
+    // The post-read check, for a chunked body that declared nothing.
+    //
+    // Python reads the whole thing — `await request.body()` — and its
+    // 413 names the real length, so the message cannot be produced
+    // without knowing it. It does not follow that the bytes have to be
+    // kept: this counts every one and keeps only what fits, so an
+    // oversized chunked upload is refused with the same number in it
+    // and a bounded amount of memory. Starlette has no streaming-cap
+    // primitive to do the same with, which its own docstring says.
+    let mut stream = request.into_body().into_data_stream();
+    let mut body = Vec::new();
+    let mut total: usize = 0;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| ApiError::bad_request("could not read request body"))?;
+        total = total.saturating_add(chunk.len());
+        if total <= max_bytes {
+            body.extend_from_slice(&chunk);
+        }
     }
-    Ok(body)
+    if total > max_bytes {
+        return Err(too_large(format!("Body is {total} bytes; max is {max_bytes}")));
+    }
+    Ok(Bytes::from(body))
 }
 
 fn too_large(detail: String) -> ApiError {
@@ -248,9 +259,7 @@ pub async fn get_hls_playlist(
     }
 
     let cached = state.hls.playlist(camera_id);
-    let fresh = cached
-        .as_ref()
-        .filter(|(_, age)| *age < crate::hls::PLAYLIST_CACHE_MAX_AGE);
+    let fresh = cached.as_ref().filter(|(_, age)| playlist_is_fresh(*age));
 
     if let Some((playlist, age)) = fresh {
         if state.hls.first_stream_get(camera_id) {
@@ -277,6 +286,16 @@ pub async fn get_hls_playlist(
         );
     }
     Err(ApiError::not_found("Stream not started yet"))
+}
+
+/// Whether a cached playlist is still worth serving.
+///
+/// Its own function so the boundary can be tested without waiting
+/// thirty seconds: a scenario harness cannot tell "serves a stale
+/// playlist" from "serves a fresh one" inside a run that takes
+/// milliseconds.
+fn playlist_is_fresh(age: std::time::Duration) -> bool {
+    age < crate::hls::PLAYLIST_CACHE_MAX_AGE
 }
 
 /// The playlist response's headers, in Starlette's order: what the
@@ -526,6 +545,16 @@ mod tests {
             rewrite_playlist("#EXTM3U\n#EXT-X-CODECS:avc1.64001f,mp4a.40.2\nsegment_1.ts"),
             "#EXTM3U\n\nsegment/segment_1.ts"
         );
+    }
+
+    #[test]
+    fn a_playlist_is_fresh_for_thirty_seconds() {
+        use std::time::Duration;
+        assert!(playlist_is_fresh(Duration::ZERO));
+        assert!(playlist_is_fresh(Duration::from_millis(29_999)));
+        // The comparison is `<`, so exactly thirty seconds is stale.
+        assert!(!playlist_is_fresh(Duration::from_secs(30)));
+        assert!(!playlist_is_fresh(Duration::from_secs(31)));
     }
 
     #[test]

@@ -78,6 +78,7 @@ thiserror = "2"
 jiff = { version = "0.2.37", features = ["tzdb-bundle-always"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 regex = { version = "1.13.1", default-features = false, features = ["std", "unicode-perl"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["async-await", "std"] }
 
 [dev-dependencies]
 http-body-util = "0.1"

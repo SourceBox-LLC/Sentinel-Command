@@ -22,6 +22,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RS="$(cd "$HERE/../.." && pwd)"
 CARGO="${CARGO:-cargo}"
 
+# The database-gated tests skip themselves when TEST_DATABASE_URL is
+# unset — that is what keeps `cargo test` green in CI with no Postgres,
+# and it silently emptied this harness: two mutations to the viewer-hour
+# accounting survived a mutation run because the tests that cover them
+# returned before asserting anything. This harness already requires the
+# tiers, which require that database, so it supplies it.
+export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgresql://cc:cc@127.0.0.1:15434/cc}"
+
 out="$("$CARGO" test --manifest-path "$RS/Cargo.toml" 2>&1)"
 status=$?
 
