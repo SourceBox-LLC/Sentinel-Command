@@ -4,12 +4,18 @@
 //! `core/release_cache.py`. Register and heartbeat both run this, and
 //! `GET /api/nodes` decorates every row with it.
 //!
-//! **The differential cannot see the cache.** Both stacks start cold, so
-//! both answer from `LATEST_NODE_VERSION` and agree for the wrong
-//! reason — the exact shape `in_process_state.md` calls the worst bug
-//! this project can produce. What the harness *can* check is that the
-//! answer is the same when neither has fetched; everything the cache
-//! itself does is held by unit tests against a stub server instead.
+//! **The differential mostly cannot see the cache.** On the heartbeat
+//! path both stacks start cold and answer from `LATEST_NODE_VERSION`,
+//! so they agree for the wrong reason — the shape
+//! `in_process_state.md` calls the worst bug this project can produce.
+//! The ranking and the version comparison are held by unit tests
+//! instead.
+//!
+//! The one place the fetch *is* visible is `/downloads/{os}/{arch}`,
+//! which resolves an asset URL and so has to reach GitHub. That case
+//! immediately found what the cold-cache agreement could not: GitHub
+//! answers 403 to a request with no User-Agent, which httpx sends by
+//! default and reqwest does not.
 //!
 //! Nothing here fetches on a request path. The Python's
 //! `latest_node_version()` is explicitly synchronous and never does
@@ -86,6 +92,12 @@ pub async fn refresh_release(client: &reqwest::Client, force: bool) -> Option<Va
     let response = client
         .get(&url)
         .header("Accept", "application/vnd.github+json")
+        // GitHub answers 403 to a request with no User-Agent, and
+        // reqwest sends none by default where httpx sends its own. The
+        // differential is what found this: both caches are cold in a
+        // test environment, so unit tests on either side would have
+        // agreed on the fallback and said nothing.
+        .header("User-Agent", concat!("sentinel-command/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(5))
         .send()
         .await;

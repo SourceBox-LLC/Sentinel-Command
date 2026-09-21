@@ -464,6 +464,18 @@ CASES = [
     # the four routes registered by hand kept answering HEAD with 200
     # while this reported 218/218.
 
+    # --- binary downloads ----------------------------------------------
+    # The refusals need no network. The redirects do: both stacks ask
+    # GitHub, and if it is unreachable both answer 503 — equal either
+    # way, and equal for a good reason when it is reachable, because
+    # the asset each picks is the same one.
+    *[("GET", f"/downloads/{path}", False) for path in [
+        "linux/x86_64", "linux/aarch64", "linux/armv7",
+        "macos/aarch64", "windows/x86_64",
+        "LINUX/X86_64",              # the lookup lowercases both halves
+        "plan9/x86_64", "linux/sparc", "linux/", "windows/x86_64/extra",
+    ]],
+
     # --- the node list -------------------------------------------------
     # Each row carries what its build compares to. Both stacks answer
     # from the environment fallback here, because neither has fetched

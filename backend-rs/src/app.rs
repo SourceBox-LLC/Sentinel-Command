@@ -63,6 +63,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/install.sh", ported(api::install::install_sh))
         .route("/mcp-setup.sh", ported(api::install::mcp_setup_sh))
         .route("/mcp-setup.ps1", ported(api::install::mcp_setup_ps1))
+        // Unblocked by the release cache moving: this one resolves an
+        // asset URL from it, and is allowed to fetch — a person waiting
+        // on a download can wait, where a node's heartbeat cannot.
+        .route(
+            "/downloads/{os_name}/{arch}",
+            ported(api::install::download_binary),
+        )
         .route(
             "/api/incidents/{incident_id}/evidence/{evidence_id}",
             ported(api::incidents::get_evidence_blob),
