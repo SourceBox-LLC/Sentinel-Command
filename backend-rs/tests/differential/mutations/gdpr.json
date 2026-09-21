@@ -1,5 +1,5 @@
 {
- "_comment": "Mutations for the GDPR Article 20 export. DIFF_ONLY is narrow because each export case reseeds and builds a whole archive; the unit harness carries the filename and rounding cases, which no response shows.",
+ "_comment": "Mutations for the GDPR Article 20 export. DIFF_ONLY is narrow because each export case reseeds and builds a whole archive; the unit harness carries the filename and rounding cases, which no response shows. The ordering harness is in the list because the write harness cannot see a missing rate limit at all: it flushes the counters before every case and sends one request.",
  "restart_rust": true,
  "env": {
   "DIFF_ONLY": "gdpr export"
@@ -10,6 +10,10 @@
   ],
   [
    "tests/differential/unit_run.sh"
+  ],
+  [
+   "tests/differential/ratelimit_order_run.sh",
+   "gdpr/export"
   ]
  ],
  "mutations": [
@@ -98,7 +102,7 @@
    "new": "        \"gdpr_exported\","
   },
   {
-   "name": "the rate limit is spent before the admin check",
+   "name": "the export is not rate limited",
    "file": "src/api/gdpr.rs",
    "old": "    rate.check().await?;\n\n    let exported_at",
    "new": "    let exported_at"
