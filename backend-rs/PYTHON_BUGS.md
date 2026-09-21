@@ -138,3 +138,45 @@ where Rust is required to 500 in exactly the same places — porting the
 fault deliberately, because the whole method rests on the two stacks
 agreeing. Case 1 has no harness — it is a concurrency property, not a
 response.
+
+## 11. An SSE subscriber dropped for being slow keeps a live, dead stream
+
+`app/api/notifications.py`, `NotificationBroadcaster.notify` — and the
+same code in `motion.py` and `mcp_activity.py`:
+
+```python
+try:
+    q.put_nowait(event_data)
+except asyncio.QueueFull:
+    dead.append((q, is_admin))
+```
+
+Dropping a subscriber that has fallen 100 events behind is right: one
+stalled browser tab must not hold up an alert to everyone else. What
+follows is not. The generator on the other side is still awaiting
+`queue.get()` on a queue that is now in nobody's subscriber list:
+
+```python
+event = await asyncio.wait_for(queue.get(), timeout=25.0)
+```
+
+so it goes on emitting `: keepalive` every 25 seconds, forever, over a
+connection that can never deliver another event. The browser's
+`EventSource` sees a healthy stream and never reconnects, so the bell
+silently stops updating for that tab until the page is reloaded. The
+socket, the task and the queue all stay allocated.
+
+It is also self-perpetuating under load: the subscriber most likely to
+be dropped is one on a slow link, and it is exactly the one that will
+now never recover without a reload.
+
+The fix is to close the queue — or push a sentinel — when dropping a
+subscriber, so the generator returns and the client reconnects into a
+fresh subscription.
+
+**Reproduced in the port, on purpose.** `src/sse.rs` holds a clone of
+the sender inside `Subscription` for no reason other than to keep the
+channel open, because in Rust the drop would otherwise end the response
+by itself. Fixing it here first would mean the two stacks disagree, and
+the whole method rests on them agreeing. It should be fixed once, on
+`master`, with a test — and then the `keepalive` field comes out.

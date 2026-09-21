@@ -35,6 +35,7 @@ pub mod query;
 pub mod ratelimit;
 pub mod recipients;
 pub mod settings;
+pub mod sse;
 pub mod tz_names;
 pub mod versions;
 pub mod zoneinfo;
