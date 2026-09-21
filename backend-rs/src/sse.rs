@@ -240,6 +240,9 @@ mod tests {
         let mut keeping_up = b.subscribe("org_a", false, 10).unwrap();
         let _behind = b.subscribe("org_a", false, 10).unwrap();
 
+        // Python's is `asyncio.Queue(maxsize=100)`, and this test would
+        // otherwise follow the constant wherever it went.
+        assert_eq!(QUEUE_DEPTH, 100);
         // Exactly the queue depth fits; the next one is what costs the
         // slow subscriber its place.
         for i in 0..=QUEUE_DEPTH {
