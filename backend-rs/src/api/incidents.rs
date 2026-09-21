@@ -29,24 +29,24 @@ const SEVERITIES: [&str; 4] = ["low", "medium", "high", "critical"];
 const STATUSES: [&str; 4] = ["open", "acknowledged", "resolved", "dismissed"];
 
 #[derive(Debug, sqlx::FromRow)]
-struct IncidentRow {
-    id: i32,
-    camera_id: Option<String>,
-    title: String,
-    summary: String,
-    report: Option<String>,
-    severity: String,
-    status: String,
-    created_by: String,
-    created_at: Option<NaiveDateTime>,
-    updated_at: Option<NaiveDateTime>,
-    resolved_at: Option<NaiveDateTime>,
-    resolved_by: Option<String>,
-    evidence_count: i64,
+pub(crate) struct IncidentRow {
+    pub(crate) id: i32,
+    pub(crate) camera_id: Option<String>,
+    pub(crate) title: String,
+    pub(crate) summary: String,
+    pub(crate) report: Option<String>,
+    pub(crate) severity: String,
+    pub(crate) status: String,
+    pub(crate) created_by: String,
+    pub(crate) created_at: Option<NaiveDateTime>,
+    pub(crate) updated_at: Option<NaiveDateTime>,
+    pub(crate) resolved_at: Option<NaiveDateTime>,
+    pub(crate) resolved_by: Option<String>,
+    pub(crate) evidence_count: i64,
 }
 
 impl IncidentRow {
-    fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         json!({
             "id": self.id,
             "camera_id": self.camera_id,
@@ -68,18 +68,18 @@ impl IncidentRow {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-struct EvidenceRow {
-    id: i32,
-    incident_id: i32,
-    kind: String,
-    text: Option<String>,
-    camera_id: Option<String>,
-    data_mime: Option<String>,
-    timestamp: Option<NaiveDateTime>,
+pub(crate) struct EvidenceRow {
+    pub(crate) id: i32,
+    pub(crate) incident_id: i32,
+    pub(crate) kind: String,
+    pub(crate) text: Option<String>,
+    pub(crate) camera_id: Option<String>,
+    pub(crate) data_mime: Option<String>,
+    pub(crate) timestamp: Option<NaiveDateTime>,
 }
 
 impl EvidenceRow {
-    fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         json!({
             "id": self.id,
             "incident_id": self.incident_id,

@@ -1,0 +1,131 @@
+{
+ "_comment": "Mutations for the GDPR Article 20 export. DIFF_ONLY is narrow because each export case reseeds and builds a whole archive; the unit harness carries the filename and rounding cases, which no response shows.",
+ "restart_rust": true,
+ "env": {
+  "DIFF_ONLY": "gdpr export"
+ },
+ "harness": [
+  [
+   "tests/differential/write_run.sh"
+  ],
+  [
+   "tests/differential/unit_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "a table is left out of the archive",
+   "file": "src/api/gdpr.rs",
+   "old": "    out.push((\"audit_log\", rows.iter().map(|r| r.to_json()).collect()));",
+   "new": "    let _ = rows;"
+  },
+  {
+   "name": "the manifest is written first",
+   "file": "src/api/gdpr.rs",
+   "old": "    zip.start_file(\"manifest.json\", options)?;",
+   "new": "    zip.start_file(\"manifest_first.json\", options)?;"
+  },
+  {
+   "name": "the row counts are the number of tables",
+   "file": "src/api/gdpr.rs",
+   "old": "            \"rows\": rows.len(),",
+   "new": "            \"rows\": tables.len(),"
+  },
+  {
+   "name": "the excluded notes are dropped",
+   "file": "src/api/gdpr.rs",
+   "old": "        \"excluded\": {",
+   "new": "        \"excluded_data\": {"
+  },
+  {
+   "name": "the format version moves on",
+   "file": "src/api/gdpr.rs",
+   "old": "        \"format_version\": 1,",
+   "new": "        \"format_version\": 2,"
+  },
+  {
+   "name": "the trace rides along in the export",
+   "file": "src/api/gdpr.rs",
+   "old": "    out.push((\"sentinel_runs\", rows.iter().map(|r| r.to_json(false)).collect()));",
+   "new": "    out.push((\"sentinel_runs\", rows.iter().map(|r| r.to_json(true)).collect()));"
+  },
+  {
+   "name": "cameras are scoped by their own org_id",
+   "file": "src/api/gdpr.rs",
+   "old": "            \"{} WHERE n.node_id = $1\",",
+   "new": "            \"{} WHERE c.org_id = $1 AND $1 = $1\","
+  },
+  {
+   "name": "only mcp keys are exported, not integration ones",
+   "file": "src/api/gdpr.rs",
+   "old": "        org_rows(pool, \"SELECT * FROM mcp_api_keys WHERE org_id = $1\", org_id).await?;",
+   "new": "        org_rows(pool, \"SELECT * FROM mcp_api_keys WHERE org_id = $1 AND kind = 'mcp'\", org_id).await?;"
+  },
+  {
+   "name": "evidence is loaded in one flat query",
+   "file": "src/api/gdpr.rs",
+   "old": "               FROM incident_evidence WHERE incident_id = $1\",",
+   "new": "               FROM incident_evidence WHERE $1 = $1 ORDER BY id DESC\","
+  },
+  {
+   "name": "the settings table is exported empty",
+   "file": "src/api/gdpr.rs",
+   "old": "    out.push((\"settings\", introspect_rows(pool, \"settings\", org_id).await?));",
+   "new": "    out.push((\"settings\", Vec::new()));"
+  },
+  {
+   "name": "an introspected timestamp stays a timestamp",
+   "file": "src/api/gdpr.rs",
+   "old": "                    .map(|v| v.map_or(Value::Null, |v| json!(iso_naive(v)))),",
+   "new": "                    .map(|v| v.map_or(Value::Null, |v| json!(v.to_string()))),"
+  },
+  {
+   "name": "the archive is cacheable",
+   "file": "src/api/gdpr.rs",
+   "old": "    out.insert(header::CACHE_CONTROL, HeaderValue::from_static(\"no-store\"));",
+   "new": "    out.insert(header::CACHE_CONTROL, HeaderValue::from_static(\"max-age=60\"));"
+  },
+  {
+   "name": "the filename is not in the headers",
+   "file": "src/api/gdpr.rs",
+   "old": "        HeaderValue::from_str(&format!(\"attachment; filename=\\\"{filename}\\\"\"))",
+   "new": "        HeaderValue::from_str(\"attachment\")"
+  },
+  {
+   "name": "the export is not audited",
+   "file": "src/api/gdpr.rs",
+   "old": "        \"gdpr_export\",",
+   "new": "        \"gdpr_exported\","
+  },
+  {
+   "name": "the rate limit is spent before the admin check",
+   "file": "src/api/gdpr.rs",
+   "old": "    rate.check().await?;\n\n    let exported_at",
+   "new": "    let exported_at"
+  },
+  {
+   "name": "viewer hours round away from zero",
+   "file": "src/api/gdpr.rs",
+   "old": "    format!(\"{x:.2}\").parse().unwrap_or(x)",
+   "new": "    (x * 100.0).round() / 100.0"
+  },
+  {
+   "name": "the filename keeps its csv extension",
+   "file": "src/api/gdpr.rs",
+   "old": "    format!(\"gdpr-export-{org}-{date}.csv\").replace(\".csv\", \".zip\")",
+   "new": "    format!(\"gdpr-export-{org}-{date}.zip\")"
+  },
+  {
+   "name": "the filename is not sanitised",
+   "file": "src/api/gdpr.rs",
+   "old": "    let org = safe_segment(org_id);",
+   "new": "    let org = org_id.to_string();"
+  },
+  {
+   "name": "the json is indented four spaces",
+   "file": "src/api/gdpr.rs",
+   "old": "    serde_json::to_string_pretty(value).unwrap_or_else(|_| \"null\".into())",
+   "new": "    let mut buf = Vec::new();\n    let formatter = serde_json::ser::PrettyFormatter::with_indent(b\"    \");\n    let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);\n    serde::Serialize::serialize(value, &mut ser).ok();\n    String::from_utf8(buf).unwrap_or_else(|_| \"null\".into())"
+  }
+ ]
+}

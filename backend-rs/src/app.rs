@@ -195,6 +195,13 @@ pub fn build_router(state: AppState) -> Router {
             "/api/settings/danger/wipe-logs",
             served(axum::routing::post(api::node_writes::wipe_stream_logs)),
         )
+        // Article 20's export. Its sibling, the Article 17 erasure
+        // behind /settings/danger/full-reset, still reaches the segment
+        // cache and the WebSocket manager, so it stays on the proxy.
+        .route(
+            "/api/gdpr/export",
+            served(axum::routing::post(api::gdpr::export_organization_data)),
+        )
         // /counts must be declared here too: it is a static sibling of
         // /{incident_id} and would otherwise be swallowed. It is ported
         // rather than pinned, so it is a real route, not a proxy pin.

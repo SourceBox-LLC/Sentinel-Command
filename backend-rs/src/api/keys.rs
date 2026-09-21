@@ -31,19 +31,19 @@ use crate::query::{int4, path_int};
 use crate::ratelimit::PerHour;
 
 #[derive(Debug, sqlx::FromRow)]
-struct KeyRow {
-    id: i32,
-    name: String,
-    created_at: Option<NaiveDateTime>,
-    last_used_at: Option<NaiveDateTime>,
-    revoked: Option<bool>,
-    scope_mode: Option<String>,
-    scope_tools: Option<String>,
-    kind: Option<String>,
+pub(crate) struct KeyRow {
+    pub(crate) id: i32,
+    pub(crate) name: String,
+    pub(crate) created_at: Option<NaiveDateTime>,
+    pub(crate) last_used_at: Option<NaiveDateTime>,
+    pub(crate) revoked: Option<bool>,
+    pub(crate) scope_mode: Option<String>,
+    pub(crate) scope_tools: Option<String>,
+    pub(crate) kind: Option<String>,
 }
 
 impl KeyRow {
-    fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         json!({
             "id": self.id,
             "name": self.name,

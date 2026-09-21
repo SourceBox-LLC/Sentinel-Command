@@ -62,22 +62,22 @@ const WRITABLE_PREF_KEYS: [&str; 7] = [
 ];
 
 #[derive(Debug, sqlx::FromRow)]
-struct NotificationRow {
-    id: i32,
-    kind: String,
-    audience: String,
-    title: String,
-    body: String,
-    severity: String,
-    link: Option<String>,
-    camera_id: Option<String>,
-    node_id: Option<String>,
-    meta_json: Option<String>,
-    created_at: Option<NaiveDateTime>,
+pub(crate) struct NotificationRow {
+    pub(crate) id: i32,
+    pub(crate) kind: String,
+    pub(crate) audience: String,
+    pub(crate) title: String,
+    pub(crate) body: String,
+    pub(crate) severity: String,
+    pub(crate) link: Option<String>,
+    pub(crate) camera_id: Option<String>,
+    pub(crate) node_id: Option<String>,
+    pub(crate) meta_json: Option<String>,
+    pub(crate) created_at: Option<NaiveDateTime>,
 }
 
 impl NotificationRow {
-    fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         // Unparseable meta is null, not an error: the column is free-form
         // and a bad row must not take down the whole inbox.
         let meta = self

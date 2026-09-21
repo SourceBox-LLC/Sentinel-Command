@@ -156,6 +156,14 @@ ROUTES = [
     ("POST settings/danger/wipe-logs", 5,
      [("POST", "/api/settings/danger/wipe-logs", "member", None)],
      ("POST", "/api/settings/danger/wipe-logs", "admin", None)),
+    # The export has no body at all, so the only thing refused before
+    # the limiter is the admin check — and three an hour is few enough
+    # that a member's refused attempts spending slots would lock an
+    # admin out of their own Article 20 request for the rest of the
+    # hour.
+    ("POST gdpr/export", 3,
+     [("POST", "/api/gdpr/export", "member", None)],
+     ("POST", "/api/gdpr/export", "admin", None)),
     # Integration auth is a dependency, so a bad key is free; the
     # recording body is read inside the function, so it is not.
     ("GET integration/cameras", 120,

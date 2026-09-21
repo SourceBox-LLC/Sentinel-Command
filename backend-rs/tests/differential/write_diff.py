@@ -26,6 +26,7 @@ Usage: write_diff.py <token> [-v]
 """
 
 import hashlib
+import io
 import json
 import os
 import re
@@ -33,6 +34,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -787,6 +789,30 @@ CASES += [
     ("sentinel config: unlicensed GET", "GET", "/api/sentinel/config", None, "admin",
      "DELETE FROM settings WHERE org_id='self-host' AND key LIKE 'sentinel_license%';"),
 
+    # --- GDPR Article 20 export -----------------------------------------
+    # The archive is compared by contents, not bytes: member names in
+    # order and each member's JSON. `exported_at` in the manifest and
+    # the audit row's filename both carry today's date, which is the
+    # same on both stacks.
+    ("gdpr export", "POST", "/api/gdpr/export", None, "admin", None),
+    ("gdpr export: member", "POST", "/api/gdpr/export", None, "member", None),
+    ("gdpr export: anon", "POST", "/api/gdpr/export", None, "agent:none", None),
+    # A table with nothing in it still gets a file, holding `[]`.
+    ("gdpr export: an empty table", "POST", "/api/gdpr/export", None, "admin",
+     "DELETE FROM motion_events; DELETE FROM sentinel_runs;"),
+    # Cameras are exported by walking each node's cameras, not by the
+    # camera's own org_id — so a row whose org_id disagrees with its
+    # node's is still in the export, and one that belongs to no node of
+    # this org is not.
+    ("gdpr export: a camera whose org_id disagrees", "POST", "/api/gdpr/export", None, "admin",
+     "UPDATE cameras SET org_id = 'other-org' WHERE camera_id = 'cam-live';"),
+    # Two incidents with evidence, to pin the per-parent order the
+    # relationship load produces.
+    ("gdpr export: evidence order", "POST", "/api/gdpr/export", None, "admin",
+     "INSERT INTO incident_evidence (id, incident_id, kind, text, camera_id, timestamp)"
+     " VALUES (900, 2, 'observation', 'late', 'cam-live', timestamp '2026-06-02 00:00:00'),"
+     "        (901, 1, 'observation', 'early', 'cam-live', timestamp '2026-06-01 00:00:00');"),
+
     # --- org timezone ---------------------------------------------------
     # The name is checked against `zoneinfo.available_timezones()`, which
     # is the tzdata package's list plus a walk of the system directories
@@ -1040,6 +1066,15 @@ UPDATE mcp_activity_logs m
   FROM (SELECT id, row_number() OVER (ORDER BY timestamp DESC, id) AS rn
           FROM mcp_activity_logs) r
  WHERE m.id = r.id;
+-- Fifth time, and for the same reason one table at a time keeps finding
+-- it: a relative timestamp only drifts into view once something puts
+-- the column in front of the comparison. The GDPR export puts *every*
+-- org-scoped table in front of it at once, so this is the rest of them.
+UPDATE motion_events m
+   SET timestamp = timestamp '2026-06-01 00:00:00' - (r.rn || ' seconds')::interval
+  FROM (SELECT id, row_number() OVER (ORDER BY timestamp DESC, id) AS rn
+          FROM motion_events) r
+ WHERE m.id = r.id;
 """
 
 
@@ -1158,6 +1193,46 @@ def normalise(value, now):
     return value
 
 
+def value_diff(python, rust, path="body", out=None, limit=12):
+    """The paths at which two response bodies differ.
+
+    Walks dicts and lists in step and reports leaves, so a difference
+    deep inside an archive member reads as
+    `body.<zip>.files.cameras.json[3].last_seen` rather than as two
+    dumps that agree for their first 260 characters.
+    """
+    out = [] if out is None else out
+    if len(out) >= limit:
+        return out
+    if isinstance(python, dict) and isinstance(rust, dict):
+        for key in sorted(set(python) | set(rust)):
+            if key not in python:
+                out.append(f"{path}.{key}: only in rust = {short(rust[key])}")
+            elif key not in rust:
+                out.append(f"{path}.{key}: only in python = {short(python[key])}")
+            elif python[key] != rust[key]:
+                value_diff(python[key], rust[key], f"{path}.{key}", out, limit)
+            if len(out) >= limit:
+                break
+        return out
+    if isinstance(python, list) and isinstance(rust, list):
+        if len(python) != len(rust):
+            out.append(f"{path}: {len(python)} items in python, {len(rust)} in rust")
+        for i, (a, b) in enumerate(zip(python, rust)):
+            if a != b:
+                value_diff(a, b, f"{path}[{i}]", out, limit)
+            if len(out) >= limit:
+                break
+        return out
+    out.append(f"{path}: python={short(python)} rust={short(rust)}")
+    return out
+
+
+def short(value, width=90):
+    text = json.dumps(value, sort_keys=True) if not isinstance(value, str) else repr(value)
+    return text if len(text) <= width else text[:width] + "..."
+
+
 def row_diff(python_rows, rust_rows):
     """Name the rows and fields that differ, instead of a truncated dump.
 
@@ -1253,11 +1328,73 @@ def fetch(base, method, path, body, who="admin"):
         req.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
-            return r.status, r.read()
+            return r.status, r.read(), {k.lower(): v for k, v in r.headers.items()}
     except urllib.error.HTTPError as e:
-        return e.code, e.read()
+        return e.code, e.read(), {k.lower(): v for k, v in e.headers.items()}
     except Exception as e:  # noqa: BLE001
-        return None, str(e).encode()
+        return None, str(e).encode(), {}
+
+
+def unpack_archive(raw, headers):
+    """A ZIP response as something two stacks can be compared on.
+
+    Not the bytes: Python's zlib and Rust's DEFLATE need not emit the
+    same stream for the same input, and every member carries the local
+    clock. What the export *means* is the member list, in order, and
+    each member's JSON — so that is what is compared, together with the
+    three headers that make it a download rather than a page.
+
+    A member that does not parse as JSON is kept as text, so a malformed
+    one shows up as itself rather than as a parse error.
+    """
+    out = {
+        "content-disposition": headers.get("content-disposition"),
+        "content-type": headers.get("content-type"),
+        "cache-control": headers.get("cache-control"),
+    }
+    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+        out["members"] = zf.namelist()
+        files = {}
+        for name in zf.namelist():
+            payload = zf.read(name).decode("utf-8", "replace")
+            try:
+                files[name] = table_for_compare(name, json.loads(payload))
+            except Exception:  # noqa: BLE001
+                files[name] = payload
+        out["files"] = files
+    return {"<zip>": out}
+
+
+def table_for_compare(name, rows):
+    """One exported table, in the terms the two stacks can agree on.
+
+    `export_org_data` issues `db.query(Model).filter_by(org_id=...)` with
+    no `order_by`, so the row order inside a table is whatever the seq
+    scan hands back — and the fixture's own FREEZE rewrites rows, which
+    moves them. The order flips between runs *on the same stack*, so
+    comparing it would be testing the storage engine rather than the
+    port. The rows are compared as a set instead.
+
+    What is not arbitrary is the grouping of the two cascade children:
+    Python loads them per parent (`for inc in incidents: for ev in
+    inc.evidence`), so each parent's rows are contiguous and the parents
+    come in the order the parent table was exported. A port that
+    replaced that with one flat join would lose it, so it is compared
+    explicitly.
+    """
+    if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
+        return rows
+    out = {"rows": sorted(rows, key=lambda r: json.dumps(r, sort_keys=True))}
+    parent = {"incident_evidence.json": "incident_id", "cameras.json": "node_id"}.get(name)
+    if parent:
+        # The sequence of parents, with runs collapsed: ["a", "b"] means
+        # every row of a came before every row of b.
+        seen = []
+        for row in rows:
+            if not seen or seen[-1] != row.get(parent):
+                seen.append(row.get(parent))
+        out["grouped_by"] = seen
+    return out
 
 
 def run_case(base, method, path, body, who="admin", setup=None):
@@ -1268,11 +1405,14 @@ def run_case(base, method, path, body, who="admin", setup=None):
         # install, or an org that has already spent its monthly run cap.
         docker_psql(["-q"], input=setup, what="case setup")
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    status, raw = fetch(base, method, path, body, who)
-    try:
-        parsed = json.loads(raw)
-    except Exception:  # noqa: BLE001
-        parsed = raw.decode("utf-8", "replace")
+    status, raw, headers = fetch(base, method, path, body, who)
+    if raw[:4] == b"PK\x03\x04":
+        parsed = unpack_archive(raw, headers)
+    else:
+        try:
+            parsed = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            parsed = raw.decode("utf-8", "replace")
     subs = {**issued_secrets(parsed), **issued_ids(parsed)}
     return (status, substitute(normalise(parsed, now), subs),
             substitute(normalise(snapshot(), now), subs))
@@ -1387,8 +1527,12 @@ def _main():
         if not status_same:
             print(f"            status: rust={rs_status} python={py_status}")
         if not body_same:
-            print(f"            body rust  : {json.dumps(rs_body, sort_keys=True)[:260]}")
-            print(f"            body python: {json.dumps(py_body, sort_keys=True)[:260]}")
+            # Name the paths that differ, not two truncated dumps. A ZIP
+            # export runs to hundreds of kilobytes and its one differing
+            # field sat far past any sane truncation — the dumps printed
+            # identical prefixes and said nothing.
+            for line in value_diff(py_body, rs_body):
+                print(f"            {line}")
         if not db_same:
             for table in WATCHED:
                 if py_db[table] != rs_db[table]:

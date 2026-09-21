@@ -24,20 +24,20 @@ use crate::query::Query;
 use crate::ratelimit::PerMinute;
 
 #[derive(Debug, sqlx::FromRow)]
-struct McpActivityLogRow {
-    id: i32,
-    org_id: String,
-    tool_name: String,
-    key_name: String,
-    status: String,
-    duration_ms: Option<i32>,
-    args_summary: Option<String>,
-    error: Option<String>,
-    timestamp: Option<NaiveDateTime>,
+pub(crate) struct McpActivityLogRow {
+    pub(crate) id: i32,
+    pub(crate) org_id: String,
+    pub(crate) tool_name: String,
+    pub(crate) key_name: String,
+    pub(crate) status: String,
+    pub(crate) duration_ms: Option<i32>,
+    pub(crate) args_summary: Option<String>,
+    pub(crate) error: Option<String>,
+    pub(crate) timestamp: Option<NaiveDateTime>,
 }
 
 impl McpActivityLogRow {
-    fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         json!({
             "id": self.id,
             "org_id": self.org_id,

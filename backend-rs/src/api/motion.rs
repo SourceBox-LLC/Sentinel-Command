@@ -16,18 +16,18 @@ use crate::pyint::PyInt;
 use crate::query::Query;
 
 #[derive(Debug, sqlx::FromRow)]
-struct MotionEventRow {
-    id: i32,
-    org_id: String,
-    camera_id: String,
-    node_id: String,
-    score: i32,
-    segment_seq: Option<i32>,
-    timestamp: Option<NaiveDateTime>,
+pub(crate) struct MotionEventRow {
+    pub(crate) id: i32,
+    pub(crate) org_id: String,
+    pub(crate) camera_id: String,
+    pub(crate) node_id: String,
+    pub(crate) score: i32,
+    pub(crate) segment_seq: Option<i32>,
+    pub(crate) timestamp: Option<NaiveDateTime>,
 }
 
 impl MotionEventRow {
-    fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         json!({
             "id": self.id,
             "org_id": self.org_id,

@@ -17,17 +17,17 @@ use crate::query::Query;
 use crate::ratelimit::PerMinute;
 
 #[derive(Debug, sqlx::FromRow)]
-struct AuditLogRow {
-    id: i32,
-    timestamp: Option<NaiveDateTime>,
-    event: String,
-    ip_address: Option<String>,
-    username: Option<String>,
-    details: Option<String>,
+pub(crate) struct AuditLogRow {
+    pub(crate) id: i32,
+    pub(crate) timestamp: Option<NaiveDateTime>,
+    pub(crate) event: String,
+    pub(crate) ip_address: Option<String>,
+    pub(crate) username: Option<String>,
+    pub(crate) details: Option<String>,
 }
 
 impl AuditLogRow {
-    fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         json!({
             "id": self.id,
             // Python calls `.isoformat()` unguarded here, so a NULL

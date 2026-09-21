@@ -53,18 +53,18 @@ const VALID_DAY_KEYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "su
 const DEFAULT_DAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 
 #[derive(Debug, sqlx::FromRow)]
-struct ConfigRow {
-    enabled: bool,
-    motion_enabled: bool,
-    incident_opened_enabled: bool,
-    motion_cooldown_min: i32,
-    schedule_mode: String,
-    schedule_start: String,
-    schedule_end: String,
-    active_days: Option<String>,
-    camera_scope: Option<String>,
-    created_at: Option<NaiveDateTime>,
-    updated_at: Option<NaiveDateTime>,
+pub(crate) struct ConfigRow {
+    pub(crate) enabled: bool,
+    pub(crate) motion_enabled: bool,
+    pub(crate) incident_opened_enabled: bool,
+    pub(crate) motion_cooldown_min: i32,
+    pub(crate) schedule_mode: String,
+    pub(crate) schedule_start: String,
+    pub(crate) schedule_end: String,
+    pub(crate) active_days: Option<String>,
+    pub(crate) camera_scope: Option<String>,
+    pub(crate) created_at: Option<NaiveDateTime>,
+    pub(crate) updated_at: Option<NaiveDateTime>,
 }
 
 impl ConfigRow {
@@ -99,7 +99,7 @@ impl ConfigRow {
         }
     }
 
-    fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         json!({
             "enabled": self.enabled,
             "motion_enabled": self.motion_enabled,
