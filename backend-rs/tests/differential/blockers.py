@@ -112,7 +112,7 @@ BLOCKERS = {
     "core.integration_auth": "Home Assistant integration key",
     "core.sync_client": "Sentinel Sync Service client",
     "api.hls": "in-process HLS segment + playlist caches",  # now Rust's — see PORTED_STATE
-    "api.ws": "in-process WebSocket connection manager",
+    "api.ws": "in-process WebSocket connection manager",  # likewise
     "mcp": "MCP server (fastmcp -> rmcp)",
 }
 
@@ -152,6 +152,11 @@ BLOCKING_SYMBOLS = {
 PORTED_SYMBOLS = {
     ("api.notifications", "notification_broadcaster"),
     ("api.notifications", "_transition_debounce"),
+    # Both motion feeds moved with their producer: the HTTP motion
+    # route and the socket's `event` frame are Rust's, so Python's
+    # broadcasters have no publisher left.
+    ("api.motion", "motion_broadcaster"),
+    ("api.motion", "integration_motion_broadcaster"),
 }
 
 # In-process state the port has already taken over. A route whose only
@@ -163,6 +168,12 @@ PORTED_SYMBOLS = {
 # counter reset, not like a port boundary.
 PORTED_STATE = {
     "api.hls": "the HLS caches and the viewer-second counter are Rust's",
+    # A node holds one socket, to one machine. Once Rust serves
+    # `/ws/node`, every connected node is on Rust's registry, and a
+    # Python route asking its own `manager` whether a node is connected
+    # is asking a registry nothing ever writes to — so every command it
+    # would send reports the node offline.
+    "api.ws": "the CameraNode socket registry is Rust's",
 }
 
 # Routes nothing blocks and nobody should port: FastAPI generates them

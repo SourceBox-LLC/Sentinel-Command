@@ -18,6 +18,15 @@ BACKEND_RS = HERE.parent.parent
 BACKEND = BACKEND_RS.parent / "backend"
 
 
+# WebSocket endpoints, which `@limiter.limit` cannot decorate: slowapi
+# works on a Request, and an upgrade is not one. `/ws/node` throttles
+# itself instead — a connect budget and a message budget, both in
+# `app/api/ws.py` and both ported to `src/ws.rs`, neither visible to
+# this comparison. Listed so the route is accounted for rather than
+# reported as having no Python counterpart.
+WEBSOCKET_ROUTES = {("GET", "/ws/node")}
+
+
 def python_limits():
     """(METHOD, path) -> (n, window) or None."""
     out = {}
@@ -194,6 +203,9 @@ def main():
         bad += 1
     for method, path, handler in sorted(set(routes)):
         if handler == "health":
+            continue
+        if (method, path) in WEBSOCKET_ROUTES:
+            print(f"  ok    {method:<6} {path:<46} websocket — throttled in ws.rs, not slowapi")
             continue
         if (method, path) not in py:
             print(f"  FAIL  {method:<6} {path:<46} no matching python route")

@@ -134,6 +134,16 @@ def unsub_token(kind="camera_offline", rcpt="admin@example.com",
     )
 
 
+# A per-org notification preference, written the way the settings
+# table stores it — the string "true" or "false", never a boolean.
+def pref(key, value):
+    return (
+        f"DELETE FROM settings WHERE org_id='self-host' AND key='{key}';"
+        f"INSERT INTO settings (org_id, key, value, updated_at)"
+        f" VALUES ('self-host', '{key}', '{value}', now()::timestamp);"
+    )
+
+
 # A `sentinel_config` row for `self-host` with every gate open, and
 # keyword overrides to close one at a time. Values are SQL literals
 # because they go straight into the setup statement.
@@ -1215,6 +1225,104 @@ CASES += [
           ("signed empty body", b"", "svix:msg_29"),
       ]],
 
+    # --- Motion, pushed over HTTP -------------------------------------
+    # The reliable half of motion reporting — it works whether or not
+    # the node's socket is up. Each accepted event writes a motion row,
+    # a notification, and (once the org has Sentinel on) a run.
+    ("motion: ok", "POST", "/api/cameras/cam-live/motion",
+     {"score": 42}, "node:test-node-key"),
+    ("motion: every field", "POST", "/api/cameras/cam-live/motion",
+     {"score": 87, "segment_seq": 1234, "timestamp": "2026-09-01T10:00:00"},
+     "node:test-node-key"),
+    # The score is clamped, not rejected.
+    ("motion: score above the range", "POST", "/api/cameras/cam-live/motion",
+     {"score": 250}, "node:test-node-key"),
+    ("motion: score below the range", "POST", "/api/cameras/cam-live/motion",
+     {"score": -5}, "node:test-node-key"),
+    # int() truncates toward zero before the clamp.
+    ("motion: fractional score", "POST", "/api/cameras/cam-live/motion",
+     {"score": 99.9}, "node:test-node-key"),
+    ("motion: score as a string", "POST", "/api/cameras/cam-live/motion",
+     {"score": "77"}, "node:test-node-key"),
+    # Everything int() refuses drops the event rather than erroring.
+    ("motion: score is not a number", "POST", "/api/cameras/cam-live/motion",
+     {"score": "abc"}, "node:test-node-key"),
+    ("motion: score is a list", "POST", "/api/cameras/cam-live/motion",
+     {"score": []}, "node:test-node-key"),
+    ("motion: no score at all", "POST", "/api/cameras/cam-live/motion",
+     {"segment_seq": 1}, "node:test-node-key"),
+    ("motion: null score", "POST", "/api/cameras/cam-live/motion",
+     {"score": None}, "node:test-node-key"),
+    # An offset is *dropped*, not applied: this is stored as 10:00:00.
+    ("motion: timestamp with an offset", "POST", "/api/cameras/cam-live/motion",
+     {"score": 10, "timestamp": "2026-09-01T10:00:00+05:00"}, "node:test-node-key"),
+    ("motion: unparseable timestamp", "POST", "/api/cameras/cam-live/motion",
+     {"score": 10, "timestamp": "not a date"}, "node:test-node-key"),
+    ("motion: timestamp is not a string", "POST", "/api/cameras/cam-live/motion",
+     {"score": 10, "timestamp": 5}, "node:test-node-key"),
+    # Past the column: the whole event is lost, row and notification
+    # together, because the Python's commit fails.
+    ("motion: segment_seq past the column", "POST", "/api/cameras/cam-live/motion",
+     {"score": 10, "segment_seq": 2147483648}, "node:test-node-key"),
+    ("motion: segment_seq as a string", "POST", "/api/cameras/cam-live/motion",
+     {"score": 10, "segment_seq": "9"}, "node:test-node-key"),
+    # The camera has to be this node's, in this node's org.
+    ("motion: another node's camera", "POST", "/api/cameras/cam-failed/motion",
+     {"score": 10}, "node:test-node-key"),
+    ("motion: another org's camera", "POST", "/api/cameras/cam-theirs/motion",
+     {"score": 10}, "node:test-node-key"),
+    ("motion: no such camera", "POST", "/api/cameras/cam-nope/motion",
+     {"score": 10}, "node:test-node-key"),
+    ("motion: no api key", "POST", "/api/cameras/cam-live/motion",
+     {"score": 10}, "agent:none"),
+    ("motion: wrong api key", "POST", "/api/cameras/cam-live/motion",
+     {"score": 10}, "node:wrong"),
+    # The per-org kill switch, answered 200 so the node does not retry.
+    ("motion: ingestion disabled", "POST", "/api/cameras/cam-live/motion",
+     {"score": 10}, "node:test-node-key",
+     pref("motion_ingestion_enabled", "false")),
+    # Anything that is not "true", case-insensitively, is off.
+    ("motion: ingestion set to TRUE", "POST", "/api/cameras/cam-live/motion",
+     {"score": 10}, "node:test-node-key",
+     pref("motion_ingestion_enabled", "TRUE")),
+    ("motion: ingestion set to nonsense", "POST", "/api/cameras/cam-live/motion",
+     {"score": 10}, "node:test-node-key",
+     pref("motion_ingestion_enabled", "yes")),
+    # With Sentinel on and motion as a trigger, an accepted event also
+    # queues a run — and the cooldown silences the email after the
+    # first, which is the pair the digest loop exists for.
+    ("motion: dispatches a run", "POST", "/api/cameras/cam-live/motion",
+     {"score": 60}, "node:test-node-key", sentinel_on()),
+    ("motion: out of scope for sentinel", "POST", "/api/cameras/cam-live/motion",
+     {"score": 60}, "node:test-node-key",
+     sentinel_on(camera_scope="""'{"cam-live": false}'""")),
+
+    # --- The two gates, separately ------------------------------------
+    # Both default on for this kind and the fixture writes neither, so
+    # without these the "is it exactly the string true" comparison and
+    # the independence of the two gates are reached by nothing.
+    #
+    # `mcp_key_revoked` is the kind to use: it is the only one these
+    # cases emit that appears in *both* maps, so its inbox and email
+    # toggles can be set against each other.
+    ("gates: inbox off, email on", "DELETE", "/api/mcp/keys/1", None, "admin",
+     pref("mcp_key_audit_notifications", "false") + pref("email_mcp_key_audit", "true")),
+    ("gates: inbox on, email off", "DELETE", "/api/mcp/keys/2", None, "admin",
+     pref("mcp_key_audit_notifications", "true") + pref("email_mcp_key_audit", "false")),
+    ("gates: both off", "DELETE", "/api/mcp/keys/3", None, "admin",
+     pref("mcp_key_audit_notifications", "false") + pref("email_mcp_key_audit", "false")),
+    # Neither "true" nor absent: anything generous about the comparison
+    # reads this as enabled.
+    ("gates: a setting that is not a bool", "DELETE", "/api/mcp/keys/1", None, "admin",
+     pref("email_mcp_key_audit", "yes") + pref("mcp_key_audit_notifications", "1")),
+
+    # A title where bytes and characters part company. The notification
+    # title is "Incident #N: " plus this, so it runs past the 200-char
+    # column limit — and cutting 200 *bytes* of a two-byte-per-character
+    # string keeps about half as much text.
+    ("file: a title that is 200 characters of two-byte text", "POST", "/api/incidents",
+     {"title": "é" * 200, "summary": "S"}),
+
     # --- POST: minting a key ------------------------------------------
     # All three mint a credential, return it exactly once, and fire an
     # admin notification — a new key is a security signal, and naming
@@ -1532,6 +1640,16 @@ RANDOM_FIELDS = {"key_last4": "<issued-key-last4>"}
 # Anchored on the field name for the same reason.
 LAST4_IN_JSON = re.compile(r'("key_last4":\s*")[^"]{0,8}(")')
 
+# An ISO timestamp inside a JSON string column. `meta_json` on a motion
+# notification carries `event_timestamp`, which is a server clock
+# reading when the node sent none — so the two tiers write values that
+# differ by however long the first run took. The value-level rule below
+# never sees it, because the column is one long string.
+#
+# Anchored on the JSON shape and still subject to the same recency
+# test, so a timestamp the *fixture* put there stays compared.
+TS_IN_JSON = re.compile(r'("\w+":\s*")(\d{4}-\d{2}-\d{2}T[\d:.+-]{8,})(")')
+
 
 def normalise(value, now):
     """Replace just-written timestamps with a token, recursively.
@@ -1555,6 +1673,10 @@ def normalise(value, now):
         value = UNSUB_LINK.sub(_unsub_claims, value)
     if isinstance(value, str) and "key_last4" in value:
         value = LAST4_IN_JSON.sub(r"\1<issued-key-last4>\2", value)
+    if isinstance(value, str) and '":' in value and "T" in value:
+        value = TS_IN_JSON.sub(
+            lambda m: m.group(1) + normalise(m.group(2), now) + m.group(3), value
+        )
     if isinstance(value, str) and 19 <= len(value) <= 32 and value[4] == "-":
         for fmt in TS_FORMATS:
             try:

@@ -33,7 +33,21 @@ import sys
 import time
 
 PORTS = {"rust": 8000, "python": 8001}
-PATH = "/api/notifications/stream"
+
+# The three feeds, with what authenticates each and the per-org cap the
+# route enforces. The two motion ones exist separately on purpose: a
+# Home Assistant connection must never consume a dashboard subscriber
+# slot, which is only true because they are different pools with
+# different budgets — and a port that shared one would look identical
+# until an install ran both at once.
+FEEDS = [
+    ("notifications", "/api/notifications/stream", "session", 50),
+    ("motion", "/api/motion/events/stream", "session", 50),
+    ("integration motion", "/api/integration/motion/stream", "integration", 10),
+]
+
+# The fixture's live integration key, as the read differential uses it.
+INTEGRATION_KEY = "osi_live_integration_key"
 
 # The same set the HTTP differential compares, minus the ones that are
 # random per request. `connection` is deliberately absent: it is
@@ -60,13 +74,20 @@ KEEPALIVE_SLACK = 6
 VERBOSE = "-v" in sys.argv
 
 
-def open_stream(port: str | int, token: str, timeout: float = 5.0) -> socket.socket:
+def open_stream(
+    port: str | int,
+    token: str,
+    path: str = "/api/notifications/stream",
+    auth: str = "session",
+    timeout: float = 5.0,
+) -> socket.socket:
     """Connect and send the request, without reading the response."""
+    credential = token if auth == "session" else INTEGRATION_KEY
     sock = socket.create_connection(("127.0.0.1", int(port)), timeout=timeout)
     sock.sendall(
-        f"GET {PATH} HTTP/1.1\r\n"
+        f"GET {path} HTTP/1.1\r\n"
         f"Host: 127.0.0.1\r\n"
-        f"Authorization: Bearer {token}\r\n"
+        f"Authorization: Bearer {credential}\r\n"
         f"Accept: text/event-stream\r\n"
         f"\r\n".encode()
     )
@@ -207,14 +228,15 @@ def compare(label: str, values: dict[str, object], results: list) -> bool:
     return same
 
 
-def case_greeting(token: str, results: list) -> None:
-    print("the greeting")
-    socks = {name: open_stream(port, token) for name, port in PORTS.items()}
+def case_greeting(token: str, results: list, feed) -> None:
+    label, path, auth, _ = feed
+    print(f"the greeting — {label}")
+    socks = {name: open_stream(port, token, path, auth) for name, port in PORTS.items()}
     try:
         heads = {name: read_head(sock) for name, sock in socks.items()}
-        compare("status", {n: h[0] for n, h in heads.items()}, results)
+        compare(f"{label}: status", {n: h[0] for n, h in heads.items()}, results)
         compare(
-            "headers",
+            f"{label}: headers",
             {
                 n: json.dumps(
                     {k: v for k, v in h[1].items() if k in COMPARED_HEADERS},
@@ -228,15 +250,16 @@ def case_greeting(token: str, results: list) -> None:
         for name, sock in socks.items():
             frame, _ = read_frame(sock, heads[name][2], timeout=5)
             frames[name] = frame
-        compare("first frame", frames, results)
+        compare(f"{label}: first frame", frames, results)
     finally:
         for sock in socks.values():
             sock.close()
 
 
-def case_keepalive(token: str, results: list) -> None:
-    print(f"the keepalive, after {KEEPALIVE_WAIT}s of quiet")
-    socks = {name: open_stream(port, token) for name, port in PORTS.items()}
+def case_keepalive(token: str, results: list, feed) -> None:
+    label, path, auth, _ = feed
+    print(f"the keepalive, after {KEEPALIVE_WAIT}s of quiet — {label}")
+    socks = {name: open_stream(port, token, path, auth) for name, port in PORTS.items()}
     try:
         leftovers = {}
         for name, sock in socks.items():
@@ -249,34 +272,35 @@ def case_keepalive(token: str, results: list) -> None:
         for name, sock in socks.items():
             frame, _ = read_frame(sock, leftovers[name], KEEPALIVE_WAIT + KEEPALIVE_SLACK)
             frames[name] = frame
-        compare("keepalive frame", frames, results)
+        compare(f"{label}: keepalive frame", frames, results)
     finally:
         for sock in socks.values():
             sock.close()
 
 
-def case_cap(token: str, cap: int, results: list) -> None:
-    print(f"the subscriber cap ({cap} for this plan)")
+def case_cap(token: str, results: list, feed) -> None:
+    label, path, auth, cap = feed
+    print(f"the subscriber cap — {label} ({cap})")
     held: dict[str, list[socket.socket]] = {name: [] for name in PORTS}
     try:
         for name, port in PORTS.items():
             for _ in range(cap):
-                sock = open_stream(port, token)
+                sock = open_stream(port, token, path, auth)
                 read_head(sock)
                 held[name].append(sock)
         # One more than the cap, on each.
         over = {}
         for name, port in PORTS.items():
-            sock = open_stream(port, token)
+            sock = open_stream(port, token, path, auth)
             try:
                 status, headers, rest = read_head(sock)
                 body = read_body(sock, headers, rest, timeout=3)
                 over[name] = (status, headers.get("content-type"), body)
             finally:
                 sock.close()
-        compare("over-cap status", {n: v[0] for n, v in over.items()}, results)
-        compare("over-cap content-type", {n: v[1] for n, v in over.items()}, results)
-        compare("over-cap body", {n: v[2] for n, v in over.items()}, results)
+        compare(f"{label}: over-cap status", {n: v[0] for n, v in over.items()}, results)
+        compare(f"{label}: over-cap content-type", {n: v[1] for n, v in over.items()}, results)
+        compare(f"{label}: over-cap body", {n: v[2] for n, v in over.items()}, results)
 
         # And closing one frees exactly one slot, rather than the org
         # staying wedged at the cap until every stream goes.
@@ -286,13 +310,13 @@ def case_cap(token: str, cap: int, results: list) -> None:
             # The server notices the close when it next writes or reads;
             # give it a moment.
             time.sleep(0.3)
-            sock = open_stream(port, token)
+            sock = open_stream(port, token, path, auth)
             try:
                 status, _, _ = read_head(sock)
                 freed[name] = status
             finally:
                 sock.close()
-        compare("status after freeing one slot", freed, results)
+        compare(f"{label}: status after freeing one slot", freed, results)
     finally:
         for socks in held.values():
             for sock in socks:
@@ -306,11 +330,15 @@ def main() -> int:
     token = sys.argv[1]
 
     results: list[tuple[str, bool]] = []
-    case_greeting(token, results)
-    # 50 is `self_host`'s `max_sse_subscribers`; the harness runs the
-    # local-auth tier, where every org resolves to that plan.
-    case_cap(token, 50, results)
-    case_keepalive(token, results)
+    for feed in FEEDS:
+        case_greeting(token, results, feed)
+        # The session feeds are capped by the plan — 50 for `self_host`,
+        # which is what the local-auth tier resolves to — and the
+        # integration one by its own fixed ten.
+        case_cap(token, results, feed)
+    # One keepalive case is enough: the interval is shared code, and
+    # paying 25 seconds three times buys nothing.
+    case_keepalive(token, results, FEEDS[0])
 
     same = sum(1 for _, ok in results if ok)
     differing = len(results) - same

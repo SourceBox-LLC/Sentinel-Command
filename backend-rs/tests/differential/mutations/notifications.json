@@ -30,7 +30,8 @@
    "name": "the global email switch is ignored",
    "file": "src/notifications.rs",
    "old": "    if !config.email_enabled {\n        return false;\n    }",
-   "new": "    if false {\n        return false;\n    }"
+   "new": "    if false {\n        return false;\n    }",
+   "equivalent": "EMAIL_ENABLED is process configuration, and tiers.sh sets it true for both stacks so the email path is exercised at all — with the switch already on, ignoring it is a no-op. Reaching this would take a second tier pair running with it off, which would buy one branch at the cost of doubling every run."
   },
   {
    "name": "a setting that is not \"true\" still enables",
@@ -71,20 +72,23 @@
    "_why": "`json.dumps(meta) if meta else None` — {} is falsy in Python and stores NULL.",
    "file": "src/notifications.rs",
    "old": "        .filter(|meta| !is_falsy(meta))",
-   "new": "        .filter(|meta| !meta.is_null())"
+   "new": "        .filter(|meta| !meta.is_null())",
+   "equivalent": "No caller in the tree passes an empty meta: every emitter either omits it or fills it. The `{}` -> NULL rule is Python truthiness applied to an argument that is always either absent or populated, so no route can reach it. `python_truthiness_decides_whether_meta_is_stored` in the unit harness pins `is_falsy` over every falsy JSON value instead."
   },
   {
    "name": "an unknown audience becomes admin",
    "_why": "Python falls through to \"all\". Falling to \"admin\" instead would hide a notification from everyone it was meant for.",
    "file": "src/notifications.rs",
    "old": "        \"all\" | \"admin\" => notification.audience.as_str(),\n        _ => \"all\",",
-   "new": "        \"all\" | \"admin\" => notification.audience.as_str(),\n        _ => \"admin\","
+   "new": "        \"all\" | \"admin\" => notification.audience.as_str(),\n        _ => \"admin\",",
+   "equivalent": "Every caller passes a literal 'all' or 'admin', so the fallback is defensive and unreachable over HTTP. Held by `an_unrecognised_audience_or_severity_falls_back`, which is why that test exists."
   },
   {
    "name": "an unknown severity is kept",
    "file": "src/notifications.rs",
    "old": "        \"info\" | \"warning\" | \"error\" | \"critical\" => notification.severity.as_str(),\n        _ => \"info\",",
-   "new": "        \"info\" | \"warning\" | \"error\" | \"critical\" => notification.severity.as_str(),\n        other => other,"
+   "new": "        \"info\" | \"warning\" | \"error\" | \"critical\" => notification.severity.as_str(),\n        other => other,",
+   "equivalent": "Same: every caller passes a literal from the enum. Held by the same unit test."
   },
   {
    "name": "the cooldown gate applies to every kind",
@@ -97,7 +101,8 @@
    "_why": "Python adds every row and commits once, so a row the database refuses takes the whole batch with it rather than leaving some recipients mailed and others not.",
    "file": "src/notifications.rs",
    "old": "        if let Err(err) = result {\n            tracing::error!(error = %err, org_id, kind = %row.kind, address, \"[Notifications] enqueue failed\");\n            return;\n        }",
-   "new": "        if let Err(err) = result {\n            tracing::error!(error = %err, org_id, kind = %row.kind, address, \"[Notifications] enqueue failed\");\n        }"
+   "new": "        if let Err(err) = result {\n            tracing::error!(error = %err, org_id, kind = %row.kind, address, \"[Notifications] enqueue failed\");\n        }",
+   "equivalent": "Needs a batch where one row is refused and another is not, which needs more than one recipient — and the differential runs the local-auth tier, where `recipient_emails` returns exactly the one local admin. A single-row batch is atomic either way."
   },
   {
    "name": "the motion cooldown never floors at a minute",
@@ -129,11 +134,10 @@
   },
   {
    "name": "a failed recipient lookup is cached",
-   "_why": "The enqueue path writes no rows when there are no recipients, so caching a failure turns one Clerk hiccup into five minutes of silently dropped alert mail — with no retry, because the outbox IS the retry and it was never reached.",
+   "_why": "Marked equivalent at first and wrongly: the unit harness catches it. `a_failed_lookup_is_not_cached` points the lookup at a dead port and asserts nothing was written to the cache, which does not need Clerk.",
    "file": "src/recipients.rs",
    "old": "    let Some(addrs) = fetch_from_clerk(lookup, org_id, audience).await else {\n        return Vec::new();\n    };",
-   "new": "    let addrs = fetch_from_clerk(lookup, org_id, audience).await.unwrap_or_default();",
-   "equivalent": "Unreachable for the same reason, and covered by `a_failed_lookup_is_not_cached` in the unit harness, which points the lookup at a dead port and asserts nothing was written to the cache."
+   "new": "    let addrs = fetch_from_clerk(lookup, org_id, audience).await.unwrap_or_default();"
   },
   {
    "name": "sentinel dispatches while disabled",
@@ -189,7 +193,8 @@
    "name": "the monthly cap is not enforced",
    "file": "src/sentinel_dispatch.rs",
    "old": "    if cap.saturating_sub(used) <= 0 {\n        return Err(Refusal::MonthlyCapReached);\n    }",
-   "new": "    if false {\n        return Err(Refusal::MonthlyCapReached);\n    }"
+   "new": "    if false {\n        return Err(Refusal::MonthlyCapReached);\n    }",
+   "equivalent": "Equivalent in outcome, not merely unreached: the check before the INSERT is the cheap path, and the recount inside the transaction is the guard. Remove the former and the row is inserted, recounted at cap+1, and rolled back — the org still gets no run. What it costs is a wasted insert, which no snapshot shows."
   },
   {
    "name": "the licence gate is skipped",
@@ -209,7 +214,8 @@
    "_why": "The check before the insert is a read-then-write race: two dispatchers at cap-1 both pass it and the org overshoots.",
    "file": "src/sentinel_dispatch.rs",
    "old": "    if used > cap {\n        tx.rollback().await?;\n        tracing::info!(org_id, cap, used, \"sentinel: dispatch lost cap race\");\n        return Ok(false);\n    }",
-   "new": "    let _ = used;"
+   "new": "    let _ = used;",
+   "equivalent": "The other half of the same pair. With the pre-check present, the recount only changes the outcome when two dispatchers pass the pre-check concurrently — a race the harness is single-threaded against. Both layers are kept because each covers what the other cannot."
   },
   {
    "name": "the incident report column is left null",
@@ -256,7 +262,8 @@
    "_why": "SQLAlchemy emits no UPDATE when nothing changed, which the side-effect comparison counts.",
    "file": "src/api/keys.rs",
    "old": "    if revoked != Some(true) {",
-   "new": "    if true {"
+   "new": "    if true {",
+   "equivalent": "`mcp_api_keys` has no `updated_at`, so a second UPDATE setting `revoked = true` on a row that already has it produces a byte-identical row. The skip is there to keep the write count matching Python's, which nothing in the snapshot can see. Noted rather than dropped, because the day that table grows an onupdate column this becomes observable."
   },
   {
    "name": "an MCP key id revokes on the integration surface",
@@ -310,7 +317,8 @@
    "name": "an already-suppressed address is inserted again",
    "file": "src/api/notifications.rs",
    "old": "    match existing {\n        Ok(None) => {",
-   "new": "    match existing {\n        Ok(_) => {"
+   "new": "    match existing {\n        Ok(_) => {",
+   "equivalent": "`email_suppression.address` is UNIQUE, so the duplicate INSERT is refused by the database, logged, and the final state is the same row. The lookup is there to avoid an error in the log, not to protect the table — the constraint does that."
   },
   {
    "name": "an admin can request their own promotion",
