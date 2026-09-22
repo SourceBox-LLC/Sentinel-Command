@@ -118,20 +118,25 @@ WINDOW_START = (_PAST_DUE_NOW - timedelta(hours=2)).strftime("%H:%M")
 WINDOW_END = (_PAST_DUE_NOW + timedelta(hours=2)).strftime("%H:%M")
 
 
-def window_setup(tz: str | None) -> str:
-    """Put `cam-stale` inside a live UTC window, optionally with an
-    org timezone that moves it out of one."""
-    sql = (
+def window_setup(tz: str) -> str:
+    """Put `cam-stale` inside a window that is live in UTC, under the
+    named org timezone.
+
+    The zone is always named explicitly. The fixture already gives this
+    org `America/Los_Angeles`, so "leave it alone" would silently mean
+    "test Los Angeles" — and the case saying it tested UTC would have
+    been testing the same thing as the case beside it.
+
+    It is set with `pref`, which clears the key first, rather than a
+    bare INSERT: `(org_id, key)` is not unique, and a second row made
+    both tiers pick one at random and disagree about half the time, in
+    both directions. See PYTHON_BUGS.md #12.
+    """
+    return (
         "UPDATE cameras SET scheduled_recording = true,"
         f" scheduled_start = '{WINDOW_START}', scheduled_end = '{WINDOW_END}'"
         " WHERE camera_id = 'cam-stale';"
-    )
-    if tz is not None:
-        sql += (
-            "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
-            f" (9331,'self-host','timezone','{tz}', timestamp '2026-06-01');"
-        )
-    return sql
+    ) + pref("timezone", tz)
 
 
 def past_due_setup(stamp: str) -> str:
@@ -1724,13 +1729,12 @@ CASES += [
            " scheduled_end = 'def' WHERE camera_id = 'cam-stale'"),
           ("recording state: a bad timezone falls back to UTC",
            {"node_id": "node-aaaa1111"}, "node:test-node-key",
-           "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
-           " (9330,'self-host','timezone','Mars/Olympus', timestamp '2026-06-01')"),
+           pref("timezone", "Mars/Olympus")),
           # The three that make the zone itself observable. In UTC the
           # window is live; seven zones west it is not, and a port that
           # ignored the setting would answer the same for both.
           ("recording state: a live UTC window records",
-           {"node_id": "node-aaaa1111"}, "node:test-node-key", window_setup(None)),
+           {"node_id": "node-aaaa1111"}, "node:test-node-key", window_setup("UTC")),
           ("recording state: the same window in another zone does not",
            {"node_id": "node-aaaa1111"}, "node:test-node-key",
            window_setup("America/Los_Angeles")),

@@ -180,3 +180,44 @@ channel open, because in Rust the drop would otherwise end the response
 by itself. Fixing it here first would mean the two stacks disagree, and
 the whole method rests on them agreeing. It should be fixed once, on
 `master`, with a test — and then the `keepalive` field comes out.
+
+## 12. `settings` allows duplicate `(org_id, key)` rows, and every read of one picks arbitrarily
+
+`ix_settings_org_key` is a plain btree index, not a unique one, and
+`Setting.set` is a read-then-write:
+
+```python
+setting = db.query(Setting).filter_by(org_id=org_id, key=key).first()
+if setting: setting.value = value
+else: db.add(Setting(org_id=org_id, key=key, value=value))
+```
+
+Two concurrent setters that both miss the SELECT both insert, and
+nothing stops them. From then on the key has two rows, and every
+reader is a `.first()` with no `order_by` — so which value an org's
+plan, timezone, past-due flag or email toggle resolves to is whatever
+the planner returns first, and it can differ from one query to the
+next.
+
+Found by a harness case that inserted a second `timezone` row for an
+org the fixture already gave one: the two tiers answered a heartbeat's
+`recording_state` differently about half the time, in both directions,
+because each picked a different row. That was my case's bug, but the
+nondeterminism it exposed is the schema's.
+
+The writers most able to race here are the ones that fire per event
+rather than per user action: the Clerk webhook (`org_plan`,
+`payment_past_due`), the heartbeat's past-due sweep, and the motion
+cooldown anchors, which are written per camera per event.
+
+The fix is a unique index on `(org_id, key)` plus an upsert — 
+`ON CONFLICT (org_id, key) DO UPDATE`. It needs a migration that
+collapses any duplicates already present, which is why it is not a
+one-line change.
+
+**Not reproduced deliberately, and not fixable from this branch.** The
+port's `settings::get` is the same `LIMIT 1` without an `ORDER BY`, so
+it matches Python exactly — including the part where "matches" means
+both are arbitrary. A port that added `ORDER BY id` here would be more
+predictable than the thing it is replacing and would diverge from it,
+which is the one thing this branch cannot do.
