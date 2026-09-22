@@ -201,8 +201,8 @@
    "name": "the update does not scope to the node",
    "_why": "This is the tenant boundary, not the pre-check above it. Without the node_id in the WHERE, a node can mark any camera in any org failed by naming it \u2014 the camera_id is the only other term, and it is global.",
    "file": "src/api/node_register.rs",
-   "old": "                \"UPDATE cameras SET status = $1, last_seen = $2, last_error = $3, updated_at = $2\\n                  WHERE camera_id = $4 AND node_id = $5\",",
-   "new": "                \"UPDATE cameras SET status = $1, last_seen = $2, last_error = $3, updated_at = $2\\n                  WHERE camera_id = $4 AND $5 = $5\","
+   "old": "                  WHERE camera_id = $4 AND node_id = $5\",",
+   "new": "                  WHERE camera_id = $4 AND $5 = $5\","
   }
  ]
 }
