@@ -57,6 +57,16 @@ PORTED = {
     "core.migrations",
     "models.models",
     "models",
+    # Ported in the notification slice. Stopping here matters as much
+    # as it does for `core.auth`: `core.recipients` calls the Clerk
+    # Backend API, and without this every route that emits a
+    # notification counts `core.clerk` as a blocker — when the Rust
+    # side makes that same membership call itself.
+    "core.recipients",
+    "core.email_templates",
+    "core.email_unsubscribe",
+    "core.versions",
+    "core.release_cache",
 }
 
 # Modules only PART of which has a Rust equivalent. Importing one of the
@@ -75,25 +85,32 @@ PORTED_FUNCTIONS = {
         "is_sentinel_licensed", "is_sync_enabled", "sentinel_blocked_by_license",
         "SENTINEL_LICENSE_GRACE_HOURS",
     },
+    # The dispatch path is ported; `reap_stranded_runs` — the reaper
+    # loop's body — is not, and no route reaches it.
+    "core.sentinel_dispatch": {
+        "maybe_dispatch_for_notification", "dispatch_manual_run",
+        "global_dispatch_allowed", "cap_for_plan", "cap_remaining",
+        "runs_used_this_month", "runs_used_this_month_global",
+        "SENTINEL_PLANS", "STRANDED_RUN_AGE_MINUTES",
+    },
 }
 
 # A module whose *import alone* means the route cannot move yet, with the
 # reason. Keys are module prefixes under `app.`.
+# Ported since this table was written, and so deliberately absent
+# below: core.recipients, core.email_templates, core.email_unsubscribe,
+# core.sentinel_dispatch, core.versions and core.release_cache. What is
+# left of the email stack is the transport — core.email and
+# core.email_worker — which still needs Resend and the drain loop.
 BLOCKERS = {
     "core.plans": "plan-cache + Clerk billing API",
     "core.clerk": "Clerk Backend API",
     "core.email": "Resend + the outbox worker",
-    "core.email_templates": "Resend + the outbox worker",
-    "core.email_unsubscribe": "Resend + the outbox worker",
     "core.email_worker": "Resend + the outbox worker",
-    "core.recipients": "Clerk org membership lookup",
     "core.license_client": "Sentinel License Service client",
-    "core.release_cache": "in-process GitHub release cache",
     "core.health_probes": "Clerk + license probes",
     "core.integration_auth": "Home Assistant integration key",
     "core.sync_client": "Sentinel Sync Service client",
-    "core.sentinel_dispatch": "sentinel dispatch (DB-backed, portable)",
-    "core.versions": "node version check (reads release cache)",
     "api.hls": "in-process HLS segment + playlist caches",  # now Rust's — see PORTED_STATE
     "api.ws": "in-process WebSocket connection manager",
     "mcp": "MCP server (fastmcp -> rmcp)",
@@ -103,7 +120,6 @@ BLOCKERS = {
 # simply has not been written yet. Listing these separately keeps
 # "blocked" meaning blocked.
 JUST_WORK = {
-    "core.sentinel_dispatch": "sentinel dispatch (DB-backed)",
     "core.csv_export": "CSV export",
     "core.gdpr": "GDPR export builder",
     "core.codec": "codec negotiation",
@@ -125,6 +141,17 @@ BLOCKING_SYMBOLS = {
     ("api.motion", "integration_motion_broadcaster"): "in-process motion SSE broadcaster",
     ("api.notifications", "notification_broadcaster"): "in-process notification SSE broadcaster",
     ("api.notifications", "_transition_debounce"): "in-process transition debounce",
+}
+
+# The same distinction as PORTED_STATE, one level down: in-process state
+# named by BLOCKING_SYMBOLS that the port has already taken over. Once
+# `GET /api/notifications/stream` is served from Rust, every subscriber
+# is on Rust's broadcaster — so a Python route that still publishes to
+# its own copy is not blocked, it is overdue, and its notifications
+# reach nobody.
+PORTED_SYMBOLS = {
+    ("api.notifications", "notification_broadcaster"),
+    ("api.notifications", "_transition_debounce"),
 }
 
 # In-process state the port has already taken over. A route whose only
@@ -347,9 +374,40 @@ def routes() -> list[tuple[str, str, str]]:
     return sorted(set(out))
 
 
-def ported_paths() -> set[str]:
+def ported_routes() -> set[tuple[str, str]]:
+    """(METHOD, path) for every route Rust actually serves.
+
+    Keyed on the method as well as the path, because a path can be
+    split between the two stacks: `/api/mcp/keys` is a ported GET and a
+    proxied POST, and matching the path alone reported the creation
+    route — which mints a secret and fires a notification — as done.
+    Both key-creation routes disappeared from this report that way.
+    """
     rs = (REPO / "backend-rs/src/app.rs").read_text()
-    return set(re.findall(r'"([^"]+)"\s*,\s*\n?\s*(?:ported|served)\(', rs))
+    out: set[tuple[str, str]] = set()
+    for m in re.finditer(r'\.route\(\s*"([^"]+)"\s*,', rs):
+        path = m.group(1)
+        # Balance parentheses from `.route(` to find just this call.
+        start = rs.rindex("(", 0, m.end())
+        depth, j = 0, start
+        while j < len(rs):
+            if rs[j] == "(":
+                depth += 1
+            elif rs[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        body = rs[m.end():j]
+        if "still_python" in body:
+            continue
+        # `ported(h)` is GET only; `served(...)` carries its verbs.
+        if re.search(r"\bported\(", body):
+            out.add(("GET", path))
+        for verb in ("get", "post", "put", "patch", "delete"):
+            if re.search(rf"(?:^|[^\w])(?:axum::routing::)?{verb}\(", body):
+                out.add((verb.upper(), path))
+    return out
 
 
 def main() -> int:
@@ -357,14 +415,28 @@ def main() -> int:
     why = sys.argv[sys.argv.index("--why") + 1] if "--why" in sys.argv else None
 
     index = ModuleIndex()
-    ported = ported_paths()
+    ported = ported_routes()
     groups: dict[tuple, list[tuple[str, str]]] = defaultdict(list)
+    # Reasons that name state the port already owns. They are not
+    # blockers — calling them that implies the Rust side does not exist
+    # — but a route that reads one is reading a copy that is no longer
+    # live, so they are subtracted here and reported separately.
+    ported_reasons = {BLOCKERS.get(mod, mod) for mod in PORTED_STATE}
+    ported_reasons |= {BLOCKING_SYMBOLS[sym] for sym in PORTED_SYMBOLS}
+    reads_ported: dict[str, set[str]] = defaultdict(set)
 
     for path, methods, qual in routes():
-        if path in ported and not show_all:
+        # A route counts as done only when every verb it answers is
+        # served from Rust.
+        verbs = [v for v in methods.split(",") if v]
+        if verbs and all((v, path) in ported for v in verbs) and not show_all:
             continue
         found, chain = index.walk(qual)
-        key = tuple(sorted(why_ for _, why_ in found))
+        all_reasons = {why_ for _, why_ in found}
+        stale = all_reasons & ported_reasons
+        if stale:
+            reads_ported[path] = stale
+        key = tuple(sorted(all_reasons - ported_reasons))
         groups[key].append((path, methods))
         if why and path == why:
             print(f"{methods} {path}  ->  {qual}")
@@ -393,12 +465,11 @@ def main() -> int:
     deliberate = [(p, m) for p, m in clear if p in NOT_A_PORT]
     clear = [(p, m) for p, m in clear if p not in NOT_A_PORT]
 
-    # Split out the routes whose only blockers have already moved.
-    overdue = {}
-    for key in list(groups):
-        reasons = {BLOCKERS.get(mod, mod) for mod in PORTED_STATE}
-        if key and set(key) <= reasons:
-            overdue[key] = groups.pop(key)
+    # A route whose blockers are now all ported lands on the empty key,
+    # which is `clear` — but it is not clear, it is overdue: the Python
+    # copy of that state is no longer the live one.
+    overdue = [(p, m) for p, m in clear if p in reads_ported]
+    clear = [(p, m) for p, m in clear if p not in reads_ported]
 
     print(f"== clear: nothing in the way ({len(clear)}) ==")
     for path, methods in sorted(clear):
@@ -407,11 +478,18 @@ def main() -> int:
         print(f"\n== not a port, by decision ({len(deliberate)}) ==")
         for path, methods in sorted(deliberate):
             print(f"   {methods:12} {path:28} {NOT_A_PORT[path]}")
-    for key, paths in sorted(overdue.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-        print(f"\n== overdue: reads state the port already owns ({len(paths)}) ==")
-        print(f"   {', '.join(key)} — the Python copy is no longer the live one")
-        for path, methods in sorted(paths):
-            print(f"   {methods:12} {path}")
+    if overdue:
+        print(f"\n== overdue: reads state the port already owns ({len(overdue)}) ==")
+        for path, methods in sorted(overdue):
+            print(f"   {methods:12} {path:44} {', '.join(sorted(reads_ported[path]))}")
+    still_reading = sorted(
+        (p, m) for paths in groups.values() for p, m in paths if p in reads_ported
+    )
+    if still_reading:
+        print(f"\n== blocked, and also reads state the port owns ({len(still_reading)}) ==")
+        for path, methods in still_reading:
+            print(f"   {methods:12} {path:44} {', '.join(sorted(reads_ported[path]))}")
+
     for key in sorted(groups, key=lambda k: (-len(groups[k]), k)):
         print(f"\n== blocked by {', '.join(key)} ({len(groups[key])}) ==")
         for path, methods in sorted(groups[key]):

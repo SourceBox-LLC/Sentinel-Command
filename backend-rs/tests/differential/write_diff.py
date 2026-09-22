@@ -33,6 +33,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -108,9 +109,194 @@ AGENT_KEYS = {
     "agent:unknown": "osa_ffffffffffffffffffffffffffffffff",
 }
 
+# Unsubscribe tokens, minted the way `core/email_unsubscribe.py` does:
+# the signing key is derived from the deployment secret with a fixed
+# domain label, never used raw. Built here rather than fetched from a
+# rendered email so a case can ask for a token that is expired, or
+# signed with the wrong key, which no email would ever contain.
+UNSUB_LABEL = b"sentinel-email-unsubscribe-v1"
+
+
+def unsub_token(kind="camera_offline", rcpt="admin@example.com",
+                org_id="self-host", age=0, secret=None):
+    import hmac as _hmac  # noqa: PLC0415
+
+    import jwt as _jwt  # noqa: PLC0415
+
+    base = secret or os.environ.get(
+        "APP_SECRET_KEY", "differential-test-secret-not-a-real-key")
+    derived = _hmac.new(base.encode(), UNSUB_LABEL, hashlib.sha256).hexdigest()
+    issued = int(time.time()) - age
+    return _jwt.encode(
+        {"org_id": org_id, "kind": kind, "rcpt": rcpt, "iat": issued,
+         "exp": issued + 400 * 24 * 3600, "sub": "email-unsubscribe"},
+        derived, algorithm="HS256",
+    )
+
+
+# A `sentinel_config` row for `self-host` with every gate open, and
+# keyword overrides to close one at a time. Values are SQL literals
+# because they go straight into the setup statement.
+def sentinel_on(**over):
+    fields = {
+        "enabled": "true",
+        "motion_enabled": "true",
+        "incident_opened_enabled": "true",
+        "motion_cooldown_min": "0",
+        "schedule_mode": "'always'",
+        "schedule_start": "'00:00'",
+        "schedule_end": "'24:00'",
+        "active_days": """'["mon","tue","wed","thu","fri","sat","sun"]'""",
+        "camera_scope": "'{}'",
+    }
+    fields.update(over)
+    columns = ", ".join(fields)
+    values = ", ".join(fields.values())
+    return (
+        "DELETE FROM sentinel_config WHERE org_id='self-host';"
+        f"INSERT INTO sentinel_config (org_id, {columns}, created_at, updated_at)"
+        f" VALUES ('self-host', {values}, now()::timestamp, now()::timestamp);"
+    )
+
+
+# Five hundred runs already spent this month — the per-plan cap for
+# `self_host`.
+CAP_FILLER = (
+    "INSERT INTO sentinel_runs (id, org_id, triggered_at, trigger_type,"
+    " tool_call_count, outcome, summary, updated_at)"
+    " SELECT md5(g::text), 'self-host', now()::timestamp, 'motion', 0, 'no_action',"
+    " '', now()::timestamp FROM generate_series(1, 500) g;"
+)
+
+
 # (name, method, path, body) — body None means no request body.
-# A 5th element "member" sends the non-admin token instead.
+# A 5th element "member" sends the non-admin token instead, and "none"
+# sends no Authorization header at all.
 CASES = [
+    # --- POST: a member asking for admin ------------------------------
+    # Audience "admin", so this is also the one write case whose
+    # notification a viewer must never see on the SSE stream.
+    ("promotion: a member asks", "POST",
+     "/api/notifications/request-admin-promotion", None, "member"),
+    # An admin asking would otherwise notify themselves that they had
+    # requested their own access.
+    ("promotion: an admin asks", "POST",
+     "/api/notifications/request-admin-promotion", None),
+
+    # --- GET: the unsubscribe link ------------------------------------
+    # A GET that writes: an `email_suppression` row and an audit entry.
+    # Public, so no token is sent — the signed one in the URL is the
+    # authority, and these are the only cases in the file that carry
+    # their own credential.
+    ("unsub: valid link", "GET",
+     "/api/notifications/email/unsubscribe?t=" + unsub_token(), None, "none"),
+    # Idempotent: the address is already suppressed by the seed, so a
+    # second click adds no row and still renders the same page.
+    ("unsub: already suppressed", "GET",
+     "/api/notifications/email/unsubscribe?t=" + unsub_token(
+         rcpt="already@example.com"), None, "none"),
+    # The kind reaches the page copy, underscores turned to spaces.
+    ("unsub: another kind", "GET",
+     "/api/notifications/email/unsubscribe?t=" + unsub_token(kind="motion_digest"),
+     None, "none"),
+    # An address with no domain takes the other masking branch.
+    ("unsub: malformed address", "GET",
+     "/api/notifications/email/unsubscribe?t=" + unsub_token(rcpt="not-an-address"),
+     None, "none"),
+    ("unsub: bad signature", "GET",
+     "/api/notifications/email/unsubscribe?t=" + unsub_token(secret="wrong-secret"),
+     None, "none"),
+    ("unsub: expired", "GET",
+     "/api/notifications/email/unsubscribe?t=" + unsub_token(age=401 * 24 * 3600),
+     None, "none"),
+    ("unsub: not a token", "GET",
+     "/api/notifications/email/unsubscribe?t=nonsense", None, "none"),
+    ("unsub: empty token", "GET",
+     "/api/notifications/email/unsubscribe?t=", None, "none"),
+    ("unsub: no token at all", "GET",
+     "/api/notifications/email/unsubscribe", None, "none"),
+
+    # --- POST: filing one, and what the dispatcher does with it -------
+    # The fixture gives `self-host` no sentinel_config row, so without a
+    # setup every incident case stops at the dispatcher's first gate and
+    # the rest of it — plan, licence, trigger, scope, schedule, cap — is
+    # never reached by anything. These turn it on and then close one
+    # gate at a time.
+    *[(f"dispatch: {label}", "POST", "/api/incidents",
+       {"title": "T", "summary": "S", "camera_id": "cam-live"}, "admin", setup)
+      for label, setup in [
+          ("every gate open", sentinel_on()),
+          ("sentinel disabled", sentinel_on(enabled="false")),
+          ("incident trigger off", sentinel_on(incident_opened_enabled="false")),
+          # The camera is named in the body, and excluded by scope.
+          ("camera out of scope", sentinel_on(camera_scope="""'{"cam-live": false}'""")),
+          # A camera absent from the scope is still in scope.
+          ("another camera out of scope", sentinel_on(camera_scope="""'{"cam-stale": false}'""")),
+          ("schedule off", sentinel_on(schedule_mode="'off'")),
+          # No day is today, whichever day it is — deterministic where a
+          # window in hours would depend on when the harness ran.
+          ("no active days", sentinel_on(schedule_mode="'scheduled'", active_days="'[]'")),
+          ("every active day", sentinel_on(schedule_mode="'scheduled'")),
+          ("unlicensed",
+           sentinel_on() + "DELETE FROM settings WHERE org_id='self-host' AND key LIKE 'sentinel_license%';"),
+          ("monthly cap reached", sentinel_on() + CAP_FILLER),
+      ]],
+
+    # --- POST: filing one ---------------------------------------------
+    # The first ported route that emits a notification, so these are
+    # also the first cases that compare `notifications` and
+    # `email_outbox` rows written by Rust rather than forwarded to
+    # Python — and, where the seeded Sentinel config allows it, a
+    # `sentinel_runs` row from the dispatcher.
+    ("file: minimal", "POST", "/api/incidents", {"title": "T", "summary": "S"}),
+    ("file: every field", "POST", "/api/incidents",
+     {"title": "Back door", "summary": "Someone at the gate", "severity": "high",
+      "camera_id": "cam-live"}),
+    # Severity drives the notification's own severity, and the split is
+    # at high: low and medium are a warning, high and critical are not.
+    ("file: low", "POST", "/api/incidents",
+     {"title": "T", "summary": "S", "severity": "low"}),
+    ("file: critical", "POST", "/api/incidents",
+     {"title": "T", "summary": "S", "severity": "critical"}),
+    ("file: bad severity", "POST", "/api/incidents",
+     {"title": "T", "summary": "S", "severity": "nonsense"}),
+    ("file: null severity", "POST", "/api/incidents",
+     {"title": "T", "summary": "S", "severity": None}),
+    # Stripped before the emptiness check, so whitespace is not a title.
+    ("file: padded", "POST", "/api/incidents", {"title": "  T  ", "summary": "  S  "}),
+    ("file: whitespace title", "POST", "/api/incidents", {"title": "   ", "summary": "S"}),
+    ("file: whitespace summary", "POST", "/api/incidents", {"title": "T", "summary": " "}),
+    # Pydantic's bounds, which fire before the handler sees anything.
+    ("file: no body fields", "POST", "/api/incidents", {}),
+    ("file: empty title", "POST", "/api/incidents", {"title": "", "summary": "S"}),
+    ("file: empty summary", "POST", "/api/incidents", {"title": "T", "summary": ""}),
+    ("file: title too long", "POST", "/api/incidents",
+     {"title": "x" * 201, "summary": "S"}),
+    ("file: title at the bound", "POST", "/api/incidents",
+     {"title": "x" * 200, "summary": "S"}),
+    ("file: title not a string", "POST", "/api/incidents",
+     {"title": 123, "summary": "S"}),
+    ("file: null title", "POST", "/api/incidents", {"title": None, "summary": "S"}),
+    ("file: every field wrong", "POST", "/api/incidents",
+     {"title": 1, "summary": 2, "severity": 3, "camera_id": 4}),
+    # The camera must be this org's. cam-theirs belongs to another.
+    ("file: unknown camera", "POST", "/api/incidents",
+     {"title": "T", "summary": "S", "camera_id": "nope"}),
+    ("file: another tenant's camera", "POST", "/api/incidents",
+     {"title": "T", "summary": "S", "camera_id": "cam-theirs"}),
+    ("file: empty camera id", "POST", "/api/incidents",
+     {"title": "T", "summary": "S", "camera_id": ""}),
+    ("file: null camera id", "POST", "/api/incidents",
+     {"title": "T", "summary": "S", "camera_id": None}),
+    # Title and summary reach the email templates, so they have to
+    # survive escaping in HTML and stay literal in the text part.
+    ("file: markup in the title", "POST", "/api/incidents",
+     {"title": "<b>&</b> \"q\" 'a'", "summary": "5 < 6 & 7 > 2"}),
+    ("file: unicode", "POST", "/api/incidents",
+     {"title": "Café — Ünïcødé 😀", "summary": "naïve façade"}),
+    ("file: member cannot", "POST", "/api/incidents",
+     {"title": "T", "summary": "S"}, "member"),
+
     # --- PATCH: status transitions ------------------------------------
     ("ack open incident", "PATCH", "/api/incidents/1", {"status": "acknowledged"}),
     ("resolve open incident", "PATCH", "/api/incidents/1", {"status": "resolved"}),
@@ -1029,6 +1215,78 @@ CASES += [
           ("signed empty body", b"", "svix:msg_29"),
       ]],
 
+    # --- POST: minting a key ------------------------------------------
+    # All three mint a credential, return it exactly once, and fire an
+    # admin notification — a new key is a security signal, and naming
+    # the actor is what lets a recipient who *is* the actor recognise
+    # their own action rather than suspecting a compromise.
+    ("mint agent key", "POST", "/api/sentinel/agent-keys", {"name": "CI agent"}),
+    ("mint agent key, default name", "POST", "/api/sentinel/agent-keys", {}),
+    ("mint agent key, name at the bound", "POST", "/api/sentinel/agent-keys",
+     {"name": "x" * 100}),
+    ("mint agent key, name too long", "POST", "/api/sentinel/agent-keys",
+     {"name": "x" * 101}),
+    ("mint agent key, name not a string", "POST", "/api/sentinel/agent-keys",
+     {"name": 5}),
+    ("mint agent key, name null", "POST", "/api/sentinel/agent-keys", {"name": None}),
+    # Non-ASCII reaches the audit `details` JSON, where json.dumps
+    # escapes it, and the notification title, where it stays literal.
+    ("mint agent key, non-ascii name", "POST", "/api/sentinel/agent-keys",
+     {"name": "Café 🎥"}),
+    ("mint agent key, member", "POST", "/api/sentinel/agent-keys", {"name": "x"}, "member"),
+    # Billing, not just admin: this key spends money on every run.
+    ("mint agent key, past due", "POST", "/api/sentinel/agent-keys", {"name": "x"},
+     "admin", past_due_setup(PAST_DUE_EXPIRED)),
+    ("mint agent key, unlicensed", "POST", "/api/sentinel/agent-keys", {"name": "x"},
+     "admin", "DELETE FROM settings WHERE org_id='self-host' AND key LIKE 'sentinel_license%';"),
+
+    # Integration keys are free on every tier — admin, but no billing
+    # gate — and carry no per-tool scoping, so both scope columns stay
+    # null where an MCP row has values.
+    ("mint integration key", "POST", "/api/integration/keys", {"name": "HA"}),
+    ("mint integration key, default name", "POST", "/api/integration/keys", {}),
+    ("mint integration key, name too long", "POST", "/api/integration/keys",
+     {"name": "x" * 101}),
+    ("mint integration key, name not a string", "POST", "/api/integration/keys",
+     {"name": []}),
+    ("mint integration key, member", "POST", "/api/integration/keys", {"name": "x"}, "member"),
+    # Free on every tier, so a past-due org can still mint one.
+    ("mint integration key, past due", "POST", "/api/integration/keys", {"name": "x"},
+     "admin", past_due_setup(PAST_DUE_EXPIRED)),
+
+    # Agent keys: a soft revoke, so `last_used_at` survives as the
+    # forensic answer to "when did this leaked credential last act?"
+    # and the unique hash stays burned. Seeded rows 1-3 are a live key,
+    # a revoked one and another tenant's.
+    ("revoke agent key", "DELETE", "/api/sentinel/agent-keys/1", None),
+    ("revoke an already-revoked agent key", "DELETE", "/api/sentinel/agent-keys/2", None),
+    # 404 rather than 403, so a caller cannot probe which ids exist
+    # in another org.
+    ("revoke another tenant's agent key", "DELETE", "/api/sentinel/agent-keys/3", None),
+    ("revoke missing agent key", "DELETE", "/api/sentinel/agent-keys/9999", None),
+    ("revoke agent key, non-integer id", "DELETE", "/api/sentinel/agent-keys/abc", None),
+    ("member: revoke agent key", "DELETE", "/api/sentinel/agent-keys/1", None, "member"),
+
+    # MCP keys: the same revoke, a different response shape, and a
+    # notification the integration surface deliberately has none of —
+    # an MCP key is full programmatic access, so both ends of its
+    # lifecycle are a security audit signal.
+    ("revoke mcp key", "DELETE", "/api/mcp/keys/1", None),
+    ("revoke mcp key with a custom scope", "DELETE", "/api/mcp/keys/2", None),
+    # The name reaches the audit `details` JSON *and* the notification
+    # title and body, so a non-ASCII one exercises json.dumps'
+    # ensure_ascii in one place and leaves it literal in the others.
+    ("revoke mcp key with a non-ascii name", "DELETE", "/api/mcp/keys/11", None),
+    # Already revoked: no second UPDATE, but Python still audits and
+    # still notifies.
+    ("revoke an already-revoked mcp key", "DELETE", "/api/mcp/keys/4", None),
+    # An integration key id must 404 here rather than crossing surfaces.
+    ("revoke an integration key via mcp", "DELETE", "/api/mcp/keys/5", None),
+    ("revoke missing mcp key", "DELETE", "/api/mcp/keys/9999", None),
+    ("revoke another tenant's mcp key", "DELETE", "/api/mcp/keys/9", None),
+    ("revoke mcp, non-integer id", "DELETE", "/api/mcp/keys/abc", None),
+    ("member: revoke mcp key", "DELETE", "/api/mcp/keys/1", None, "member"),
+
     ("revoke integration key", "DELETE", "/api/integration/keys/5", None),
     # The audit row this writes carries the key's name in its details
     # JSON, and that name is non-ASCII on purpose — see seed row 11.
@@ -1260,6 +1518,21 @@ def _unsub_claims(match):
     return match.group(1) + "<jwt:" + json.dumps(claims, sort_keys=True) + ">"
 
 
+# Values random by construction whose *name* identifies them more
+# safely than their content could. `key_last4` is four hex characters —
+# short enough that substituting it by value would rewrite an unrelated
+# run of four characters inside some other hash, differently on each
+# tier, and manufacture a difference out of nothing. That it really is
+# the last four characters of the minted key is held by a unit test,
+# which is the right place for an invariant that needs the key itself.
+RANDOM_FIELDS = {"key_last4": "<issued-key-last4>"}
+
+# The same field, but inside a JSON *string* — the audit `details`
+# column, which is text and so never reaches the dict rule above.
+# Anchored on the field name for the same reason.
+LAST4_IN_JSON = re.compile(r'("key_last4":\s*")[^"]{0,8}(")')
+
+
 def normalise(value, now):
     """Replace just-written timestamps with a token, recursively.
 
@@ -1269,13 +1542,19 @@ def normalise(value, now):
     is what the HTTP differential runs on.
     """
     if isinstance(value, dict):
-        return {k: normalise(v, now) for k, v in value.items()}
+        return {
+            k: (RANDOM_FIELDS[k] if k in RANDOM_FIELDS and isinstance(v, str)
+                else normalise(v, now))
+            for k, v in value.items()
+        }
     if isinstance(value, list):
         return [normalise(v, now) for v in value]
     if isinstance(value, str) and JWT.match(value):
         return "<jwt>"
     if isinstance(value, str) and "/api/notifications/email/unsubscribe?t=" in value:
         value = UNSUB_LINK.sub(_unsub_claims, value)
+    if isinstance(value, str) and "key_last4" in value:
+        value = LAST4_IN_JSON.sub(r"\1<issued-key-last4>\2", value)
     if isinstance(value, str) and 19 <= len(value) <= 32 and value[4] == "-":
         for fmt in TS_FORMATS:
             try:
@@ -1364,7 +1643,10 @@ def fetch(base, method, path, body, who="admin"):
         # which raises TypeError on non-ASCII — an unauthenticated
         # probe 500'd all three agent endpoints instead of 401ing.
         req.add_header("X-Sentinel-Agent-Key", "osa_\u00ff")
-    elif who == "agent:none":
+    elif who == "agent:none" or who == "none":
+        # No credential at all. The unsubscribe link is public — its
+        # signed token is the authority — and sending a session token
+        # anyway would let a port that wrongly required one still pass.
         pass
     elif who.startswith("svix"):
         # A Resend delivery, signed by the svix library itself at send
@@ -1434,12 +1716,19 @@ def table_for_compare(name, rows):
     comparing it would be testing the storage engine rather than the
     port. The rows are compared as a set instead.
 
-    What is not arbitrary is the grouping of the two cascade children:
+    What is not arbitrary is the *grouping* of the two cascade children:
     Python loads them per parent (`for inc in incidents: for ev in
-    inc.evidence`), so each parent's rows are contiguous and the parents
-    come in the order the parent table was exported. A port that
-    replaced that with one flat join would lose it, so it is compared
-    explicitly.
+    inc.evidence`), so every row of one parent is contiguous. A port
+    that replaced that with one flat join would interleave them, so
+    that property is compared explicitly.
+
+    The *order the parents come in* is arbitrary, though, and comparing
+    it was a latent flake: `db.query(CameraNode).filter_by(...).all()`
+    has no ORDER BY either, so the parent sequence is the same heap
+    order as the rows, and it flipped between runs on its own. What is
+    compared instead is the set of parents plus contiguity — a flat
+    join still fails, because it makes a parent appear in more than one
+    run and `contiguous` goes false.
     """
     if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
         return rows
@@ -1452,7 +1741,8 @@ def table_for_compare(name, rows):
         for row in rows:
             if not seen or seen[-1] != row.get(parent):
                 seen.append(row.get(parent))
-        out["grouped_by"] = seen
+        out["grouped_by"] = sorted(seen, key=str)
+        out["grouping_is_contiguous"] = len(seen) == len(set(seen))
     return out
 
 
@@ -1472,9 +1762,10 @@ def run_case(base, method, path, body, who="admin", setup=None):
             parsed = json.loads(raw)
         except Exception:  # noqa: BLE001
             parsed = raw.decode("utf-8", "replace")
-    subs = {**issued_secrets(parsed), **issued_ids(parsed)}
+    rows = snapshot()
+    subs = {**dispatched_run_ids(rows), **issued_secrets(parsed), **issued_ids(parsed)}
     return (status, substitute(normalise(parsed, now), subs),
-            substitute(normalise(snapshot(), now), subs))
+            substitute(normalise(rows, now), subs))
 
 
 def issued_secrets(parsed):
@@ -1489,11 +1780,18 @@ def issued_secrets(parsed):
     two tiers disagree.
     """
     subs = {}
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("api_key"), str):
+    if not isinstance(parsed, dict):
+        return subs
+    # `api_key` is a node's; `key` is what the three key-minting routes
+    # call theirs. Both are returned once and stored only as a hash.
+    for field in ("api_key", "key"):
+        value = parsed.get(field)
+        if isinstance(value, str) and value:
+            subs[value] = f"<issued-{field}>"
+            subs[hashlib.sha256(value.encode()).hexdigest()] = f"<sha256-of-issued-{field}>"
+    if not isinstance(parsed.get("api_key"), str):
         return subs
     key = parsed["api_key"]
-    subs[key] = "<issued-api-key>"
-    subs[hashlib.sha256(key.encode()).hexdigest()] = "<sha256-of-issued-key>"
     node_id = parsed.get("node_id")
     if isinstance(node_id, str) and re.fullmatch(r"[0-9a-f]{8}", node_id):
         subs[node_id] = "<issued-node-id>"
@@ -1509,6 +1807,27 @@ def issued_ids(parsed):
     if isinstance(parsed, dict) and re.fullmatch(r"[0-9a-f]{32}", str(parsed.get("id", ""))):
         return {parsed["id"]: "<issued-run-id>"}
     return {}
+
+
+def dispatched_run_ids(rows):
+    """Run ids the *dispatcher* minted, which no response carries.
+
+    `issued_ids` reads the id out of the response, which works for
+    `POST /runs/manual` — the response is the run. A run dispatched from
+    a notification has no such response: filing an incident returns the
+    incident, and the run appears only in the side-effect snapshot with
+    a fresh uuid4 that differs by construction between the two passes.
+
+    Scoped to this one column rather than matching 32 hex characters
+    anywhere, which would also blank anything else that happened to
+    look like one. Seeded ids spell "run0000…", which is not hex, so
+    only a generated one matches.
+    """
+    return {
+        row["id"]: "<dispatched-run-id>"
+        for row in rows.get("sentinel_runs", [])
+        if re.fullmatch(r"[0-9a-f]{32}", str(row.get("id", "")))
+    }
 
 
 def substitute(value, subs):

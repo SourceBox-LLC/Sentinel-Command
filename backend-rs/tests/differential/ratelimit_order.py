@@ -60,6 +60,22 @@ ROUTES = [
      [("DELETE", "/api/incidents/9999", "member", None),
       ("DELETE", "/api/incidents/abc", "admin", None)],
      ("DELETE", "/api/incidents/9999", "admin", None)),
+    ("POST sentinel/agent-keys", 10,
+     [("POST", "/api/sentinel/agent-keys", "member", {"name": "x"}),
+      ("POST", "/api/sentinel/agent-keys", "admin", {"name": "x" * 101})],
+     ("POST", "/api/sentinel/agent-keys", "admin", {"name": "x"})),
+    ("POST integration/keys", 10,
+     [("POST", "/api/integration/keys", "member", {"name": "x"}),
+      ("POST", "/api/integration/keys", "admin", {"name": "x" * 101})],
+     ("POST", "/api/integration/keys", "admin", {"name": "x"})),
+    ("DELETE sentinel/agent-keys/{id}", 30,
+     [("DELETE", "/api/sentinel/agent-keys/9999", "member", None),
+      ("DELETE", "/api/sentinel/agent-keys/abc", "admin", None)],
+     ("DELETE", "/api/sentinel/agent-keys/9999", "admin", None)),
+    ("DELETE mcp/keys/{id}", 30,
+     [("DELETE", "/api/mcp/keys/9999", "member", None),
+      ("DELETE", "/api/mcp/keys/abc", "admin", None)],
+     ("DELETE", "/api/mcp/keys/9999", "admin", None)),
     ("DELETE integration/keys/{id}", 30,
      [("DELETE", "/api/integration/keys/9999", "member", None),
       ("DELETE", "/api/integration/keys/abc", "admin", None)],
@@ -105,6 +121,13 @@ ROUTES = [
      [("PATCH", "/api/incidents/9999", "member", {"status": "open"}),
       ("PATCH", "/api/incidents/abc", "admin", {"status": "open"})],
      ("PATCH", "/api/incidents/9999", "admin", {"status": "open"})),
+    ("POST incidents", 60,
+     # A member 403 and a 422 are both free; the handler's own 400 for
+     # an unknown severity is not, because it is raised inside the
+     # function where slowapi's decorator has already run.
+     [("POST", "/api/incidents", "member", {"title": "T", "summary": "S"}),
+      ("POST", "/api/incidents", "admin", {"title": "", "summary": "S"})],
+     ("POST", "/api/incidents", "admin", {"title": "T", "summary": "S"})),
     ("POST auth/local/login", 10,
      # Both 422 paths: an unparseable body, and a parseable one missing
      # its fields. A check misplaced between the two is caught only by

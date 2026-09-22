@@ -97,6 +97,23 @@ export SEGMENT_CACHE_MAX_TOTAL_BYTES="${SEGMENT_CACHE_MAX_TOTAL_BYTES:-3000000}"
 export CLEANUP_INTERVAL="${CLEANUP_INTERVAL:-3}"
 
 
+# Email on. Off is the production default and was the harness default
+# too, which meant `email_enabled_for_kind` refused every kind and not
+# one outbox row was ever written — so the templates, the recipient
+# lookup and the unsubscribe tokens went entirely uncompared while the
+# write differential reported green. The worker interval below is
+# already pinned to never, so nothing is sent; the rows are simply
+# enqueued, and `email_outbox` is a watched table.
+export EMAIL_ENABLED="${EMAIL_ENABLED:-true}"
+# Both tiers already default to this. Set explicitly because it is the
+# base of every unsubscribe link, and two tiers disagreeing about it
+# would look like a template difference.
+export FRONTEND_URL="${FRONTEND_URL:-http://localhost:5173}"
+# Where the Rust tier loads the shared .j2 templates from. Python finds
+# them relative to its own package; there is one copy, and this points
+# at it.
+export EMAIL_TEMPLATES_DIR="${EMAIL_TEMPLATES_DIR:-$REPO/backend/app/templates/emails}"
+
 # The same Svix secret for both tiers, so write_diff can sign one
 # webhook delivery with the svix library and send it to each.
 export RESEND_WEBHOOK_SECRET="${RESEND_WEBHOOK_SECRET:-whsec_aGFybmVzcy13ZWJob29rLXNlY3JldC0xMjM0NTY=}"

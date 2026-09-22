@@ -11,7 +11,7 @@ Three things are worth comparing, and only the first is visible to a
 client that connects once:
 
 * **the greeting** — status line, the headers the HTTP differential
-  compares, and the first frame's bytes, chunk framing included;
+  compares, and the first frame's bytes;
 * **the keepalive** — a quiet stream still has to say something or an
   intermediary times it out. Both stacks wait 25 seconds; a port that
   waited 30 would look perfect for the first 25 and then start losing
@@ -93,14 +93,51 @@ def read_head(sock: socket.socket, timeout: float = 5.0):
     return status, headers, rest
 
 
-def read_frame(sock: socket.socket, have: bytes, timeout: float):
-    """The next chunk of body bytes, appended to whatever was left over.
+def dechunk(raw: bytes) -> tuple[bytes, bytes]:
+    """Strip HTTP chunked framing, returning `(payload, undecodable tail)`.
 
-    Returns `(frame, leftover)`. The frame is raw — chunk-length prefix
-    and all — because the framing is part of what is being compared.
+    The framing itself must NOT be compared. It carries the chunk length
+    in hex, and hyper writes that hex in upper case where uvicorn writes
+    it in lower: a 13-byte keepalive is `D\r\n` from one and `d\r\n`
+    from the other. No HTTP client can see the difference — both decode
+    to the same bytes — but a literal comparison of the raw stream calls
+    it a port difference. The first frame happened to agree only
+    because 52 bytes is `34`, which has no letters in it.
+    """
+    out = bytearray()
+    while True:
+        line_end = raw.find(b"\r\n")
+        if line_end == -1:
+            return bytes(out), raw
+        try:
+            size = int(raw[:line_end].split(b";")[0], 16)
+        except ValueError:
+            return bytes(out), raw
+        if size == 0:
+            return bytes(out), b""
+        body_start = line_end + 2
+        body_end = body_start + size
+        if len(raw) < body_end + 2:
+            return bytes(out), raw
+        out += raw[body_start:body_end]
+        raw = raw[body_end + 2:]
+
+
+def read_frame(sock: socket.socket, have: bytes, timeout: float):
+    """The next SSE frame's payload, with chunk framing removed.
+
+    Returns `(frame, leftover)`, where leftover is the still-chunked
+    remainder so the next call picks up where this one stopped.
     """
     deadline = time.monotonic() + timeout
-    while b"\n\n" not in have:
+    while True:
+        payload, tail = dechunk(have)
+        if b"\n\n" in payload:
+            frame, _, rest = payload.partition(b"\n\n")
+            # Re-chunk nothing: what is left is handed back as a plain
+            # payload prefix, which `dechunk` leaves alone because it
+            # will not parse as a length line.
+            return frame + b"\n\n", rest + tail if not rest else tail
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return None, have
@@ -112,8 +149,48 @@ def read_frame(sock: socket.socket, have: bytes, timeout: float):
         if not chunk:
             return None, have
         have += chunk
-    frame, _, leftover = have.partition(b"\n\n")
-    return frame + b"\n\n", leftover
+
+
+def read_body(sock: socket.socket, headers: dict, have: bytes, timeout: float) -> bytes:
+    """A whole finite response body.
+
+    Reading whatever happened to arrive with the headers is a race: the
+    429 body came back in the same segment from one stack and a segment
+    later from the other, which scored as a difference when both had
+    sent exactly the same bytes.
+    """
+    length = headers.get("content-length")
+    deadline = time.monotonic() + timeout
+    if length is not None:
+        want = int(length)
+        while len(have) < want:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            sock.settimeout(remaining)
+            try:
+                chunk = sock.recv(4096)
+            except socket.timeout:
+                break
+            if not chunk:
+                break
+            have += chunk
+        return have[:want]
+    # Chunked, or no length at all: read to the terminator or the
+    # deadline, then decode.
+    while b"0\r\n\r\n" not in have:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        sock.settimeout(remaining)
+        try:
+            chunk = sock.recv(4096)
+        except socket.timeout:
+            break
+        if not chunk:
+            break
+        have += chunk
+    return dechunk(have)[0]
 
 
 def compare(label: str, values: dict[str, object], results: list) -> bool:
@@ -193,8 +270,8 @@ def case_cap(token: str, cap: int, results: list) -> None:
             sock = open_stream(port, token)
             try:
                 status, headers, rest = read_head(sock)
-                body, _ = read_frame(sock, rest, timeout=3)
-                over[name] = (status, headers.get("content-type"), rest[:400])
+                body = read_body(sock, headers, rest, timeout=3)
+                over[name] = (status, headers.get("content-type"), body)
             finally:
                 sock.close()
         compare("over-cap status", {n: v[0] for n, v in over.items()}, results)
