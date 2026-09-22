@@ -134,7 +134,7 @@
    "file": "src/api/node_register.rs",
    "old": "            if !known.iter().any(|(id,)| *id == update.camera_id) {\n                continue;\n            }",
    "new": "            if false {\n                continue;\n            }",
-   "equivalent": "The pre-check is belt-and-braces: the UPDATE below carries `AND node_id = $5` itself, so dropping the lookup changes which rows are CONSIDERED and not which are written. The mutation below removes the WHERE clause instead, which is where the boundary actually lives."
+   "equivalent": "Defence in depth, and each layer alone is sufficient: the SELECT that builds `known` filters on node_id, and so does the UPDATE's own WHERE. Removing either one is unobservable \u2014 measured, both ways \u2014 so the mutation that carries this boundary is the one below, which removes both."
   },
   {
    "name": "the badge plan is resolved instead of read",
@@ -202,7 +202,15 @@
    "_why": "This is the tenant boundary, not the pre-check above it. Without the node_id in the WHERE, a node can mark any camera in any org failed by naming it \u2014 the camera_id is the only other term, and it is global.",
    "file": "src/api/node_register.rs",
    "old": "                  WHERE camera_id = $4 AND node_id = $5\",",
-   "new": "                  WHERE camera_id = $4 AND $5 = $5\","
+   "new": "                  WHERE camera_id = $4 AND $5 = $5\",",
+   "equivalent": "The other half of the same pair: the pre-check above filters to this node's cameras, so the UPDATE never runs for another node's row even with its WHERE clause gone."
+  },
+  {
+   "name": "neither layer scopes to the node",
+   "_why": "The tenant boundary itself. camera_id is globally unique but not node-scoped, so with both filters gone a node can mark any camera in any org failed by naming it. Spans both because either one alone holds the line.",
+   "file": "src/api/node_register.rs",
+   "old": "            \"SELECT camera_id FROM cameras WHERE camera_id = ANY($1) AND node_id = $2\",\n        )\n        .bind(&ids)\n        .bind(node.id)\n        .fetch_all(&state.pool)\n        .await?;\n        // A camera named twice in one heartbeat is applied twice, in\n        // order \u2014 the Python loops over the reports, not the rows.\n        for update in &camera_updates {\n            if !known.iter().any(|(id,)| *id == update.camera_id) {\n                continue;\n            }\n            let last_error = if matches!(update.status.as_str(), \"restarting\" | \"failed\" | \"error\")\n            {\n                update.last_error.clone()\n            } else {\n                None\n            };\n            sqlx::query(\n                \"UPDATE cameras SET status = $1, last_seen = $2, last_error = $3, updated_at = $2\n                  WHERE camera_id = $4 AND node_id = $5\",",
+   "new": "            \"SELECT camera_id FROM cameras WHERE camera_id = ANY($1) AND $2 = $2\",\n        )\n        .bind(&ids)\n        .bind(node.id)\n        .fetch_all(&state.pool)\n        .await?;\n        // A camera named twice in one heartbeat is applied twice, in\n        // order \u2014 the Python loops over the reports, not the rows.\n        for update in &camera_updates {\n            if !known.iter().any(|(id,)| *id == update.camera_id) {\n                continue;\n            }\n            let last_error = if matches!(update.status.as_str(), \"restarting\" | \"failed\" | \"error\")\n            {\n                update.last_error.clone()\n            } else {\n                None\n            };\n            sqlx::query(\n                \"UPDATE cameras SET status = $1, last_seen = $2, last_error = $3, updated_at = $2\n                  WHERE camera_id = $4 AND $5 = $5\","
   }
  ]
 }
