@@ -103,6 +103,37 @@ PLAN_LIMIT_ANCHOR_RECENT = (
     _PAST_DUE_NOW - timedelta(minutes=5)).replace(tzinfo=None).isoformat(timespec="seconds")
 
 
+# A four-hour window centred on now, in UTC, fixed at import so both
+# passes seed the identical literal.
+#
+# Every other recording case is deliberately time-independent, because a
+# window computed per pass would straddle a minute boundary. That left
+# the timezone itself unverifiable: with no window in play, UTC and
+# America/Los_Angeles give the same answer for every camera, and a port
+# that ignored the org's zone entirely would pass. This window is inside
+# the current UTC hour and nowhere near the local hour seven zones away,
+# so the two disagree — deterministically, since the literal is fixed
+# and the passes are a second apart, not two hours.
+WINDOW_START = (_PAST_DUE_NOW - timedelta(hours=2)).strftime("%H:%M")
+WINDOW_END = (_PAST_DUE_NOW + timedelta(hours=2)).strftime("%H:%M")
+
+
+def window_setup(tz: str | None) -> str:
+    """Put `cam-stale` inside a live UTC window, optionally with an
+    org timezone that moves it out of one."""
+    sql = (
+        "UPDATE cameras SET scheduled_recording = true,"
+        f" scheduled_start = '{WINDOW_START}', scheduled_end = '{WINDOW_END}'"
+        " WHERE camera_id = 'cam-stale';"
+    )
+    if tz is not None:
+        sql += (
+            "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
+            f" (9331,'self-host','timezone','{tz}', timestamp '2026-06-01');"
+        )
+    return sql
+
+
 def past_due_setup(stamp: str) -> str:
     """Mark the org past due, with `payment_past_due_at` set to `stamp`."""
     return (
@@ -1598,9 +1629,20 @@ CASES += [
             "cameras": [{"camera_id": "cam-error", "status": "online",
                          "last_error": "ignored on a healthy status"}]},
            "node:test-node-key", None),
-          ("a camera on another node is ignored",
+          # `cam-offline` exists and belongs to node-bbbb2222 in the same
+          # org; `cam-theirs` belongs to another org. Both must be left
+          # alone. A camera id that does not exist at all proves
+          # nothing here — the UPDATE matches no row either way, which
+          # is what the first version of this case did.
+          ("a camera on another node of the same org is ignored",
            {"node_id": "node-aaaa1111",
-            "cameras": [{"camera_id": "cam-garage", "status": "failed"}]},
+            "cameras": [{"camera_id": "cam-offline", "status": "failed",
+                         "last_error": "should not land"}]},
+           "node:test-node-key", None),
+          ("another org's camera is ignored",
+           {"node_id": "node-aaaa1111",
+            "cameras": [{"camera_id": "cam-theirs", "status": "failed",
+                         "last_error": "should not land"}]},
            "node:test-node-key", None),
           ("the same camera twice applies in order",
            {"node_id": "node-aaaa1111",
@@ -1627,6 +1669,14 @@ CASES += [
            "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
            f" (9320,'self-host','cameranode_disk_low_emit_at:node-aaaa1111',"
            f" '{DISK_ANCHOR_RECENT}', timestamp '2026-06-01')"),
+          ("a malformed anchor is treated as never",
+           {"node_id": "node-aaaa1111",
+            "storage_stats": {"disk_free_bytes": 5_000_000_000,
+                              "disk_total_bytes": 100_000_000_000}},
+           "node:test-node-key",
+           "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
+           " (9323,'self-host','cameranode_disk_low_emit_at:node-aaaa1111',"
+           " 'not-a-date', timestamp '2026-06-01')"),
           ("a stale anchor re-alerts",
            {"node_id": "node-aaaa1111",
             "storage_stats": {"disk_free_bytes": 5_000_000_000,
@@ -1676,6 +1726,17 @@ CASES += [
            {"node_id": "node-aaaa1111"}, "node:test-node-key",
            "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
            " (9330,'self-host','timezone','Mars/Olympus', timestamp '2026-06-01')"),
+          # The three that make the zone itself observable. In UTC the
+          # window is live; seven zones west it is not, and a port that
+          # ignored the setting would answer the same for both.
+          ("recording state: a live UTC window records",
+           {"node_id": "node-aaaa1111"}, "node:test-node-key", window_setup(None)),
+          ("recording state: the same window in another zone does not",
+           {"node_id": "node-aaaa1111"}, "node:test-node-key",
+           window_setup("America/Los_Angeles")),
+          ("recording state: a bad zone falls back to UTC, not elsewhere",
+           {"node_id": "node-aaaa1111"}, "node:test-node-key",
+           window_setup("Mars/Olympus")),
           # Suspended cameras are named so the node stops pushing for
           # them instead of collecting 402s.
           ("disabled cameras are listed",
@@ -1719,6 +1780,127 @@ CASES += [
            "node:test-node-key", None),
           ("empty body", b"", "node:test-node-key", None),
       ]],
+]
+
+
+# ---------------------------------------------------------------------
+# Cases that only mean anything against the Clerk-mode pair.
+#
+# `resolve_org_plan` opens with
+#
+#     if settings.is_local_auth():
+#         return "self_host"
+#
+# and the default tiers run AUTH_PROVIDER=local, so every plan lookup
+# there returns one constant with a 999-camera cap. Against those tiers
+# no camera is ever over cap, nothing is ever skipped, and the whole
+# plan-cap half of registration — the skip loop, the skipped list, the
+# notification and its debounce, the `plan_limit_hit` body — is
+# unreachable. Five mutations survived the first run of this spec for
+# exactly that reason, and every `org_plan` a case wrote was inert.
+#
+# These run against the 8100/8101 pair instead, where the short-circuit
+# is off. They authenticate with a node API key, which is what makes it
+# possible at all: the ~20 Clerk-gated routes would need real RS256
+# session tokens from a Clerk instance neither tier has, and these need
+# none. Every case pins a PAID slug, because `resolve_org_plan` returns
+# a paid one from the Setting without calling Clerk — a free slug would
+# reach for the network on every request.
+#
+# Run them with tests/differential/cap_run.sh.
+PRO = pref("org_plan", "pro")
+
+# Four more cameras, which puts the org exactly at Pro's cap of 25.
+FILL_TO_CAP = PRO + (
+    "INSERT INTO cameras (camera_id, org_id, node_id, name, status, node_type,"
+    " capabilities, continuous_24_7, scheduled_recording, created_at, updated_at)"
+    " SELECT 'filler-'||g, 'self-host',"
+    " (SELECT id FROM camera_nodes WHERE node_id='node-bbbb2222'),"
+    " 'Filler '||g, 'online', 'usb', 'streaming', false, false,"
+    " timestamp '2026-01-01', timestamp '2026-01-01'"
+    " FROM generate_series(1,4) g;"
+)
+
+CLERK_CASES = [
+    # 21 cameras against Pro's 25: the first four land, the rest are
+    # refused. The cap has to count what THIS request has created —
+    # comparing against the pre-loop count alone lets one register
+    # create as many cameras as it reports.
+    ("cap: a batch crosses the cap mid-loop", "POST", "/api/nodes/register",
+     {"node_id": "node-aaaa1111",
+      "cameras": [{"device_path": f"/dev/v{i}"} for i in range(1, 7)]},
+     "node:test-node-key", PRO),
+    # Already at the cap, so even one new camera is refused.
+    ("cap: at the cap, nothing new lands", "POST", "/api/nodes/register",
+     {"node_id": "node-aaaa1111", "cameras": [{"device_path": "/dev/new"}]},
+     "node:test-node-key", FILL_TO_CAP),
+    # The notification names the first five and counts the rest.
+    ("cap: eight refused lists five and a count", "POST", "/api/nodes/register",
+     {"node_id": "node-aaaa1111",
+      "cameras": [{"device_path": f"/dev/w{i}"} for i in range(1, 9)]},
+     "node:test-node-key", FILL_TO_CAP),
+    ("cap: exactly five refused adds no count", "POST", "/api/nodes/register",
+     {"node_id": "node-aaaa1111",
+      "cameras": [{"device_path": f"/dev/x{i}"} for i in range(1, 6)]},
+     "node:test-node-key", FILL_TO_CAP),
+    # A camera that already exists is updated, not counted against the
+    # cap — otherwise a node at its limit could never re-register.
+    ("cap: existing cameras are not re-counted", "POST", "/api/nodes/register",
+     {"node_id": "node-aaaa1111",
+      "cameras": [{"device_path": "live"}, {"device_path": "stale"},
+                  {"device_path": "boundary"}, {"device_path": "restart"},
+                  {"device_path": "error"}, {"device_path": "neverseen"}]},
+     "node:test-node-key", FILL_TO_CAP),
+    # The notification's debounce, which is only reachable once the
+    # notification itself is.
+    ("cap: the notice is debounced", "POST", "/api/nodes/register",
+     {"node_id": "node-aaaa1111", "cameras": [{"device_path": "/dev/new"}]},
+     "node:test-node-key",
+     FILL_TO_CAP
+     + "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
+     + f" (9340,'self-host','plan_limit_notif_last_at','{PLAN_LIMIT_ANCHOR_RECENT}',"
+     + " timestamp '2026-06-01');"),
+    ("cap: a stale debounce lets it through", "POST", "/api/nodes/register",
+     {"node_id": "node-aaaa1111", "cameras": [{"device_path": "/dev/new"}]},
+     "node:test-node-key",
+     FILL_TO_CAP
+     + "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
+     + " (9341,'self-host','plan_limit_notif_last_at','2020-01-01T00:00:00',"
+     + " timestamp '2026-06-01');"),
+    ("cap: a malformed debounce is treated as never", "POST", "/api/nodes/register",
+     {"node_id": "node-aaaa1111", "cameras": [{"device_path": "/dev/new"}]},
+     "node:test-node-key",
+     FILL_TO_CAP
+     + "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
+     + " (9342,'self-host','plan_limit_notif_last_at','not-a-date',"
+     + " timestamp '2026-06-01');"),
+    # Pro Plus has room, so the same batch lands in full and no notice
+    # is emitted at all.
+    ("cap: a higher tier takes the whole batch", "POST", "/api/nodes/register",
+     {"node_id": "node-aaaa1111",
+      "cameras": [{"device_path": f"/dev/v{i}"} for i in range(1, 7)]},
+     "node:test-node-key", PRO_PLUS),
+    # Registration's cap sweep, which is the safety net for an org whose
+    # subscription webhook never arrived: the flags are recomputed even
+    # though nothing about this request concerns them.
+    ("cap: register re-runs enforcement", "POST", "/api/nodes/register",
+     {"node_id": "node-aaaa1111"}, "node:test-node-key",
+     PRO + "UPDATE cameras SET disabled_by_plan = true WHERE org_id = 'self-host';"),
+    # The heartbeat's badge reads the Setting rather than resolving, and
+    # its disabled list is scoped to this node.
+    ("cap: the heartbeat badge reads the setting", "POST", "/api/nodes/heartbeat",
+     {"node_id": "node-aaaa1111"}, "node:test-node-key", PRO),
+    ("cap: the heartbeat lists this node's suspended cameras", "POST",
+     "/api/nodes/heartbeat", {"node_id": "node-aaaa1111"}, "node:test-node-key",
+     PRO + "UPDATE cameras SET disabled_by_plan = true WHERE org_id = 'self-host';"),
+    # Past due beyond grace drops the caps to free — 5 against 21
+    # cameras, so the sweep has plenty to suspend.
+    ("cap: past due beyond grace tightens to free", "POST", "/api/nodes/heartbeat",
+     {"node_id": "node-aaaa1111"}, "node:test-node-key",
+     PRO + past_due_setup(PAST_DUE_EXPIRED)),
+    ("cap: past due within grace keeps the tier", "POST", "/api/nodes/heartbeat",
+     {"node_id": "node-aaaa1111"}, "node:test-node-key",
+     PRO + past_due_setup(PAST_DUE_DAYS_LEFT)),
 ]
 
 
@@ -2318,7 +2500,12 @@ def main():
 def _main():
     bad = 0
     wanted = [w for w in DIFF_ONLY.split("|") if w]
-    cases = [c for c in CASES if not wanted or any(w in c[0] or w in c[2] for w in wanted)]
+    # CASE_SET=clerk swaps in the cases that need the Clerk-mode pair.
+    # They are a separate list rather than a filter over CASES because
+    # running them against the local pair does not fail — it passes,
+    # vacuously, which is the worst of the three outcomes.
+    pool = CLERK_CASES if os.environ.get("CASE_SET") == "clerk" else CASES
+    cases = [c for c in pool if not wanted or any(w in c[0] or w in c[2] for w in wanted)]
     for case in cases:
         name, method, path, body = case[0], case[1], case[2], case[3]
         who = case[4] if len(case) > 4 else "admin"

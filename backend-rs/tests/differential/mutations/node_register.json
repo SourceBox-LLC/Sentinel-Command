@@ -1,37 +1,39 @@
 {
- "_comment": "Mutations for the CameraNode registration and heartbeat slice. These two routes carry more branching than anything ported so far — a plan cap, a version gate, a camera reconciliation, a debounced alert and a recording map — and none of it was ever compared before, because both were proxied: the differential was running Python against Python and scoring it green. The filter is this slice's own cases; a full sweep is 697 cases.",
+ "_comment": "Mutations for the CameraNode registration and heartbeat slice. These two routes carry more branching than anything ported so far \u2014 a version gate, a camera reconciliation, a debounced alert and a recording map \u2014 and none of it was ever compared before, because both were proxied: the differential was running Python against Python and scoring it green. The filter is this slice's own cases; a full sweep is 702 cases. The plan-cap half lives in node_register_cap.json, against the Clerk-mode pair, because it is unreachable under the local auth these tiers run.",
  "restart_rust": true,
  "env": {
   "DIFF_ONLY": "register:|heartbeat:"
  },
  "harness": [
-  ["tests/differential/write_run.sh"]
+  [
+   "tests/differential/write_run.sh"
+  ]
  ],
  "mutations": [
   {
    "name": "the port default is dropped",
-   "_why": "`Field(8080, ...)` on an Optional[int] applies its default when the key is ABSENT, which is every register a node sends that does not mention a port. Treating absent as None leaves the column alone instead of setting 8080 — and this is exactly what the first run of this slice got wrong, on seventeen cases at once.",
+   "_why": "`Field(8080, ...)` on an Optional[int] applies its default when the key is ABSENT, which is every register a node sends that does not mention a port. Treating absent as None leaves the column alone instead of setting 8080 \u2014 and this is exactly what the first run of this slice got wrong, on seventeen cases at once.",
    "file": "src/api/node_register.rs",
    "old": "    let http_port = match body.get(\"http_port\") {\n        None => Some(8080),",
    "new": "    let http_port = match body.get(\"http_port\") {\n        None => None,"
   },
   {
    "name": "the returned key is decoded as UTF-8",
-   "_why": "Starlette decodes header bytes as latin-1. `node_secret` hands the key back to the node, and a lossy UTF-8 decode replaces any high byte with U+FFFD — handing back a key that will not authenticate.",
+   "_why": "Starlette decodes header bytes as latin-1. `node_secret` hands the key back to the node, and a lossy UTF-8 decode replaces any high byte with U+FFFD \u2014 handing back a key that will not authenticate.",
    "file": "src/api/node_register.rs",
    "old": "    let api_key_text: String = key.iter().map(|&b| b as char).collect();",
    "new": "    let api_key_text: String = String::from_utf8_lossy(&key).to_string();"
   },
   {
    "name": "the version is persisted before the gate",
-   "_why": "The heartbeat raises out of the 426 with nothing committed, so the version columns it assigned roll back. Writing them first leaves a refused node looking like it reported successfully. Registration is the opposite — its error recorder commits — and a port that treats both the same is wrong on one of them.",
+   "_why": "The heartbeat raises out of the 426 with nothing committed, so the version columns it assigned roll back. Writing them first leaves a refused node looking like it reported successfully. Registration is the opposite \u2014 its error recorder commits \u2014 and a port that treats both the same is wrong on one of them.",
    "file": "src/api/node_register.rs",
    "old": "    // The version columns are written only once the gate passes.",
    "new": "    sqlx::query(\n        \"UPDATE camera_nodes SET node_version = $1, version_checked_at = $2, updated_at = $2\n          WHERE id = $3\",\n    )\n    .bind(&stored_version)\n    .bind(now)\n    .bind(node.id)\n    .execute(&state.pool)\n    .await?;\n    // The version columns are written only once the gate passes."
   },
   {
    "name": "an absent version stores 0.0.0",
-   "_why": "`version_check[\"parsed\"] if data.node_version else None`. A node too old to report a version must leave the column NULL, not claim to be running 0.0.0 — the dashboard tells those apart.",
+   "_why": "`version_check[\"parsed\"] if data.node_version else None`. A node too old to report a version must leave the column NULL, not claim to be running 0.0.0 \u2014 the dashboard tells those apart.",
    "file": "src/api/node_register.rs",
    "old": "    let stored_version = node_version.as_ref().map(|_| parsed.clone());",
    "new": "    let stored_version = Some(parsed.clone());"
@@ -64,32 +66,6 @@
    "new": "        let Ok(parsed) = crate::pydatetime::fromisoformat(&last) else { return };\n        if (now - parsed.naive).num_seconds() < DISK_LOW_REEMIT_SECONDS {\n            return;\n        }"
   },
   {
-   "name": "the plan-limit notice is not debounced",
-   "file": "src/api/node_register.rs",
-   "old": "            if (now - parsed.naive).num_seconds() < PLAN_LIMIT_THROTTLE_SECONDS {\n                return;\n            }",
-   "new": "            if false {\n                return;\n            }"
-  },
-  {
-   "name": "the skipped list is not capped at five",
-   "_why": "The body names the first five and counts the rest. Listing all of them turns a notification into a wall of camera names.",
-   "file": "src/api/node_register.rs",
-   "old": "    let head: Vec<String> = skipped.iter().take(5).cloned().collect();",
-   "new": "    let head: Vec<String> = skipped.to_vec();"
-  },
-  {
-   "name": "cameras over the cap are created anyway",
-   "file": "src/api/node_register.rs",
-   "old": "        if current_cameras + new_camera_count >= limits.max_cameras {",
-   "new": "        if false {"
-  },
-  {
-   "name": "the running count ignores what this request created",
-   "_why": "Without `new_camera_count` the cap is compared against the count taken before the loop, so a single register can create as many cameras as it reports — the cap holds against one camera at a time and not against a batch.",
-   "file": "src/api/node_register.rs",
-   "old": "        if current_cameras + new_camera_count >= limits.max_cameras {",
-   "new": "        if current_cameras >= limits.max_cameras {"
-  },
-  {
    "name": "unreported cameras are left behind",
    "_why": "A device that is unplugged, renamed, or re-sanitised leaves its old row and its segment cache forever.",
    "file": "src/api/node_register.rs",
@@ -102,11 +78,11 @@
    "file": "src/api/node_register.rs",
    "old": "        state.hls.cleanup_camera(&stale_camera_id);",
    "new": "        let _ = &stale_camera_id;",
-   "equivalent": "The write differential snapshots tables, and the segment cache is memory. hls_run.sh covers the cache, but it has no registration case — the two harnesses do not meet here."
+   "equivalent": "The write differential snapshots tables, and the segment cache is memory. hls_run.sh covers the cache, but it has no registration case \u2014 the two harnesses do not meet here."
   },
   {
    "name": "an empty capability list is stored as empty",
-   "_why": "`\",\".join(caps) if caps else \"streaming\"` — an empty list is falsy in Python and takes the default.",
+   "_why": "`\",\".join(caps) if caps else \"streaming\"` \u2014 an empty list is falsy in Python and takes the default.",
    "file": "src/api/node_register.rs",
    "old": "            Some(caps) if !caps.is_empty() => caps.join(\",\"),",
    "new": "            Some(caps) => caps.join(\",\"),"
@@ -134,11 +110,10 @@
   },
   {
    "name": "the past-due sweep runs for everyone",
-   "_why": "Gating on the flag is what keeps the happy path free — but running it always is also observably different, because it recomputes caps on every heartbeat of every org.",
+   "_why": "Gating on the flag is what keeps the happy path free \u2014 but running it always is also observably different, because it recomputes caps on every heartbeat of every org.",
    "file": "src/api/node_register.rs",
    "old": "    if past_due {",
-   "new": "    if true {",
-   "equivalent": "enforce_camera_cap is idempotent, so on an org whose flags already match the result is the same rows and the same response. What it costs is a query per heartbeat, which no differential can see."
+   "new": "    if true {"
   },
   {
    "name": "the past-due sweep never runs",
@@ -165,8 +140,7 @@
    "_why": "Heartbeats are every thirty seconds per node, and resolve_org_plan calls Clerk for any org whose cached slug is not paid. The Setting is deliberately authoritative here.",
    "file": "src/api/node_register.rs",
    "old": "    let cached_plan = crate::settings::get(&state.pool, &node.org_id, \"org_plan\", Some(\"free_org\"))\n        .await\n        .unwrap_or_default()\n        .filter(|p| !p.is_empty())\n        .unwrap_or_else(|| \"free_org\".to_string());",
-   "new": "    let cached_plan = plans::resolve_org_plan(&plan_ctx(&state), &node.org_id).await;",
-   "equivalent": "Both read the same Setting when it names a paid plan, and the harness runs local-auth tiers where resolve short-circuits to self_host... except it does not: the wire slug would then be self_host rather than free. Left marked so the run says which."
+   "new": "    let cached_plan = plans::resolve_org_plan(&plan_ctx(&state), &node.org_id).await;"
   },
   {
    "name": "disabled cameras are reported org-wide",
@@ -198,8 +172,8 @@
    "name": "a bad timezone raises instead of falling back",
    "_why": "An exception here would 500 every heartbeat for that org and stop its recording entirely, which is why Python falls back to UTC.",
    "file": "src/api/node_register.rs",
-   "old": "        Err(_) => {\n            tracing::warn!(org_id, timezone = %name, \"invalid timezone setting — falling back to UTC\");\n            crate::zoneinfo::load(\"UTC\").unwrap_or(jiff::tz::TimeZone::UTC)\n        }",
-   "new": "        Err(err) => panic!(\"bad timezone: {err}\")"
+   "old": "            crate::zoneinfo::load(\"UTC\").unwrap_or(jiff::tz::TimeZone::UTC)",
+   "new": "            crate::zoneinfo::load(\"America/Los_Angeles\").unwrap_or(jiff::tz::TimeZone::UTC)"
   },
   {
    "name": "the key check runs before validation",
