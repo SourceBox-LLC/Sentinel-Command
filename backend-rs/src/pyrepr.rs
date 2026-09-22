@@ -166,7 +166,14 @@ pub fn contains_str(value: &Value, needle: &str) -> Option<bool> {
 /// reading it back gives the same double, because both sides round the
 /// exact binary value the same way.
 pub fn round_half_even(x: f64) -> f64 {
-    format!("{x:.2}").parse().unwrap_or(x)
+    round_to(x, 2)
+}
+
+/// `round(x, digits)` — the same reasoning as `round_half_even`, for
+/// the places that want one decimal (a disk-usage percentage, a size
+/// in GB) rather than two.
+pub fn round_to(x: f64, digits: usize) -> f64 {
+    format!("{x:.digits$}").parse().unwrap_or(x)
 }
 
 

@@ -455,6 +455,14 @@ pub fn parse_handler_json(bytes: &[u8]) -> Result<serde_json::Map<String, Value>
 #[derive(Default)]
 pub struct BodyErrors {
     errors: Vec<Value>,
+    /// Location prefix for everything reported while inside `within`.
+    ///
+    /// A nested model reports at `["body", "cameras", 0, "name"]`, and
+    /// every validator here already knows how to name its own field.
+    /// Carrying the prefix on the collector rather than threading it
+    /// through each signature means the nested case reuses them
+    /// unchanged, in Pydantic's field-declaration order.
+    prefix: Vec<Value>,
 }
 
 /// Pydantic's own pluralisation for a length message.
@@ -482,6 +490,7 @@ impl BodyErrors {
     /// in order.
     fn push_at(&mut self, kind: &str, loc: &[Value], msg: &str, input: Value, ctx: Option<Value>) {
         let mut full = vec![json!("body")];
+        full.extend_from_slice(&self.prefix);
         full.extend_from_slice(loc);
         let mut err = json!({
             "type": kind,
@@ -600,6 +609,32 @@ impl BodyErrors {
             &format!("String should have at least {min} character{}", plural(min)),
             json!(input),
             Some(json!({ "min_length": min })),
+        );
+    }
+
+    /// Validate a nested model, reporting everything inside it under
+    /// `loc`.
+    pub fn within<T>(&mut self, loc: &[Value], f: impl FnOnce(&mut Self) -> T) -> T {
+        let depth = self.prefix.len();
+        self.prefix.extend_from_slice(loc);
+        let out = f(self);
+        self.prefix.truncate(depth);
+        out
+    }
+
+    /// A nested `BaseModel` handed something that is not a mapping.
+    ///
+    /// Distinct from `dict_type`, which is what a bare `dict` field
+    /// reports: Pydantic describes a model as "a valid dictionary or
+    /// object to extract fields from", because it would also accept an
+    /// arbitrary object and read attributes off it.
+    pub fn model_attributes_type_at(&mut self, loc: &[Value], input: &Value) {
+        self.push_at(
+            "model_attributes_type",
+            loc,
+            "Input should be a valid dictionary or object to extract fields from",
+            input.clone(),
+            None,
         );
     }
 

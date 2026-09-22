@@ -91,6 +91,18 @@ PAST_DUE_HOURS_LEFT = (_PAST_DUE_NOW - timedelta(days=6, hours=20)).isoformat()
 PAST_DUE_EXPIRED = (_PAST_DUE_NOW - timedelta(days=9)).isoformat()
 
 
+# Debounce anchors, fixed at import for the same reason as the past-due
+# ones above: computing `now() - interval '1 hour'` inside the setup SQL
+# runs it once per pass, and the two passes are a second apart — so the
+# seeded value itself differed and the case reported a port bug. Both
+# are recent enough to still be inside their window when the request
+# lands, minutes later.
+DISK_ANCHOR_RECENT = (
+    _PAST_DUE_NOW - timedelta(hours=1)).replace(tzinfo=None).isoformat(timespec="seconds")
+PLAN_LIMIT_ANCHOR_RECENT = (
+    _PAST_DUE_NOW - timedelta(minutes=5)).replace(tzinfo=None).isoformat(timespec="seconds")
+
+
 def past_due_setup(stamp: str) -> str:
     """Mark the org past due, with `payment_past_due_at` set to `stamp`."""
     return (
@@ -142,6 +154,12 @@ def pref(key, value):
         f"INSERT INTO settings (org_id, key, value, updated_at)"
         f" VALUES ('self-host', '{key}', '{value}', now()::timestamp);"
     )
+
+
+# Pro Plus caps cameras at 200 against the fixture's 21, so a case
+# using this reaches the *creation* path in registration. Without it
+# every reported camera is refused: the free cap is five.
+PRO_PLUS = pref("org_plan", "pro_plus")
 
 
 # A `sentinel_config` row for `self-host` with every gate open, and
@@ -1431,6 +1449,276 @@ CASES += [
      {"scheduled_start": "25:00"}),
     ("policy: single-digit hour", "PATCH", "/api/cameras/cam-live/recording-settings",
      {"scheduled_start": "8:30"}),
+
+    # --- CameraNode registration --------------------------------------
+    #
+    # The org's fixture already holds 21 cameras against a free cap of
+    # five, so the default path here is the *skipped* one: every camera
+    # a node reports that does not already exist is refused, and the
+    # response carries `plan_limit_hit`. The creation path needs the cap
+    # lifted, which `PRO_PLUS` does.
+    *[(f"register: {label}", "POST", "/api/nodes/register", body, who, setup)
+      for label, body, who, setup in [
+          ("ok, no cameras", {"node_id": "node-aaaa1111"}, "node:test-node-key", None),
+          ("hostname and ip", {"node_id": "node-aaaa1111", "hostname": "pi-front",
+                               "local_ip": "192.168.1.9", "http_port": 8085},
+           "node:test-node-key", None),
+          # lan_streaming=False clears local_ip so the integration layer
+          # stops advertising a URL that refuses connections.
+          ("loopback-bound clears the ip",
+           {"node_id": "node-dddd4444", "local_ip": "192.168.1.40", "lan_streaming": False},
+           "node:node-key-\u00ff", None),
+          ("an absent lan_streaming keeps it",
+           {"node_id": "node-dddd4444", "local_ip": "192.168.1.41"},
+           "node:node-key-\u00ff", None),
+          # Every reported camera already exists, so this is the update
+          # path: names refreshed, status online, nothing created.
+          ("existing cameras are updated",
+           {"node_id": "node-aaaa1111",
+            "cameras": [{"device_path": "live", "name": "Renamed Live"},
+                        {"device_path": "stale"}, {"device_path": "boundary"},
+                        {"device_path": "restart"}, {"device_path": "error"},
+                        {"device_path": "neverseen"}]},
+           "node:test-node-key", None),
+          # A node that reports fewer cameras than it has: the rest are
+          # deleted, with their segment caches.
+          ("unreported cameras are removed",
+           {"node_id": "node-aaaa1111", "cameras": [{"device_path": "live"}]},
+           "node:test-node-key", None),
+          # Over cap: skipped, notified, and told so in the response.
+          ("a new camera over the cap is skipped",
+           {"node_id": "node-aaaa1111",
+            "cameras": [{"device_path": "/dev/video9", "name": "New One"}]},
+           "node:test-node-key", None),
+          ("six over the cap lists five and a count",
+           {"node_id": "node-aaaa1111",
+            "cameras": [{"device_path": f"/dev/video{i}"} for i in range(1, 8)]},
+           "node:test-node-key", None),
+          # The debounce: a second register inside the hour says nothing.
+          ("the plan-limit notice is debounced",
+           {"node_id": "node-aaaa1111", "cameras": [{"device_path": "/dev/video9"}]},
+           "node:test-node-key",
+           "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
+           f" (9310,'self-host','plan_limit_notif_last_at',"
+           f" '{PLAN_LIMIT_ANCHOR_RECENT}', timestamp '2026-06-01')"),
+          ("a stale debounce lets it through",
+           {"node_id": "node-aaaa1111", "cameras": [{"device_path": "/dev/video9"}]},
+           "node:test-node-key",
+           "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
+           " (9311,'self-host','plan_limit_notif_last_at','2020-01-01T00:00:00',"
+           " timestamp '2026-06-01')"),
+          ("a malformed debounce is treated as never",
+           {"node_id": "node-aaaa1111", "cameras": [{"device_path": "/dev/video9"}]},
+           "node:test-node-key",
+           "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
+           " (9312,'self-host','plan_limit_notif_last_at','not-a-date',"
+           " timestamp '2026-06-01')"),
+          # Under the cap, so the camera is actually created — with the
+          # capability list joined, the node_type defaulted, and the
+          # device path sanitised into the id.
+          ("a camera is created under a raised cap",
+           {"node_id": "node-aaaa1111",
+            "cameras": [{"device_path": "/dev/video 9", "name": "Created",
+                         "node_type": "rtsp", "capabilities": ["streaming", "audio"]}]},
+           "node:test-node-key", PRO_PLUS),
+          ("an empty capability list takes the default",
+           {"node_id": "node-aaaa1111",
+            "cameras": [{"device_path": "/dev/video9", "capabilities": []}]},
+           "node:test-node-key", PRO_PLUS),
+          ("no device_path falls back to camera_id then unknown",
+           {"node_id": "node-aaaa1111",
+            "cameras": [{"camera_id": "from-id"}, {}]},
+           "node:test-node-key", PRO_PLUS),
+          ("codecs are sanitised and stamped",
+           {"node_id": "node-aaaa1111", "video_codec": "avc1.64e00a",
+            "audio_codec": "mp4a.40.2",
+            "cameras": [{"device_path": "live"}]},
+           "node:test-node-key", None),
+          # Auth and existence.
+          ("no key", {"node_id": "node-aaaa1111"}, "agent:none", None),
+          ("empty key", {"node_id": "node-aaaa1111"}, "node:", None),
+          ("wrong key records the error", {"node_id": "node-aaaa1111"}, "node:wrong", None),
+          ("another org's node is still found", {"node_id": "node-cccc3333"},
+           "node:test-node-key", None),
+          ("missing node", {"node_id": "nope"}, "node:test-node-key", None),
+          # Versions: refused below the floor, and the reported version
+          # is persisted either way so the dashboard can show it.
+          ("an old version is refused",
+           {"node_id": "node-aaaa1111", "node_version": "0.0.1"}, "node:test-node-key", None),
+          ("a current version registers",
+           {"node_id": "node-aaaa1111", "node_version": "9.9.9"}, "node:test-node-key", None),
+          ("an unparseable version",
+           {"node_id": "node-aaaa1111", "node_version": "banana"}, "node:test-node-key", None),
+          ("an absent version clears the column",
+           {"node_id": "node-aaaa1111"}, "node:test-node-key", None),
+          # Validation.
+          ("no node_id", {}, "node:test-node-key", None),
+          ("node_id too long", {"node_id": "x" * 51}, "node:test-node-key", None),
+          ("node_id not a string", {"node_id": 5}, "node:test-node-key", None),
+          ("cameras not a list", {"node_id": "node-aaaa1111", "cameras": 5},
+           "node:test-node-key", None),
+          ("a camera that is not an object",
+           {"node_id": "node-aaaa1111", "cameras": [5]}, "node:test-node-key", None),
+          ("two bad fields in one camera",
+           {"node_id": "node-aaaa1111", "cameras": [{"name": 5, "width": 0}]},
+           "node:test-node-key", None),
+          ("a bad field in the second camera",
+           {"node_id": "node-aaaa1111",
+            "cameras": [{"device_path": "live"}, {"capabilities": "streaming"}]},
+           "node:test-node-key", None),
+          ("http_port out of range",
+           {"node_id": "node-aaaa1111", "http_port": 70000}, "node:test-node-key", None),
+          ("http_port as a string",
+           {"node_id": "node-aaaa1111", "http_port": "8080"}, "node:test-node-key", None),
+          ("lan_streaming as a string",
+           {"node_id": "node-aaaa1111", "lan_streaming": "no"}, "node:test-node-key", None),
+          ("lan_streaming uncoercible",
+           {"node_id": "node-aaaa1111", "lan_streaming": "maybe"}, "node:test-node-key", None),
+          ("empty body", b"", "node:test-node-key", None),
+          ("malformed json", b"{x", "node:test-node-key", None),
+          ("list body", [1, 2], "node:test-node-key", None),
+      ]],
+
+    # --- CameraNode heartbeat -----------------------------------------
+    *[(f"heartbeat: {label}", "POST", "/api/nodes/heartbeat", body, who, setup)
+      for label, body, who, setup in [
+          ("ok", {"node_id": "node-aaaa1111"}, "node:test-node-key", None),
+          ("camera statuses are applied",
+           {"node_id": "node-aaaa1111",
+            "cameras": [{"camera_id": "cam-live", "status": "online"},
+                        {"camera_id": "cam-restart", "status": "restarting",
+                         "last_error": "pipeline stalled"},
+                        {"camera_id": "cam-error", "status": "failed",
+                         "last_error": "no such device"}]},
+           "node:test-node-key", None),
+          # A healthy status wipes last_error, so a recovered camera
+          # stops showing a stale reason.
+          ("a healthy status clears the error",
+           {"node_id": "node-aaaa1111",
+            "cameras": [{"camera_id": "cam-error", "status": "online",
+                         "last_error": "ignored on a healthy status"}]},
+           "node:test-node-key", None),
+          ("a camera on another node is ignored",
+           {"node_id": "node-aaaa1111",
+            "cameras": [{"camera_id": "cam-garage", "status": "failed"}]},
+           "node:test-node-key", None),
+          ("the same camera twice applies in order",
+           {"node_id": "node-aaaa1111",
+            "cameras": [{"camera_id": "cam-live", "status": "failed", "last_error": "first"},
+                        {"camera_id": "cam-live", "status": "online"}]},
+           "node:test-node-key", None),
+          # Storage, and the disk-low alert it drives.
+          ("storage stats are persisted",
+           {"node_id": "node-aaaa1111",
+            "storage_stats": {"used_bytes": 5000, "max_bytes": 10000,
+                              "disk_free_bytes": 50_000_000_000,
+                              "disk_total_bytes": 100_000_000_000}},
+           "node:test-node-key", None),
+          ("a full disk alerts",
+           {"node_id": "node-aaaa1111",
+            "storage_stats": {"disk_free_bytes": 5_000_000_000,
+                              "disk_total_bytes": 100_000_000_000}},
+           "node:test-node-key", None),
+          ("the alert is debounced for six hours",
+           {"node_id": "node-aaaa1111",
+            "storage_stats": {"disk_free_bytes": 5_000_000_000,
+                              "disk_total_bytes": 100_000_000_000}},
+           "node:test-node-key",
+           "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
+           f" (9320,'self-host','cameranode_disk_low_emit_at:node-aaaa1111',"
+           f" '{DISK_ANCHOR_RECENT}', timestamp '2026-06-01')"),
+          ("a stale anchor re-alerts",
+           {"node_id": "node-aaaa1111",
+            "storage_stats": {"disk_free_bytes": 5_000_000_000,
+                              "disk_total_bytes": 100_000_000_000}},
+           "node:test-node-key",
+           "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
+           " (9321,'self-host','cameranode_disk_low_emit_at:node-aaaa1111',"
+           " '2020-01-01T00:00:00', timestamp '2026-06-01')"),
+          # Back under the threshold: the anchor is cleared so the next
+          # crossing alerts at once.
+          ("recovery clears the anchor",
+           {"node_id": "node-aaaa1111",
+            "storage_stats": {"disk_free_bytes": 80_000_000_000,
+                              "disk_total_bytes": 100_000_000_000}},
+           "node:test-node-key",
+           "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
+           " (9322,'self-host','cameranode_disk_low_emit_at:node-aaaa1111',"
+           " '2020-01-01T00:00:00', timestamp '2026-06-01')"),
+          # Zero free bytes means "could not identify the disk", not a
+          # full one — no alert.
+          ("zero free bytes is unknown, not full",
+           {"node_id": "node-aaaa1111",
+            "storage_stats": {"disk_free_bytes": 0, "disk_total_bytes": 100_000_000_000}},
+           "node:test-node-key", None),
+          ("a partial storage block",
+           {"node_id": "node-aaaa1111", "storage_stats": {"used_bytes": 1}},
+           "node:test-node-key", None),
+          ("an absent block leaves the last reading",
+           {"node_id": "node-aaaa1111"}, "node:test-node-key", None),
+          # The recording map. Only time-independent policies are
+          # compared here — a window would straddle a minute boundary
+          # between the two passes. The arithmetic is unit-tested.
+          ("recording state: continuous and off",
+           {"node_id": "node-aaaa1111"}, "node:test-node-key", None),
+          ("recording state: a zero-length window",
+           {"node_id": "node-aaaa1111"}, "node:test-node-key",
+           "UPDATE cameras SET scheduled_recording = true, scheduled_start = '08:00',"
+           " scheduled_end = '08:00' WHERE camera_id = 'cam-stale'"),
+          ("recording state: a schedule with no times",
+           {"node_id": "node-aaaa1111"}, "node:test-node-key",
+           "UPDATE cameras SET scheduled_recording = true WHERE camera_id = 'cam-stale'"),
+          ("recording state: an unparseable window",
+           {"node_id": "node-aaaa1111"}, "node:test-node-key",
+           "UPDATE cameras SET scheduled_recording = true, scheduled_start = 'abc',"
+           " scheduled_end = 'def' WHERE camera_id = 'cam-stale'"),
+          ("recording state: a bad timezone falls back to UTC",
+           {"node_id": "node-aaaa1111"}, "node:test-node-key",
+           "INSERT INTO settings (id, org_id, key, value, updated_at) VALUES"
+           " (9330,'self-host','timezone','Mars/Olympus', timestamp '2026-06-01')"),
+          # Suspended cameras are named so the node stops pushing for
+          # them instead of collecting 402s.
+          ("disabled cameras are listed",
+           {"node_id": "node-aaaa1111"}, "node:test-node-key",
+           "UPDATE cameras SET disabled_by_plan = true"
+           " WHERE camera_id IN ('cam-stale','cam-error')"),
+          # The time-based past-due transition, which no webhook covers.
+          ("past due within grace changes nothing",
+           {"node_id": "node-aaaa1111"}, "node:test-node-key",
+           past_due_setup(PAST_DUE_DAYS_LEFT)),
+          ("past due beyond grace suspends cameras",
+           {"node_id": "node-aaaa1111"}, "node:test-node-key",
+           past_due_setup(PAST_DUE_EXPIRED)),
+          # Auth, existence and versions.
+          ("no key", {"node_id": "node-aaaa1111"}, "agent:none", None),
+          ("wrong key", {"node_id": "node-aaaa1111"}, "node:wrong", None),
+          ("missing node", {"node_id": "nope"}, "node:test-node-key", None),
+          ("an old version is refused",
+           {"node_id": "node-aaaa1111", "node_version": "0.0.1"}, "node:test-node-key", None),
+          ("a current version heartbeats",
+           {"node_id": "node-aaaa1111", "node_version": "9.9.9"}, "node:test-node-key", None),
+          # Validation.
+          ("no node_id", {}, "node:test-node-key", None),
+          ("a camera status missing its status",
+           {"node_id": "node-aaaa1111", "cameras": [{"camera_id": "cam-live"}]},
+           "node:test-node-key", None),
+          ("a camera status that is not an object",
+           {"node_id": "node-aaaa1111", "cameras": ["cam-live"]}, "node:test-node-key", None),
+          ("last_error too long",
+           {"node_id": "node-aaaa1111",
+            "cameras": [{"camera_id": "cam-live", "status": "failed",
+                         "last_error": "x" * 501}]},
+           "node:test-node-key", None),
+          ("negative storage",
+           {"node_id": "node-aaaa1111", "storage_stats": {"used_bytes": -1}},
+           "node:test-node-key", None),
+          ("storage that is not an object",
+           {"node_id": "node-aaaa1111", "storage_stats": 5}, "node:test-node-key", None),
+          ("storage bytes as a string",
+           {"node_id": "node-aaaa1111", "storage_stats": {"used_bytes": "100"}},
+           "node:test-node-key", None),
+          ("empty body", b"", "node:test-node-key", None),
+      ]],
 ]
 
 

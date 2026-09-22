@@ -43,11 +43,11 @@ pub fn node_key_hash(header: &[u8]) -> String {
         .collect()
 }
 
-fn header_bytes<'a>(headers: &'a HeaderMap, name: &str) -> &'a [u8] {
+pub(crate) fn header_bytes<'a>(headers: &'a HeaderMap, name: &str) -> &'a [u8] {
     headers.get(name).map(|v| v.as_bytes()).unwrap_or_default()
 }
 
-async fn body_bytes(request: Request) -> Result<axum::body::Bytes, ApiError> {
+pub(crate) async fn body_bytes(request: Request) -> Result<axum::body::Bytes, ApiError> {
     axum::body::to_bytes(request.into_body(), 2 * 1024 * 1024)
         .await
         .map_err(|_| ApiError::bad_request("could not read request body"))
@@ -192,7 +192,7 @@ pub async fn validate_node(
 ///
 /// Best-effort: the caller is about to return a 4xx either way, so a
 /// failure here is logged and swallowed.
-async fn record_node_register_error(pool: &sqlx::PgPool, id: i32, reason: &str) {
+pub(crate) async fn record_node_register_error(pool: &sqlx::PgPool, id: i32, reason: &str) {
     let reason: String = reason.chars().take(500).collect();
     let now = now_naive();
     if let Err(err) = sqlx::query(

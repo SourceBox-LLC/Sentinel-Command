@@ -67,20 +67,26 @@ PORTED = {
     "core.email_unsubscribe",
     "core.versions",
     "core.release_cache",
+    # Ported with the camera-cap slice, and like `core.recipients` it
+    # has to STOP the walk rather than merely be excused: the resolver
+    # calls Clerk's billing API through `core.clerk`, so descending past
+    # it counts `core.clerk` as a blocker for every route that resolves
+    # a plan — when the Rust resolver makes that same REST call itself.
+    #
+    # `get_plan_limits_for_org` has no named Rust counterpart; it is two
+    # lines composing `resolve_org_plan` and `get_plan_limits`, and the
+    # one ported caller inlines it (see hls.rs).
+    "core.plans",
 }
 
 # Modules only PART of which has a Rust equivalent. Importing one of the
 # listed names does not block a route; importing anything else from the
-# module still does. Module granularity alone would have to choose
-# between hiding `enforce_camera_cap` (unported) and flagging every
-# caller of `effective_plan_for_caps` (ported, and verified by
-# plan_run.sh).
+# module still does. `core.plans` lived here while `enforce_camera_cap`
+# was the one unported piece — module granularity alone would have had
+# to choose between hiding it and flagging every caller of
+# `effective_plan_for_caps`. It is ported now, so core.plans has moved
+# up to PORTED entirely.
 PORTED_FUNCTIONS = {
-    "core.plans": {
-        "effective_plan_for_caps", "resolve_org_plan", "get_plan_limits",
-        "get_plan_display_name", "invalidate_effective_plan_cache",
-        "PAID_PLAN_SLUGS", "PAYMENT_GRACE_DAYS", "PLAN_LIMITS",
-    },
     "core.license_client": {
         "is_sentinel_licensed", "is_sync_enabled", "sentinel_blocked_by_license",
         "SENTINEL_LICENSE_GRACE_HOURS",
@@ -103,7 +109,6 @@ PORTED_FUNCTIONS = {
 # left of the email stack is the transport — core.email and
 # core.email_worker — which still needs Resend and the drain loop.
 BLOCKERS = {
-    "core.plans": "plan-cache + Clerk billing API",
     "core.clerk": "Clerk Backend API",
     "core.email": "Resend + the outbox worker",
     "core.email_worker": "Resend + the outbox worker",

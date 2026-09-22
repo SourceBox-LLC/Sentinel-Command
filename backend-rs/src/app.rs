@@ -222,13 +222,19 @@ pub fn build_router(state: AppState) -> Router {
             "/api/nodes/validate",
             served(axum::routing::post(api::node_writes::validate_node)),
         )
-        .route("/api/nodes/register", still_python())
+        .route(
+            "/api/nodes/register",
+            served(axum::routing::post(api::node_register::register_node)),
+        )
         // Same reason: it clears the caches for the node's cameras.
         .route(
             "/api/nodes/self/decommission",
             served(axum::routing::post(api::nodes::decommission_self)),
         )
-        .route("/api/nodes/heartbeat", still_python())
+        .route(
+            "/api/nodes/heartbeat",
+            served(axum::routing::post(api::node_register::node_heartbeat)),
+        )
         // Moved with the video path, not before it: this reads the
         // viewer-second counter, which lives in whichever process
         // serves segments.
@@ -467,6 +473,11 @@ fn served(router: axum::routing::MethodRouter<AppState>) -> axum::routing::Metho
 ///
 /// Needed because `/a/{id}` matches `/a/literal`. Without this, porting
 /// a `{id}` route quietly takes over every static path beside it.
+// Currently unused: every static sibling of a ported `{id}` route is
+// itself ported. Kept because the MCP slice reinstates the situation —
+// `/api/mcp/keys/{key_id}` lands beside `/api/mcp/tools` — and because
+// the reason it exists is not something to rediscover.
+#[allow(dead_code)]
 fn still_python() -> axum::routing::MethodRouter<AppState> {
     axum::routing::any(proxy::forward)
 }
