@@ -126,6 +126,11 @@ export EMAIL_TEMPLATES_DIR="${EMAIL_TEMPLATES_DIR:-$REPO/backend/app/templates/e
 # The same Svix secret for both tiers, so write_diff can sign one
 # webhook delivery with the svix library and send it to each.
 export RESEND_WEBHOOK_SECRET="${RESEND_WEBHOOK_SECRET:-whsec_aGFybmVzcy13ZWJob29rLXNlY3JldC0xMjM0NTY=}"
+# Clerk's webhook secret. Only the Clerk-mode pair mounts that route at
+# all — main.py registers the webhooks router under Clerk only — but it
+# is exported for both so the two pairs differ by AUTH_PROVIDER and
+# nothing else.
+export CLERK_WEBHOOK_SECRET="${CLERK_WEBHOOK_SECRET:-whsec_Y2xlcmstaGFybmVzcy1zZWNyZXQtNjU0MzIxMDA=}"
 
 # Placeholder Clerk keys for the Clerk-mode pair: base64 of a made-up
 # Frontend API host. Nothing that pair is used for reaches Clerk.

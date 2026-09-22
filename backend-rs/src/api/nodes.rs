@@ -287,7 +287,7 @@ pub async fn get_plan_info(
 /// The offset is carried through from whatever `payment_past_due_at`
 /// was stored with, because that is the value Python added the grace
 /// window to and then printed.
-fn iso_aware(naive_utc: NaiveDateTime, offset_us: i64) -> String {
+pub(crate) fn iso_aware(naive_utc: NaiveDateTime, offset_us: i64) -> String {
     let local = naive_utc + chrono::Duration::microseconds(offset_us);
     let total_minutes = offset_us / 60_000_000;
     let sign = if total_minutes < 0 { '-' } else { '+' };

@@ -1817,8 +1817,12 @@ CASES += [
 # a paid one from the Setting without calling Clerk — a free slug would
 # reach for the network on every request.
 #
-# Run them with tests/differential/cap_run.sh.
+# Run them with tests/differential/clerk_run.sh.
 PRO = pref("org_plan", "pro")
+
+# Epoch milliseconds, which is what Clerk puts in a webhook payload.
+FUTURE_PERIOD_END = int((_PAST_DUE_NOW + timedelta(days=20)).timestamp() * 1000)
+PAST_PERIOD_END = int((_PAST_DUE_NOW - timedelta(days=20)).timestamp() * 1000)
 
 # Four more cameras, which puts the org exactly at Pro's cap of 25.
 FILL_TO_CAP = PRO + (
@@ -1911,6 +1915,248 @@ CLERK_CASES = [
     ("cap: past due within grace keeps the tier", "POST", "/api/nodes/heartbeat",
      {"node_id": "node-aaaa1111"}, "node:test-node-key",
      PRO + past_due_setup(PAST_DUE_DAYS_LEFT)),
+
+    # --- The Clerk webhook --------------------------------------------
+    #
+    # main.py mounts the webhooks router under Clerk only, so this route
+    # does not exist on the local pair at all — Python answers 404 there
+    # and so must the port. Every case is Svix-signed with Clerk's own
+    # secret, which is separate from Resend's: a port that verified
+    # either against the other would accept a forged plan change.
+    #
+    # `payer.organization_id` is how a subscription event names its org,
+    # and `self-host` is the org the fixture is built around.
+    *[(f"clerk: {label}", "POST", "/api/webhooks/clerk", body, who, setup)
+      for label, body, who, setup in [
+          # Signature, which is the whole security boundary here.
+          ("unsigned", {"type": "subscription.active", "data": {}}, "agent:none", None),
+          ("bad signature", {"type": "subscription.active", "data": {}},
+           "clerk-bad:msg_c1", None),
+          ("a stale timestamp", {"type": "subscription.active", "data": {}},
+           "clerk-stale:msg_c2", None),
+          ("a future timestamp", {"type": "subscription.active", "data": {}},
+           "clerk-future:msg_c3", None),
+          ("signed with Resend's secret", {"type": "subscription.active", "data": {}},
+           "svix:msg_c4", None),
+          ("the webhook- header set", {"type": "subscription.active", "data": {}},
+           "clerk-webhook:msg_c5", None),
+          ("signed but not JSON", b"{x", "clerk:msg_c6", None),
+          ("signed but not an object", [1, 2], "clerk:msg_c7", None),
+          ("signed empty body", b"", "clerk:msg_c8", None),
+          # Dedup: the same msg id twice is answered once.
+          ("a replayed delivery", {"type": "subscription.active", "data": {}},
+           "clerk:msg_seen", "INSERT INTO processed_webhooks (svix_msg_id, event_type, processed_at)"
+           " VALUES ('msg_seen','subscription.active', timestamp '2026-06-01')"),
+          # An event nobody handles still records itself as processed.
+          ("an unknown event type", {"type": "user.created", "data": {"id": "u_1"}},
+           "clerk:msg_c9", None),
+          ("no type at all", {"data": {}}, "clerk:msg_c10", None),
+          # Subscription lifecycle. The first active item wins.
+          ("subscription active on pro",
+           {"type": "subscription.active",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "items": [{"status": "active", "plan": {"slug": "pro"}}]}},
+           "clerk:msg_s1", None),
+          ("subscription updated to pro_plus",
+           {"type": "subscription.updated",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "items": [{"status": "active", "plan": {"slug": "pro_plus"}}]}},
+           "clerk:msg_s2", PRO),
+          # A downgrade suspends the cameras past the new cap, without
+          # deleting anything.
+          ("a downgrade suspends over-cap cameras",
+           {"type": "subscription.updated",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "items": [{"status": "active", "plan": {"slug": "pro"}}]}},
+           "clerk:msg_s3", PRO_PLUS),
+          # A canceled item still inside its period keeps the tier; the
+          # snapshot Clerk sends right after a cancel click contains
+          # only that item, and reading it as "free" downgraded paying
+          # customers on the spot.
+          ("a canceled item paid through keeps its plan",
+           {"type": "subscription.updated",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "items": [{"status": "canceled", "plan": {"slug": "pro"},
+                                "period_end": FUTURE_PERIOD_END}]}},
+           "clerk:msg_s4", None),
+          ("a canceled item past its period does not",
+           {"type": "subscription.updated",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "items": [{"status": "canceled", "plan": {"slug": "pro"},
+                                "period_end": PAST_PERIOD_END}]}},
+           "clerk:msg_s5", None),
+          ("an active item beats a canceled one, whatever the order",
+           {"type": "subscription.updated",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "items": [{"status": "canceled", "plan": {"slug": "pro_plus"},
+                                "period_end": FUTURE_PERIOD_END},
+                               {"status": "active", "plan": {"slug": "pro"}}]}},
+           "clerk:msg_s6", None),
+          ("an item with no slug is skipped",
+           {"type": "subscription.updated",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "items": [{"status": "active", "plan": {}},
+                               {"status": "active", "plan": {"slug": "pro"}}]}},
+           "clerk:msg_s7", None),
+          ("no items at all is free",
+           {"type": "subscription.updated",
+            "data": {"payer": {"organization_id": "self-host"}, "items": []}},
+           "clerk:msg_s8", PRO),
+          ("no payer organization",
+           {"type": "subscription.active", "data": {"items": []}}, "clerk:msg_s9", None),
+          # A paid snapshot must NOT clear a held past-due flag: during
+          # dunning the item stays active with its paid slug, and
+          # clearing here reset the grace clock every cycle.
+          ("a paid snapshot leaves a held past-due alone",
+           {"type": "subscription.updated",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "items": [{"status": "active", "plan": {"slug": "pro"}}]}},
+           "clerk:msg_s10", past_due_setup(PAST_DUE_DAYS_LEFT)),
+          ("a paid snapshot clears past-due when none is held",
+           {"type": "subscription.updated",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "items": [{"status": "active", "plan": {"slug": "pro"}}]}},
+           "clerk:msg_s11", None),
+          # Only an ACTIVE paid item clears a pending cancellation.
+          ("an active item clears a pending cancel",
+           {"type": "subscription.updated",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "items": [{"status": "active", "plan": {"slug": "pro"}}]}},
+           "clerk:msg_s12", pref("plan_cancel_pending", "true")),
+          ("a canceled-but-paid item does not",
+           {"type": "subscription.updated",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "items": [{"status": "canceled", "plan": {"slug": "pro"},
+                                "period_end": FUTURE_PERIOD_END}]}},
+           "clerk:msg_s13", pref("plan_cancel_pending", "true")),
+          # The item-level activation, which is the authoritative
+          # "payment went through" signal.
+          ("item active on pro",
+           {"type": "subscriptionItem.active",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "plan": {"slug": "pro"}}}, "clerk:msg_i1", None),
+          ("item active on an unknown slug does nothing",
+           {"type": "subscriptionItem.active",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "plan": {"slug": "enterprise"}}}, "clerk:msg_i2", PRO),
+          ("item active with no plan",
+           {"type": "subscriptionItem.active",
+            "data": {"payer": {"organization_id": "self-host"}}}, "clerk:msg_i3", None),
+          # Past due: the anchor is stamped only on entry.
+          ("past due stamps an anchor",
+           {"type": "subscription.pastDue",
+            "data": {"payer": {"organization_id": "self-host"}}}, "clerk:msg_p1", PRO),
+          ("past due again does not re-stamp",
+           {"type": "subscriptionItem.pastDue",
+            "data": {"payer": {"organization_id": "self-host"}}},
+           "clerk:msg_p2", PRO + past_due_setup(PAST_DUE_DAYS_LEFT)),
+          ("past due with epoch millis",
+           {"type": "subscription.pastDue",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "past_due_at": 1750000000123}}, "clerk:msg_p3", PRO),
+          ("past due with epoch seconds",
+           {"type": "subscription.pastDue",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "past_due_at": 1750000000}}, "clerk:msg_p4", PRO),
+          ("past due with camelCase",
+           {"type": "subscription.pastDue",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "pastDueAt": 1750000000123}}, "clerk:msg_p5", PRO),
+          ("past due with a string timestamp",
+           {"type": "subscription.pastDue",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "past_due_at": "2026-06-01T00:00:00+00:00"}}, "clerk:msg_p6", PRO),
+          # Both zero: `A or B` yields B, which is not None, so it
+          # parses and stamps 1970 — where past_due_at alone being zero
+          # stamps now.
+          ("past due with both keys zero",
+           {"type": "subscription.pastDue",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "past_due_at": 0, "pastDueAt": 0}}, "clerk:msg_p7", PRO),
+          ("past due with only past_due_at zero",
+           {"type": "subscription.pastDue",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "past_due_at": 0}}, "clerk:msg_p8", PRO),
+          ("past due with a bool",
+           {"type": "subscription.pastDue",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "past_due_at": True}}, "clerk:msg_p9", PRO),
+          ("past due with an unparseable value",
+           {"type": "subscription.pastDue",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "past_due_at": "whenever"}}, "clerk:msg_p10", PRO),
+          ("past due with a list",
+           {"type": "subscription.pastDue",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "past_due_at": [1]}}, "clerk:msg_p11", PRO),
+          # Payment recovered.
+          ("a paid attempt clears past-due and re-enables",
+           {"type": "paymentAttempt.updated",
+            "data": {"payer": {"organization_id": "self-host"}, "status": "paid"}},
+           "clerk:msg_a1", PRO + past_due_setup(PAST_DUE_EXPIRED)),
+          ("a failed attempt changes nothing",
+           {"type": "paymentAttempt.updated",
+            "data": {"payer": {"organization_id": "self-host"}, "status": "failed"}},
+           "clerk:msg_a2", PRO + past_due_setup(PAST_DUE_DAYS_LEFT)),
+          # Cancellation: scheduled, then actually ended.
+          ("a scheduled cancel records the marker",
+           {"type": "subscriptionItem.canceled",
+            "data": {"payer": {"organization_id": "self-host"}}}, "clerk:msg_x1", PRO),
+          ("the trial-ending notice does nothing",
+           {"type": "subscriptionItem.freeTrialEnding",
+            "data": {"payer": {"organization_id": "self-host"}}}, "clerk:msg_x2", PRO),
+          # Membership audit.
+          ("a member was added",
+           {"type": "organizationMembership.created",
+            "data": {"organization": {"id": "self-host"},
+                     "public_user_data": {"identifier": "new@example.com",
+                                          "user_id": "user_1"},
+                     "role": "org:member"}}, "clerk:msg_m1", None),
+          ("an admin was added",
+           {"type": "organizationMembership.created",
+            "data": {"organization": {"id": "self-host"},
+                     "public_user_data": {"identifier": "boss@example.com"},
+                     "role": "org:admin"}}, "clerk:msg_m2", None),
+          ("a member with no identifier falls back to the user id",
+           {"type": "organizationMembership.created",
+            "data": {"organization": {"id": "self-host"},
+                     "public_user_data": {"user_id": "user_2"}}}, "clerk:msg_m3", None),
+          ("a member with nothing at all",
+           {"type": "organizationMembership.created",
+            "data": {"organization": {"id": "self-host"}}}, "clerk:msg_m4", None),
+          ("a role with no org prefix",
+           {"type": "organizationMembership.updated",
+            "data": {"organization": {"id": "self-host"},
+                     "public_user_data": {"identifier": "x@example.com"},
+                     "role": "admin"}}, "clerk:msg_m5", None),
+          ("a role change to member",
+           {"type": "organizationMembership.updated",
+            "data": {"organization": {"id": "self-host"},
+                     "public_user_data": {"identifier": "x@example.com"},
+                     "role": "org:member"}}, "clerk:msg_m6", None),
+          ("a member was removed",
+           {"type": "organizationMembership.deleted",
+            "data": {"organization": {"id": "self-host"},
+                     "public_user_data": {"identifier": "gone@example.com",
+                                          "user_id": "user_3"}}}, "clerk:msg_m7", None),
+          ("a membership event with no organization",
+           {"type": "organizationMembership.created",
+            "data": {"public_user_data": {"identifier": "x@example.com"}}},
+           "clerk:msg_m8", None),
+          # Org lifecycle.
+          ("an organization was created",
+           {"type": "organization.created",
+            "data": {"id": "self-host", "name": "Acme", "created_by": "user_9"}},
+           "clerk:msg_o1", None),
+          ("an organization created with no name",
+           {"type": "organization.created", "data": {"id": "self-host"}},
+           "clerk:msg_o2", None),
+          ("an organization deleted wipes everything",
+           {"type": "organization.deleted", "data": {"id": "self-host"}},
+           "clerk:msg_o3", None),
+          ("an organization deleted with no id",
+           {"type": "organization.deleted", "data": {}}, "clerk:msg_o4", None),
+      ]],
 ]
 
 
@@ -2248,9 +2494,11 @@ def field_diff(python_value, rust_value, width=200):
 
 RESEND_SECRET = os.environ.get(
     "RESEND_WEBHOOK_SECRET", "whsec_aGFybmVzcy13ZWJob29rLXNlY3JldC0xMjM0NTY=")
+CLERK_SECRET = os.environ.get(
+    "CLERK_WEBHOOK_SECRET", "whsec_Y2xlcmstaGFybmVzcy1zZWNyZXQtNjU0MzIxMDA=")
 
 
-def sign_svix(req, variant, msg_id, data):
+def sign_svix(req, variant, msg_id, data, secret=None):
     from datetime import timedelta  # noqa: PLC0415
 
     from svix.webhooks import Webhook  # noqa: PLC0415
@@ -2260,7 +2508,8 @@ def sign_svix(req, variant, msg_id, data):
         when -= timedelta(minutes=10)
     elif variant == "svix-future":
         when += timedelta(minutes=10)
-    signature = Webhook(RESEND_SECRET).sign(msg_id, when, data.decode("utf-8", "replace"))
+    signature = Webhook(secret or RESEND_SECRET).sign(
+        msg_id, when, data.decode("utf-8", "replace"))
     if variant == "svix-bad":
         signature = "v1," + "A" * 43 + "="
     elif variant == "svix-rotated":
@@ -2298,6 +2547,14 @@ def fetch(base, method, path, body, who="admin"):
         # signed token is the authority — and sending a session token
         # anyway would let a port that wrongly required one still pass.
         pass
+    elif who.startswith("clerk"):
+        # A Clerk delivery. Same library and the same variants, signed
+        # with Clerk's own secret — the two webhooks have separate
+        # secrets in production, and a port that verified either one
+        # against the other would accept a forged plan change.
+        variant, _, msg_id = who.partition(":")
+        variant = variant.replace("clerk", "svix", 1)
+        sign_svix(req, variant, msg_id, data or b"", secret=CLERK_SECRET)
     elif who.startswith("svix"):
         # A Resend delivery, signed by the svix library itself at send
         # time — the timestamp is part of what is signed and must be
@@ -2599,7 +2856,7 @@ def _main():
               f"comparison over an empty table is vacuous. Seed them or drop them.")
         return 2
 
-    scope = f" [DIFF_ONLY={DIFF_ONLY!r}: {len(cases)} of {len(CASES)} cases]" if DIFF_ONLY else ""
+    scope = f" [DIFF_ONLY={DIFF_ONLY!r}: {len(cases)} of {len(pool)} cases]" if DIFF_ONLY else ""
     print(f"{len(cases) - bad}/{len(cases)} identical (response + side effects), {bad} differing{scope}")
     return 1 if bad else 0
 

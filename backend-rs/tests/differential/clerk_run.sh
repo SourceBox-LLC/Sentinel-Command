@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# The plan-cap differential: the node routes against the CLERK-mode
-# pair on 8100/8101.
+# The Clerk-mode differential: everything that only means something
+# against the pair on 8100/8101.
 #
 # The default tiers run AUTH_PROVIDER=local, where `resolve_org_plan`
 # returns "self_host" before reading anything. Against them no camera
@@ -20,7 +20,11 @@
 # The two pairs share one database, so this cannot run at the same time
 # as write_run.sh.
 #
-# Usage: tests/differential/cap_run.sh [-v]
+# Two kinds of case live here: the plan-cap half of the node routes
+# (below), and the Clerk webhook, which main.py does not even mount
+# under local auth.
+#
+# Usage: tests/differential/clerk_run.sh [-v]
 
 set -euo pipefail
 

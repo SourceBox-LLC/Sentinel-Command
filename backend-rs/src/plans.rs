@@ -191,7 +191,7 @@ fn prune_resolve_cache(c: &mut Caches, now: Instant) {
 /// either a datetime or an integer on SDK objects. A value above 1e12
 /// is milliseconds; below that it is seconds. Returns `None` when the
 /// field is absent or unparseable rather than guessing.
-fn item_period_end_utc(item: &Value) -> Option<DateTime<Utc>> {
+pub fn item_period_end_utc(item: &Value) -> Option<DateTime<Utc>> {
     let raw = item
         .get("period_end")
         .or_else(|| item.get("periodEnd"))

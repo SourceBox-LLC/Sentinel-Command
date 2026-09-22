@@ -390,10 +390,15 @@ pub fn build_router(state: AppState) -> Router {
         // under Clerk. A self-hosted install has no Clerk account to
         // send webhooks and no secret to verify them, so the path does
         // not exist there — Python answers 404, and so does the proxy.
-        router = router.route(
-            "/api/webhooks/resend",
-            served(axum::routing::post(api::webhooks::resend_webhook)),
-        );
+        router = router
+            .route(
+                "/api/webhooks/resend",
+                served(axum::routing::post(api::webhooks::resend_webhook)),
+            )
+            .route(
+                "/api/webhooks/clerk",
+                served(axum::routing::post(api::clerk_webhook::clerk_webhook)),
+            );
     }
     if local_auth {
         router = router

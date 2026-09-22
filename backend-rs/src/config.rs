@@ -56,6 +56,7 @@ pub struct Config {
     /// it every delivery is refused: an unverified bounce could
     /// suppress any address.
     pub resend_webhook_secret: Option<String>,
+    pub clerk_webhook_secret: Option<String>,
 
     // --- Clerk ---------------------------------------------------------
     pub clerk_secret_key: String,
@@ -157,6 +158,7 @@ impl Config {
                 .parse()
                 .unwrap_or(0),
             resend_webhook_secret: std::env::var("RESEND_WEBHOOK_SECRET").ok().filter(|v| !v.is_empty()),
+            clerk_webhook_secret: std::env::var("CLERK_WEBHOOK_SECRET").ok().filter(|v| !v.is_empty()),
             sentinel_agent_webhook_url: std::env::var("SENTINEL_AGENT_WEBHOOK_URL")
                 .ok()
                 .filter(|v| !v.is_empty()),
@@ -221,6 +223,7 @@ mod tests {
             min_supported_node_version: "0.1.0".into(),
             latest_node_version: "0.1.77".into(),
             sentinel_agent_key: None,
+            clerk_webhook_secret: None,
             sentinel_license_key: None,
             sentinel_dispatch_enabled: true,
             sentinel_global_monthly_run_cap: 0,

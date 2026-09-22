@@ -177,9 +177,102 @@ pub fn round_to(x: f64, digits: usize) -> f64 {
 }
 
 
+/// Python's `float()`, which accepts more than Rust's `f64::from_str`:
+/// underscores between digits, and `infinity` as a spelling of `inf`.
+/// It rejects a few things Rust takes as well — a leading or trailing
+/// underscore, and one adjacent to the decimal point or the exponent.
+///
+/// Shared rather than duplicated: the incident clip's `duration`
+/// parameter and the Clerk webhook's `past_due_at` both need it, and
+/// they had two copies of the same underscore rule between them.
+pub fn python_float(raw: &str) -> Option<f64> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.contains('_') {
+        // Underscores are legal only *between* two digits, so every one
+        // of them must have a digit on each side.
+        let bytes = trimmed.as_bytes();
+        for (i, b) in bytes.iter().enumerate() {
+            if *b != b'_' {
+                continue;
+            }
+            let before = i.checked_sub(1).map(|j| bytes[j]);
+            let after = bytes.get(i + 1).copied();
+            if !matches!((before, after), (Some(a), Some(c)) if a.is_ascii_digit() && c.is_ascii_digit())
+            {
+                return None;
+            }
+        }
+    }
+    let cleaned = trimmed.replace('_', "");
+    // Rust parses "inf"/"infinity"/"nan" case-insensitively, as does
+    // Python, so no special-casing is needed for those.
+    cleaned.parse::<f64>().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Held to what CPython's `float()` actually answers.
+    ///
+    /// The underscore rule is the only place Rust disagrees, and it is
+    /// the whole reason this function exists: `1_000` is 1000.0, while
+    /// `_1`, `1_`, `1__0`, `1._5` and `1e_5` all raise.
+    #[test]
+    fn python_float_matches_cpython() {
+        for (input, expected) in [
+            ("1", Some(1.0)),
+            ("5", Some(5.0)),
+            ("1.5", Some(1.5)),
+            (" 1.5 ", Some(1.5)),
+            ("+1.5", Some(1.5)),
+            ("+3", Some(3.0)),
+            ("-1.5", Some(-1.5)),
+            ("-3.7", Some(-3.7)),
+            (".5", Some(0.5)),
+            ("5.", Some(5.0)),
+            ("1e5", Some(100000.0)),
+            ("1E5", Some(100000.0)),
+            ("1e3", Some(1000.0)),
+            // Underscores, but only between digits.
+            ("1_0", Some(10.0)),
+            ("1_0.5", Some(10.5)),
+            ("1_000", Some(1000.0)),
+            ("1_000.5", Some(1000.5)),
+            ("_1", None),
+            ("_5", None),
+            ("1_", None),
+            ("5_", None),
+            ("1__0", None),
+            ("1._5", None),
+            ("1.5_", None),
+            ("1e_5", None),
+            ("1e_3", None),
+            ("1_e3", None),
+            // Rejected by both.
+            ("", None),
+            (" ", None),
+            ("   ", None),
+            ("0x10", None),
+            ("1,000", None),
+            ("1 000", None),
+            ("5=6", None),
+            ("abc", None),
+            ("1e", None),
+            ("--1", None),
+        ] {
+            assert_eq!(python_float(input), expected, "float({input:?})");
+        }
+        // The non-finite spellings, which compare false to themselves.
+        assert!(python_float("inf").is_some_and(f64::is_infinite));
+        assert!(python_float("Infinity").is_some_and(f64::is_infinite));
+        assert!(python_float("-inf").is_some_and(|v| v.is_infinite() && v < 0.0));
+        assert!(python_float("nan").is_some_and(f64::is_nan));
+        assert!(python_float("NAN").is_some_and(f64::is_nan));
+    }
 
     #[test]
     fn round_two_places_like_python() {

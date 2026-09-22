@@ -8,7 +8,7 @@
  },
  "harness": [
   [
-   "tests/differential/cap_run.sh"
+   "tests/differential/clerk_run.sh"
   ]
  ],
  "mutations": [

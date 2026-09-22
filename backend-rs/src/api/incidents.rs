@@ -600,7 +600,7 @@ fn clip_duration(raw_mime: &str) -> f64 {
     for param in raw_mime.split(';').skip(1) {
         let param = param.trim();
         if let Some(value) = param.strip_prefix("duration=") {
-            if let Some(parsed) = parse_python_float(value) {
+            if let Some(parsed) = crate::pyrepr::python_float(value) {
                 duration = parsed;
             }
         }
@@ -627,36 +627,6 @@ fn target_duration(duration: f64) -> Option<i64> {
     Some((truncated as i64).saturating_add(1).max(1))
 }
 
-/// Python's `float()` accepts more than Rust's `f64::from_str`:
-/// underscores between digits, and `infinity` as a spelling of `inf`.
-/// It rejects a few things Rust takes as well — a trailing or leading
-/// underscore, and an underscore adjacent to the decimal point.
-fn parse_python_float(raw: &str) -> Option<f64> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    if trimmed.contains('_') {
-        // Underscores are legal only *between* two digits, so every one
-        // of them must have a digit on each side.
-        let bytes = trimmed.as_bytes();
-        for (i, b) in bytes.iter().enumerate() {
-            if *b != b'_' {
-                continue;
-            }
-            let before = i.checked_sub(1).map(|j| bytes[j]);
-            let after = bytes.get(i + 1).copied();
-            if !matches!((before, after), (Some(a), Some(c)) if a.is_ascii_digit() && c.is_ascii_digit())
-            {
-                return None;
-            }
-        }
-    }
-    let cleaned = trimmed.replace('_', "");
-    // Rust parses "inf"/"infinity"/"nan" case-insensitively, as does
-    // Python, so no special-casing is needed for those.
-    cleaned.parse::<f64>().ok()
-}
 
 #[derive(Debug, Deserialize, Default)]
 pub struct IncidentPatch {
@@ -815,37 +785,6 @@ mod evidence_tests {
         // An unparseable value is skipped, leaving whatever came before.
         assert_eq!(clip_duration("video/mp2t;duration=5;duration=x"), 5.0);
         assert_eq!(clip_duration("video/mp2t;duration=oops"), 60.0);
-    }
-
-    #[test]
-    fn python_float_accepts_underscores_only_between_digits() {
-        // Verified against CPython: 1_0 is 10.0, but 1__0, 1e_3 and a
-        // leading or trailing underscore all raise ValueError.
-        for (raw, expected) in [
-            ("5", Some(5.0)),
-            ("1_0", Some(10.0)),
-            ("1_0.5", Some(10.5)),
-            ("-3.7", Some(-3.7)),
-            ("+3", Some(3.0)),
-            ("1e3", Some(1000.0)),
-            ("5.", Some(5.0)),
-            (".5", Some(0.5)),
-            ("_5", None),
-            ("5_", None),
-            ("1__0", None),
-            ("1e_3", None),
-            ("1_e3", None),
-            ("1._5", None),
-            ("0x10", None),
-            ("5=6", None),
-            ("", None),
-            ("   ", None),
-        ] {
-            assert_eq!(parse_python_float(raw), expected, "input {raw:?}");
-        }
-        assert!(parse_python_float("inf").unwrap().is_infinite());
-        assert!(parse_python_float("Infinity").unwrap().is_infinite());
-        assert!(parse_python_float("nan").unwrap().is_nan());
     }
 
     #[test]
