@@ -82,6 +82,17 @@ pub struct Config {
     /// The operator's platform-wide email kill switch. Defaults off, so
     /// a deployment that never sets it sends nothing.
     pub email_enabled: bool,
+    pub resend_api_key: String,
+    /// `resend.api_url` — the SDK reads it from the environment, which
+    /// is what lets a fake Resend sit in front of BOTH tiers. Clerk's
+    /// SDK has no equivalent, and that asymmetry is why the webhook's
+    /// member-limit call is untestable and this is not.
+    pub resend_api_url: String,
+    pub email_from_address: String,
+    pub email_from_name: String,
+    pub email_worker_interval_seconds: u64,
+    pub email_worker_batch_size: i64,
+    pub email_max_attempts: i64,
 
     /// Checked against a Clerk token's `azp` claim — the Python service
     /// passes it to the SDK as `authorized_parties`.
@@ -103,6 +114,16 @@ impl Config {
     /// The login and refresh routes answer 503 when this is false,
     /// rather than rejecting every password as wrong — an operator who
     /// forgot a secret needs to see a configuration problem.
+    /// `is_email_configured` — the wiring, not the operator switch.
+    ///
+    /// `EMAIL_ENABLED` is a deliberate "off"; this is "misconfigured",
+    /// and the worker treats them differently: the first is a skipped
+    /// send that still clears the row, the second is a permanent
+    /// failure that retrying cannot fix.
+    pub fn is_email_configured(&self) -> bool {
+        !self.resend_api_key.is_empty() && !self.email_from_address.is_empty()
+    }
+
     pub fn is_local_auth_configured(&self) -> bool {
         !self.app_secret_key.is_empty()
             && !self.local_admin_username.is_empty()
@@ -178,6 +199,17 @@ impl Config {
             auth_provider: var_or("AUTH_PROVIDER", "clerk"),
             redis_url: var_or("REDIS_URL", ""),
             email_enabled: var_or("EMAIL_ENABLED", "false").to_lowercase() == "true",
+            resend_api_key: var_or("RESEND_API_KEY", ""),
+            resend_api_url: var_or("RESEND_API_URL", "https://api.resend.com"),
+            email_from_address: var_or("EMAIL_FROM_ADDRESS", "notifications@sentinel-command.com"),
+            email_from_name: var_or("EMAIL_FROM_NAME", "Sentinel by SourceBox"),
+            email_worker_interval_seconds: var_or("EMAIL_WORKER_INTERVAL_SECONDS", "5")
+                .parse()
+                .unwrap_or(5),
+            email_worker_batch_size: var_or("EMAIL_WORKER_BATCH_SIZE", "20")
+                .parse()
+                .unwrap_or(20),
+            email_max_attempts: var_or("EMAIL_MAX_ATTEMPTS", "3").parse().unwrap_or(3),
             frontend_url: var_or("FRONTEND_URL", "http://localhost:5173"),
             cors_allowed_origins: var_or(
                 "CORS_ALLOWED_ORIGINS",
@@ -241,6 +273,13 @@ mod tests {
             auth_provider: auth_provider.into(),
             redis_url: String::new(),
             email_enabled: false,
+            resend_api_key: String::new(),
+            resend_api_url: "https://api.resend.com".into(),
+            email_from_address: String::new(),
+            email_from_name: String::new(),
+            email_worker_interval_seconds: 5,
+            email_worker_batch_size: 20,
+            email_max_attempts: 3,
             frontend_url: String::new(),
             cors_allowed_origins: String::new(),
         }

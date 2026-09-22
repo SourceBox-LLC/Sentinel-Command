@@ -72,6 +72,9 @@ async fn main() -> anyhow::Result<()> {
     // And the one that keeps the newest CameraNode release known, so
     // the heartbeat path never waits on GitHub.
     sentinel_command::versions::spawn_refresh_loop(state.http.clone());
+    // The outbox drain. It owns the last-tick stamp the health probe
+    // reads, so it has to run in whichever process answers that probe.
+    tokio::spawn(sentinel_command::email_worker::email_worker_loop(state.clone()));
 
     let upstream = state.config.upstream.clone();
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
