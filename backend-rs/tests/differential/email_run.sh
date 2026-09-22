@@ -45,14 +45,34 @@ if ! docker exec "$PG_CONTAINER" psql -U cc -d postgres -tAc \
         < "$RS/migrations/0001_adopt_production_schema.sql"
 fi
 
-started_fake=0
+# Always OUR fake, never one that happens to be listening.
+#
+# This used to reuse whatever answered the port, and a fake left behind
+# by an earlier run then served every run after it — including runs
+# whose cases needed modes that fake did not have, and whose `flaky`
+# key it had already spent. Three mutations scored OK against code
+# that was never exercised, and two more read as MISS for the same
+# reason. A stale helper does not fail; it answers, which is worse.
+if pid="$(ss -lntpH "sport = :$PORT" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1)"; then
+    if [[ -n "${pid:-}" ]]; then
+        echo "killing a fake resend left on :$PORT (pid $pid)"
+        kill "$pid" 2>/dev/null || true
+        for _ in $(seq 25); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.1
+        done
+    fi
+fi
+"$PYTHON" "$HERE/fake_resend.py" --port "$PORT" >"$OUT/fake.log" 2>&1 &
+started_fake=$!
+for _ in $(seq 50); do
+    curl -fsS -m 1 "http://127.0.0.1:$PORT/" >/dev/null 2>&1 && break
+    sleep 0.2
+done
 if ! curl -fsS -m 2 "http://127.0.0.1:$PORT/" >/dev/null 2>&1; then
-    "$PYTHON" "$HERE/fake_resend.py" --port "$PORT" >"$OUT/fake.log" 2>&1 &
-    started_fake=$!
-    for _ in $(seq 50); do
-        curl -fsS -m 1 "http://127.0.0.1:$PORT/" >/dev/null 2>&1 && break
-        sleep 0.2
-    done
+    echo "fake resend never came up — see $OUT/fake.log" >&2
+    cat "$OUT/fake.log" >&2 || true
+    exit 2
 fi
 cleanup() { [[ "$started_fake" != 0 ]] && kill "$started_fake" 2>/dev/null; rm -rf "$OUT"; }
 trap cleanup EXIT
