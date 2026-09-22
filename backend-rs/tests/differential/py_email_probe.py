@@ -56,7 +56,11 @@ def main() -> int:
     resend.api_url = args.resend
 
     from app.core.database import SessionLocal, engine  # noqa: PLC0415
-    from app.core.email_worker import run_one_tick  # noqa: PLC0415
+    from app.core.email_worker import (  # noqa: PLC0415
+        _reset_tick_for_tests,
+        run_one_tick,
+        seconds_since_last_tick,
+    )
     from app.models.models import Base, EmailLog, EmailOutbox, EmailSuppression  # noqa: PLC0415
     import app.core.config as config_mod  # noqa: PLC0415
     import app.core.email as email_mod  # noqa: PLC0415
@@ -85,9 +89,17 @@ def main() -> int:
             settings.EMAIL_WORKER_BATCH_SIZE = scenario.get("batch_size", 20)
             email_mod._reset_for_tests()
 
+            # Reset per scenario, so "did this tick stamp" is a
+            # question about THIS tick rather than about any earlier
+            # one in the same process.
+            _reset_tick_for_tests()
             summaries = []
             for _ in range(scenario.get("ticks", 1)):
                 summaries.append(run_one_tick(db))
+            # The value is wall-clock, so only its presence is
+            # compared: the health probe's question is "has the loop
+            # been scheduled", not "how long ago".
+            ticked = seconds_since_last_tick() is not None
 
             (settings.EMAIL_ENABLED, settings.RESEND_API_KEY,
              settings.EMAIL_WORKER_BATCH_SIZE) = saved
@@ -95,6 +107,7 @@ def main() -> int:
             print(json.dumps({
                 "scenario": scenario["name"],
                 "summaries": summaries,
+                "ticked": ticked,
                 "outbox": _dump_outbox(db, EmailOutbox),
                 "log": _dump_log(db, EmailLog),
             }, sort_keys=True), flush=True)
@@ -144,6 +157,10 @@ def _dump_outbox(db, model) -> list:
             "kind": r.kind, "status": r.status, "attempts": r.attempts,
             "resend_message_id": r.resend_message_id, "error": r.error,
             "sent": r.sent_at is not None,
+            # The claim is the only writer of last_attempt_at, so this
+            # is how "the batch was claimed before sending" is visible
+            # at all once the tick has finished.
+            "attempted": r.last_attempt_at is not None,
         }
         for r in db.query(model).order_by(model.id).all()
     ]

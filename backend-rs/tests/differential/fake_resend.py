@@ -20,6 +20,9 @@ its own outcome by addressing the mail:
                                            SDK's table; invalid_api_key is
                                            mapped under 403 only)
     empty@…       200 with an empty body   ApplicationError: Failed to decode…
+    bodyerr@…     200 with {"statusCode": 500}  the body's own status decides;
+                                           Resend has answered 200 with an
+                                           error document
     html@…        502 text/html            ResendError: Expected JSON response…
     flaky@…       500 once, then 200       the retry path: a row that fails
                                            and succeeds later must log once
@@ -99,6 +102,9 @@ class Handler(BaseHTTPRequestHandler):
         if mode == "badkey":
             return json.dumps({"statusCode": 401, "name": "invalid_api_key",
                                "message": "nope"}).encode(), 401, js
+        if mode == "bodyerr":
+            return json.dumps({"statusCode": 500, "name": "application_error",
+                               "message": "body says no"}).encode(), 200, js
         if mode == "empty":
             return b"", 200, js
         if mode == "html":

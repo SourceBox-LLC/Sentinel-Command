@@ -358,6 +358,19 @@
      "created_offset": 10
     }
    ]
+  },
+  {
+   "name": "a 200 carrying an error document",
+   "ticks": 1,
+   "rows": [
+    {
+     "id": 1,
+     "recipient": "bodyerr@example.com",
+     "kind": "motion",
+     "status": "pending",
+     "attempts": 2
+    }
+   ]
   }
  ]
 }

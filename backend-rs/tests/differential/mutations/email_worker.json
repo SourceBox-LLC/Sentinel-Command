@@ -75,7 +75,8 @@
    "file": "src/email_worker.rs",
    "_why": "The kill switch being off is not an error. Treating it as one leaves every row retrying until it hits the cap and is marked permanently failed.",
    "old": "    if result.skipped {",
-   "new": "    if false {"
+   "new": "    if false {",
+   "equivalent": "The two arms return the same thing. `send_email` reports a skipped send as ok=true with no message id, so falling through to the `result.ok` arm yields (\"sent\", None, None) either way. The branch is redundant in Python too \u2014 it is there to say what a skip MEANS, not to change what happens \u2014 and no case can tell the two apart."
   },
   {
    "name": "a failure past the cap keeps retrying",
@@ -137,8 +138,8 @@
    "name": "a missing message id is treated as success",
    "file": "src/email.rs",
    "_why": "Without an id the eventual bounce or complaint webhook cannot be matched back to this row, so the correlation is silently lost.",
-   "old": "            error: Some(\"resend_no_message_id\".to_string()),",
-   "new": "            ok: true,\n            error: Some(\"resend_no_message_id\".to_string()),"
+   "old": "        return EmailSendResult {\n            ok: false,\n            error: Some(\"resend_no_message_id\".to_string()),\n            ..Default::default()\n        };",
+   "new": "        return EmailSendResult {\n            ok: true,\n            error: Some(\"resend_no_message_id\".to_string()),\n            ..Default::default()\n        };"
   },
   {
    "name": "the SDK's error class is not reproduced",

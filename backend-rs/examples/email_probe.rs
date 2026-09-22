@@ -18,7 +18,9 @@
 use std::collections::BTreeMap;
 
 use sentinel_command::config::Config;
-use sentinel_command::email_worker::{run_one_tick, EmailContext};
+use sentinel_command::email_worker::{
+    reset_tick_for_tests, run_one_tick, seconds_since_last_tick, EmailContext,
+};
 use serde_json::{json, Value};
 use sqlx::Row;
 
@@ -122,16 +124,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.email_max_attempts = base.email_max_attempts;
 
         let ctx = EmailContext { pool: &pool, config: &config, client: &client };
+        // Reset per scenario: "did this tick stamp" must be a question
+        // about this tick and not about an earlier one in the process.
+        reset_tick_for_tests();
         let mut summaries = Vec::new();
         for _ in 0..scenario.ticks {
             summaries.push(run_one_tick(&ctx).await?);
         }
+        // Wall-clock, so only its presence is compared.
+        let ticked = seconds_since_last_tick().is_some();
 
         println!(
             "{}",
             serde_json::to_string(&json!({
                 "scenario": scenario.name,
                 "summaries": summaries,
+                "ticked": ticked,
                 "outbox": dump_outbox(&pool).await?,
                 "log": dump_log(&pool).await?,
             }))?
@@ -195,7 +203,7 @@ async fn seed(pool: &sqlx::PgPool, scenario: &Scenario) -> Result<(), sqlx::Erro
 async fn dump_outbox(pool: &sqlx::PgPool) -> Result<Vec<BTreeMap<String, Value>>, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT id, org_id, recipient_email, kind, status, attempts,
-                resend_message_id, error, sent_at
+                resend_message_id, error, sent_at, last_attempt_at
            FROM email_outbox ORDER BY id",
     )
     .fetch_all(pool)
@@ -215,6 +223,8 @@ async fn dump_outbox(pool: &sqlx::PgPool) -> Result<Vec<BTreeMap<String, Value>>
                 ("error".into(), json!(r.get::<Option<String>, _>("error"))),
                 ("sent".into(),
                  json!(r.get::<Option<chrono::NaiveDateTime>, _>("sent_at").is_some())),
+                ("attempted".into(),
+                 json!(r.get::<Option<chrono::NaiveDateTime>, _>("last_attempt_at").is_some())),
             ])
         })
         .collect())
