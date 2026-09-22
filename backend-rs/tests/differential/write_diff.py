@@ -1985,6 +1985,17 @@ CLERK_CASES = [
                      "items": [{"status": "canceled", "plan": {"slug": "pro"},
                                 "period_end": PAST_PERIOD_END}]}},
            "clerk:msg_s5", None),
+          # Two canceled-but-paid items: the FIRST wins, matching the
+          # loop's order. Without a second one, nothing distinguishes
+          # "first wins" from "last wins".
+          ("the first canceled-but-paid item wins",
+           {"type": "subscription.updated",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "items": [{"status": "canceled", "plan": {"slug": "pro"},
+                                "period_end": FUTURE_PERIOD_END},
+                               {"status": "canceled", "plan": {"slug": "pro_plus"},
+                                "period_end": FUTURE_PERIOD_END}]}},
+           "clerk:msg_s14", None),
           ("an active item beats a canceled one, whatever the order",
            {"type": "subscription.updated",
             "data": {"payer": {"organization_id": "self-host"},
@@ -2085,6 +2096,25 @@ CLERK_CASES = [
            {"type": "subscription.pastDue",
             "data": {"payer": {"organization_id": "self-host"},
                      "past_due_at": "whenever"}}, "clerk:msg_p10", PRO),
+          # Out of range: Python's except clause catches TypeError and
+          # ValueError, and these raise OverflowError or OSError, which
+          # propagate. A 500 rather than a stored string — and the
+          # delivery must NOT be recorded as processed, because Svix
+          # has to be able to retry it.
+          ("past due past the year an int can hold",
+           {"type": "subscription.pastDue",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "past_due_at": 1e30}}, "clerk:msg_p12", PRO),
+          ("past due with infinity as a string",
+           {"type": "subscription.pastDue",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "past_due_at": "inf"}}, "clerk:msg_p13", PRO),
+          # Inside the datetime range but outside year 1..9999, which
+          # IS caught — so this one stores the string and answers 200.
+          ("past due past year 9999",
+           {"type": "subscription.pastDue",
+            "data": {"payer": {"organization_id": "self-host"},
+                     "past_due_at": 253402300800}}, "clerk:msg_p14", PRO),
           ("past due with a list",
            {"type": "subscription.pastDue",
             "data": {"payer": {"organization_id": "self-host"},

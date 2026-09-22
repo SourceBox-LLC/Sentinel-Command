@@ -24,7 +24,8 @@
    "file": "src/api/clerk_webhook.rs",
    "_why": "Refusing is the only safe answer: with no secret configured there is nothing to check a signature against, and accepting would mean the endpoint is open.",
    "old": "    let Some(secret) = state.config.clerk_webhook_secret.as_deref() else {\n        tracing::error!(\"CLERK_WEBHOOK_SECRET not set \u2014 cannot verify webhook signatures\");\n        return Err(ApiError::bad_request(\"Webhook processing unavailable\"));\n    };",
-   "new": "    let secret = state.config.clerk_webhook_secret.as_deref().unwrap_or(\"\");"
+   "new": "    let secret = state.config.clerk_webhook_secret.as_deref().unwrap_or(\"\");",
+   "equivalent": "Configuration, not code: tiers.sh sets CLERK_WEBHOOK_SECRET for both tiers, because without it the route refuses everything and none of the other 23 mutations could be scored at all. Reaching this branch would take a third tier pair running without the secret, which buys one branch at the cost of another pair to keep in sync."
   },
   {
    "name": "the dedup check is skipped",
@@ -44,7 +45,7 @@
    "name": "a paid snapshot clears a held past-due",
    "file": "src/api/clerk_webhook.rs",
    "_why": "The subtlest branch in the file. During dunning the item stays active with its paid slug, so clearing here resets the seven-day grace clock on every routine snapshot \u2014 including the ones this handler triggers itself via the member-limit PATCH. An org with a permanently failing card rides paid caps for free.",
-   "old": "                    if !setting_is_true(&state, &org_id, \"payment_past_due\").await {",
+   "old": "                    if !setting_is_true(state, &org_id, \"payment_past_due\").await {",
    "new": "                    if true {"
   },
   {
@@ -79,8 +80,8 @@
    "name": "the past-due anchor is re-stamped every time",
    "file": "src/api/clerk_webhook.rs",
    "_why": "Clerk re-emits pastDue per dunning retry. Overwriting the anchor on each one restarts the grace clock every cycle, which is the same free ride as the branch above.",
-   "old": "                if !already {",
-   "new": "                if true {"
+   "old": "                let stamp = if already { None } else { Some(past_due_stamp(&data)?) };",
+   "new": "                let stamp = Some(past_due_stamp(&data)?);"
   },
   {
    "name": "epoch milliseconds are read as seconds",
@@ -115,7 +116,8 @@
    "file": "src/api/clerk_webhook.rs",
    "_why": "Clerk holds the seat cap, not this database. Without the PATCH a paying org stays capped at the free tier's two seats however much they pay.",
    "old": "async fn set_org_member_limit(state: &AppState, org_id: &str, limit: i64) {",
-   "new": "async fn set_org_member_limit(state: &AppState, org_id: &str, limit: i64) {\n    if true { let _ = (state, org_id, limit); return; }"
+   "new": "async fn set_org_member_limit(state: &AppState, org_id: &str, limit: i64) {\n    if true { let _ = (state, org_id, limit); return; }",
+   "equivalent": "Unreachable through the tiers. The PATCH goes to api.clerk.com with a placeholder key, so it fails on BOTH tiers and neither writes anything. plan_run.sh solves this by putting fake_clerk.py in front of both probes, but that works because it calls the functions directly: `core/clerk.py` builds the SDK client with no URL override, so a fake cannot be put in front of the PYTHON TIER without editing it. The seat cap is the one effect of this handler that lives entirely outside the database."
   },
   {
    "name": "an unknown item slug takes the free defaults",
@@ -129,7 +131,8 @@
    "file": "src/api/clerk_webhook.rs",
    "_why": "One item ending is not necessarily free: a scheduled pro_plus to pro downgrade ends the pro_plus item while a pro item becomes active. Assuming free drops a paying org two tiers.",
    "old": "                let live = plans::fetch_live_plan_slug(",
-   "new": "                let live: Option<String> = None;\n                let _unused = plans::fetch_live_plan_slug("
+   "new": "                let live: Option<String> = None;\n                let _unused = plans::fetch_live_plan_slug(",
+   "equivalent": "Same cause as the member limit above: `fetch_live_plan_slug` cannot reach Clerk from either tier, so the live lookup fails and BOTH fall back to free_org \u2014 which is exactly what the mutation hard-codes. The fallback is what is being exercised here; the lookup itself is covered by plan_run.sh, against a fake Clerk, where both sides can be pointed at it."
   },
   {
    "name": "the org wipe leaves the database alone",
@@ -162,16 +165,17 @@
   {
    "name": "the dedup row is written before the handler runs",
    "file": "src/api/clerk_webhook.rs",
-   "_why": "A handler that raises midway must not record itself as done. Written first, a failed delivery is never retried and the plan change is lost \u2014 Svix sees the 500 but the marker says it is finished.",
-   "old": "    // Recorded last, and only now: a handler that raised midway must\n    // not mark itself done.",
-   "new": "    // Recorded last, and only now: a handler that raised midway must\n    // not mark itself done.\n    let _moved_earlier = ();"
+   "_why": "A handler that raises midway must not record itself as done: Svix retries, and every operation here is built to be safe to re-run, so a lost plan change is strictly worse than a repeated one. Recorded first, a delivery that 500s is never retried and the change it carried is gone.",
+   "old": "    dispatched?;\n    record_processed(&state, &msg_id, &event_type).await?;",
+   "new": "    record_processed(&state, &msg_id, &event_type).await?;\n    dispatched?;"
   },
   {
    "name": "the cache is invalidated before the writes",
    "file": "src/api/clerk_webhook.rs",
    "_why": "Invalidating first leaves a window in which a concurrent reader re-primes the cache with the OLD plan, which then outlives the change by the cache's full TTL.",
-   "old": "                plans::invalidate_effective_plan_cache(Some(&org_id));\n                reenforce(&state, &org_id, \"subscription\").await?;",
-   "new": "                reenforce(&state, &org_id, \"subscription\").await?;\n                plans::invalidate_effective_plan_cache(Some(&org_id));"
+   "old": "                plans::invalidate_effective_plan_cache(Some(&org_id));\n                reenforce(state, &org_id, \"subscription\").await?;",
+   "new": "                reenforce(state, &org_id, \"subscription\").await?;\n                plans::invalidate_effective_plan_cache(Some(&org_id));",
+   "equivalent": "Not observable in a single request, and deliberately so. The cap re-evaluation that follows calls `effective_plan_for_caps` with the cache BYPASSED, so it reads the Settings this handler just wrote whatever the cache holds. The invalidation is for readers in other requests \u2014 the HLS segment path, which calls it on every segment \u2014 and the window it closes needs a concurrent reader to see."
   },
   {
    "name": "the segment caches outlive the camera rows",

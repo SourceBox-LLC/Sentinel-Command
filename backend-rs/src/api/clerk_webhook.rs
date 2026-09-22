@@ -12,6 +12,14 @@
 //! window where a concurrent reader re-primes the cache with the old
 //! plan.
 //!
+//! A third difference is structural rather than ordered. Python stages
+//! its Setting writes with `commit=False` and commits once at the end,
+//! so a raise anywhere in a branch discards everything that branch
+//! wrote. These writes land immediately. Where a branch can fail AFTER
+//! writing — the past-due timestamp is the one that can, on a value
+//! big enough to overflow a C year — the fallible part is computed
+//! first, so the failure happens before anything is persisted.
+//!
 //! And the dedup row is written LAST, in a commit of its own. A handler
 //! that raises midway must not record itself as done — Svix retries and
 //! the operations are built to be safe to re-run. An earlier Python
@@ -247,6 +255,26 @@ pub async fn clerk_webhook(
     }
     tracing::info!(event_type, "webhook received");
 
+    let dispatched = dispatch(&state, &event_type, data.clone()).await;
+
+    // Recorded only once the branches have run. A handler that raised
+    // midway must not mark itself done: Svix retries, and every
+    // operation above is built to be safe to re-run, so a lost plan
+    // change is strictly worse than a repeated one. Writing the marker
+    // first would tell Svix the delivery is finished while the change
+    // it carried was rolled back.
+    dispatched?;
+    record_processed(&state, &msg_id, &event_type).await?;
+    Ok(Json(json!({ "received": true })))
+}
+
+/// The event branches, split out so the caller can order the dedup
+/// write against them in one statement.
+async fn dispatch(
+    state: &AppState,
+    event_type: &str,
+    data: Option<Map<String, Value>>,
+) -> Result<(), ApiError> {
     // A branch that reads `data` on a non-object payload raises
     // AttributeError, which nothing catches.
     let data_object = || -> Result<Map<String, Value>, ApiError> {
@@ -254,7 +282,7 @@ pub async fn clerk_webhook(
             .ok_or_else(|| ApiError::internal("webhook data is not an object"))
     };
 
-    match event_type.as_str() {
+    match event_type {
         "subscription.created" | "subscription.updated" | "subscription.active" => {
             let data = data_object()?;
             if let Some(org_id) = payer_org(&data) {
@@ -265,8 +293,8 @@ pub async fn clerk_webhook(
                     .unwrap_or_default();
                 let plan_slug = active_plan_slug(&items, chrono::Utc::now());
                 let active = has_active_item(&items);
-                set_org_member_limit(&state, &org_id, plan_member_limit(&plan_slug)).await;
-                set_setting(&state, &org_id, "org_plan", &plan_slug).await;
+                set_org_member_limit(state, &org_id, plan_member_limit(&plan_slug)).await;
+                set_setting(state, &org_id, "org_plan", &plan_slug).await;
 
                 // A paid slug here does NOT mean the card is good.
                 // During dunning the item stays active with its paid
@@ -278,9 +306,9 @@ pub async fn clerk_webhook(
                 // card ride paid caps indefinitely. The authoritative
                 // recovery signal is paymentAttempt.updated status=paid.
                 if PAID_PLAN_SLUGS_WEBHOOK.contains(&plan_slug.as_str()) {
-                    if !setting_is_true(&state, &org_id, "payment_past_due").await {
-                        set_setting(&state, &org_id, "payment_past_due", "false").await;
-                        set_setting(&state, &org_id, "payment_past_due_at", "").await;
+                    if !setting_is_true(state, &org_id, "payment_past_due").await {
+                        set_setting(state, &org_id, "payment_past_due", "false").await;
+                        set_setting(state, &org_id, "payment_past_due_at", "").await;
                     }
                     if active {
                         // Only an ACTIVE paid item supersedes a pending
@@ -288,11 +316,11 @@ pub async fn clerk_webhook(
                         // alongside subscriptionItem.canceled, and
                         // clearing it there made the marker useless for
                         // a "cancels at period end" banner.
-                        set_setting(&state, &org_id, "plan_cancel_pending", "").await;
+                        set_setting(state, &org_id, "plan_cancel_pending", "").await;
                     }
                 }
                 plans::invalidate_effective_plan_cache(Some(&org_id));
-                reenforce(&state, &org_id, "subscription").await?;
+                reenforce(state, &org_id, "subscription").await?;
                 tracing::info!(org_id, plan = %plan_slug, "subscription active");
             }
         }
@@ -316,15 +344,15 @@ pub async fn clerk_webhook(
                 // `item_slug in PLAN_MEMBER_LIMITS` — an unknown slug
                 // takes no branch at all, rather than the free default.
                 if matches!(item_slug.as_str(), "free_org" | "pro" | "pro_plus") {
-                    set_org_member_limit(&state, &org_id, plan_member_limit(&item_slug)).await;
-                    set_setting(&state, &org_id, "org_plan", &item_slug).await;
-                    set_setting(&state, &org_id, "plan_cancel_pending", "").await;
+                    set_org_member_limit(state, &org_id, plan_member_limit(&item_slug)).await;
+                    set_setting(state, &org_id, "org_plan", &item_slug).await;
+                    set_setting(state, &org_id, "plan_cancel_pending", "").await;
                     if PAID_PLAN_SLUGS_WEBHOOK.contains(&item_slug.as_str()) {
-                        set_setting(&state, &org_id, "payment_past_due", "false").await;
-                        set_setting(&state, &org_id, "payment_past_due_at", "").await;
+                        set_setting(state, &org_id, "payment_past_due", "false").await;
+                        set_setting(state, &org_id, "payment_past_due_at", "").await;
                     }
                     plans::invalidate_effective_plan_cache(Some(&org_id));
-                    reenforce(&state, &org_id, "item-activated").await?;
+                    reenforce(state, &org_id, "item-activated").await?;
                     tracing::info!(org_id, plan = %item_slug, "subscription item active");
                 }
             }
@@ -337,17 +365,22 @@ pub async fn clerk_webhook(
                 // Clerk re-emits this per dunning retry, and
                 // overwriting on each one restarted the grace clock
                 // every cycle.
-                let already = setting_is_true(&state, &org_id, "payment_past_due").await;
-                set_setting(&state, &org_id, "payment_past_due", "true").await;
+                let already = setting_is_true(state, &org_id, "payment_past_due").await;
+
+                // The stamp is computed BEFORE anything is written,
+                // although Python computes it after. Python stages its
+                // Setting writes and commits at the end, so a raise in
+                // here discards them; these writes land immediately, so
+                // the same raise would leave `payment_past_due` set to
+                // true with no anchor beside it — an org past due with
+                // no grace clock. Found by a case carrying a timestamp
+                // big enough to raise OverflowError.
+                let stamp = if already { None } else { Some(past_due_stamp(&data)?) };
+
+                set_setting(state, &org_id, "payment_past_due", "true").await;
                 plans::invalidate_effective_plan_cache(Some(&org_id));
-                if !already {
-                    set_setting(
-                        &state,
-                        &org_id,
-                        "payment_past_due_at",
-                        &past_due_stamp(&data)?,
-                    )
-                    .await;
+                if let Some(stamp) = stamp {
+                    set_setting(state, &org_id, "payment_past_due_at", &stamp).await;
                 }
                 tracing::warn!(org_id, "subscription is past due — payment failed");
             }
@@ -362,12 +395,12 @@ pub async fn clerk_webhook(
                     // The timestamp is cleared too, so a future
                     // past-due starts a fresh window rather than
                     // counting from whenever the old one began.
-                    set_setting(&state, &org_id, "payment_past_due", "false").await;
-                    set_setting(&state, &org_id, "payment_past_due_at", "").await;
+                    set_setting(state, &org_id, "payment_past_due", "false").await;
+                    set_setting(state, &org_id, "payment_past_due_at", "").await;
                     plans::invalidate_effective_plan_cache(Some(&org_id));
                     // Cameras suspended when the grace window expired
                     // come back immediately.
-                    reenforce(&state, &org_id, "payment restored").await?;
+                    reenforce(state, &org_id, "payment restored").await?;
                     tracing::info!(org_id, "payment succeeded — past-due cleared");
                 } else if status == "failed" {
                     tracing::warn!(org_id, "payment attempt failed");
@@ -382,7 +415,7 @@ pub async fn clerk_webhook(
         "subscriptionItem.canceled" => {
             let data = data_object()?;
             if let Some(org_id) = payer_org(&data) {
-                set_setting(&state, &org_id, "plan_cancel_pending", "true").await;
+                set_setting(state, &org_id, "plan_cancel_pending", "true").await;
                 tracing::info!(org_id, "cancellation scheduled — plan retained until period end");
             }
         }
@@ -411,14 +444,14 @@ pub async fn clerk_webhook(
                     );
                     "free_org".to_string()
                 });
-                set_org_member_limit(&state, &org_id, plan_member_limit(&live_slug)).await;
-                set_setting(&state, &org_id, "org_plan", &live_slug).await;
-                set_setting(&state, &org_id, "plan_cancel_pending", "").await;
-                set_setting(&state, &org_id, "payment_past_due", "false").await;
+                set_org_member_limit(state, &org_id, plan_member_limit(&live_slug)).await;
+                set_setting(state, &org_id, "org_plan", &live_slug).await;
+                set_setting(state, &org_id, "plan_cancel_pending", "").await;
+                set_setting(state, &org_id, "payment_past_due", "false").await;
                 plans::invalidate_effective_plan_cache(Some(&org_id));
                 // Rows are suspended, never deleted, so a re-subscribe
                 // restores them with their history intact.
-                reenforce(&state, &org_id, "period end").await?;
+                reenforce(state, &org_id, "period end").await?;
                 tracing::info!(org_id, plan = %live_slug, "subscription period ended");
             }
         }
@@ -438,7 +471,7 @@ pub async fn clerk_webhook(
         | "organizationMembership.updated"
         | "organizationMembership.deleted" => {
             let data = data_object()?;
-            membership_notification(&state, &event_type, &data).await;
+            membership_notification(state, event_type, &data).await;
         }
 
         // First touch. The creator is automatically the org's first
@@ -465,7 +498,7 @@ pub async fn clerk_webhook(
                     "org_name": org_name,
                     "created_by": data.get("created_by").cloned().unwrap_or(Value::Null),
                 }));
-                create_notification(&state, org_id, notification).await;
+                create_notification(state, org_id, notification).await;
             }
         }
 
@@ -505,34 +538,39 @@ pub async fn clerk_webhook(
 
         _ => {}
     }
+    Ok(())
+}
 
-    // Recorded last, and only now: a handler that raised midway must
-    // not mark itself done.
-    if !msg_id.is_empty() {
-        let inserted = sqlx::query(
-            "INSERT INTO processed_webhooks (svix_msg_id, event_type, processed_at)
-             VALUES ($1, $2, $3)",
-        )
-        .bind(&msg_id)
-        .bind(&event_type)
-        .bind(crate::models::now_naive())
-        .execute(&state.pool)
-        .await;
-        if let Err(err) = inserted {
-            // A concurrent worker recording the same id is benign:
-            // both runs reach the same final state, and the response
-            // below still tells Svix we are done. Anything else is not
-            // swallowed.
-            match &err {
-                sqlx::Error::Database(db) if db.is_unique_violation() => {
-                    tracing::info!(msg_id, "dedup insert raced with a concurrent worker");
-                }
-                _ => return Err(err.into()),
+/// Mark this delivery done so a Svix retry short-circuits.
+async fn record_processed(
+    state: &AppState,
+    msg_id: &str,
+    event_type: &str,
+) -> Result<(), ApiError> {
+    if msg_id.is_empty() {
+        return Ok(());
+    }
+    let inserted = sqlx::query(
+        "INSERT INTO processed_webhooks (svix_msg_id, event_type, processed_at)
+         VALUES ($1, $2, $3)",
+    )
+    .bind(msg_id)
+    .bind(event_type)
+    .bind(crate::models::now_naive())
+    .execute(&state.pool)
+    .await;
+    if let Err(err) = inserted {
+        // A concurrent worker recording the same id is benign: both
+        // runs reach the same final state, and the caller still tells
+        // Svix we are done. Anything else is not swallowed.
+        match &err {
+            sqlx::Error::Database(db) if db.is_unique_violation() => {
+                tracing::info!(msg_id, "dedup insert raced with a concurrent worker");
             }
+            _ => return Err(err.into()),
         }
     }
-
-    Ok(Json(json!({ "received": true })))
+    Ok(())
 }
 
 /// `past_due_at`, normalised to ISO — or an error, which is a 500.
