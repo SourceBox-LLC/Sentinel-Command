@@ -12,7 +12,7 @@
 
 use axum::extract::{Path, Request, State};
 use axum::http::HeaderValue;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::NaiveDateTime;
 use serde::Deserialize;
@@ -22,7 +22,7 @@ use crate::app::AppState;
 use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::{iso_naive, now_naive};
-use crate::query::{int4, path_int, ModelBody, Query};
+use crate::query::{int4, path_int, BodyErrors, ModelBody, Query};
 use crate::ratelimit::PerMinute;
 
 const SEVERITIES: [&str; 4] = ["low", "medium", "high", "critical"];
@@ -132,6 +132,175 @@ async fn owned_incident(
     // 404 for "not yours" as well as "not there" — distinguishing them
     // would confirm another tenant's incident ids.
     .ok_or_else(|| ApiError::not_found("Incident not found"))
+}
+
+/// A required string with Pydantic's length bounds.
+///
+/// `min` and `max` cannot both fire — a string is not at once too short
+/// and too long — so the order between them is not a decision. The
+/// order that *is* one is across fields: Pydantic reports them in
+/// declaration order, and the envelope's `message` names the first.
+fn bounded_string(
+    errors: &mut BodyErrors,
+    body: &Value,
+    field: &str,
+    min: usize,
+    max: Option<usize>,
+) -> String {
+    match body.get(field) {
+        None => {
+            errors.missing(field, body);
+            String::new()
+        }
+        Some(Value::String(s)) => {
+            let length = s.chars().count();
+            if length < min {
+                errors.too_short(field, s, min);
+            } else if max.is_some_and(|max| length > max) {
+                errors.too_long(field, s, max.unwrap());
+            }
+            s.clone()
+        }
+        Some(other) => {
+            errors.string_type(field, other);
+            String::new()
+        }
+    }
+}
+
+/// `POST /api/incidents` — a human files one.
+///
+/// Mirrors the MCP `create_incident` tool's validation and fires the
+/// same `incident_created` notification, so the inbox and email
+/// channels do not care which author wrote the row. The difference is
+/// `created_by`: `user:<clerk id>` here where the agent writes
+/// `mcp:<key name>`, which is what the dashboard badges off.
+///
+/// The `meta` sent with the notification deliberately carries no
+/// `created_by`, and that is load-bearing rather than an omission: the
+/// Sentinel dispatcher refuses to re-trigger on an incident an agent
+/// filed, so leaving the key out is what lets a *human*-filed incident
+/// wake the agent.
+pub async fn create_incident(
+    rate: PerMinute<60>,
+    State(state): State<AppState>,
+    ModelBody(RequireAdmin(user), body): ModelBody<RequireAdmin>,
+) -> Result<Response, ApiError> {
+    let mut errors = BodyErrors::new();
+    let title = bounded_string(&mut errors, &body, "title", 1, Some(200));
+    // No upper bound on the summary: an incident narrative is a `Text`
+    // column and the model sets only `min_length`.
+    let summary = bounded_string(&mut errors, &body, "summary", 1, None);
+    // `severity: str = Field(default="medium")` — a plain `str` with a
+    // default, so an absent key takes the default but an explicit null
+    // is a type error.
+    let severity = match body.get("severity") {
+        None => "medium".to_string(),
+        Some(Value::String(value)) => value.clone(),
+        Some(other) => {
+            errors.string_type("severity", other);
+            String::new()
+        }
+    };
+    let camera_id = errors.optional_string(&body, "camera_id", usize::MAX);
+    errors.finish()?;
+    // After validation, before anything this function raises — which is
+    // where slowapi's decorator sits. FastAPI resolves the body first,
+    // so a 422 costs the org nothing, while the 400s below have already
+    // spent their slot.
+    rate.check().await?;
+
+    // Pydantic passes anything of the right type; the enum is the
+    // handler's own check, and it runs before the emptiness checks.
+    if !SEVERITIES.contains(&severity.as_str()) {
+        return Err(ApiError::bad_request(format!("Invalid severity: {severity}")));
+    }
+
+    let title = title.trim().to_string();
+    let summary = summary.trim().to_string();
+    if title.is_empty() {
+        return Err(ApiError::bad_request("title is required"));
+    }
+    if summary.is_empty() {
+        return Err(ApiError::bad_request("summary is required"));
+    }
+
+    // `if body.camera_id:` — the empty string is falsy, so it skips the
+    // lookup. It is still *stored*, because Python passes the original
+    // value to the model and not the one the guard tested. Filtering it
+    // here instead wrote NULL where Python writes '', in the incident
+    // row, in the notification beside it and in the response.
+    if let Some(camera_id) = camera_id.as_deref().filter(|id| !id.is_empty()) {
+        let known: Option<(String,)> = sqlx::query_as(
+            "SELECT camera_id FROM cameras WHERE org_id = $1 AND camera_id = $2",
+        )
+        .bind(&user.org_id)
+        .bind(camera_id)
+        .fetch_optional(&state.pool)
+        .await?;
+        if known.is_none() {
+            return Err(ApiError::bad_request(format!(
+                "Camera '{camera_id}' not found"
+            )));
+        }
+    }
+
+    // `title[:200]` again after the strip. Pydantic already refused a
+    // longer one, so this only ever matters if that bound moves.
+    let stored_title: String = title.chars().take(200).collect();
+    // SQLAlchemy evaluates the two `default=` callables separately, so
+    // the row's two timestamps differ by a few microseconds.
+    let created_at = now_naive();
+    let updated_at = now_naive();
+    let (incident_id,): (i32,) = sqlx::query_as(
+        // `report` is not left to the column: the model declares
+        // `default=""`, so SQLAlchemy writes an empty string where an
+        // unbound column would be NULL — and the read path returns
+        // `self.report or ""`, which hides the difference in the
+        // response while the stored row still differs.
+        "INSERT INTO incidents
+            (org_id, camera_id, title, summary, report, severity, status, created_by,
+             created_at, updated_at)
+         VALUES ($1, $2, $3, $4, '', $5, 'open', $6, $7, $8)
+         RETURNING id",
+    )
+    .bind(&user.org_id)
+    .bind(camera_id.as_deref())
+    .bind(&stored_title)
+    .bind(&summary)
+    .bind(&severity)
+    .bind(format!("user:{}", user.user_id))
+    .bind(created_at)
+    .bind(updated_at)
+    .fetch_one(&state.pool)
+    .await?;
+
+    // The notification is best-effort: the row is already committed and
+    // the operator has clicked submit, so a failure here must not turn
+    // a filed incident into an error.
+    let notification = crate::notifications::NewNotification::new(
+        "incident_created",
+        format!("Incident #{incident_id}: {stored_title}"),
+    )
+    .body(format!("[{}] {summary}", severity.to_uppercase()))
+    .severity(if matches!(severity.as_str(), "high" | "critical") {
+        "critical"
+    } else {
+        "warning"
+    })
+    .audience("all")
+    .link(format!("/incidents/{incident_id}"))
+    .meta(json!({"incident_id": incident_id, "severity": severity}));
+    let notification = match camera_id.as_deref() {
+        Some(camera_id) => notification.camera(camera_id),
+        None => notification,
+    };
+    crate::notifications::create_notification(&state, &user.org_id, notification).await;
+
+    let row = owned_incident(&state.pool, &user.org_id, incident_id).await?;
+    let mut out = row.to_json();
+    out["evidence"] = Value::Array(Vec::new());
+    Ok((axum::http::StatusCode::CREATED, Json(out)).into_response())
 }
 
 /// `GET /api/incidents`.

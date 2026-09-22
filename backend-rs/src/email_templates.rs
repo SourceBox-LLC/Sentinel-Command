@@ -332,9 +332,14 @@ fn generic_body_html(notif: &NotificationView) -> String {
     )
 }
 
-/// `html.escape(s)` — which escapes the quote characters too, unlike
-/// some other definitions of the same name.
-fn html_escape(text: &str) -> String {
+/// `html.escape(s, quote=True)` — which escapes both quote characters,
+/// unlike some other definitions of the same name, and unlike
+/// markupsafe's above: the two disagree on the apostrophe.
+///
+/// Used by the generic fallback body here, and by the unsubscribe
+/// pages, which are built with `str.format` rather than Jinja and so
+/// get no autoescaping at all.
+pub fn html_escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
         match ch {

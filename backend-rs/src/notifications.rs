@@ -34,6 +34,7 @@ use serde_json::Value;
 
 use crate::api::notifications::NotificationRow;
 use crate::audit::python_json_value;
+use crate::app::AppState;
 use crate::config::Config;
 use crate::email_templates::{self, NotificationView};
 use crate::email_unsubscribe;
@@ -141,36 +142,26 @@ const UNSUB_PLACEHOLDER: &str = "UNSUB-URL-PLACEHOLDER-7f3a";
 /// `_TRANSITION_DEBOUNCE_SECONDS`.
 const TRANSITION_DEBOUNCE_SECONDS: u64 = 60;
 
-/// What the emitters need to reach: the database, Clerk, and the
-/// configuration that decides whether mail is on at all.
-pub struct NotifyContext<'a> {
-    pub pool: &'a sqlx::PgPool,
-    pub http: &'a reqwest::Client,
-    pub config: &'a Config,
+fn recipient_lookup(state: &AppState) -> Lookup<'_> {
+    Lookup {
+        client: &state.http,
+        clerk_base_url: &state.config.clerk_api_url,
+        clerk_secret: &state.config.clerk_secret_key,
+        local_admin_email: state
+            .config
+            .is_local_auth()
+            .then_some(state.config.local_admin_email.as_str()),
+    }
 }
 
-impl NotifyContext<'_> {
-    fn recipient_lookup(&self) -> Lookup<'_> {
-        Lookup {
-            client: self.http,
-            clerk_base_url: &self.config.clerk_api_url,
-            clerk_secret: &self.config.clerk_secret_key,
-            local_admin_email: self
-                .config
-                .is_local_auth()
-                .then_some(self.config.local_admin_email.as_str()),
-        }
-    }
-
-    /// The base the unsubscribe token is signed with, already derived.
-    fn unsubscribe_secret(&self) -> Option<String> {
-        let base = if self.config.is_local_auth() {
-            &self.config.app_secret_key
-        } else {
-            &self.config.clerk_secret_key
-        };
-        email_unsubscribe::derive_secret(base)
-    }
+/// The base the unsubscribe token is signed with, already derived.
+fn unsubscribe_secret(config: &Config) -> Option<String> {
+    let base = if config.is_local_auth() {
+        &config.app_secret_key
+    } else {
+        &config.clerk_secret_key
+    };
+    email_unsubscribe::derive_secret(base)
 }
 
 /// The arguments `create_notification` takes, with the same defaults.
@@ -303,12 +294,22 @@ pub async fn motion_cooldown_minutes(pool: &sqlx::PgPool, org_id: &str) -> i64 {
         .ok()
         .flatten()
         .unwrap_or_else(|| "15".to_string());
-    // `max(1, int(raw))`, falling back on anything `int()` refuses.
-    // A value beyond i64 is not a number this ever really holds — it is
-    // a hand-edited row — but it still has to land somewhere, and the
-    // Python's answer for a huge one is "a cooldown that never expires".
+    parse_cooldown_minutes(&raw)
+}
+
+/// `max(1, int(raw))`, falling back to fifteen on anything `int()`
+/// refuses.
+///
+/// Its own function because nothing reaches the cooldown yet — motion
+/// arrives on a route that is still Python's — so the differential
+/// cannot see any of these branches, and a unit test is the only thing
+/// that can. A value beyond i64 is not a number this ever really holds;
+/// it is a hand-edited row, and it still has to land somewhere.
+fn parse_cooldown_minutes(raw: &str) -> i64 {
     match crate::pyint::str_as_int(raw.trim()) {
         Ok(PyInt::Small(minutes)) => minutes.max(1),
+        // Python's `max(1, <huge negative>)` is 1, and its `max(1,
+        // <huge positive>)` is a cooldown that never expires.
         Ok(PyInt::Big { negative: true }) => 1,
         Ok(PyInt::Big { negative: false }) => i64::MAX,
         Err(_) => 15,
@@ -381,7 +382,7 @@ pub async fn claim_motion_cooldown_or_silence(
 /// out. That is the Python's long-standing contract and several callers
 /// read it as "was anything written".
 pub async fn create_notification(
-    ctx: &NotifyContext<'_>,
+    state: &AppState,
     org_id: &str,
     notification: NewNotification,
 ) -> Option<NotificationRow> {
@@ -404,7 +405,7 @@ pub async fn create_notification(
         .filter(|meta| !is_falsy(meta))
         .map(python_json_value);
 
-    let inbox = inbox_enabled(ctx.pool, org_id, &notification.kind).await;
+    let inbox = inbox_enabled(&state.pool, org_id, &notification.kind).await;
 
     let mut row = NotificationRow {
         id: 0,
@@ -422,7 +423,7 @@ pub async fn create_notification(
 
     let mut persisted = false;
     if inbox {
-        match insert_notification(ctx.pool, org_id, &row).await {
+        match insert_notification(&state.pool, org_id, &row).await {
             Ok((id, created_at)) => {
                 row.id = id;
                 row.created_at = Some(created_at);
@@ -439,20 +440,34 @@ pub async fn create_notification(
     }
 
     // The email side-channel, which runs whatever the inbox gate said.
-    if email_enabled(ctx.config, ctx.pool, org_id, &row.kind).await {
+    if email_enabled(&state.config, &state.pool, org_id, &row.kind).await {
         // The cooldown gate applies to motion only: the first event per
         // camera per window mails, the rest reach the inbox and the SSE
         // above but skip the outbox, and the digest loop summarises
         // them when the window closes.
         let send = if row.kind == "motion" {
-            claim_motion_cooldown_or_silence(ctx.pool, org_id, row.camera_id.as_deref()).await
+            claim_motion_cooldown_or_silence(&state.pool, org_id, row.camera_id.as_deref()).await
         } else {
             true
         };
         if send {
-            enqueue_email(ctx, org_id, &row, persisted, audience).await;
+            enqueue_email(state, org_id, &row, persisted, audience).await;
         }
     }
+
+    // The agent dispatcher, which gates on its own config — enabled,
+    // the per-kind trigger, camera scope, the schedule window and the
+    // monthly cap — and queues a pending run when all of that clears.
+    // Best-effort and self-contained: it swallows its own failures, so
+    // a dispatch that cannot happen never costs the notification.
+    crate::sentinel_dispatch::maybe_dispatch_for_notification(
+        state,
+        org_id,
+        &row.kind,
+        row.camera_id.as_deref(),
+        notification.meta.as_ref(),
+    )
+    .await;
 
     persisted.then_some(row)
 }
@@ -521,13 +536,13 @@ async fn insert_notification(
 /// `varchar(500)`, say — takes the whole batch with it rather than
 /// leaving some recipients mailed and others not.
 async fn enqueue_email(
-    ctx: &NotifyContext<'_>,
+    state: &AppState,
     org_id: &str,
     row: &NotificationRow,
     persisted: bool,
     audience: &str,
 ) {
-    let recipients = recipients::recipient_emails(&ctx.recipient_lookup(), org_id, audience).await;
+    let recipients = recipients::recipient_emails(&recipient_lookup(state), org_id, audience).await;
     if recipients.is_empty() {
         return;
     }
@@ -545,14 +560,14 @@ async fn enqueue_email(
         &row.kind,
         &view,
         UNSUB_PLACEHOLDER,
-        &ctx.config.frontend_url,
+        &state.config.frontend_url,
     );
 
-    let Some(secret) = ctx.unsubscribe_secret() else {
+    let Some(secret) = unsubscribe_secret(&state.config) else {
         tracing::error!(
             org_id,
             kind = %row.kind,
-            missing = email_unsubscribe::secret_base_name(ctx.config.is_local_auth()),
+            missing = email_unsubscribe::secret_base_name(state.config.is_local_auth()),
             "[Notifications] cannot sign unsubscribe tokens — no email enqueued"
         );
         return;
@@ -562,7 +577,7 @@ async fn enqueue_email(
     let notification_id = persisted.then_some(row.id);
     let now = chrono::Utc::now().timestamp();
 
-    let mut tx = match ctx.pool.begin().await {
+    let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
         Err(err) => {
             tracing::error!(error = %err, org_id, kind = %row.kind, "[Notifications] outbox commit failed");
@@ -572,7 +587,7 @@ async fn enqueue_email(
     for address in &recipients {
         let Some(unsub) = email_unsubscribe::build_unsubscribe_url(
             &secret,
-            &ctx.config.frontend_url,
+            &state.config.frontend_url,
             org_id,
             &row.kind,
             address,
@@ -658,7 +673,7 @@ pub fn clear_transition_debounce() {
 /// `emit_camera_transition`. Audience `all` — every member cares when a
 /// camera drops.
 pub async fn emit_camera_transition(
-    ctx: &NotifyContext<'_>,
+    state: &AppState,
     org_id: &str,
     camera_id: &str,
     display_name: &str,
@@ -692,13 +707,13 @@ pub async fn emit_camera_transition(
     .camera(camera_id);
     notification.node_id = node_id.map(str::to_string);
 
-    create_notification(ctx, org_id, notification).await
+    create_notification(state, org_id, notification).await
 }
 
 /// `emit_node_transition`. Audience `admin` — node health is an
 /// operator concern, and a viewer has nothing to do with an uplink.
 pub async fn emit_node_transition(
-    ctx: &NotifyContext<'_>,
+    state: &AppState,
     org_id: &str,
     node_id: &str,
     display_name: &str,
@@ -730,7 +745,7 @@ pub async fn emit_node_transition(
     .link("/admin")
     .node(node_id);
 
-    create_notification(ctx, org_id, notification).await
+    create_notification(state, org_id, notification).await
 }
 
 #[cfg(test)]
@@ -821,6 +836,36 @@ mod tests {
                 ("email_motion", false),
                 ("email_welcome", true),
             ]
+        );
+    }
+
+    #[test]
+    fn the_motion_cooldown_floors_at_one_minute() {
+        // The ordinary values.
+        assert_eq!(parse_cooldown_minutes("15"), 15);
+        assert_eq!(parse_cooldown_minutes("1"), 1);
+        assert_eq!(parse_cooldown_minutes(" 30 "), 30);
+        // Zero and negatives floor at one: a cooldown of zero would be
+        // pointless, since the immediate mail fires anyway.
+        assert_eq!(parse_cooldown_minutes("0"), 1);
+        assert_eq!(parse_cooldown_minutes("-5"), 1);
+        // Anything `int()` refuses falls back rather than disabling
+        // email outright — a corrupt row must not silence alerts.
+        for bad in ["", "abc", "1.5", "15m", "0x10", "  "] {
+            assert_eq!(parse_cooldown_minutes(bad), 15, "{bad:?}");
+        }
+        // Past i64 in either direction.
+        assert_eq!(parse_cooldown_minutes(&"9".repeat(40)), i64::MAX);
+        assert_eq!(parse_cooldown_minutes(&format!("-{}", "9".repeat(40))), 1);
+    }
+
+    #[test]
+    fn the_cooldown_anchor_key_carries_the_camera() {
+        // The colon suffix is what lets the digest loop find every
+        // active anchor with one LIKE and read the camera back out.
+        assert_eq!(
+            motion_cooldown_anchor_key("cam-live"),
+            "motion_email_cooldown_start:cam-live"
         );
     }
 

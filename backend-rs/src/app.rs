@@ -93,7 +93,17 @@ pub fn build_router(state: AppState) -> Router {
             "/api/sentinel/runs/{run_id}/complete",
             served(axum::routing::post(api::sentinel::post_run_complete)),
         )
-        .route("/api/sentinel/agent-keys", ported(api::sentinel::list_agent_keys))
+        .route(
+            "/api/sentinel/agent-keys",
+            served(
+                get(api::sentinel::list_agent_keys)
+                    .post(api::sentinel::create_agent_key),
+            ),
+        )
+        .route(
+            "/api/sentinel/agent-keys/{key_id}",
+            served(axum::routing::delete(api::sentinel::revoke_agent_key)),
+        )
         .route(
             "/api/sentinel/config",
             served(
@@ -243,7 +253,13 @@ pub fn build_router(state: AppState) -> Router {
         // /counts must be declared here too: it is a static sibling of
         // /{incident_id} and would otherwise be swallowed. It is ported
         // rather than pinned, so it is a real route, not a proxy pin.
-        .route("/api/incidents", ported(api::incidents::list_incidents))
+        .route(
+            "/api/incidents",
+            served(
+                get(api::incidents::list_incidents)
+                    .post(api::incidents::create_incident),
+            ),
+        )
         .route("/api/incidents/counts", ported(api::incidents::incident_counts))
         .route(
             "/api/incidents/{incident_id}",
@@ -254,7 +270,17 @@ pub fn build_router(state: AppState) -> Router {
             ),
         )
         .route("/api/mcp/keys", ported(api::keys::list_mcp_keys))
-        .route("/api/integration/keys", ported(api::keys::list_integration_keys))
+        .route(
+            "/api/mcp/keys/{key_id}",
+            served(axum::routing::delete(api::keys::revoke_mcp_key)),
+        )
+        .route(
+            "/api/integration/keys",
+            served(
+                get(api::keys::list_integration_keys)
+                    .post(api::keys::create_integration_key),
+            ),
+        )
         .route("/api/integration/cameras", ported(api::integration::list_cameras))
         .route(
             "/api/integration/cameras/{camera_id}/recording",
@@ -282,6 +308,14 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/notifications/clear-all",
             served(axum::routing::post(api::notifications::clear_all)),
+        )
+        .route(
+            "/api/notifications/request-admin-promotion",
+            served(axum::routing::post(api::notifications::request_admin_promotion)),
+        )
+        .route(
+            "/api/notifications/email/unsubscribe",
+            ported(api::notifications::email_unsubscribe),
         )
         .route(
             "/api/notifications/email/preferences",

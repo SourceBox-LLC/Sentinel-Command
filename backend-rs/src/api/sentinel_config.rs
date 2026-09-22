@@ -36,7 +36,7 @@ use crate::query::{BodyErrors, ModelBody, Query};
 /// Sentinel at all, and `cap_for_plan` returns 0 — fail closed, so any
 /// path that reaches the cap check for an ineligible org sees nothing
 /// remaining.
-fn cap_for_plan(plan: &str) -> i64 {
+pub(crate) fn cap_for_plan(plan: &str) -> i64 {
     match plan {
         "pro" => 100,
         "pro_plus" | "self_host" => 500,
@@ -44,7 +44,7 @@ fn cap_for_plan(plan: &str) -> i64 {
     }
 }
 
-fn plan_has_sentinel(plan: &str) -> bool {
+pub(crate) fn plan_has_sentinel(plan: &str) -> bool {
     matches!(plan, "pro" | "pro_plus" | "self_host")
 }
 
@@ -71,7 +71,7 @@ impl ConfigRow {
     /// `get_active_days`: the stored JSON list, or every day. A value
     /// that is not a JSON list — corrupt, or an object — falls back the
     /// same way rather than raising.
-    fn active_days(&self) -> Value {
+    pub(crate) fn active_days(&self) -> Value {
         match self.active_days.as_deref().filter(|s| !s.is_empty()) {
             Some(raw) => match serde_json::from_str::<Value>(raw) {
                 Ok(Value::Array(items)) => Value::Array(
@@ -85,7 +85,7 @@ impl ConfigRow {
 
     /// `get_camera_scope`: keys stringified, values coerced with
     /// Python's `bool()`.
-    fn camera_scope(&self) -> Value {
+    pub(crate) fn camera_scope(&self) -> Value {
         let Some(raw) = self.camera_scope.as_deref().filter(|s| !s.is_empty()) else {
             return json!({});
         };
@@ -149,7 +149,7 @@ async fn ensure_config_row(state: &AppState, org_id: &str) -> Result<ConfigRow, 
         .ok_or_else(|| ApiError::internal("sentinel config row vanished after insert"))
 }
 
-async fn fetch_config(state: &AppState, org_id: &str) -> Result<Option<ConfigRow>, ApiError> {
+pub(crate) async fn fetch_config(state: &AppState, org_id: &str) -> Result<Option<ConfigRow>, ApiError> {
     Ok(sqlx::query_as(&format!(
         "SELECT {CONFIG_COLUMNS} FROM sentinel_config WHERE org_id = $1 LIMIT 1"
     ))
@@ -158,7 +158,7 @@ async fn fetch_config(state: &AppState, org_id: &str) -> Result<Option<ConfigRow
     .await?)
 }
 
-fn plan_ctx<'a>(state: &'a AppState) -> PlanContext<'a> {
+pub(crate) fn plan_ctx<'a>(state: &'a AppState) -> PlanContext<'a> {
     PlanContext {
         pool: &state.pool,
         client: &state.http,
@@ -171,7 +171,7 @@ fn plan_ctx<'a>(state: &'a AppState) -> PlanContext<'a> {
 /// The licence state lives under `LOCAL_ORG_ID`, not the caller's org:
 /// a self-hosted install has exactly one organisation, and the licence
 /// belongs to the install.
-fn license_ctx(state: &AppState) -> LicenseContext<'_> {
+pub(crate) fn license_ctx(state: &AppState) -> LicenseContext<'_> {
     LicenseContext {
         pool: &state.pool,
         org_id: &state.config.local_org_id,
@@ -182,7 +182,7 @@ fn license_ctx(state: &AppState) -> LicenseContext<'_> {
 
 /// Both "is Sentinel granted" and, when it is not, why — computed once
 /// so a 402 body cannot disagree with the check that produced it.
-async fn resolve_sentinel_access(state: &AppState, org_id: &str) -> Result<(bool, Value), ApiError> {
+pub(crate) async fn resolve_sentinel_access(state: &AppState, org_id: &str) -> Result<(bool, Value), ApiError> {
     let plan = effective_plan_for_caps(&plan_ctx(state), org_id, true).await;
     if !plan_has_sentinel(&plan) {
         return Ok((false, json!({"error": "plan_required", "plan": "pro"})));
@@ -389,7 +389,7 @@ fn validate_hhmm(value: &str, field: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn python_int(s: &str) -> Option<i64> {
+pub(crate) fn python_int(s: &str) -> Option<i64> {
     let t = s.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c));
     let (neg, digits) = match t.strip_prefix('-') {
         Some(rest) => (true, rest),
@@ -402,7 +402,7 @@ fn python_int(s: &str) -> Option<i64> {
 }
 
 /// Start of the current UTC month, as a naive timestamp.
-fn start_of_month() -> NaiveDateTime {
+pub(crate) fn start_of_month() -> NaiveDateTime {
     let now = Utc::now();
     Utc.with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
         .single()
@@ -410,7 +410,7 @@ fn start_of_month() -> NaiveDateTime {
         .unwrap_or_else(now_naive)
 }
 
-async fn runs_used_this_month(state: &AppState, org_id: &str) -> Result<i64, ApiError> {
+pub(crate) async fn runs_used_this_month(state: &AppState, org_id: &str) -> Result<i64, ApiError> {
     let (n,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM sentinel_runs WHERE org_id = $1 AND triggered_at >= $2",
     )
@@ -748,7 +748,7 @@ fn truncate_chars(s: &str, limit: usize) -> String {
 /// The body is a timestamp rather than a constant, and signed: the
 /// signature of a fixed body under a fixed key never changes, so one
 /// captured request could be replayed forever to force cold starts.
-fn fire_wakeup_webhook(state: &AppState) {
+pub(crate) fn fire_wakeup_webhook(state: &AppState) {
     let Some(url) = state.config.sentinel_agent_webhook_url.clone() else {
         return; // no agent configured — the run waits to be polled
     };

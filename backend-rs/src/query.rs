@@ -455,6 +455,15 @@ pub struct BodyErrors {
     errors: Vec<Value>,
 }
 
+/// Pydantic's own pluralisation for a length message.
+fn plural(n: usize) -> &'static str {
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
 impl BodyErrors {
     pub fn new() -> Self {
         Self::default()
@@ -572,9 +581,23 @@ impl BodyErrors {
         self.push(
             "string_too_long",
             field,
-            &format!("String should have at most {max} characters"),
+            &format!("String should have at most {max} character{}", plural(max)),
             json!(input),
             Some(json!({ "max_length": max })),
+        );
+    }
+
+    /// The other end of the same constraint. `min_length=1` is the only
+    /// one in use, and it is exactly the case where Pydantic's message
+    /// is singular — "at least 1 character" — so the pluralisation is
+    /// not a detail that can be skipped.
+    pub fn too_short(&mut self, field: &str, input: &str, min: usize) {
+        self.push(
+            "string_too_short",
+            field,
+            &format!("String should have at least {min} character{}", plural(min)),
+            json!(input),
+            Some(json!({ "min_length": min })),
         );
     }
 

@@ -54,6 +54,12 @@ hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", 
 http-body-util = "0.1"
 bytes = "1"
 
+# `secrets.token_hex` for the API keys this service mints. Already in
+# the tree through uuid; declared directly because a v4 UUID is not a
+# substitute — it fixes six of its bits, so its hex always carries a
+# `4` in the thirteenth place.
+getrandom = "0.3"
+
 # Clerk session verification is local RS256 against a cached JWKS — there
 # is no Rust SDK and none is needed. See src/auth.rs.
 jsonwebtoken = "9"

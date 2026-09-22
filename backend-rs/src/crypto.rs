@@ -34,6 +34,22 @@ pub fn hex(bytes: &[u8]) -> String {
     })
 }
 
+/// `secrets.token_hex(n)` — `n` bytes from the OS CSPRNG as `2n`
+/// lowercase hex characters.
+///
+/// Deliberately not a v4 UUID with its dashes removed. That is also 32
+/// hex characters, and it is what the node-key path uses because Python
+/// there really does call `uuid.uuid4()` — but a v4 UUID fixes six
+/// bits, so its hex always has a `4` in the thirteenth place and one of
+/// `89ab` in the seventeenth. The agent and integration keys are
+/// `secrets.token_hex(16)`, which has no such structure, and a key with
+/// a predictable character is a key with fewer bits than it looks.
+pub fn token_hex(bytes: usize) -> String {
+    let mut buf = vec![0u8; bytes];
+    getrandom::fill(&mut buf).expect("the OS CSPRNG is unavailable");
+    hex(&buf)
+}
+
 const STANDARD: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const URL_SAFE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
@@ -112,6 +128,19 @@ mod tests {
 
     /// Checked against `base64.b64encode` and
     /// `base64.urlsafe_b64encode(...).rstrip(b"=")`.
+    #[test]
+    fn a_token_is_uniform_hex_of_the_right_length() {
+        let token = token_hex(16);
+        assert_eq!(token.len(), 32);
+        assert!(token.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        // Two draws differ, and neither carries a v4 UUID's fixed
+        // nibbles — the whole reason this is not `Uuid::new_v4`.
+        let other = token_hex(16);
+        assert_ne!(token, other);
+        let fixed_four = (0..64).filter(|_| token_hex(16).as_bytes()[12] == b'4').count();
+        assert!(fixed_four < 20, "{fixed_four}/64 tokens had a 4 in the v4 position");
+    }
+
     #[test]
     fn both_alphabets_match_pythons() {
         // Every input length modulo three, so the padding branch is

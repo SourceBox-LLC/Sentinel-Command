@@ -254,6 +254,263 @@ pub async fn get_run(
 /// `GET /api/sentinel/agent-keys`.
 ///
 /// Deliberately not plan-gated, unlike minting: an org that downgrades
+/// `osa_` — the prefix that tells an agent key from an MCP or
+/// integration one at a glance, and in the auth path.
+const AGENT_KEY_PREFIX: &str = "osa_";
+
+/// What an admin reads when an agent key is created.
+fn agent_key_create_body(actor: &str, name: &str) -> String {
+    format!(
+        "{actor} just created a Sentinel agent key \"{name}\".  Anyone \
+         holding it can run the Sentinel agent against this organization's \
+         cameras.  If this was you, no action needed.  If not, revoke it \
+         from the MCP settings page immediately."
+    )
+}
+
+/// `POST /api/sentinel/agent-keys` — mint one, return it once.
+///
+/// `require_active_billing` rather than `require_admin`: this hands out
+/// a credential that spends money, since every run the agent completes
+/// burns a cap slot and real model cost. Revoking stays on plain admin,
+/// so a past-due org can still turn a key off.
+///
+/// The plan and licence gate here is a UX gate, not the security
+/// boundary — the MCP surface re-checks both on every tool call,
+/// because a plan can change long after a key is minted. Failing here
+/// means a free org finds out now, with an upgrade prompt, instead of
+/// at 3am through an opaque 401 from an agent they already configured.
+pub async fn create_agent_key(
+    rate: crate::ratelimit::PerHour<10>,
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    ModelBody(crate::auth::RequireActiveBilling(user), body): ModelBody<
+        crate::auth::RequireActiveBilling,
+    >,
+) -> Result<Json<Value>, ApiError> {
+    let mut errors = BodyErrors::new();
+    // `name: str = Field("Self-hosted agent", max_length=100)`.
+    let name = match body.get("name") {
+        None => "Self-hosted agent".to_string(),
+        Some(Value::String(value)) => {
+            if value.chars().count() > 100 {
+                errors.too_long("name", value, 100);
+            }
+            value.clone()
+        }
+        Some(other) => {
+            errors.string_type("name", other);
+            String::new()
+        }
+    };
+    errors.finish()?;
+    rate.check().await?;
+
+    let (has_access, denial) =
+        crate::api::sentinel_config::resolve_sentinel_access(&state, &user.org_id).await?;
+    if !has_access {
+        return Err(ApiError::new(
+            axum::http::StatusCode::PAYMENT_REQUIRED,
+            denial,
+        ));
+    }
+
+    // `key_hash` is UNIQUE. A 128-bit collision will not happen, but an
+    // unhandled conflict would be a 500, so it is absorbed and retried
+    // once rather than leaving this endpoint's only failure path
+    // uncovered.
+    let mut minted: Option<(i32, String, Option<NaiveDateTime>)> = None;
+    let mut raw_key = String::new();
+    for attempt in 1..=2 {
+        raw_key = format!("{AGENT_KEY_PREFIX}{}", crate::crypto::token_hex(16));
+        let key_hash = crate::crypto::hex(&Sha256::digest(raw_key.as_bytes()));
+        let last4: String = raw_key.chars().rev().take(4).collect::<Vec<_>>()
+            .into_iter().rev().collect();
+        let inserted: Result<(i32, String, Option<NaiveDateTime>), _> = sqlx::query_as(
+            "INSERT INTO sentinel_agent_keys
+                (org_id, key_hash, key_last4, name, created_by, revoked, created_at)
+             VALUES ($1, $2, $3, $4, $5, false, $6)
+             RETURNING id, key_last4, created_at",
+        )
+        .bind(&user.org_id)
+        .bind(&key_hash)
+        .bind(&last4)
+        .bind(&name)
+        // The user id, not the label: this column is varchar(100) and an
+        // email can overflow it. The readable actor is in the audit row.
+        .bind(&user.user_id)
+        .bind(now_naive())
+        .fetch_one(&state.pool)
+        .await;
+        match inserted {
+            Ok(row) => {
+                minted = Some(row);
+                break;
+            }
+            Err(err) if attempt == 1 && is_unique_violation(&err) => continue,
+            Err(err) => return Err(err.into()),
+        }
+    }
+    let Some((key_id, key_last4, created_at)) = minted else {
+        return Err(ApiError::internal("could not mint an agent key"));
+    };
+
+    let label = crate::audit::audit_label(&user);
+    crate::audit::write_audit(
+        &state.pool,
+        &user.org_id,
+        "sentinel_agent_key_created",
+        &user.user_id,
+        &label,
+        Some(crate::audit::python_json(&[
+            ("key_id", json!(key_id)),
+            ("name", json!(name)),
+            ("key_last4", json!(key_last4)),
+        ])),
+        &headers,
+        Some(&peer.ip().to_string()),
+    )
+    .await;
+
+    let actor = [label, user.user_id.clone(), "unknown user".to_string()]
+        .into_iter()
+        .find(|candidate| !candidate.is_empty())
+        .unwrap_or_default();
+    crate::notifications::create_notification(
+        &state,
+        &user.org_id,
+        crate::notifications::NewNotification::new(
+            "sentinel_agent_key_created",
+            format!("New Sentinel agent key created: {name}"),
+        )
+        .body(agent_key_create_body(&actor, &name))
+        .severity("warning")
+        .audience("admin")
+        .link("/mcp")
+        .meta(json!({
+            "key_id": key_id,
+            "key_name": name,
+            "actor_user_id": user.user_id,
+        })),
+    )
+    .await;
+
+    Ok(Json(json!({
+        "id": key_id,
+        "name": name,
+        // The only time this value exists outside the caller's machine.
+        "key": raw_key,
+        "key_last4": key_last4,
+        "created_at": created_at.map(iso_naive),
+        "warning": "Save this key now. You won't be able to see it again.",
+    })))
+}
+
+/// A UNIQUE constraint rejection, as opposed to any other database
+/// failure — the retry above must not swallow the rest.
+fn is_unique_violation(err: &sqlx::Error) -> bool {
+    matches!(err.as_database_error().and_then(|e| e.code()), Some(code) if code == "23505")
+}
+
+/// What an admin reads when an agent key is revoked.
+///
+/// Extracted for the same reason as its MCP counterpart: the Python
+/// joins two f-strings, and the join carries a deliberate double space
+/// after the full stop.
+fn agent_key_revoke_body(actor: &str, name: &str) -> String {
+    format!(
+        "{actor} revoked the Sentinel agent key \"{name}\".  \
+         Any agent still using it will start failing immediately."
+    )
+}
+
+/// `DELETE /api/sentinel/agent-keys/{key_id}`.
+///
+/// A soft revoke, matching the MCP keys: `last_used_at` stays as the
+/// forensic answer to "when did this leaked credential last act?", and
+/// the unique `key_hash` stays permanently burned.
+///
+/// The `org_id` in the filter is the security control, not a
+/// convenience — without it any admin could revoke any org's key — and
+/// a miss is a 404 rather than a 403 so a caller cannot probe which key
+/// ids exist elsewhere.
+pub async fn revoke_agent_key(
+    rate: crate::ratelimit::PerHour<30>,
+    State(state): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Path(key_id): Path<String>,
+    headers: axum::http::HeaderMap,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+) -> Result<Json<Value>, ApiError> {
+    let key_id = crate::query::path_int("key_id", &key_id)?;
+    rate.check().await?;
+    let key_id = int4(key_id)?;
+
+    let row: Option<(String, bool)> = sqlx::query_as(
+        "SELECT name, revoked FROM sentinel_agent_keys WHERE id = $1 AND org_id = $2",
+    )
+    .bind(key_id)
+    .bind(&user.org_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    let Some((name, revoked)) = row else {
+        return Err(ApiError::not_found("agent key not found"));
+    };
+
+    // SQLAlchemy emits no UPDATE when the value is unchanged, so
+    // re-revoking writes nothing — which the side-effect differential
+    // counts.
+    if !revoked {
+        sqlx::query("UPDATE sentinel_agent_keys SET revoked = true WHERE id = $1 AND org_id = $2")
+            .bind(key_id)
+            .bind(&user.org_id)
+            .execute(&state.pool)
+            .await?;
+    }
+
+    let label = crate::audit::audit_label(&user);
+    crate::audit::write_audit(
+        &state.pool,
+        &user.org_id,
+        "sentinel_agent_key_revoked",
+        &user.user_id,
+        &label,
+        Some(crate::audit::python_json(&[
+            ("key_id", json!(key_id)),
+            ("name", json!(name)),
+        ])),
+        &headers,
+        Some(&peer.ip().to_string()),
+    )
+    .await;
+
+    let actor = [label, user.user_id.clone(), "unknown user".to_string()]
+        .into_iter()
+        .find(|candidate| !candidate.is_empty())
+        .unwrap_or_default();
+    crate::notifications::create_notification(
+        &state,
+        &user.org_id,
+        crate::notifications::NewNotification::new(
+            "sentinel_agent_key_revoked",
+            format!("Sentinel agent key revoked: {name}"),
+        )
+        .body(agent_key_revoke_body(&actor, &name))
+        .severity("info")
+        .audience("admin")
+        .link("/admin/audit-log")
+        .meta(json!({
+            "key_id": key_id,
+            "key_name": name,
+            "actor_user_id": user.user_id,
+        })),
+    )
+    .await;
+
+    Ok(Json(json!({ "success": true, "revoked": key_id })))
+}
+
 /// must still be able to see and revoke credentials it already issued.
 pub async fn list_agent_keys(
     State(state): State<AppState>,
@@ -622,6 +879,36 @@ use crate::auth::RequireView;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `key_last4` is stored and returned separately from the key, and
+    /// the differential blanks it by name — substituting four hex
+    /// characters by value would rewrite unrelated runs inside other
+    /// hashes. That it really is the key's own last four is held here
+    /// instead, which is the only place that has the key.
+    #[test]
+    fn the_stored_suffix_is_the_keys_own_last_four() {
+        for _ in 0..32 {
+            let key = format!("{AGENT_KEY_PREFIX}{}", crate::crypto::token_hex(16));
+            let last4: String = key.chars().rev().take(4).collect::<Vec<_>>()
+                .into_iter().rev().collect();
+            assert_eq!(last4.len(), 4);
+            assert!(key.ends_with(&last4), "{key} does not end with {last4}");
+            // `osa_` plus 32 hex characters.
+            assert_eq!(key.len(), 4 + 32);
+            assert!(key.strip_prefix("osa_").unwrap().chars().all(|c| c.is_ascii_hexdigit()));
+        }
+    }
+
+    /// Two f-strings joined with a deliberate double space after the
+    /// full stop — the string that lands in `notifications.body`.
+    #[test]
+    fn the_agent_key_revoke_notification_keeps_its_double_space() {
+        assert_eq!(
+            agent_key_revoke_body("alice@example.com", "prod agent"),
+            "alice@example.com revoked the Sentinel agent key \"prod agent\".  \
+             Any agent still using it will start failing immediately."
+        );
+    }
 
     /// Expected strings produced by running `set_tool_trace`'s own body
     /// under CPython, not reasoned out. `json.dumps` defaults apply:

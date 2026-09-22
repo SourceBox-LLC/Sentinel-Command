@@ -25,6 +25,7 @@ pub mod license;
 pub mod models;
 pub mod notifications;
 pub mod plans;
+pub mod sentinel_dispatch;
 pub mod proxy;
 pub mod pydatetime;
 pub mod pycodec;
