@@ -306,13 +306,15 @@ pub async fn motion_cooldown_minutes(pool: &sqlx::PgPool, org_id: &str) -> i64 {
 /// that can. A value beyond i64 is not a number this ever really holds;
 /// it is a hand-edited row, and it still has to land somewhere.
 fn parse_cooldown_minutes(raw: &str) -> i64 {
-    match crate::pyint::str_as_int(raw.trim()) {
-        Ok(PyInt::Small(minutes)) => minutes.max(1),
+    // `python_int`, not the Pydantic coercion: the Python here calls
+    // the builtin `int()`, and the two disagree — `int("1_0")` is 10.
+    match crate::pyint::python_int(raw) {
+        Some(PyInt::Small(minutes)) => minutes.max(1),
         // Python's `max(1, <huge negative>)` is 1, and its `max(1,
         // <huge positive>)` is a cooldown that never expires.
-        Ok(PyInt::Big { negative: true }) => 1,
-        Ok(PyInt::Big { negative: false }) => i64::MAX,
-        Err(_) => 15,
+        Some(PyInt::Big { negative: true }) => 1,
+        Some(PyInt::Big { negative: false }) => i64::MAX,
+        None => 15,
     }
 }
 
@@ -386,14 +388,8 @@ pub async fn create_notification(
     org_id: &str,
     notification: NewNotification,
 ) -> Option<NotificationRow> {
-    let audience = match notification.audience.as_str() {
-        "all" | "admin" => notification.audience.as_str(),
-        _ => "all",
-    };
-    let severity = match notification.severity.as_str() {
-        "info" | "warning" | "error" | "critical" => notification.severity.as_str(),
-        _ => "info",
-    };
+    let audience = normalise_audience(&notification.audience);
+    let severity = normalise_severity(&notification.severity);
     // `title[:200]` — characters, not bytes, and the column is
     // `varchar(200)`, which Postgres also counts in characters.
     let title: String = notification.title.chars().take(200).collect();
@@ -483,6 +479,30 @@ fn broadcast_payload(row: &NotificationRow) -> String {
     let mut payload = row.to_json();
     payload["type"] = Value::String("notification".to_string());
     python_json_value(&payload)
+}
+
+/// Anything that is not one of the two audiences falls through to
+/// `all`.
+///
+/// Its own function because every caller in the tree passes a literal,
+/// so no route can reach the fallback and the differential cannot see
+/// it. Falling to `admin` instead would hide a notification from
+/// everyone it was meant for, which is the failure worth pinning.
+fn normalise_audience(audience: &str) -> &'static str {
+    match audience {
+        "admin" => "admin",
+        _ => "all",
+    }
+}
+
+/// The same, for severity: anything unrecognised is `info`.
+fn normalise_severity(severity: &str) -> &'static str {
+    match severity {
+        "warning" => "warning",
+        "error" => "error",
+        "critical" => "critical",
+        _ => "info",
+    }
 }
 
 /// Python's truthiness for the `meta` argument: `None`, `{}`, `[]`,
@@ -845,6 +865,9 @@ mod tests {
         assert_eq!(parse_cooldown_minutes("15"), 15);
         assert_eq!(parse_cooldown_minutes("1"), 1);
         assert_eq!(parse_cooldown_minutes(" 30 "), 30);
+        // The builtin `int()` takes underscores between digits, which
+        // is where it parts company with Pydantic's coercion.
+        assert_eq!(parse_cooldown_minutes("1_0"), 10);
         // Zero and negatives floor at one: a cooldown of zero would be
         // pointless, since the immediate mail fires anyway.
         assert_eq!(parse_cooldown_minutes("0"), 1);
@@ -867,6 +890,23 @@ mod tests {
             motion_cooldown_anchor_key("cam-live"),
             "motion_email_cooldown_start:cam-live"
         );
+    }
+
+    /// Neither fallback is reachable from a route — every caller passes
+    /// a literal — so this is the only thing that checks them.
+    #[test]
+    fn an_unrecognised_audience_or_severity_falls_back() {
+        assert_eq!(normalise_audience("all"), "all");
+        assert_eq!(normalise_audience("admin"), "admin");
+        for odd in ["", "ADMIN", "everyone", "viewer"] {
+            assert_eq!(normalise_audience(odd), "all", "{odd:?}");
+        }
+        for known in ["info", "warning", "error", "critical"] {
+            assert_eq!(normalise_severity(known), known);
+        }
+        for odd in ["", "INFO", "fatal", "debug"] {
+            assert_eq!(normalise_severity(odd), "info", "{odd:?}");
+        }
     }
 
     #[test]

@@ -39,6 +39,7 @@ pub mod settings;
 pub mod sse;
 pub mod tz_names;
 pub mod versions;
+pub mod ws;
 pub mod zoneinfo;
 
 pub use app::{build_router, AppState, VERSION};

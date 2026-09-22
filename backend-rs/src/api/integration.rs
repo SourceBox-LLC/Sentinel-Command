@@ -332,6 +332,41 @@ pub async fn status(
     })))
 }
 
+/// `INTEGRATION_MAX_SSE_SUBSCRIBERS` — a small fixed cap, not a
+/// per-tier one. A home runs one or two Home Assistant instances, and
+/// this bounds memory against a scripted connect loop.
+const MAX_SSE_SUBSCRIBERS: usize = 10;
+
+/// `GET /api/integration/motion/stream` — the feed behind Home
+/// Assistant's motion `binary_sensor`s.
+///
+/// The same org-wide motion pipeline the dashboard consumes, through a
+/// *separate* subscriber pool, so a persistent Home Assistant
+/// connection never eats into the dashboard's per-tier cap.
+pub async fn motion_stream(
+    rate: crate::ratelimit::PerMinute<60>,
+    user: IntegrationUser,
+) -> Result<axum::response::Response, ApiError> {
+    rate.check().await?;
+    let Some(subscription) = crate::api::motion::INTEGRATION_BROADCASTER.subscribe(
+        &user.0.org_id,
+        true,
+        MAX_SSE_SUBSCRIBERS,
+    ) else {
+        return Err(ApiError::new(
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            format!(
+                "Too many open integration motion streams for this org (cap: \
+                 {MAX_SSE_SUBSCRIBERS}). Close unused connections and retry."
+            ),
+        ));
+    };
+    Ok(crate::sse::stream_response(
+        subscription,
+        crate::sse::connected_frame(&user.0.org_id),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

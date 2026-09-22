@@ -82,3 +82,73 @@ pub async fn list_camera_groups(
 
     Ok(Json(rows.iter().map(CameraGroupRow::to_json).collect()))
 }
+
+/// `POST /api/cameras/{camera_id}/snapshot` — ask the node to capture
+/// one and keep it locally.
+///
+/// The only route whose answer is a *node's*, relayed. That makes the
+/// failure modes its own: the node may be unassigned, may not hold a
+/// socket to this machine, may never answer, or may go away
+/// mid-command — 400, 503, 504 and 503 respectively, each carrying the
+/// message the Python's exception carried.
+pub async fn take_snapshot(
+    rate: crate::ratelimit::PerMinute<30>,
+    State(state): State<AppState>,
+    RequireView(user): RequireView,
+    Path(camera_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    rate.check().await?;
+    let camera_id = path_segment(&camera_id)?;
+
+    let camera: Option<(Option<i32>,)> =
+        sqlx::query_as("SELECT node_id FROM cameras WHERE camera_id = $1 AND org_id = $2")
+            .bind(camera_id)
+            .bind(&user.org_id)
+            .fetch_optional(&state.pool)
+            .await?;
+    let Some((node_pk,)) = camera else {
+        return Err(ApiError::not_found("Camera not found"));
+    };
+    // `if not camera.node_id` — an unassigned camera has nobody to ask,
+    // and a zero primary key is as falsy as a null one.
+    let Some(node_pk) = node_pk.filter(|pk| *pk != 0) else {
+        return Err(ApiError::bad_request("Camera has no assigned node"));
+    };
+
+    let node: Option<(String,)> =
+        sqlx::query_as("SELECT node_id FROM camera_nodes WHERE id = $1")
+            .bind(node_pk)
+            .fetch_optional(&state.pool)
+            .await?;
+    let Some((node_id,)) = node else {
+        return Err(ApiError::bad_request("Camera node not found"));
+    };
+    if !crate::ws::MANAGER.is_connected(&node_id) {
+        return Err(ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "Camera node is offline",
+        ));
+    }
+
+    match crate::ws::MANAGER
+        .send_command(
+            &node_id,
+            "take_snapshot",
+            serde_json::json!({"camera_id": camera_id}),
+            std::time::Duration::from_secs(15),
+        )
+        .await
+    {
+        Ok(result) => Ok(Json(result)),
+        Err(crate::ws::CommandError::Timeout { .. }) => Err(ApiError::new(
+            axum::http::StatusCode::GATEWAY_TIMEOUT,
+            "Snapshot request timed out",
+        )),
+        // Every other failure is a `ValueError` in the Python, and the
+        // route puts `str(e)` straight into the body.
+        Err(other) => Err(ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            other.to_string(),
+        )),
+    }
+}

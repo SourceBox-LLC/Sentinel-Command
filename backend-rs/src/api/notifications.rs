@@ -221,50 +221,13 @@ pub async fn stream_notifications(
         ));
     };
 
-    // The first frame goes out before anything is awaited, so a client
+    // The greeting goes out before anything is awaited, so a client
     // knows it is connected rather than waiting up to 25 seconds for
     // the first keepalive to prove it.
-    let hello = format!(
-        "data: {}\n\n",
-        python_json(&[
-            ("type", json!("connected")),
-            ("org_id", json!(user.org_id)),
-        ])
-    );
-
-    let stream = futures_util::stream::unfold(
-        (Some(hello), subscription),
-        |(hello, mut subscription)| async move {
-            if let Some(hello) = hello {
-                return Some((Ok::<_, std::io::Error>(hello), (None, subscription)));
-            }
-            // A quiet stream still has to say something, or an
-            // intermediary will time the connection out.
-            let frame = match tokio::time::timeout(
-                std::time::Duration::from_secs(25),
-                subscription.recv(),
-            )
-            .await
-            {
-                Ok(Some(event)) => format!("data: {event}\n\n"),
-                // Unreachable while the subscription holds its own
-                // sender — see `sse::Subscription::keepalive`.
-                Ok(None) => return None,
-                Err(_) => ": keepalive\n\n".to_string(),
-            };
-            Some((Ok(frame), (None, subscription)))
-        },
-    );
-
-    axum::response::Response::builder()
-        .header("content-type", "text/event-stream; charset=utf-8")
-        .header("cache-control", "no-cache")
-        .header("connection", "keep-alive")
-        // Without this nginx buffers the whole response and the stream
-        // never arrives.
-        .header("x-accel-buffering", "no")
-        .body(axum::body::Body::from_stream(stream))
-        .map_err(|err| ApiError::internal(err.to_string()))
+    Ok(crate::sse::stream_response(
+        subscription,
+        crate::sse::connected_frame(&user.org_id),
+    ))
 }
 
 /// `GET /api/notifications/unread-count` — the bell badge.

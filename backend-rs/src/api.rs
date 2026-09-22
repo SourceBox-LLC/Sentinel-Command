@@ -25,5 +25,6 @@ pub mod sentinel_config;
 pub mod settings;
 pub mod timezone;
 pub mod webhooks;
+pub mod ws;
 pub mod well_known;
 pub mod stream_logs;

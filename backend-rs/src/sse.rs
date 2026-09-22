@@ -27,6 +27,10 @@ use tokio::sync::mpsc;
 /// `asyncio.Queue(maxsize=100)`.
 const QUEUE_DEPTH: usize = 100;
 
+/// `asyncio.wait_for(queue.get(), timeout=25.0)` — how long a stream
+/// stays quiet before it says something anyway.
+const KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(25);
+
 /// `MAX_SSE_SUBSCRIBERS_PER_ORG` — the fallback when a caller has no
 /// plan limit to hand. Route handlers pass the tier's own cap.
 pub const DEFAULT_CAP: usize = 100;
@@ -184,6 +188,60 @@ impl Drop for Subscription<'_> {
     fn drop(&mut self) {
         self.broadcaster.unsubscribe(&self.org_id, self.id);
     }
+}
+
+/// The response body every SSE route returns.
+///
+/// Three routes want the identical thing — the notification bell and
+/// the two motion feeds — and the only differences are the greeting and
+/// what the cap message says. Writing it once means the keepalive
+/// interval, the frame separator and the headers cannot drift between
+/// them, which is exactly the kind of drift the differential found
+/// between the stacks.
+pub fn stream_response(
+    subscription: Subscription<'static>,
+    hello: String,
+) -> axum::response::Response {
+    let stream = futures_util::stream::unfold(
+        (Some(hello), subscription),
+        |(hello, mut subscription)| async move {
+            if let Some(hello) = hello {
+                return Some((Ok::<_, std::io::Error>(hello), (None, subscription)));
+            }
+            // A quiet stream still has to say something, or an
+            // intermediary times the connection out.
+            let frame = match tokio::time::timeout(KEEPALIVE, subscription.recv()).await {
+                Ok(Some(event)) => format!("data: {event}\n\n"),
+                // Unreachable while the subscription holds its own
+                // sender — see the `keepalive` field above.
+                Ok(None) => return None,
+                Err(_) => ": keepalive\n\n".to_string(),
+            };
+            Some((Ok(frame), (None, subscription)))
+        },
+    );
+
+    axum::response::Response::builder()
+        .header("content-type", "text/event-stream; charset=utf-8")
+        .header("cache-control", "no-cache")
+        .header("connection", "keep-alive")
+        // Without this nginx buffers the whole response and the stream
+        // never arrives.
+        .header("x-accel-buffering", "no")
+        .body(axum::body::Body::from_stream(stream))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+}
+
+/// The greeting frame: `{"type": "connected", "org_id": ...}`, written
+/// the way `json.dumps` writes it.
+pub fn connected_frame(org_id: &str) -> String {
+    format!(
+        "data: {}\n\n",
+        crate::audit::python_json(&[
+            ("type", serde_json::json!("connected")),
+            ("org_id", serde_json::json!(org_id)),
+        ])
+    )
 }
 
 #[cfg(test)]

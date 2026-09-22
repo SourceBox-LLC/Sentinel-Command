@@ -163,6 +163,9 @@ fn too_large(detail: String) -> ApiError {
 /// node in one org push into another's camera.
 struct PushTarget {
     org_id: String,
+    /// The node's own id, not its primary key — what a motion row
+    /// stores and what the ownership check joins on.
+    node_id: String,
     camera_name: String,
     disabled_by_plan: bool,
 }
@@ -175,12 +178,12 @@ async fn resolve_push_target(
     let Some(key) = headers.get("x-node-api-key") else {
         return Err(ApiError::unauthorized("Missing API key"));
     };
-    let node: Option<(i32, String)> =
-        sqlx::query_as("SELECT id, org_id FROM camera_nodes WHERE api_key_hash = $1")
+    let node: Option<(i32, String, String)> =
+        sqlx::query_as("SELECT id, org_id, node_id FROM camera_nodes WHERE api_key_hash = $1")
             .bind(crate::api::node_writes::node_key_hash(key.as_bytes()))
             .fetch_optional(&state.pool)
             .await?;
-    let Some((node_pk, org_id)) = node else {
+    let Some((node_pk, org_id, node_id)) = node else {
         return Err(ApiError::unauthorized("Invalid API key"));
     };
 
@@ -199,6 +202,7 @@ async fn resolve_push_target(
 
     Ok(PushTarget {
         org_id,
+        node_id,
         camera_name,
         disabled_by_plan,
     })
@@ -498,6 +502,67 @@ pub async fn update_hls_playlist(
     }
 
     Ok(Json(json!({ "success": true, "message": "Playlist updated" })))
+}
+
+/// `POST /api/cameras/{camera_id}/motion`.
+///
+/// The reliable half of motion reporting: it works whether or not the
+/// node's WebSocket is up, which is why CameraNode uses it rather than
+/// the `event` frame.
+pub async fn push_motion_event(
+    rate: PerMinute<120>,
+    State(state): State<AppState>,
+    Path(camera_id): Path<String>,
+    request: Request,
+) -> Result<Json<Value>, ApiError> {
+    rate.check().await?;
+    let camera_id = path_segment(&camera_id)?.to_string();
+    let target = resolve_push_target(&state, request.headers(), &camera_id).await?;
+
+    // The per-org kill switch, for when a misbehaving sensor is
+    // flooding events and an admin needs a server-side stop without
+    // reaching the node. Answered 200 with `ingested: false` rather
+    // than an error, so CameraNode treats it as a deliberate refusal
+    // and does not spend its retry budget — the same shape the
+    // plan-cap suspension uses.
+    //
+    // Checked *before* the body is read, as the Python does: a
+    // malformed body reaches nothing while ingestion is off.
+    let enabled = crate::settings::get(
+        &state.pool,
+        &target.org_id,
+        "motion_ingestion_enabled",
+        Some("true"),
+    )
+    .await?
+    .unwrap_or_else(|| "true".to_string());
+    if enabled.to_lowercase() != "true" {
+        return Ok(Json(json!({
+            "success": true,
+            "ingested": false,
+            "reason": "ingestion_disabled",
+        })));
+    }
+
+    let body = axum::body::to_bytes(request.into_body(), 2 * 1024 * 1024)
+        .await
+        .map_err(|_| ApiError::internal("could not read the request body"))?;
+    let body = crate::query::parse_handler_json(&body)?;
+
+    crate::api::ws::handle_motion_event(
+        &state,
+        &target.node_id,
+        &target.org_id,
+        &json!({
+            "camera_id": camera_id,
+            "score": body.get("score").cloned().unwrap_or(Value::Null),
+            "segment_seq": body.get("segment_seq").cloned().unwrap_or(Value::Null),
+            "timestamp": body.get("timestamp").cloned().unwrap_or(Value::Null),
+        }),
+    )
+    .await;
+
+    Ok(Json(json!({ "success": true, "ingested": true })))
 }
 
 #[cfg(test)]

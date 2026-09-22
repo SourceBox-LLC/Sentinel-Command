@@ -46,7 +46,9 @@ impl Query {
     }
 
     /// The last occurrence of a parameter, which is the one FastAPI uses.
-    fn last(&self, name: &str) -> Option<&str> {
+    /// The last value for a name, which is what FastAPI's `Query` takes
+    /// when a parameter is repeated.
+    pub(crate) fn last(&self, name: &str) -> Option<&str> {
         self.params
             .iter()
             .rev()

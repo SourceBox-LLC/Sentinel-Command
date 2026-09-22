@@ -148,7 +148,10 @@ pub fn build_router(state: AppState) -> Router {
         // Motion stays: it shares hls.py with the two below but not
         // their caches — it reaches the WebSocket module's motion
         // handling, which has not moved.
-        .route("/api/cameras/{camera_id}/motion", still_python())
+        .route(
+            "/api/cameras/{camera_id}/motion",
+            served(axum::routing::post(api::hls::push_motion_event)),
+        )
         .route(
             "/api/cameras/{camera_id}/playlist",
             served(axum::routing::post(api::hls::update_hls_playlist)),
@@ -165,7 +168,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/cameras/{camera_id}/recording-settings",
             served(axum::routing::patch(api::recording::update_recording_policy)),
         )
-        .route("/api/cameras/{camera_id}/snapshot", still_python())
+        .route(
+            "/api/cameras/{camera_id}/snapshot",
+            served(axum::routing::post(api::cameras::take_snapshot)),
+        )
         .route(
             "/api/cameras/{camera_id}/stream.m3u8",
             ported(api::hls::get_hls_playlist),
@@ -227,7 +233,8 @@ pub fn build_router(state: AppState) -> Router {
         // viewer-second counter, which lives in whichever process
         // serves segments.
         .route("/api/nodes/plan", ported(api::nodes::get_plan_info))
-        .route("/api/nodes/ws-status", still_python())
+        .route("/api/nodes/ws-status", ported(api::nodes::ws_status))
+        .route("/ws/node", served(get(api::ws::node_websocket)))
         .route("/api/nodes/{node_id}", ported(api::nodes::get_node))
         .route(
             "/api/nodes/{node_id}/rotate-key",
@@ -273,6 +280,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/mcp/keys/{key_id}",
             served(axum::routing::delete(api::keys::revoke_mcp_key)),
+        )
+        .route(
+            "/api/integration/motion/stream",
+            ported(api::integration::motion_stream),
         )
         .route(
             "/api/integration/keys",
@@ -325,6 +336,10 @@ pub fn build_router(state: AppState) -> Router {
             ),
         )
         .route("/api/motion/events", ported(api::motion::list_motion_events))
+        .route(
+            "/api/motion/events/stream",
+            ported(api::motion::stream_motion_events),
+        )
         .route(
             "/api/motion/events/stats",
             ported(api::motion::motion_stats),

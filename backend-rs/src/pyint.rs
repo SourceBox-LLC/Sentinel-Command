@@ -227,8 +227,156 @@ pub fn str_as_int(s: &str) -> Result<PyInt, StrIntError> {
     jiter_int(cleaned.as_bytes()).map_err(|_| StrIntError::Parsing)
 }
 
+// ---------------------------------------------------------------------
+// The builtin `int()`, which is not the same function as the above
+// ---------------------------------------------------------------------
+
+/// `int(s)` for a string — the *builtin*, not Pydantic's coercion.
+///
+/// The two differ, and the difference is reachable: `int("1_0")` is 10,
+/// because Python's integer literal grammar allows single underscores
+/// between digits, and Pydantic's string coercion does not accept them.
+/// Anywhere the Python source calls `int()` directly — the motion
+/// score, the segment sequence, the hidden cooldown setting — this is
+/// the function it called.
+///
+/// `None` is every case Python raises `ValueError` for.
+pub fn python_int(s: &str) -> Option<PyInt> {
+    // `int()` strips the same whitespace `str.strip()` does, which is
+    // Unicode whitespace rather than just ASCII.
+    let s = s.trim_matches(char::is_whitespace);
+    let (negative, digits) = match s.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, s.strip_prefix('+').unwrap_or(s)),
+    };
+    if digits.is_empty() {
+        return None;
+    }
+
+    // An underscore is allowed only *between* digits: never leading,
+    // never trailing, never doubled.
+    let mut clean = String::with_capacity(digits.len());
+    let mut previous_was_digit = false;
+    for ch in digits.chars() {
+        if ch == '_' {
+            if !previous_was_digit {
+                return None;
+            }
+            previous_was_digit = false;
+            continue;
+        }
+        if !ch.is_ascii_digit() {
+            return None;
+        }
+        clean.push(ch);
+        previous_was_digit = true;
+    }
+    if !previous_was_digit {
+        // Ended on an underscore.
+        return None;
+    }
+
+    Some(match clean.parse::<i64>() {
+        Ok(value) => PyInt::Small(if negative { -value } else { value }),
+        // Past i64 in one direction or the other. Python has no such
+        // limit, so the sign is all a caller can act on.
+        Err(_) => {
+            if negative {
+                PyInt::Big { negative: true }
+            } else {
+                PyInt::Big { negative: false }
+            }
+        }
+    })
+}
+
+/// `int(value)` where the value came out of a JSON body.
+///
+/// `None` is every case Python raises for — `ValueError` on an
+/// unparseable string, `TypeError` on a list, a mapping or `None`.
+/// A float truncates *toward zero*, which is what `int()` does and
+/// what `floor` does not.
+pub fn python_int_of_json(value: &serde_json::Value) -> Option<PyInt> {
+    match value {
+        // `int(True)` is 1. JSON booleans reach this because a node
+        // sends what it sends.
+        serde_json::Value::Bool(b) => Some(PyInt::Small(i64::from(*b))),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                return Some(PyInt::Small(i));
+            }
+            if let Some(u) = n.as_u64() {
+                return Some(i64::try_from(u).map_or(PyInt::Big { negative: false }, PyInt::Small));
+            }
+            let f = n.as_f64()?;
+            if !f.is_finite() {
+                // `int(nan)` raises ValueError and `int(inf)` raises
+                // OverflowError — neither of which the motion path
+                // catches, so both are a 500 there. serde_json cannot
+                // even represent them, so this is unreachable from a
+                // parsed body and defensive only.
+                return None;
+            }
+            let truncated = f.trunc();
+            if truncated >= i64::MIN as f64 && truncated <= i64::MAX as f64 {
+                Some(PyInt::Small(truncated as i64))
+            } else {
+                Some(PyInt::Big { negative: truncated < 0.0 })
+            }
+        }
+        serde_json::Value::String(s) => python_int(s),
+        // `int(None)`, `int([])`, `int({})` are all TypeError.
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// Every value here was run through the interpreter, including the
+    /// ones that raise.
+    #[test]
+    fn the_builtin_int_is_not_pydantics() {
+        use super::{python_int, python_int_of_json, PyInt};
+        use serde_json::json;
+
+        let small = |n: i64| Some(PyInt::Small(n));
+        // Underscores between digits, which is the difference that
+        // makes this a separate function from `str_as_int`.
+        assert_eq!(python_int("1_0"), small(10));
+        assert_eq!(python_int("1_000_000"), small(1_000_000));
+        // ...but never leading, trailing or doubled.
+        for bad in ["_1", "1_", "1__0", "_", "-_1"] {
+            assert_eq!(python_int(bad), None, "{bad:?}");
+        }
+        // Whitespace and a sign, as `int()` accepts them.
+        assert_eq!(python_int(" 50 "), small(50));
+        assert_eq!(python_int("+7"), small(7));
+        assert_eq!(python_int("-7"), small(-7));
+        assert_eq!(python_int("\t\n 12 \r"), small(12));
+        // ValueError cases.
+        for bad in ["", " ", "3.9", "abc", "0x10", "1e3", "- 1", "1 2"] {
+            assert_eq!(python_int(bad), None, "{bad:?}");
+        }
+        // Past i64 keeps only its sign, which is all a caller can use.
+        assert_eq!(python_int(&"9".repeat(30)), Some(PyInt::Big { negative: false }));
+        assert_eq!(python_int(&format!("-{}", "9".repeat(30))), Some(PyInt::Big { negative: true }));
+
+        // And over a JSON value, where the type decides.
+        assert_eq!(python_int_of_json(&json!(50)), small(50));
+        // Truncation is toward zero, not floor — the two differ for
+        // negatives, and `int()` does the former.
+        assert_eq!(python_int_of_json(&json!(3.9)), small(3));
+        assert_eq!(python_int_of_json(&json!(-3.9)), small(-3));
+        assert_eq!(python_int_of_json(&json!(true)), small(1));
+        assert_eq!(python_int_of_json(&json!(false)), small(0));
+        assert_eq!(python_int_of_json(&json!("50")), small(50));
+        // TypeError and ValueError alike come back as None, because the
+        // one caller catches both and does the same thing.
+        for bad in [json!(null), json!([]), json!({}), json!("3.9"), json!("abc")] {
+            assert_eq!(python_int_of_json(&bad), None, "{bad}");
+        }
+    }
+
     use super::*;
     use serde_json::Value;
 

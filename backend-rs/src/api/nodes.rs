@@ -372,6 +372,41 @@ pub async fn decommission_self(
     Ok(Json(json!({ "success": true, "deleted": node_id })))
 }
 
+/// `GET /api/nodes/ws-status` — which of this org's nodes hold a live
+/// socket.
+///
+/// Filtered by org, and the filter runs the other way round from what
+/// you might write: the registry is walked in *its* order and each id
+/// checked against the org's, so the answer keeps the order the nodes
+/// connected in rather than the order the database returns them.
+///
+/// The registry is per process. On a fleet this answers for the machine
+/// that took the request, which is also the only machine that could
+/// send any of those nodes a command.
+pub async fn ws_status(
+    State(state): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+) -> Result<Json<Value>, ApiError> {
+    let owned: Vec<(String,)> =
+        sqlx::query_as("SELECT node_id FROM camera_nodes WHERE org_id = $1")
+            .bind(&user.org_id)
+            .fetch_all(&state.pool)
+            .await?;
+    let owned: std::collections::HashSet<String> =
+        owned.into_iter().map(|(node_id,)| node_id).collect();
+
+    let connected: Vec<String> = crate::ws::MANAGER
+        .connected_nodes()
+        .into_iter()
+        .filter(|node_id| owned.contains(node_id))
+        .collect();
+
+    Ok(Json(json!({
+        "connected_nodes": connected,
+        "count": connected.len(),
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

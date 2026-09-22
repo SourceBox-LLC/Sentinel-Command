@@ -268,6 +268,21 @@ fn agent_key_create_body(actor: &str, name: &str) -> String {
     )
 }
 
+/// `raw_key[-4:]` — what is stored and shown so an operator can tell
+/// two keys apart without holding either.
+///
+/// Its own function because the differential cannot see it: four hex
+/// characters are too short to substitute by value, so the harness
+/// blanks the column by name, and a wrong suffix is invisible there.
+/// The test below is the only thing that checks it, and it has to call
+/// *this* rather than recompute the expression — a test that keeps its
+/// own copy of the logic agrees with itself no matter what the handler
+/// does.
+fn key_last4(raw_key: &str) -> String {
+    let chars: Vec<char> = raw_key.chars().collect();
+    chars[chars.len().saturating_sub(4)..].iter().collect()
+}
+
 /// `POST /api/sentinel/agent-keys` — mint one, return it once.
 ///
 /// `require_active_billing` rather than `require_admin`: this hands out
@@ -325,8 +340,7 @@ pub async fn create_agent_key(
     for attempt in 1..=2 {
         raw_key = format!("{AGENT_KEY_PREFIX}{}", crate::crypto::token_hex(16));
         let key_hash = crate::crypto::hex(&Sha256::digest(raw_key.as_bytes()));
-        let last4: String = raw_key.chars().rev().take(4).collect::<Vec<_>>()
-            .into_iter().rev().collect();
+        let last4 = key_last4(&raw_key);
         let inserted: Result<(i32, String, Option<NaiveDateTime>), _> = sqlx::query_as(
             "INSERT INTO sentinel_agent_keys
                 (org_id, key_hash, key_last4, name, created_by, revoked, created_at)
@@ -889,14 +903,20 @@ mod tests {
     fn the_stored_suffix_is_the_keys_own_last_four() {
         for _ in 0..32 {
             let key = format!("{AGENT_KEY_PREFIX}{}", crate::crypto::token_hex(16));
-            let last4: String = key.chars().rev().take(4).collect::<Vec<_>>()
-                .into_iter().rev().collect();
+            let last4 = key_last4(&key);
             assert_eq!(last4.len(), 4);
             assert!(key.ends_with(&last4), "{key} does not end with {last4}");
             // `osa_` plus 32 hex characters.
             assert_eq!(key.len(), 4 + 32);
             assert!(key.strip_prefix("osa_").unwrap().chars().all(|c| c.is_ascii_hexdigit()));
         }
+        // Shorter than four characters takes the saturating branch
+        // rather than panicking on the slice.
+        assert_eq!(key_last4("ab"), "ab");
+        assert_eq!(key_last4(""), "");
+        // Counted in characters, not bytes — slicing bytes here would
+        // split one and panic.
+        assert_eq!(key_last4("aé🎥bc"), "é🎥bc");
     }
 
     /// Two f-strings joined with a deliberate double space after the

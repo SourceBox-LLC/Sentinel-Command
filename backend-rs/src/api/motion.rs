@@ -1,8 +1,14 @@
 //! `/api/motion/events` and its stats sibling.
 //!
-//! Ported from `backend/app/api/motion.py`. `/events/stream` is Server-
-//! Sent Events backed by an in-process broadcaster and stays with
-//! Python — it belongs with the WebSocket work, not here.
+//! Ported from `backend/app/api/motion.py`, including both Server-Sent
+//! Event feeds.
+//!
+//! **There are two broadcasters, not one, and that is the point.** The
+//! dashboard and the Home Assistant integration keep separate
+//! subscriber pools so a Home Assistant install polling a handful of
+//! `binary_sensor`s cannot consume the dashboard's per-tier slots — or
+//! the other way round. They carry identical payloads; only the
+//! budgets are separate.
 
 use axum::extract::{Request, State};
 use chrono::{Duration, NaiveDateTime};
@@ -14,6 +20,27 @@ use crate::error::ApiError;
 use crate::models::{iso_naive, now_naive, python_window_start};
 use crate::pyint::PyInt;
 use crate::query::Query;
+
+/// `motion_broadcaster` — the dashboard's feed.
+pub static BROADCASTER: crate::sse::Broadcaster = crate::sse::Broadcaster::new("motion");
+
+/// `integration_motion_broadcaster` — Home Assistant's, with its own
+/// budget.
+pub static INTEGRATION_BROADCASTER: crate::sse::Broadcaster =
+    crate::sse::Broadcaster::new("integration-motion");
+
+/// The frame both feeds carry for one motion event.
+///
+/// `json.dumps` order, which is the order the dict was built in.
+pub fn motion_frame(camera_id: &str, node_id: &str, score: i32, timestamp: &str) -> String {
+    crate::audit::python_json(&[
+        ("type", json!("motion")),
+        ("camera_id", json!(camera_id)),
+        ("node_id", json!(node_id)),
+        ("score", json!(score)),
+        ("timestamp", json!(timestamp)),
+    ])
+}
 
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct MotionEventRow {
@@ -137,4 +164,33 @@ pub async fn motion_stats(
             }))
             .collect::<Vec<_>>(),
     })))
+}
+
+/// `GET /api/motion/events/stream` — the dashboard's live feed.
+///
+/// Rate-limited on connects for the same reason the notification
+/// stream is: the per-org subscriber cap stops streams accumulating,
+/// but without a connect limit a client can churn open → cap-hit →
+/// reject and burn a JWT verification each cycle.
+pub async fn stream_motion_events(
+    rate: crate::ratelimit::PerMinute<60>,
+    RequireView(user): RequireView,
+) -> Result<axum::response::Response, ApiError> {
+    rate.check().await?;
+    let cap = crate::plans::get_plan_limits(&user.plan).max_sse_subscribers.max(0) as usize;
+    // No audience filter on this feed: every motion event is visible to
+    // any member who can see the camera.
+    let Some(subscription) = BROADCASTER.subscribe(&user.org_id, true, cap) else {
+        return Err(ApiError::new(
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            format!(
+                "Too many open motion streams for this org (cap: {cap} on your current \
+                 plan). Close unused dashboard tabs and retry, or upgrade for a higher cap."
+            ),
+        ));
+    };
+    Ok(crate::sse::stream_response(
+        subscription,
+        crate::sse::connected_frame(&user.org_id),
+    ))
 }
