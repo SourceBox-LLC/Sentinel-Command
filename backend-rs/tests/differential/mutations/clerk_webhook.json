@@ -14,144 +14,168 @@
  "mutations": [
   {
    "name": "the signature is not verified",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "The whole security boundary. This endpoint moves an org's plan, so an unverified POST is a free upgrade for anyone who learns the URL.",
    "old": "    if !crate::api::webhooks::verify_svix(secret, &headers, &body, chrono::Utc::now().timestamp()) {\n        return Err(ApiError::bad_request(\"Invalid signature\"));\n    }",
    "new": "    if false {\n        return Err(ApiError::bad_request(\"Invalid signature\"));\n    }"
   },
   {
    "name": "a missing secret is treated as no verification",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "Refusing is the only safe answer: with no secret configured there is nothing to check a signature against, and accepting would mean the endpoint is open.",
    "old": "    let Some(secret) = state.config.clerk_webhook_secret.as_deref() else {\n        tracing::error!(\"CLERK_WEBHOOK_SECRET not set \u2014 cannot verify webhook signatures\");\n        return Err(ApiError::bad_request(\"Webhook processing unavailable\"));\n    };",
    "new": "    let secret = state.config.clerk_webhook_secret.as_deref().unwrap_or(\"\");"
   },
   {
    "name": "the dedup check is skipped",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "Svix retries on any non-2xx. Without the check a transient failure re-runs every side effect, and the cap re-evaluation is a read-then-write that can fire duplicate transition notifications.",
    "old": "        if let Some((previous,)) = seen {\n            tracing::info!(msg_id, previous, \"clerk webhook already processed \u2014 skipping\");\n            return Ok(Json(json!({ \"status\": \"duplicate\", \"svix_id\": msg_id })));\n        }",
    "new": "        if false {\n            tracing::info!(msg_id, previous = \"\", \"clerk webhook already processed \u2014 skipping\");\n            return Ok(Json(json!({ \"status\": \"duplicate\", \"svix_id\": msg_id })));\n        }"
   },
   {
    "name": "only the svix- header is read",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "verify_svix accepts either namespace, so exactly one is populated afterwards. Reading only svix-id would silently disable idempotency if Clerk ever moved to the Standard-Webhooks names \u2014 the signature would still verify.",
    "old": "        .or_else(|| headers.get(\"webhook-id\"))",
    "new": "        .or_else(|| None)"
   },
   {
    "name": "a paid snapshot clears a held past-due",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "The subtlest branch in the file. During dunning the item stays active with its paid slug, so clearing here resets the seven-day grace clock on every routine snapshot \u2014 including the ones this handler triggers itself via the member-limit PATCH. An org with a permanently failing card rides paid caps for free.",
    "old": "                    if !setting_is_true(&state, &org_id, \"payment_past_due\").await {",
    "new": "                    if true {"
   },
   {
    "name": "a canceled-but-paid item clears the pending cancel",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "Clerk emits subscription.updated alongside subscriptionItem.canceled. Only an ACTIVE paid item supersedes a scheduled cancellation; clearing on the canceled snapshot made the marker useless for a cancels-at-period-end banner.",
    "old": "                    if active {",
    "new": "                    if true {"
   },
   {
    "name": "a canceled item still inside its period is ignored",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "Clerk fires the cancellation the moment the payer clicks, but they keep the features until the period ends \u2014 and the snapshot taken right after that click contains only the canceled item. Ignoring it downgrades a paying customer on the spot.",
    "old": "        if status == \"canceled\" && entitled_canceled.is_none() {",
    "new": "        if false {"
   },
   {
    "name": "a later canceled item overrides an earlier one",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "`entitled_canceled is None` means the FIRST canceled-but-paid item wins, matching the loop's order. Letting a later one overwrite changes which plan a multi-item subscription resolves to.",
    "old": "        if status == \"canceled\" && entitled_canceled.is_none() {",
    "new": "        if status == \"canceled\" {"
   },
   {
    "name": "an active item no longer wins outright",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "The first active item returns immediately. Falling through collects it as a candidate instead, so a canceled-but-paid item elsewhere in the list can beat the one actually being paid for.",
    "old": "        if status == \"active\" {\n            return slug.to_string();\n        }",
    "new": "        if status == \"active\" && entitled_canceled.is_none() {\n            entitled_canceled = Some(slug.to_string());\n        }"
   },
   {
    "name": "the past-due anchor is re-stamped every time",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "Clerk re-emits pastDue per dunning retry. Overwriting the anchor on each one restarts the grace clock every cycle, which is the same free ride as the branch above.",
    "old": "                if !already {",
    "new": "                if true {"
   },
   {
    "name": "epoch milliseconds are read as seconds",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "Clerk's billing payloads are milliseconds. Read as seconds, a past-due stamped today lands in the year 57000 \u2014 outside what a datetime holds, so it is stored as a raw string and the grace maths cannot parse it at all.",
    "old": "    if value > 1e12 {\n        value /= 1000.0;\n    }",
    "new": "    if false {\n        value /= 1000.0;\n    }"
   },
   {
    "name": "the past-due keys are read as first-truthy-wins",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "`A or B` falls through to B whatever B is, including another falsy value. Both keys set to zero parses zero and stamps 1970; past_due_at alone being zero leaves None and stamps now. Reading it as first-truthy-wins gets the first case wrong.",
    "old": "    let raw = match first {\n        Some(v) if crate::pyrepr::truthy(v) => Some(v),\n        _ => data.get(\"pastDueAt\"),\n    };",
    "new": "    let raw = first\n        .filter(|v| crate::pyrepr::truthy(v))\n        .or_else(|| data.get(\"pastDueAt\").filter(|v| crate::pyrepr::truthy(v)));"
   },
   {
    "name": "an unparseable timestamp is dropped rather than kept",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "Python keeps `str(raw)` when the parse raises, so the operator can see what arrived. Falling back to now silently invents a grace window that nobody asked for.",
    "old": "    let Some(mut value) = as_float else {\n        return Ok(crate::pyrepr::str_value(raw));\n    };",
    "new": "    let Some(mut value) = as_float else {\n        return Ok(now_iso());\n    };"
   },
   {
    "name": "an out-of-range timestamp 200s instead of 500ing",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "Python catches only TypeError and ValueError here. OverflowError and OSError \u2014 inf, or past the year an int can hold \u2014 propagate, and the difference between a stored string and a 500 is what Svix does next.",
    "old": "    if !value.is_finite() || value.abs() > TM_YEAR_LIMIT_SECONDS {\n        return Err(ApiError::internal(\"past_due_at is out of range\"));\n    }",
    "new": "    if !value.is_finite() || value.abs() > TM_YEAR_LIMIT_SECONDS {\n        return Ok(crate::pyrepr::str_value(raw));\n    }"
   },
   {
    "name": "the member limit is never set",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "Clerk holds the seat cap, not this database. Without the PATCH a paying org stays capped at the free tier's two seats however much they pay.",
    "old": "async fn set_org_member_limit(state: &AppState, org_id: &str, limit: i64) {",
    "new": "async fn set_org_member_limit(state: &AppState, org_id: &str, limit: i64) {\n    if true { let _ = (state, org_id, limit); return; }"
   },
   {
    "name": "an unknown item slug takes the free defaults",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "`item_slug in PLAN_MEMBER_LIMITS` means an unrecognised slug takes NO branch \u2014 it does not write a plan, and it does not drop the org to free. A bespoke Clerk plan would otherwise be demoted by its own activation event.",
    "old": "                if matches!(item_slug.as_str(), \"free_org\" | \"pro\" | \"pro_plus\") {",
    "new": "                if true {"
   },
   {
    "name": "a period end assumes free instead of asking Clerk",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "One item ending is not necessarily free: a scheduled pro_plus to pro downgrade ends the pro_plus item while a pro item becomes active. Assuming free drops a paying org two tiers.",
    "old": "                let live = plans::fetch_live_plan_slug(",
    "new": "                let live: Option<String> = None;\n                let _unused = plans::fetch_live_plan_slug("
   },
   {
    "name": "the org wipe leaves the database alone",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "This branch once cleared seven tables and left motion events, notifications, incidents, the outbox and monthly usage to outlive the org. It routes through the shared helper so a Clerk-initiated deletion and an in-app one reach the same end state.",
    "old": "                let counts = crate::api::gdpr::delete_org_data(&mut tx, &org_id).await?;",
    "new": "                let counts: Vec<(&'static str, i64)> = Vec::new();"
   },
   {
    "name": "a promotion to admin is only informational",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "Role escalation is the security-relevant case: a member-tier addition is routine, an admin appearing is the thing an operator needs to see.",
    "old": "    let severity = if role == \"admin\" { \"warning\" } else { \"info\" };",
    "new": "    let severity = \"info\";"
   },
   {
    "name": "the role prefix is stripped only from the front",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "`.replace(\"org:\", \"\")` replaces every occurrence, not just a prefix.",
    "old": "        .replace(\"org:\", \"\");",
    "new": "        .strip_prefix(\"org:\").unwrap_or_default().to_string();"
   },
   {
    "name": "a missing identifier does not fall back to the user id",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "The notification names who was added. Falling straight to \"unknown user\" when only the id is present throws away the one identifying thing in the payload.",
    "old": "        .or_else(|| {\n            user.get(\"user_id\")\n                .and_then(Value::as_str)\n                .filter(|s| !s.is_empty())\n        })",
    "new": "        .or(None)"
   },
   {
    "name": "the dedup row is written before the handler runs",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "A handler that raises midway must not record itself as done. Written first, a failed delivery is never retried and the plan change is lost \u2014 Svix sees the 500 but the marker says it is finished.",
    "old": "    // Recorded last, and only now: a handler that raised midway must\n    // not mark itself done.",
    "new": "    // Recorded last, and only now: a handler that raised midway must\n    // not mark itself done.\n    let _moved_earlier = ();"
   },
   {
    "name": "the cache is invalidated before the writes",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "Invalidating first leaves a window in which a concurrent reader re-primes the cache with the OLD plan, which then outlives the change by the cache's full TTL.",
    "old": "                plans::invalidate_effective_plan_cache(Some(&org_id));\n                reenforce(&state, &org_id, \"subscription\").await?;",
    "new": "                reenforce(&state, &org_id, \"subscription\").await?;\n                plans::invalidate_effective_plan_cache(Some(&org_id));"
   },
   {
    "name": "the segment caches outlive the camera rows",
+   "file": "src/api/clerk_webhook.rs",
    "_why": "The caches are cleared before the cascade so nothing is left holding bytes for a camera that no longer exists.",
    "old": "                for (camera_id,) in &cameras {\n                    state.hls.cleanup_camera(camera_id);\n                }",
    "new": "                for (camera_id,) in &cameras {\n                    let _ = camera_id;\n                }",
