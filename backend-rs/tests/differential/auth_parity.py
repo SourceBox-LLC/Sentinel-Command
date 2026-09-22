@@ -70,9 +70,18 @@ def python_gates():
             path = method = None
             for d in node.decorator_list:
                 seg = ast.get_source_segment(src, d) or ""
-                rm = re.match(r'router\.(get|post|put|patch|delete)\(\s*"([^"]*)"', seg)
+                rm = re.match(
+                    r'router\.(get|post|put|patch|delete|websocket)\(\s*"([^"]*)"', seg)
                 if rm:
-                    method, path = rm.group(1).upper(), rm.group(2)
+                    verb = rm.group(1)
+                    # A websocket route is a GET whose handshake upgrades,
+                    # which is how axum registers it and how this checker
+                    # sees the Rust side. Without this the ported /ws/node
+                    # reported "no matching python route" — a gap in the
+                    # checker reading exactly like a route that was never
+                    # ported at all.
+                    method = "GET" if verb == "websocket" else verb.upper()
+                    path = rm.group(2)
             if path is None:
                 continue
             sig = ast.get_source_segment(src, node) or ""

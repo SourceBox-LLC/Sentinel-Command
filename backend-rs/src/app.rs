@@ -235,7 +235,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/nodes/plan", ported(api::nodes::get_plan_info))
         .route("/api/nodes/ws-status", ported(api::nodes::ws_status))
         .route("/ws/node", served(get(api::ws::node_websocket)))
-        .route("/api/nodes/{node_id}", ported(api::nodes::get_node))
+        .route(
+            "/api/nodes/{node_id}",
+            served(
+                get(api::nodes::get_node)
+                    .delete(api::node_writes::delete_node),
+            ),
+        )
         .route(
             "/api/nodes/{node_id}/rotate-key",
             served(axum::routing::post(api::node_writes::rotate_api_key)),
@@ -250,9 +256,15 @@ pub fn build_router(state: AppState) -> Router {
             "/api/settings/danger/wipe-logs",
             served(axum::routing::post(api::node_writes::wipe_stream_logs)),
         )
-        // Article 20's export. Its sibling, the Article 17 erasure
-        // behind /settings/danger/full-reset, still reaches the segment
-        // cache and the WebSocket manager, so it stays on the proxy.
+        // Article 17's erasure, which shares its cascade with the
+        // `organization.deleted` webhook so a customer deleting their
+        // data and an operator resetting the org end up in the same
+        // state.
+        .route(
+            "/api/settings/danger/full-reset",
+            served(axum::routing::post(api::settings::full_reset)),
+        )
+        // Article 20's export.
         .route(
             "/api/gdpr/export",
             served(axum::routing::post(api::gdpr::export_organization_data)),

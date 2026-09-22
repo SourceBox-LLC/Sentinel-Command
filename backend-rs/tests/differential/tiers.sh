@@ -13,12 +13,21 @@
 # Usage:
 #   tests/differential/tiers.sh start|stop|restart|restart-rust|status
 #
-# `restart-rust` rebuilds and restarts only the Rust tier, leaving
-# Python up. That is what a mutation run wants — and it has to go
-# through this script rather than an inlined popen, because a driver
-# that sets its own environment drifts: one that forgot
-# LOCAL_ADMIN_PASSWORD_HASH added a constant two-case background
+# `restart-rust` rebuilds only the Rust binary — that is what a mutation
+# run wants, and it has to go through this script rather than an inlined
+# popen, because a driver that sets its own environment drifts: one that
+# forgot LOCAL_ADMIN_PASSWORD_HASH added a constant two-case background
 # divergence to every mutation it scored.
+#
+# It restarts *both* processes even so. Some compared values are a
+# function of process lifetime, not of the database — the viewer-second
+# counter behind `GET /api/nodes/plan` is the one that caught this:
+# it lives in memory, no reseed clears it, and the HLS harness fills it.
+# Bouncing one tier alone zeroes that tier's counter and leaves the
+# other's, which is eleven differing plan cases that have nothing to do
+# with the code under test. Restart both, or neither. Python's restart
+# is a couple of seconds; the rebuild, which is the expensive half,
+# stays Rust-only.
 #
 # `restart` rebuilds the Rust binary first. Processes are killed by the
 # PID holding the port, never by `pkill -f` on the binary name: that
@@ -129,10 +138,17 @@ export OFFLINE_SWEEP_INTERVAL_SECONDS=$FOREVER
 # matters: it writes org_monthly_usage, which the GDPR export reads, so
 # a tick landing between the two passes of a write case would report a
 # difference that is a timer rather than a port. Python's copy of this
-# loop is a literal 60 seconds and cannot be stretched — but its
-# pending counters are only non-empty just after an HLS run, so the
-# exposure is one-sided and narrow. Rust's flush is covered by
-# tests/hls_db.rs instead, against a real database.
+# loop is a literal 60 seconds and cannot be stretched, and this
+# comment used to call that exposure "one-sided and narrow" because the
+# pending counters are only non-empty just after an HLS run.
+#
+# The window is narrow; the damage was not. The row Python wrote in it
+# was never deleted by anything, so it sat in the database for the rest
+# of the session and the next full-reset case counted it -- python 1,
+# rust 0, buried in a JSON blob of per-table delete counts, reading
+# exactly like a bug in the erasure path. seed_cameras.sql now clears
+# `org_monthly_usage` per case, which is what actually bounds it.
+# Rust's flush is covered by tests/hls_db.rs, against a real database.
 export VIEWER_USAGE_FLUSH_INTERVAL_SECONDS=$FOREVER
 # The eviction loop is NOT stretched: it touches only memory, and
 # Python's copy of it runs every sixty seconds whatever this does.
@@ -213,11 +229,19 @@ case "${1:-status}" in
         ;;
     restart-rust)
         stop_one 8000
+        stop_one 8001
         mkdir -p "$LOGS"
         (cd "$RS" && cargo build 2>&1 | tail -3)
+        # Python first: Rust proxies to it at startup.
+        cd "$REPO/backend"
+        DATABASE_URL="postgresql+psycopg://cc:cc@127.0.0.1:15434/cc" \
+            spawn "$LOGS/8001.log" "$PYTHON" -m uvicorn \
+            app.main:app --host 127.0.0.1 --port 8001
+        cd "$RS"
         DATABASE_URL="postgresql://cc:cc@127.0.0.1:15434/cc" \
             PYTHON_UPSTREAM="http://127.0.0.1:8001" \
             spawn "$LOGS/8000.log" "$RS/target/debug/sentinel-command"
+        wait_healthy 8001
         wait_healthy 8000
         ;;
     start|restart)
@@ -253,17 +277,23 @@ case "${1:-status}" in
         wait_healthy 8000
         ;;
     restart-rust-clerk)
-        # The Clerk-mode Rust tier only, for mutation runs against it.
+        # The Clerk-mode pair, rebuilding Rust only. Both processes are
+        # bounced for the reason given above `restart-rust`.
         stop_one 8100
+        stop_one 8101
         mkdir -p "$LOGS"
         (cd "$RS" && cargo build 2>&1 | tail -1)
         export AUTH_PROVIDER=clerk
         export CLERK_SECRET_KEY=sk_test_harness_placeholder
         export CLERK_PUBLISHABLE_KEY="$CLERK_PK_PLACEHOLDER"
+        cd "$REPO/backend"
+        DATABASE_URL="postgresql+psycopg://cc:cc@127.0.0.1:15434/cc" \
+            spawn "$LOGS/8101.log" "$PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port 8101
         cd "$RS"
         DATABASE_URL="postgresql://cc:cc@127.0.0.1:15434/cc" \
             PYTHON_UPSTREAM="http://127.0.0.1:8101" PORT=8100 \
             spawn "$LOGS/8100.log" "$RS/target/debug/sentinel-command"
+        wait_healthy 8101
         wait_healthy 8100
         ;;
     start-clerk|stop-clerk)

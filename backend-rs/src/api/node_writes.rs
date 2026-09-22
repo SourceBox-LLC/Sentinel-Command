@@ -645,6 +645,104 @@ pub async fn wipe_stream_logs(
     })))
 }
 
+/// `DELETE /api/nodes/{node_id}` — remove a node and everything on it.
+///
+/// The node is asked to wipe its own local data first, and whether it
+/// answered is recorded rather than required: a node that is offline,
+/// or that never replies, is deleted anyway. Leaving a server-side
+/// record behind because the hardware is unreachable would make
+/// "remove this node" impossible exactly when it is most wanted.
+///
+/// The cameras are deleted explicitly. The foreign key carries no
+/// `ON DELETE CASCADE`; what removes them in the Python is
+/// SQLAlchemy's `cascade="all, delete-orphan"`, which issues the child
+/// deletes itself — so a port that relied on the database would leave
+/// every camera behind, pointing at a node that no longer exists.
+pub async fn delete_node(
+    rate: PerHour<20>,
+    State(state): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Path(node_id): Path<String>,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
+) -> Result<Json<Value>, ApiError> {
+    rate.check().await?;
+    let node_id = crate::query::path_segment(&node_id)?;
+
+    let node: Option<(i32, Option<String>)> = sqlx::query_as(
+        "SELECT id, name FROM camera_nodes WHERE node_id = $1 AND org_id = $2",
+    )
+    .bind(node_id)
+    .bind(&user.org_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    let Some((node_pk, node_name)) = node else {
+        return Err(ApiError::not_found("Node not found"));
+    };
+
+    // Ten seconds, and every failure is survivable: an offline node,
+    // one that answers something other than success, or one that
+    // answers nothing at all.
+    let wiped = matches!(
+        crate::ws::MANAGER
+            .send_command(
+                node_id,
+                "wipe_data",
+                json!({}),
+                std::time::Duration::from_secs(10),
+            )
+            .await,
+        Ok(result) if result.get("status") == Some(&Value::String("success".to_string()))
+    );
+    if wiped {
+        tracing::info!(node_id, "Node acknowledged local data wipe");
+    } else {
+        tracing::warn!(node_id, "Could not wipe node (may be offline)");
+    }
+
+    let cameras: Vec<(String,)> =
+        sqlx::query_as("SELECT camera_id FROM cameras WHERE node_id = $1")
+            .bind(node_pk)
+            .fetch_all(&state.pool)
+            .await?;
+    for (camera_id,) in &cameras {
+        state.hls.cleanup_camera(camera_id);
+    }
+
+    let mut tx = state.pool.begin().await?;
+    sqlx::query("DELETE FROM cameras WHERE node_id = $1")
+        .bind(node_pk)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM camera_nodes WHERE id = $1")
+        .bind(node_pk)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    write_audit(
+        &state.pool,
+        &user.org_id,
+        "node_deleted",
+        &user.user_id,
+        &audit_label(&user),
+        Some(python_json(&[
+            ("node_id", json!(node_id)),
+            ("name", node_name.map_or(Value::Null, Value::String)),
+            ("node_wiped", json!(wiped)),
+        ])),
+        &headers,
+        Some(&peer.ip().to_string()),
+    )
+    .await;
+
+    Ok(Json(json!({
+        "success": true,
+        "deleted": node_id,
+        "node_wiped": wiped,
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

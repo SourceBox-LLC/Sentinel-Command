@@ -487,10 +487,159 @@ fn cache_effective(org_id: &str, slug: String) -> String {
     slug
 }
 
+/// `wire_plan_slug` — the plan string CameraNode renders in its status
+/// bar.
+///
+/// The `_org` suffix is internal, so the node shows `[ FREE ]` rather
+/// than `[ FREE_ORG ]`. An unknown slug passes through untouched, so a
+/// tier shipped before a node update still shows its own name instead
+/// of a fallback. The node treats the field as advisory — enforcement
+/// is here — so a stale value costs a label and nothing else.
+pub fn wire_plan_slug(plan: &str) -> String {
+    let plan = plan.trim().to_lowercase();
+    if plan.is_empty() {
+        return "free".to_string();
+    }
+    match plan.strip_suffix("_org") {
+        Some(stripped) => stripped.to_string(),
+        None => plan,
+    }
+}
+
+/// What `enforce_camera_cap` decided.
+pub struct CapOutcome {
+    pub plan: String,
+    pub max_cameras: i64,
+    pub enabled: Vec<String>,
+    pub disabled: Vec<String>,
+    pub changed: bool,
+}
+
+/// `enforce_camera_cap(db, org_id)` — keep the oldest `max_cameras`,
+/// flag the rest.
+///
+/// Oldest-first is deterministic, needs no input from anyone, and
+/// preserves the cameras most likely to have history someone cares
+/// about; a camera plugged in this week is the easier one to re-add.
+///
+/// Nothing is deleted. The flag is read at upload time, where
+/// `push-segment` answers 402 — so raising the cap lights the same rows
+/// back up with their metadata intact.
+///
+/// **The plan is read with the cache bypassed.** This runs immediately
+/// after a plan write — a webhook, the reconciler, a registration — and
+/// a thirty-second-stale slug would flip cameras against the plan the
+/// org just left. That TTL exists for the per-segment serve path, not
+/// for writes.
+pub async fn enforce_camera_cap(
+    ctx: &PlanContext<'_>,
+    pool: &sqlx::PgPool,
+    org_id: &str,
+) -> Result<CapOutcome, sqlx::Error> {
+    let plan_slug = effective_plan_for_caps(ctx, org_id, false).await;
+    let cap = get_plan_limits(&plan_slug).max_cameras;
+
+    // `created_at ASC NULLS LAST, id ASC`. The null case should not
+    // arise — the column has a default — but ordering by it silently
+    // puts nulls first in Postgres, which would disable the oldest
+    // cameras rather than the newest.
+    let cameras: Vec<(String, Option<bool>)> = sqlx::query_as(
+        "SELECT camera_id, disabled_by_plan FROM cameras
+          WHERE org_id = $1
+          ORDER BY created_at ASC NULLS LAST, id ASC",
+    )
+    .bind(org_id)
+    .fetch_all(pool)
+    .await?;
+
+    let keep = cap.max(0) as usize;
+    let keep_ids: std::collections::HashSet<&str> = cameras
+        .iter()
+        .take(keep)
+        .map(|(camera_id, _)| camera_id.as_str())
+        .collect();
+    // The returned `disabled` is this slice, not the list the loop
+    // below builds. They differ only if two cameras in one org share a
+    // camera_id, which nothing prevents.
+    let disabled: Vec<String> = cameras
+        .iter()
+        .skip(keep)
+        .map(|(camera_id, _)| camera_id.clone())
+        .collect();
+
+    let mut changed = false;
+    let mut enabled = Vec::new();
+    let mut flip_to = Vec::new();
+    for (camera_id, currently) in &cameras {
+        let should_disable = !keep_ids.contains(camera_id.as_str());
+        // `bool(cam.disabled_by_plan)` — a null column is false.
+        if currently.unwrap_or(false) != should_disable {
+            flip_to.push((camera_id.clone(), should_disable));
+            changed = true;
+        }
+        if !should_disable {
+            enabled.push(camera_id.clone());
+        }
+    }
+
+    // Only the rows that actually flip, so an idempotent call writes
+    // nothing — which is what makes this safe on every registration and
+    // every subscription webhook.
+    for (camera_id, disable) in flip_to {
+        sqlx::query(
+            "UPDATE cameras SET disabled_by_plan = $1, updated_at = $2
+              WHERE camera_id = $3 AND org_id = $4",
+        )
+        .bind(disable)
+        .bind(crate::models::now_naive())
+        .bind(&camera_id)
+        .bind(org_id)
+        .execute(pool)
+        .await?;
+    }
+
+    if changed {
+        tracing::info!(
+            org_id, plan = %plan_slug, cap,
+            enabled = enabled.len(), disabled = disabled.len(),
+            "enforce_camera_cap"
+        );
+    }
+
+    Ok(CapOutcome {
+        plan: wire_plan_slug(&plan_slug),
+        max_cameras: cap,
+        enabled,
+        disabled,
+        changed,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// The label CameraNode paints in its status bar.
+    #[test]
+    fn the_wire_slug_drops_the_internal_suffix() {
+        use super::wire_plan_slug;
+        assert_eq!(wire_plan_slug("free_org"), "free");
+        assert_eq!(wire_plan_slug("pro"), "pro");
+        assert_eq!(wire_plan_slug("pro_plus"), "pro_plus");
+        assert_eq!(wire_plan_slug("self_host"), "self_host");
+        // Case and surrounding space are normalised away.
+        assert_eq!(wire_plan_slug("  FREE_ORG "), "free");
+        // Empty is the free tier, not an empty label.
+        assert_eq!(wire_plan_slug(""), "free");
+        assert_eq!(wire_plan_slug("   "), "free");
+        // An unknown tier passes through, so a plan shipped before a
+        // node update still shows its own name.
+        assert_eq!(wire_plan_slug("enterprise"), "enterprise");
+        // Only a *suffix* is stripped.
+        assert_eq!(wire_plan_slug("org_free"), "org_free");
+        assert_eq!(wire_plan_slug("_org"), "");
+    }
 
     #[test]
     fn an_unknown_slug_gets_free_tier_limits_but_keeps_its_name() {

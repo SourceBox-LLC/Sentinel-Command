@@ -1,10 +1,11 @@
 //! GDPR Article 20 — the organisation's data, as a ZIP of JSON.
 //!
 //! Ported from `backend/app/api/gdpr.py` and the `export_org_data` half
-//! of `backend/app/core/gdpr.py`. The erasure half (`delete_org_data`,
-//! behind `POST /api/settings/danger/full-reset` and the
-//! `organization.deleted` webhook) reaches the segment cache and the
-//! WebSocket manager, so it stays on the proxy for now.
+//! of `backend/app/core/gdpr.py`, and now the erasure half too —
+//! `delete_org_data`, which `POST /api/settings/danger/full-reset` and
+//! the `organization.deleted` webhook share so that a customer
+//! clicking "delete my data" and an operator clicking "full reset"
+//! leave the organisation in the same state.
 //!
 //! Three things decide what this has to reproduce.
 //!
@@ -486,6 +487,111 @@ impl From<zip::result::ZipError> for ApiError {
     fn from(_: zip::result::ZipError) -> Self {
         ApiError::internal("could not build the export archive")
     }
+}
+
+/// The tables `delete_org_data` empties, in the order it empties them,
+/// and the order their counts appear in the audit row.
+///
+/// Order is not cosmetic. `cameras.group_id` references
+/// `camera_groups` with no `ON DELETE` clause, so every camera has to
+/// be gone before the groups are — Python gets there by flushing its
+/// pending cascade deletes before the bulk pass, and a port that
+/// simply ran the list would hit a foreign key violation and abort the
+/// whole erasure. An aborted erasure is an Article 17 failure that
+/// reports success.
+const ORG_SCOPED_TABLES: [&str; 15] = [
+    "settings",
+    "audit_log",
+    "stream_access_logs",
+    "mcp_activity_logs",
+    "mcp_api_keys",
+    "org_monthly_usage",
+    "email_log",
+    "email_outbox",
+    "user_notification_state",
+    "notifications",
+    "motion_events",
+    "camera_groups",
+    "sentinel_config",
+    "sentinel_runs",
+    // A surviving agent key would still authenticate after the org is
+    // gone, and its `org_id` is a customer identifier in its own right.
+    "sentinel_agent_keys",
+];
+
+/// `delete_org_data(db, org_id)` — every row this organisation owns.
+///
+/// Returns `(table, rows deleted)` in the order the Python's dict
+/// records them, because that dict is serialised into the audit row.
+///
+/// Two counts are not the number of rows the statement reported.
+/// `cameras` is counted *before* anything is deleted, because in
+/// Python most of them go through the CameraNode cascade, which
+/// surfaces no count of its own; and `incident_evidence` is absent
+/// entirely, having no `org_id` and no deletion path but its parent's.
+///
+/// The caller is responsible for what lives outside the database: the
+/// `wipe_data` command to each node, which has to go out while the
+/// node ids still exist, and the in-memory caches, which no `DELETE`
+/// can reach.
+pub async fn delete_org_data(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org_id: &str,
+) -> Result<Vec<(&'static str, i64)>, sqlx::Error> {
+    let mut counts: Vec<(&'static str, i64)> = Vec::new();
+
+    // Before anything is removed: the cascade never reports how many
+    // children it took.
+    let (cameras_before,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM cameras WHERE org_id = $1")
+            .bind(org_id)
+            .fetch_one(&mut **tx)
+            .await?;
+
+    // `incident_evidence` follows its parent through the foreign key's
+    // own ON DELETE CASCADE.
+    let incidents = sqlx::query("DELETE FROM incidents WHERE org_id = $1")
+        .bind(org_id)
+        .execute(&mut **tx)
+        .await?
+        .rows_affected() as i64;
+    counts.push(("incidents", incidents));
+
+    // The CameraNode cascade, which the database will not do for us:
+    // `cameras.node_id` carries no ON DELETE clause.
+    sqlx::query(
+        "DELETE FROM cameras WHERE node_id IN
+            (SELECT id FROM camera_nodes WHERE org_id = $1)",
+    )
+    .bind(org_id)
+    .execute(&mut **tx)
+    .await?;
+    let nodes = sqlx::query("DELETE FROM camera_nodes WHERE org_id = $1")
+        .bind(org_id)
+        .execute(&mut **tx)
+        .await?
+        .rows_affected() as i64;
+    counts.push(("camera_nodes", nodes));
+
+    // The mop-up: a camera whose `node_id` is null was never reachable
+    // through a node, and is still this organisation's.
+    sqlx::query("DELETE FROM cameras WHERE org_id = $1")
+        .bind(org_id)
+        .execute(&mut **tx)
+        .await?;
+    counts.push(("cameras", cameras_before));
+
+    for table in ORG_SCOPED_TABLES {
+        // The table names are a fixed list in this file, never input.
+        let deleted = sqlx::query(&format!("DELETE FROM {table} WHERE org_id = $1"))
+            .bind(org_id)
+            .execute(&mut **tx)
+            .await?
+            .rows_affected() as i64;
+        counts.push((table, deleted));
+    }
+
+    Ok(counts)
 }
 
 #[cfg(test)]

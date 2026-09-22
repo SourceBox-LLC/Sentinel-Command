@@ -1225,6 +1225,26 @@ CASES += [
           ("signed empty body", b"", "svix:msg_29"),
       ]],
 
+    # --- Deleting a node ----------------------------------------------
+    # The cameras go with it, and so do their segment caches. Neither
+    # node is connected here, so `wipe_data` fails and `node_wiped` is
+    # false — which is the normal case for a node that has already gone
+    # away, and the reason a failed wipe cannot block the delete.
+    ("delete node with cameras", "DELETE", "/api/nodes/node-aaaa1111", None),
+    ("delete node with a codec", "DELETE", "/api/nodes/node-dddd4444", None),
+    ("delete another org's node", "DELETE", "/api/nodes/node-cccc3333", None),
+    ("delete missing node", "DELETE", "/api/nodes/node-nope", None),
+    ("member: delete node", "DELETE", "/api/nodes/node-aaaa1111", None, "member"),
+
+    # --- Article 17 -----------------------------------------------------
+    # Every org-scoped table emptied, and the only row left in
+    # `audit_log` is the one this write puts there. No plan gate: it is
+    # a legal obligation, unlike its paid-only `wipe-logs` sibling.
+    ("full reset", "POST", "/api/settings/danger/full-reset", None),
+    ("full reset on a free plan", "POST", "/api/settings/danger/full-reset", None,
+     "admin", pref("org_plan", "free_org")),
+    ("member: full reset", "POST", "/api/settings/danger/full-reset", None, "member"),
+
     # --- Motion, pushed over HTTP -------------------------------------
     # The reliable half of motion reporting — it works whether or not
     # the node's socket is up. Each accepted event writes a motion row,
@@ -1713,9 +1733,37 @@ def row_diff(python_rows, rust_rows):
         elif py[k] != rs[k]:
             for field in sorted(set(py[k]) | set(rs[k])):
                 if py[k].get(field) != rs[k].get(field):
-                    out.append(f"row {k!r} field {field}: python={py[k].get(field)!r} "
-                               f"rust={rs[k].get(field)!r}"[:400])
+                    out.append(f"row {k!r} field {field}: "
+                               + field_diff(py[k].get(field), rs[k].get(field)))
     return out or ["(rows equal but order differs)"]
+
+
+def field_diff(python_value, rust_value, width=200):
+    """Show both sides of one differing column, windowed on the divergence.
+
+    Truncating the *formatted pair* — which this did — drops the rust
+    side entirely whenever the python side is long, and the columns that
+    differ most interestingly are the long ones: a JSON blob of delete
+    counts, a meta_json, an audit `details`. Each side is truncated
+    separately, and when both are long the window is centred on the
+    first character that actually differs, because two 4KB JSON strings
+    that diverge at character 900 are otherwise identical on screen.
+    """
+    a, b = repr(python_value), repr(rust_value)
+    if len(a) <= width and len(b) <= width:
+        return f"python={a} rust={b}"
+    at = 0
+    while at < min(len(a), len(b)) and a[at] == b[at]:
+        at += 1
+    start = max(0, at - width // 4)
+
+    def window(text):
+        return (("…" if start else "") + text[start:start + width]
+                + ("…" if start + width < len(text) else ""))
+
+    return (f"diverges at char {at}\n"
+            f"                python={window(a)}\n"
+            f"                rust=  {window(b)}")
 
 
 RESEND_SECRET = os.environ.get(

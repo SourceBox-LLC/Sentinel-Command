@@ -571,3 +571,29 @@ INSERT INTO email_suppression (address, reason, source, created_at)
 VALUES ('already@example.com', 'bounce', 'resend_webhook', timestamp '2026-08-01 00:00:00');
 INSERT INTO processed_webhooks (svix_msg_id, event_type, processed_at)
 VALUES ('msg_already_seen', 'email.bounced', timestamp '2026-08-01 00:00:00');
+
+-- The last two org-scoped tables, emptied rather than seeded.
+--
+-- `org_monthly_usage` is the one that matters, and it took a full-reset
+-- case to find: the viewer-second counter lives in each tier's memory
+-- and is written by a background loop. The harness pins those loops out
+-- of the way with VIEWER_USAGE_FLUSH_INTERVAL_SECONDS — which only the
+-- Rust tier reads. Python's `_viewer_usage_flush_loop` sleeps on a
+-- literal 60, so it cannot be pinned, and the Python here is held
+-- unmodified. Within a minute of any HLS run it therefore writes a row
+-- that Rust never writes.
+--
+-- Nothing deleted it, so that row sat in the database for the rest of
+-- the session, and the next full reset counted it: python 1, rust 0,
+-- inside a JSON blob of per-table delete counts. It looked like a port
+-- bug in the erasure path, it only appeared when the HLS harness had
+-- run first, and it vanished on a rerun.
+--
+-- Clearing it per case bounds the damage to the ~60s window after an
+-- HLS run. `email_log` is empty today only because the email worker is
+-- pinned off and *is* pinnable; it is reset for the same reason rather
+-- than because anything writes it yet.
+DELETE FROM org_monthly_usage;
+DELETE FROM email_log;
+ALTER SEQUENCE IF EXISTS org_monthly_usage_id_seq RESTART WITH 1;
+ALTER SEQUENCE IF EXISTS email_log_id_seq RESTART WITH 1;
