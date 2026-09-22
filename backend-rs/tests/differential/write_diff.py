@@ -1572,6 +1572,11 @@ CASES += [
            "node:test-node-key", None),
           # Auth and existence.
           ("no key", {"node_id": "node-aaaa1111"}, "agent:none", None),
+          # Validation runs before the handler body, so this is a 422
+          # and not a 401. Without the combination, a port that checked
+          # the key first looks identical on every case.
+          ("no key and a bad body", {"node_id": 5}, "agent:none", None),
+          ("no key and no body at all", b"", "agent:none", None),
           ("empty key", {"node_id": "node-aaaa1111"}, "node:", None),
           ("wrong key records the error", {"node_id": "node-aaaa1111"}, "node:wrong", None),
           ("another org's node is still found", {"node_id": "node-cccc3333"},
@@ -1756,6 +1761,7 @@ CASES += [
            past_due_setup(PAST_DUE_EXPIRED)),
           # Auth, existence and versions.
           ("no key", {"node_id": "node-aaaa1111"}, "agent:none", None),
+          ("no key and a bad body", {"node_id": 5}, "agent:none", None),
           ("wrong key", {"node_id": "node-aaaa1111"}, "node:wrong", None),
           ("missing node", {"node_id": "nope"}, "node:test-node-key", None),
           ("an old version is refused",

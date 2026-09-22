@@ -133,7 +133,8 @@
    "_why": "The node_id filter is the tenant boundary here: a node must not be able to mark another node's cameras failed by naming them.",
    "file": "src/api/node_register.rs",
    "old": "            if !known.iter().any(|(id,)| *id == update.camera_id) {\n                continue;\n            }",
-   "new": "            if false {\n                continue;\n            }"
+   "new": "            if false {\n                continue;\n            }",
+   "equivalent": "The pre-check is belt-and-braces: the UPDATE below carries `AND node_id = $5` itself, so dropping the lookup changes which rows are CONSIDERED and not which are written. The mutation below removes the WHERE clause instead, which is where the boundary actually lives."
   },
   {
    "name": "the badge plan is resolved instead of read",
@@ -195,6 +196,13 @@
    "file": "src/api/node_register.rs",
    "old": "            errors.model_attributes_type_at(&[json!(\"cameras\"), json!(i)], item);\n            continue;\n        }\n        let report = errors.within",
    "new": "            errors.dict_type_at(\"cameras\", i, item);\n            continue;\n        }\n        let report = errors.within"
+  },
+  {
+   "name": "the update does not scope to the node",
+   "_why": "This is the tenant boundary, not the pre-check above it. Without the node_id in the WHERE, a node can mark any camera in any org failed by naming it \u2014 the camera_id is the only other term, and it is global.",
+   "file": "src/api/node_register.rs",
+   "old": "                \"UPDATE cameras SET status = $1, last_seen = $2, last_error = $3, updated_at = $2\\n                  WHERE camera_id = $4 AND node_id = $5\",",
+   "new": "                \"UPDATE cameras SET status = $1, last_seen = $2, last_error = $3, updated_at = $2\\n                  WHERE camera_id = $4 AND $5 = $5\","
   }
  ]
 }
