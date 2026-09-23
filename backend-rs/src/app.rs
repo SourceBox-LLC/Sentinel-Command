@@ -38,6 +38,11 @@ pub struct AppState {
     /// Allowed origins for routes Rust serves; see `cors.rs`.
     pub cors: crate::cors::CorsConfig,
     pub started_at: Instant,
+    /// The wall clock at boot, which `/api/health/detailed` reports as
+    /// `started_at`. Separate from the monotonic `started_at` because
+    /// uptime must not move when the clock is stepped, and a timestamp
+    /// in the body must be a real one.
+    pub started_at_wall: chrono::DateTime<chrono::Utc>,
 }
 
 /// Reported by `/api/health`. Tracks the Python service's version so a
@@ -56,6 +61,8 @@ pub fn build_router(state: AppState) -> Router {
         // handler and FastAPI returns 405, so even the health check
         // diverged on HEAD.
         .route("/api/health", ported(health))
+        .route("/api/health/ready", ported(api::health::health_ready))
+        .route("/api/health/detailed", ported(api::health::health_detailed))
         // RFC 9116 requires the .well-known path; the root alias is kept
         // because some older scanners only probe there.
         .route("/.well-known/security.txt", ported(api::well_known::security_txt))

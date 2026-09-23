@@ -1905,6 +1905,7 @@ dependencies = [
  "jiff",
  "jiff-tzdb",
  "jsonwebtoken",
+ "libc",
  "minijinja",
  "redis",
  "regex",

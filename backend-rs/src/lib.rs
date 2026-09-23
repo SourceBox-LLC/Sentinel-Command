@@ -22,6 +22,7 @@ pub mod email_worker;
 pub mod email_unsubscribe;
 pub mod error;
 pub mod headers;
+pub mod health_probes;
 pub mod hls;
 pub mod license;
 pub mod models;

@@ -77,6 +77,14 @@ PORTED = {
     # lines composing `resolve_org_plan` and `get_plan_limits`, and the
     # one ported caller inlines it (see hls.rs).
     "core.plans",
+    # The transport and the outbox drain, ported with the email slice
+    # and verified by email_run.sh against a fake Resend.
+    "core.email",
+    "core.email_worker",
+    # The readiness probes, ported with the health slice. It reaches
+    # `core.clerk` through the Clerk probe, so like `core.plans` it has
+    # to stop the walk: the Rust probe makes that same REST call.
+    "core.health_probes",
 }
 
 # Modules only PART of which has a Rust equivalent. Importing one of the
@@ -105,15 +113,11 @@ PORTED_FUNCTIONS = {
 # reason. Keys are module prefixes under `app.`.
 # Ported since this table was written, and so deliberately absent
 # below: core.recipients, core.email_templates, core.email_unsubscribe,
-# core.sentinel_dispatch, core.versions and core.release_cache. What is
-# left of the email stack is the transport — core.email and
-# core.email_worker — which still needs Resend and the drain loop.
+# core.sentinel_dispatch, core.versions, core.release_cache, core.plans,
+# and — since the email slice — core.email and core.email_worker.
 BLOCKERS = {
     "core.clerk": "Clerk Backend API",
-    "core.email": "Resend + the outbox worker",
-    "core.email_worker": "Resend + the outbox worker",
     "core.license_client": "Sentinel License Service client",
-    "core.health_probes": "Clerk + license probes",
     "core.integration_auth": "Home Assistant integration key",
     "core.sync_client": "Sentinel Sync Service client",
     "api.hls": "in-process HLS segment + playlist caches",  # now Rust's — see PORTED_STATE

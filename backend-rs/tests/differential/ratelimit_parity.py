@@ -30,7 +30,7 @@ WEBSOCKET_ROUTES = {("GET", "/ws/node")}
 def python_limits():
     """(METHOD, path) -> (n, window) or None."""
     out = {}
-    for f in sorted((BACKEND / "app/api").glob("*.py")):
+    for f in sorted((BACKEND / "app/api").glob("*.py")) + [BACKEND / "app/main.py"]:
         src = f.read_text()
         m = re.search(r'APIRouter\((?:prefix="([^"]*)")?', src)
         prefix = m.group(1) if m and m.group(1) else ""
@@ -40,7 +40,14 @@ def python_limits():
             path = method = lim = None
             for d in node.decorator_list:
                 seg = ast.get_source_segment(src, d) or ""
-                rm = re.match(r'router\.(get|post|put|patch|delete)\(\s*"([^"]*)"', seg)
+                # `app.` as well as `router.`: the health endpoints are
+                # declared on the application in main.py, not on a
+                # router, and scanning only app/api made them invisible
+                # to this checker on the Python side while the port
+                # served them from src/api — which reads as "no matching
+                # python route" for a route Python has had all along.
+                rm = re.match(
+                    r'(?:router|app)\.(get|post|put|patch|delete)\(\s*"([^"]*)"', seg)
                 if rm:
                     method, path = rm.group(1).upper(), rm.group(2)
                 lm = re.search(r'limiter\.limit\(\s*"(\d+)/(minute|hour)"', seg)

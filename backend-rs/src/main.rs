@@ -62,6 +62,7 @@ async fn main() -> anyhow::Result<()> {
         config: Arc::new(config),
         pool,
         started_at: Instant::now(),
+        started_at_wall: chrono::Utc::now(),
     };
 
     // The loops that keep the video caches honest: flushing viewer

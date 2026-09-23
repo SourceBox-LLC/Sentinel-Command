@@ -37,6 +37,7 @@ use chrono::{DateTime, Duration, Utc};
 pub const GRACE_HOURS: i64 = 72;
 
 pub const LICENSE_VALID: &str = "sentinel_license_valid";
+pub const LAST_CHECK_AT: &str = "sentinel_license_last_check_at";
 pub const LAST_CHECK_REACHABLE: &str = "sentinel_license_last_check_reachable";
 pub const LAST_OK_AT: &str = "sentinel_license_last_ok_at";
 /// A separate opt-in entitlement on the same licence: a licence can be

@@ -69,6 +69,28 @@ impl Query {
         self.errors.push(err);
     }
 
+    /// A boolean parameter with a default, coerced the way Pydantic's
+    /// lax mode does — so `?nocache=1`, `=yes` and `=on` are all true,
+    /// and anything it cannot read is a 422 rather than a silent false.
+    pub fn bool(&mut self, name: &str, default: bool) -> bool {
+        let Some(raw) = self.last(name).map(str::to_string) else {
+            return default;
+        };
+        match parse_pydantic_bool(&json!(raw)) {
+            Some(value) => value,
+            None => {
+                self.push_error(
+                    "bool_parsing",
+                    name,
+                    "Input should be a valid boolean, unable to interpret input".to_string(),
+                    &raw,
+                    None,
+                );
+                default
+            }
+        }
+    }
+
     /// An integer parameter with inclusive bounds on both sides.
     ///
     /// Returns the default when absent, and on any failure returns the

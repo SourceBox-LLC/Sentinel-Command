@@ -152,6 +152,33 @@ impl HlsCache {
     }
 
     /// `_segment_cache_total_bytes`.
+    /// `(len(_playlist_cache), len(_segment_cache))` — what
+    /// `/api/health/detailed` reports as cache occupancy.
+    ///
+    /// Both are counts of CAMERAS, not of segments: the segment figure
+    /// is how many cameras have a bucket, however full.
+    pub fn cache_occupancy(&self) -> (usize, usize) {
+        let playlists = self.playlists.lock().expect("playlist cache poisoned").len();
+        let segments = self
+            .segments
+            .lock()
+            .expect("segment cache poisoned")
+            .cameras
+            .len();
+        (playlists, segments)
+    }
+
+    /// `sum(_pending_viewer_seconds.values())` — seconds counted but
+    /// not yet flushed to `org_monthly_usage`.
+    pub fn pending_viewer_seconds(&self) -> i64 {
+        self.viewer
+            .lock()
+            .expect("viewer counter poisoned")
+            .pending
+            .values()
+            .sum()
+    }
+
     pub fn total_bytes(&self) -> i64 {
         self.segments.lock().expect("segment cache poisoned").byte_total
     }

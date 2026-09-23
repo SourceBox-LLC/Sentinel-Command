@@ -60,7 +60,7 @@ INLINE_AUTH = {
 def python_gates():
     """(METHOD, path) -> the auth dependency name, or None."""
     out = {}
-    for f in sorted((BACKEND / "app/api").glob("*.py")):
+    for f in sorted((BACKEND / "app/api").glob("*.py")) + [BACKEND / "app/main.py"]:
         src = f.read_text()
         m = re.search(r'APIRouter\((?:prefix="([^"]*)")?', src)
         prefix = m.group(1) if m and m.group(1) else ""
@@ -70,8 +70,12 @@ def python_gates():
             path = method = None
             for d in node.decorator_list:
                 seg = ast.get_source_segment(src, d) or ""
+                # `app.` as well as `router.` — see the note in
+                # ratelimit_parity: main.py declares the health
+                # endpoints directly on the application.
                 rm = re.match(
-                    r'router\.(get|post|put|patch|delete|websocket)\(\s*"([^"]*)"', seg)
+                    r'(?:router|app)\.(get|post|put|patch|delete|websocket)\(\s*"([^"]*)"',
+                    seg)
                 if rm:
                     verb = rm.group(1)
                     # A websocket route is a GET whose handshake upgrades,

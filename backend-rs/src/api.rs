@@ -9,6 +9,7 @@ pub mod cameras;
 pub mod clerk_webhook;
 pub mod gdpr;
 pub mod groups;
+pub mod health;
 pub mod hls;
 pub mod incidents;
 pub mod install;

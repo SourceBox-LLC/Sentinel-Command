@@ -375,6 +375,25 @@ CASES = [
     ("GET", "/api/incidents/1/evidence/5", False),
     ("GET", "/api/incidents/1/evidence/5/playlist.m3u8", False),
 
+    # --- health: three endpoints, three audiences -----------------------
+    #
+    # `ready` answers 503 when a critical probe fails, which the
+    # harness's own tiers do reach: the email worker's interval is
+    # pinned out of the way on BOTH, so neither ticks and both go
+    # critical once past the startup grace. That is the interesting
+    # case, and it is only comparable because the pinning is symmetric.
+    ("GET", "/api/health", False),
+    ("GET", "/api/health/ready", False),
+    ("GET", "/api/health/ready?nocache=1", False),
+    ("GET", "/api/health/ready?nocache=true", False),
+    ("GET", "/api/health/ready?nocache=0", False),
+    ("GET", "/api/health/ready?nocache=yes", False),
+    ("GET", "/api/health/ready?nocache=banana", False),
+    ("GET", "/api/health/ready?nocache=", False),
+    # Repeated: FastAPI takes the last.
+    ("GET", "/api/health/ready?nocache=0&nocache=1", False),
+    ("GET", "/api/health/detailed", False),
+
     # --- security.txt: public, both locations --------------------------
     ("GET", "/.well-known/security.txt", False),
     ("GET", "/security.txt", False),
@@ -710,6 +729,32 @@ def normalise(body, path=""):
         v = json.loads(body)
     except Exception:  # noqa: BLE001
         return body.decode("utf-8", "replace")
+    if path.startswith("/api/health/") and isinstance(v, dict):
+        # Three families of value here vary between two calls a
+        # millisecond apart, and none of them is a port decision:
+        # measured latencies, the process's own uptime and its clock.
+        # Everything else — every status, every threshold, every cache
+        # and queue count, and the disk figures — is compared as it is.
+        for field in ("uptime_seconds", "started_at", "time"):
+            if field in v:
+                v[field] = f"<{field}>"
+        checks = v.get("checks")
+        if isinstance(checks, dict):
+            for name, probe in checks.items():
+                if not isinstance(probe, dict):
+                    continue
+                for field in ("latency_ms", "tick_age_seconds", "uptime_seconds"):
+                    if field in probe and probe[field] is not None:
+                        probe[field] = f"<{field}>"
+                # The disk fills and drains while the suite runs, and a
+                # byte count that moved between the two calls is not a
+                # difference in the port. The STATUS is compared, which
+                # is what the thresholds decide.
+                if name == "disk":
+                    for field in ("bytes_free", "bytes_used", "bytes_total",
+                                  "percent_used"):
+                        if field in probe:
+                            probe[field] = f"<{field}>"
     if path.startswith("/api/nodes/plan") and isinstance(v, dict):
         usage = v.get("usage")
         if isinstance(usage, dict) and "viewer_hours_used" in usage:
