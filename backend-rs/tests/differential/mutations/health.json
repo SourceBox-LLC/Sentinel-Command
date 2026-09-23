@@ -10,6 +10,9 @@
   ],
   [
    "tests/differential/health_run.sh"
+  ],
+  [
+   "tests/differential/unit_run.sh"
   ]
  ],
  "mutations": [
@@ -136,8 +139,8 @@
    "name": "readiness answers 200 when a probe is critical",
    "file": "src/api/health.rs",
    "_why": "The whole point of this endpoint over `detailed`: uptime monitors read HTTP status, not JSON.",
-   "old": "    let status = if report.ready {\n        StatusCode::OK\n    } else {\n        StatusCode::SERVICE_UNAVAILABLE\n    };",
-   "new": "    let status = StatusCode::OK;"
+   "old": "fn ready_status(ready: bool) -> StatusCode {\n    if ready {\n        StatusCode::OK\n    } else {\n        StatusCode::SERVICE_UNAVAILABLE\n    }\n}",
+   "new": "fn ready_status(_ready: bool) -> StatusCode {\n    StatusCode::OK\n}"
   },
   {
    "name": "the readiness cache is never used",
@@ -157,8 +160,8 @@
    "name": "the cache never expires",
    "file": "src/api/health.rs",
    "_why": "A TTL that never elapses freezes the first answer the process ever gave, which is the worst possible thing for a health endpoint to do.",
-   "old": "                (cached.cached_at.elapsed() < READY_CACHE_TTL)",
-   "new": "                (true)"
+   "old": "fn cache_is_fresh(age: std::time::Duration) -> bool {\n    age < READY_CACHE_TTL\n}",
+   "new": "fn cache_is_fresh(_age: std::time::Duration) -> bool {\n    true\n}"
   },
   {
    "name": "an unreadable nocache is a silent false",
@@ -171,29 +174,29 @@
    "name": "detailed rolls warn up as unhealthy",
    "file": "src/api/health.rs",
    "_why": "Warn-tier signals colour the dashboard; critical-tier ones page. Collapsing them means a disk at 85% reads the same as a dead database.",
-   "old": "    let overall = if critical.iter().any(|p| p.is_critical()) {\n        \"unhealthy\"",
-   "new": "    let overall = if critical.iter().any(|p| p.status != \"ok\") {\n        \"unhealthy\""
+   "old": "    if any_critical {\n        \"unhealthy\"\n    } else if viewer_warn || disk_warn || license_warn {",
+   "new": "    if any_critical || viewer_warn || disk_warn || license_warn {\n        \"unhealthy\"\n    } else if false {"
   },
   {
    "name": "resend being off degrades the rollup",
    "file": "src/api/health.rs",
-   "_why": "An install running without email is a deliberate configuration, not a failure mode \u2014 which is why resend's status is reported but kept out of the rollup.",
-   "old": "    } else if viewer_usage[\"status\"] == \"warn\"\n        || disk.status == \"warn\"\n        || sentinel_license.status == \"warn\"\n    {",
-   "new": "    } else if viewer_usage[\"status\"] == \"warn\"\n        || disk.status == \"warn\"\n        || sentinel_license.status == \"warn\"\n        || resend_status != \"ok\"\n    {"
+   "_why": "An install running without email is a configuration choice, not a failure mode. Letting it degrade the rollup paints every self-hosted install yellow forever \u2014 which is why resend is not an input to `rollup` at all.",
+   "old": "pub fn rollup(\n    any_critical: bool,\n    viewer_warn: bool,\n    disk_warn: bool,\n    license_warn: bool,\n) -> &'static str {",
+   "new": "pub fn rollup(\n    any_critical: bool,\n    viewer_warn: bool,\n    disk_warn: bool,\n    license_warn: bool,\n) -> &'static str {\n    let license_warn = license_warn || true;"
   },
   {
    "name": "a failed queue count reports zero",
    "file": "src/api/health.rs",
    "_why": "-1 says \"we do not know\". Zero says \"the queue is empty\", which is a claim, and the wrong one.",
-   "old": "                tracing::warn!(error = %err, \"[Health] EmailOutbox count query failed\");\n                -1",
-   "new": "                tracing::warn!(error = %err, \"[Health] EmailOutbox count query failed\");\n                0"
+   "old": "pub const UNKNOWN_QUEUE_DEPTH: i64 = -1;",
+   "new": "pub const UNKNOWN_QUEUE_DEPTH: i64 = 0;"
   },
   {
    "name": "the viewer-usage warning threshold is ignored",
    "file": "src/api/health.rs",
    "_why": "A backlog past a hundred thousand pending writes means the flush loop is failing quietly, which is the only symptom it has.",
-   "old": "        \"status\": if pending_writes > 100_000 { \"warn\" } else { \"ok\" },",
-   "new": "        \"status\": \"ok\","
+   "old": "pub fn viewer_usage_status(pending_writes: i64) -> &'static str {\n    if pending_writes > 100_000 {",
+   "new": "pub fn viewer_usage_status(pending_writes: i64) -> &'static str {\n    if false {"
   }
  ]
 }

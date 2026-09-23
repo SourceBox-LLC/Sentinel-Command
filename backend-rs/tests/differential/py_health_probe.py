@@ -31,6 +31,15 @@ import collections
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
+
+# Resolved by the runner and handed to both probes, so the two agree on
+# the literal rather than each computing its own "now".
+RECENT = os.environ.get(
+    "HEALTH_PROBE_RECENT",
+    (datetime.now(tz=timezone.utc) - timedelta(hours=1))
+    .replace(tzinfo=None).isoformat(timespec="seconds"),
+)
 
 
 def main() -> int:
@@ -60,12 +69,29 @@ def main() -> int:
 
     Usage = collections.namedtuple("Usage", "total used free")
 
+    # One live reading, reported first; see the note in
+    # examples/health_probe.rs and the tolerance in health_run.sh.
+    live_path = "/data" if os.path.isdir("/data") else "."
+    live = shutil.disk_usage(live_path)
+    print(json.dumps({
+        "scenario": "@live-disk",
+        "path": live_path,
+        "bytes_total": live.total,
+        "bytes_free": live.free,
+        "bytes_used": live.used,
+    }, sort_keys=True), flush=True)
+
     for scenario in cases["scenarios"]:
         # The licence probe reads Settings, so the rows are the fixture.
         db = SessionLocal()
         try:
             db.query(Setting).delete()
             for key, value in (scenario.get("settings") or {}).items():
+                # "@recent" is an hour ago. A literal would drift out of
+                # the 72-hour licence grace within days and the scenario
+                # would stop distinguishing "coasting" from "invalid".
+                if value == "@recent":
+                    value = RECENT
                 db.add(Setting(org_id=settings.LOCAL_ORG_ID, key=key, value=value))
             db.commit()
         finally:

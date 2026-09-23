@@ -194,7 +194,7 @@ pub fn disk_result(path: &str, total: u64, free: u64, used: u64) -> ProbeResult 
 /// `(total, free, used)`, defined the way `shutil.disk_usage` defines
 /// them: free is what an unprivileged process can use (`f_bavail`),
 /// while used counts the reserved blocks a privileged one still could.
-fn statvfs_usage(path: &str) -> Option<(u64, u64, u64)> {
+pub fn statvfs_usage(path: &str) -> Option<(u64, u64, u64)> {
     let c_path = std::ffi::CString::new(path).ok()?;
     let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
     // SAFETY: `c_path` is a valid NUL-terminated string and `stat` is a
@@ -364,12 +364,34 @@ pub async fn run_readiness_probes(
     client: &reqwest::Client,
     uptime_seconds: f64,
 ) -> ReadinessReport {
+    run_readiness_probes_with(config, pool, client, uptime_seconds, None, None).await
+}
+
+/// The same, with the two probes a harness cannot arrange from outside
+/// supplied.
+///
+/// The disk reading and the worker's tick age are process-local: one is
+/// a syscall against a filesystem that moves, the other is a global
+/// stamped by a loop. Both are injectable so a differential can compare
+/// the ROLLUP — which is what decides 200 against 503 — rather than
+/// recomputing it and proving nothing.
+pub async fn run_readiness_probes_with(
+    config: &Config,
+    pool: &sqlx::PgPool,
+    client: &reqwest::Client,
+    uptime_seconds: f64,
+    disk_override: Option<ProbeResult>,
+    tick_age: Option<Option<f64>>,
+) -> ReadinessReport {
     let (database, clerk) = tokio::join!(
         probe_database(pool),
         probe_clerk(config, client),
     );
-    let disk = probe_disk();
-    let email_worker = probe_email_worker(config, uptime_seconds);
+    let disk = disk_override.unwrap_or_else(probe_disk);
+    let email_worker = match tick_age {
+        Some(age) => probe_email_worker_with(config, uptime_seconds, age),
+        None => probe_email_worker(config, uptime_seconds),
+    };
 
     let probes = vec![
         ("database", database),

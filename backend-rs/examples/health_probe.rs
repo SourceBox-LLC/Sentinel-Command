@@ -69,17 +69,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     let client = reqwest::Client::new();
 
+    // One live reading, reported first. It is the ONLY way to pin
+    // which statvfs field each side reads: the scenarios inject
+    // total/free/used directly and so cannot tell `f_bavail` from
+    // `f_bfree`, and the HTTP differential normalises the numbers away
+    // because a cargo build moves them between the two calls. The
+    // runner compares these with a tolerance far below the difference
+    // a filesystem reserve makes.
+    if let Some((total, free, used)) = probes::statvfs_usage(disk_path()) {
+        println!(
+            "{}",
+            serde_json::to_string(&json!({
+                "scenario": "@live-disk",
+                "path": disk_path(),
+                "bytes_total": total,
+                "bytes_free": free,
+                "bytes_used": used,
+            }))?
+        );
+    }
+
     let file: CaseFile = serde_json::from_str(&std::fs::read_to_string(&cases)?)?;
     for scenario in &file.scenarios {
         // The licence probe reads Settings, so the rows are the fixture.
         sqlx::query("DELETE FROM settings").execute(&pool).await?;
         for (key, value) in &scenario.settings {
+            // "@recent" is an hour ago; see health_cases.json.
+            let value = if value == "@recent" {
+                // Resolved by the runner and shared with the Python
+                // probe; see health_run.sh.
+                std::env::var("HEALTH_PROBE_RECENT").unwrap_or_else(|_| {
+                    sentinel_command::models::iso_naive(
+                        chrono::Utc::now().naive_utc() - chrono::Duration::hours(1),
+                    )
+                })
+            } else {
+                value.clone()
+            };
             sqlx::query(
                 r#"INSERT INTO settings (org_id, "key", value, updated_at)
                    VALUES ('self-host', $1, $2, now()::timestamp)"#,
             )
             .bind(key)
-            .bind(value)
+            .bind(&value)
             .execute(&pool)
             .await?;
         }
@@ -107,38 +139,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let clerk = probes::probe_clerk(&config, &client).await;
         let sentinel_license =
             probes::probe_sentinel_license(&config, &pool, scenario.uptime).await;
-        let report =
-            probes::run_readiness_probes(&config, &pool, &client, scenario.uptime).await;
+        // The injected probes go INTO the report rather than being
+        // substituted afterwards, so `ready` is the rollup's own answer
+        // and not something this probe recomputed — recomputing it
+        // meant a mutation to the rollup changed nothing here.
+        let report = probes::run_readiness_probes_with(
+            &config,
+            &pool,
+            &client,
+            scenario.uptime,
+            Some(disk.clone()),
+            Some(scenario.tick_age),
+        )
+        .await;
 
-        // The readiness report runs its OWN disk and worker probes off
-        // the real machine, which is not what this compares. Its
-        // database and clerk entries are, and so is the rollup — so
-        // the two injected probes are substituted in and the rollup
-        // recomputed from the same set Python's is.
-        let mut checks = serde_json::Map::new();
-        for (name, probe) in &report.probes {
-            let value = match *name {
-                "disk" => disk.to_json(),
-                "email_worker" => email_worker.to_json(),
-                _ => probe.to_json(),
-            };
-            checks.insert((*name).to_string(), value);
-        }
+        let mut readiness = report.to_json();
         // Latency is a measurement, not a decision.
-        for value in checks.values_mut() {
-            if let Some(map) = value.as_object_mut() {
-                map.remove("latency_ms");
+        if let Some(checks) = readiness["checks"].as_object_mut() {
+            for value in checks.values_mut() {
+                if let Some(map) = value.as_object_mut() {
+                    map.remove("latency_ms");
+                }
             }
         }
-        let ready = report
-            .probes
-            .iter()
-            .map(|(name, probe)| match *name {
-                "disk" => disk.is_critical(),
-                "email_worker" => email_worker.is_critical(),
-                _ => probe.is_critical(),
-            })
-            .all(|critical| !critical);
 
         println!(
             "{}",
@@ -148,7 +171,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "email_worker": email_worker.to_json(),
                 "clerk": clerk.to_json(),
                 "sentinel_license": sentinel_license.to_json(),
-                "readiness": { "ready": ready, "checks": Value::Object(checks) },
+                "readiness": readiness,
             })))?
         );
     }

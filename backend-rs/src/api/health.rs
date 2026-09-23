@@ -41,6 +41,20 @@ use crate::health_probes::{
 /// both run the probes, which is cheaper than locking the hot path.
 const READY_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// 200 or 503 — the only thing an uptime monitor reads.
+fn ready_status(ready: bool) -> StatusCode {
+    if ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
+}
+
+/// Whether a cache entry of this age may still be served.
+fn cache_is_fresh(age: std::time::Duration) -> bool {
+    age < READY_CACHE_TTL
+}
+
 struct ReadyCache {
     cached_at: std::time::Instant,
     body: Value,
@@ -71,7 +85,7 @@ pub async fn health_ready(
         let hit = {
             let guard = READY_CACHE.lock().unwrap_or_else(|e| e.into_inner());
             guard.as_ref().and_then(|cached| {
-                (cached.cached_at.elapsed() < READY_CACHE_TTL)
+                cache_is_fresh(cached.cached_at.elapsed())
                     .then(|| (cached.body.clone(), cached.status))
             })
         };
@@ -87,11 +101,7 @@ pub async fn health_ready(
     let mut body = report.to_json();
     body["version"] = json!(VERSION);
     body["uptime_seconds"] = json!(crate::pyrepr::round_to(uptime, 3));
-    let status = if report.ready {
-        StatusCode::OK
-    } else {
-        StatusCode::SERVICE_UNAVAILABLE
-    };
+    let status = ready_status(report.ready);
 
     *READY_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Some(ReadyCache {
         cached_at: std::time::Instant::now(),
@@ -100,6 +110,57 @@ pub async fn health_ready(
     });
     Ok((status, Json(body)).into_response())
 }
+
+/// The viewer-usage backlog's status.
+///
+/// The flush loop ticks every sixty seconds, so a backlog past a
+/// hundred thousand pending writes means it is failing quietly — which
+/// is the only symptom that failure has. `warn` colours the dashboard
+/// and gates nothing.
+///
+/// Extracted for the same reason as `rollup`: reaching a six-figure
+/// backlog through a harness would mean serving a hundred thousand
+/// segments first.
+pub fn viewer_usage_status(pending_writes: i64) -> &'static str {
+    if pending_writes > 100_000 {
+        "warn"
+    } else {
+        "ok"
+    }
+}
+
+/// The rolled-up status.
+///
+/// Critical-tier probes page; warn-tier signals only colour the
+/// dashboard. Resend being off or unconfigured is deliberately NOT an
+/// input: an install running without email is a configuration choice,
+/// not a failure mode, and letting it degrade the rollup would paint
+/// every self-hosted install yellow forever.
+///
+/// Extracted so this is decided by a function with four boolean inputs
+/// rather than inside a handler that needs a live database, a real
+/// filesystem and a process past its startup grace to reach at all.
+pub fn rollup(
+    any_critical: bool,
+    viewer_warn: bool,
+    disk_warn: bool,
+    license_warn: bool,
+) -> &'static str {
+    if any_critical {
+        "unhealthy"
+    } else if viewer_warn || disk_warn || license_warn {
+        "degraded"
+    } else {
+        "healthy"
+    }
+}
+
+/// What the queue depth reports when the count query fails.
+///
+/// -1 says "we do not know". Zero says "the queue is empty", which is a
+/// claim, and the wrong one — a status page would render a healthy
+/// backlog while the database is unreachable.
+pub const UNKNOWN_QUEUE_DEPTH: i64 = -1;
 
 /// `GET /api/health/detailed`.
 pub async fn health_detailed(State(state): State<AppState>) -> Json<Value> {
@@ -128,9 +189,7 @@ pub async fn health_detailed(State(state): State<AppState>) -> Json<Value> {
 
     let pending_writes = state.hls.pending_viewer_seconds();
     let viewer_usage = json!({
-        // The flush loop ticks every sixty seconds; a backlog past this
-        // means it is failing quietly. `warn` does not gate liveness.
-        "status": if pending_writes > 100_000 { "warn" } else { "ok" },
+        "status": viewer_usage_status(pending_writes),
         "pending_writes": pending_writes,
     });
 
@@ -160,25 +219,18 @@ pub async fn health_detailed(State(state): State<AppState>) -> Json<Value> {
             Ok((count,)) => count,
             Err(err) => {
                 tracing::warn!(error = %err, "[Health] EmailOutbox count query failed");
-                -1
+                UNKNOWN_QUEUE_DEPTH
             }
         };
     let resend = json!({ "status": resend_status, "queue_depth": queue_depth });
 
-    // Critical-tier probes page; warn-tier signals only colour the
-    // dashboard. Resend being off or unconfigured is a deliberate
-    // choice and degrades nothing.
     let critical = [&database, &clerk, &disk, &email_worker];
-    let overall = if critical.iter().any(|p| p.is_critical()) {
-        "unhealthy"
-    } else if viewer_usage["status"] == "warn"
-        || disk.status == "warn"
-        || sentinel_license.status == "warn"
-    {
-        "degraded"
-    } else {
-        "healthy"
-    };
+    let overall = rollup(
+        critical.iter().any(|p| p.is_critical()),
+        viewer_usage["status"] == "warn",
+        disk.status == "warn",
+        sentinel_license.status == "warn",
+    );
 
     let mut checks = Map::new();
     checks.insert("database".into(), database.to_json());
@@ -201,4 +253,62 @@ pub async fn health_detailed(State(state): State<AppState>) -> Json<Value> {
         "time": crate::api::nodes::iso_aware(chrono::Utc::now().naive_utc(), 0),
         "checks": Value::Object(checks),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Critical pages, warn colours, and resend is not an input at all.
+    #[test]
+    fn the_rollup_separates_paging_from_colouring() {
+        assert_eq!(rollup(false, false, false, false), "healthy");
+        assert_eq!(rollup(true, false, false, false), "unhealthy");
+        // Any one warn degrades.
+        assert_eq!(rollup(false, true, false, false), "degraded");
+        assert_eq!(rollup(false, false, true, false), "degraded");
+        assert_eq!(rollup(false, false, false, true), "degraded");
+        // Critical wins over warn — a dead database is not "degraded"
+        // just because the disk is also filling.
+        assert_eq!(rollup(true, true, true, true), "unhealthy");
+    }
+
+    /// A hundred thousand is the line, and it is exclusive.
+    #[test]
+    fn the_viewer_backlog_warns_only_past_its_threshold() {
+        assert_eq!(viewer_usage_status(0), "ok");
+        assert_eq!(viewer_usage_status(99_999), "ok");
+        assert_eq!(viewer_usage_status(100_000), "ok", "the threshold itself is not past it");
+        assert_eq!(viewer_usage_status(100_001), "warn");
+        // A negative backlog is not a thing, but it must not warn.
+        assert_eq!(viewer_usage_status(-1), "ok");
+    }
+
+    /// An unknown queue depth is -1, not 0. A status page tells them
+    /// apart and only one of them is a claim about the queue.
+    #[test]
+    fn an_unknown_queue_depth_is_not_zero() {
+        assert_eq!(UNKNOWN_QUEUE_DEPTH, -1);
+        assert_ne!(UNKNOWN_QUEUE_DEPTH, 0);
+    }
+
+    /// The readiness endpoint's whole reason for existing beside
+    /// `detailed`: uptime monitors read the status code.
+    #[test]
+    fn readiness_maps_ready_to_a_status_code() {
+        assert_eq!(ready_status(true), StatusCode::OK);
+        assert_eq!(ready_status(false), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// Thirty seconds, and the entry is used only inside it. A cache
+    /// that never expires freezes the first answer the process gave,
+    /// which is the worst thing a health endpoint can do.
+    #[test]
+    fn the_ready_cache_is_used_only_inside_its_window() {
+        assert!(cache_is_fresh(std::time::Duration::from_secs(0)));
+        assert!(cache_is_fresh(std::time::Duration::from_secs(29)));
+        assert!(!cache_is_fresh(READY_CACHE_TTL));
+        assert!(!cache_is_fresh(std::time::Duration::from_secs(31)));
+        assert!(!cache_is_fresh(std::time::Duration::from_secs(3600)));
+    }
 }

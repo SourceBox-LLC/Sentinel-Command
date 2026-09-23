@@ -51,6 +51,24 @@ if ! docker exec "$PG_CONTAINER" psql -U cc -d postgres -tAc \
         < "$RS/migrations/0001_adopt_production_schema.sql"
 fi
 
+# "@recent" resolved ONCE, here, and handed to both probes. Each
+# computing its own "now" put the value in the output twice, two
+# seconds and two precisions apart — a difference in the harness
+# reported as a difference in the port.
+RECENT="$("$PYTHON" -c "
+from datetime import datetime, timedelta, timezone
+print((datetime.now(tz=timezone.utc) - timedelta(hours=1))
+      .replace(tzinfo=None).isoformat(timespec='seconds'))")"
+export HEALTH_PROBE_RECENT="$RECENT"
+
+# Built BEFORE either probe runs, not between them. The live disk
+# reading is compared with a tolerance, and a cargo build writing a
+# few hundred megabytes between the two processes is drift the
+# tolerance would have to swallow — which would make it too loose to
+# catch the thing it exists for.
+(cd "$RS" && cargo build --quiet --example health_probe) || {
+    echo "rust probe failed to build" >&2; exit 2; }
+
 echo "python probe..."
 PROBE_DATABASE_URL="$PY_URL" "$PYTHON" -u "$HERE/py_health_probe.py" --db "$PY_URL" \
     >"$OUT/py.jsonl" 2>"$OUT/py.err" || {
@@ -77,6 +95,31 @@ if len(py) != len(rs):
     sys.exit(1)
 
 bad = 0
+# The live reading is compared with a tolerance. `bytes_total` never
+# moves and is exact; free and used drift by whatever the machine wrote
+# between the two processes, which is megabytes during a build — while
+# reading `f_bfree` where `f_bavail` belongs differs by the filesystem's
+# reserve, typically five percent, which is gigabytes. 64 MiB sits
+# comfortably between the two.
+TOLERANCE = 64 * 1024 * 1024
+live_py = next((s for s in py if s["scenario"] == "@live-disk"), None)
+live_rs = next((s for s in rs if s["scenario"] == "@live-disk"), None)
+if live_py and live_rs:
+    py.remove(live_py)
+    rs.remove(live_rs)
+    if live_py["path"] != live_rs["path"] or live_py["bytes_total"] != live_rs["bytes_total"]:
+        bad += 1
+        print("  DIFFER  the live disk reading disagrees on path or total")
+        print(f"            python={live_py} rust={live_rs}")
+    else:
+        for field in ("bytes_free", "bytes_used"):
+            drift = abs(live_py[field] - live_rs[field])
+            if drift > TOLERANCE:
+                bad += 1
+                print(f"  DIFFER  the live disk reading disagrees on {field} "
+                      f"by {drift / 1024 / 1024:.0f} MiB")
+                print(f"            python={live_py[field]} rust={live_rs[field]}")
+
 for a, b in zip(py, rs):
     if a["scenario"] != b["scenario"]:
         print(f"  ORDER   python={a['scenario']} rust={b['scenario']}")
