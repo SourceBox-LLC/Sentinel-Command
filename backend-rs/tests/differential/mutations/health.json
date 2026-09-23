@@ -1,5 +1,5 @@
 {
- "_comment": "Mutations for the readiness probes and the two health endpoints. Scored against http_run.sh, which is where the cases live: the endpoints are reads. Several of these are about the vocabulary rather than the logic \u2014 `disabled` versus `unconfigured`, `warn` versus `critical` \u2014 because those distinctions are the whole product of a health endpoint and are the easiest thing to flatten by accident.",
+ "_comment": "Mutations for the readiness probes and the two health endpoints, scored against BOTH harnesses. http_run.sh has the endpoints and covers the wiring \u2014 the cache, the status code, the rollup. health_run.sh has the probes with every input supplied, and covers everything the HTTP one structurally cannot reach: the mutator restarts the tier before each run, so the process is always inside its startup grace, and the harness environment has email on, a valid licence and a healthy disk. Seventeen of these survived an HTTP-only run for that reason. Several are about the vocabulary rather than the logic \u2014 `disabled` versus `unconfigured`, `warn` versus `critical` \u2014 because those distinctions are the whole product of a health endpoint and the easiest thing to flatten by accident.",
  "restart_rust": true,
  "env": {
   "DIFF_ONLY": "health"
@@ -7,6 +7,9 @@
  "harness": [
   [
    "tests/differential/http_run.sh"
+  ],
+  [
+   "tests/differential/health_run.sh"
   ]
  ],
  "mutations": [

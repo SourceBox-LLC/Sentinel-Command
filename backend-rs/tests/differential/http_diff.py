@@ -746,10 +746,13 @@ def normalise(body, path=""):
                 for field in ("latency_ms", "tick_age_seconds", "uptime_seconds"):
                     if field in probe and probe[field] is not None:
                         probe[field] = f"<{field}>"
-                # The disk fills and drains while the suite runs, and a
-                # byte count that moved between the two calls is not a
-                # difference in the port. The STATUS is compared, which
-                # is what the thresholds decide.
+                # The disk fills and drains while the suite runs — a
+                # cargo build between the two calls moves it by
+                # megabytes — so a live reading here is either flaky or
+                # meaningless. The STATUS is compared, which is what
+                # the thresholds decide, and the arithmetic behind it
+                # is compared exactly by health_run.sh, which feeds
+                # both stacks the same injected reading.
                 if name == "disk":
                     for field in ("bytes_free", "bytes_used", "bytes_total",
                                   "percent_used"):

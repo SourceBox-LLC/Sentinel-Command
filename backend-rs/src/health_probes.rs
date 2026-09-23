@@ -157,6 +157,16 @@ pub fn probe_disk() -> ProbeResult {
         tracing::warn!(path, "[Health] disk_usage failed");
         return ProbeResult::new("critical", json!({ "path": path, "error_class": "OSError" }));
     };
+    disk_result(path, total, free, used)
+}
+
+/// The thresholds and the arithmetic, separated from the syscall.
+///
+/// Split so a differential can feed both stacks the SAME numbers: the
+/// real filesystem moves between two calls, and a harness that compares
+/// live readings is either flaky or blind. Python's probe is driven the
+/// same way, with `shutil.disk_usage` patched in the probe process.
+pub fn disk_result(path: &str, total: u64, free: u64, used: u64) -> ProbeResult {
     let pct = if total > 0 {
         crate::pyrepr::round_to((used as f64 / total as f64) * 100.0, 1)
     } else {
@@ -205,10 +215,27 @@ fn statvfs_usage(path: &str) -> Option<(u64, u64, u64)> {
 /// deliberately runs without it must not be paged about a loop that is
 /// correctly idle.
 pub fn probe_email_worker(config: &Config, uptime_seconds: f64) -> ProbeResult {
+    probe_email_worker_with(
+        config,
+        uptime_seconds,
+        crate::email_worker::seconds_since_last_tick(),
+    )
+}
+
+/// The same, with the tick age supplied.
+///
+/// The age is process-local state, so a differential cannot arrange it
+/// from outside — both stacks are driven through this seam instead,
+/// with Python's `seconds_since_last_tick` patched in the probe.
+pub fn probe_email_worker_with(
+    config: &Config,
+    uptime_seconds: f64,
+    age: Option<f64>,
+) -> ProbeResult {
     if !config.email_enabled {
         return ProbeResult::new("disabled", json!({}));
     }
-    let Some(age) = crate::email_worker::seconds_since_last_tick() else {
+    let Some(age) = age else {
         if uptime_seconds < EMAIL_WORKER_STARTUP_GRACE_SECONDS {
             // A fresh process whose loop has not had its first tick.
             return ProbeResult::new(
