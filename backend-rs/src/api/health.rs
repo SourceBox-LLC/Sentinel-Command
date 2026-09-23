@@ -50,6 +50,24 @@ fn ready_status(ready: bool) -> StatusCode {
     }
 }
 
+/// Whether this request may be answered from the cache, and with what.
+///
+/// Pulled out of the handler so the decision can be tested without a
+/// database, a Clerk probe and a thirty-second wall clock — and so a
+/// mutation to it has somewhere to be caught. The endpoint's own
+/// response cannot show it: a cached answer differs from a fresh one
+/// only in uptime and latency, and the differential normalises both.
+fn serve_from_cache(
+    nocache: bool,
+    entry: Option<(std::time::Duration, Value, StatusCode)>,
+) -> Option<(Value, StatusCode)> {
+    if nocache {
+        return None;
+    }
+    let (age, body, status) = entry?;
+    cache_is_fresh(age).then_some((body, status))
+}
+
 /// Whether a cache entry of this age may still be served.
 fn cache_is_fresh(age: std::time::Duration) -> bool {
     age < READY_CACHE_TTL
@@ -81,17 +99,14 @@ pub async fn health_ready(
     let nocache = q.bool("nocache", false);
     q.finish()?;
 
-    if !nocache {
-        let hit = {
-            let guard = READY_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-            guard.as_ref().and_then(|cached| {
-                cache_is_fresh(cached.cached_at.elapsed())
-                    .then(|| (cached.body.clone(), cached.status))
-            })
-        };
-        if let Some((body, status)) = hit {
-            return Ok((status, Json(body)).into_response());
-        }
+    let entry = {
+        let guard = READY_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        guard
+            .as_ref()
+            .map(|cached| (cached.cached_at.elapsed(), cached.body.clone(), cached.status))
+    };
+    if let Some((body, status)) = serve_from_cache(nocache, entry) {
+        return Ok((status, Json(body)).into_response());
     }
 
     let uptime = state.started_at.elapsed().as_secs_f64();
@@ -298,6 +313,31 @@ mod tests {
     fn readiness_maps_ready_to_a_status_code() {
         assert_eq!(ready_status(true), StatusCode::OK);
         assert_eq!(ready_status(false), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// `?nocache=1` bypasses a perfectly fresh entry — that is the
+    /// whole point of the parameter, and the reason an on-call
+    /// engineer can trust what they get back mid-incident.
+    #[test]
+    fn the_cache_is_consulted_unless_the_caller_says_not_to() {
+        let fresh = || {
+            Some((
+                std::time::Duration::from_secs(1),
+                json!({"ready": true}),
+                StatusCode::OK,
+            ))
+        };
+        assert!(serve_from_cache(false, fresh()).is_some(), "a fresh entry is served");
+        assert!(serve_from_cache(true, fresh()).is_none(), "nocache bypasses it");
+        // Nothing cached yet.
+        assert!(serve_from_cache(false, None).is_none());
+        // Stale.
+        let stale = Some((
+            READY_CACHE_TTL + std::time::Duration::from_secs(1),
+            json!({"ready": true}),
+            StatusCode::OK,
+        ));
+        assert!(serve_from_cache(false, stale).is_none());
     }
 
     /// Thirty seconds, and the entry is used only inside it. A cache

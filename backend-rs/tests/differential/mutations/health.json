@@ -146,8 +146,8 @@
    "name": "the readiness cache is never used",
    "file": "src/api/health.rs",
    "_why": "Thirty seconds of cache is what keeps a swarm of pollers \u2014 two uptime monitors, a status page and the admin panel \u2014 from hammering Clerk on every request.",
-   "old": "    if !nocache {",
-   "new": "    if false {"
+   "old": "    if nocache {\n        return None;\n    }",
+   "new": "    if true {\n        return None;\n    }"
   },
   {
    "name": "nocache is ignored",
