@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Hold the MCP tool catalog and rate limits to Python's.
+
+Three lists and a table decide what an MCP key can reach and how often,
+and all four are transcribed constants. A transcription slip in any of
+them is silent: a tool missing from the READ set is simply unreachable
+by a readonly key, an extra name in the agent's allowlist is a tool the
+agent can call that Python would refuse, and a wrong rate limit is only
+visible under load.
+
+The agent allowlist is the one that matters most. It is an allowlist
+rather than a denylist because the agent's model is steered by content
+an attacker can put in front of a lens — so a write tool leaking into
+it is a real escalation, not a cosmetic difference.
+
+Reads both sides as source. The Python is parsed with `ast` rather than
+imported: importing `app.mcp.server` builds a FastMCP instance and
+opens a database.
+
+Usage: mcp_parity.py
+"""
+from __future__ import annotations
+
+import ast
+import pathlib
+import re
+import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+BACKEND = HERE.parent.parent.parent / "backend"
+RS = HERE.parent.parent / "src" / "mcp" / "scope.rs"
+
+
+def python_sets() -> dict[str, set[str]]:
+    """The three frozensets, read out of the module's source."""
+    tree = ast.parse((BACKEND / "app/mcp/server.py").read_text())
+    wanted = {"MCP_READ_TOOLS", "MCP_WRITE_TOOLS", "_AGENT_WRITE_TOOLS"}
+    out: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.AnnAssign | ast.Assign):
+            continue
+        targets = [node.target] if isinstance(node, ast.AnnAssign) else node.targets
+        for target in targets:
+            if not isinstance(target, ast.Name) or target.id not in wanted:
+                continue
+            call = node.value
+            # `frozenset({...})`
+            if isinstance(call, ast.Call) and call.args:
+                inner = call.args[0]
+                if isinstance(inner, ast.Set):
+                    out[target.id] = {
+                        e.value for e in inner.elts if isinstance(e, ast.Constant)
+                    }
+    return out
+
+
+def python_rate_limits() -> dict[str, tuple[int, int]]:
+    tree = ast.parse((BACKEND / "app/mcp/server.py").read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "RATE_LIMITS" for t in node.targets
+        ):
+            table = ast.literal_eval(node.value)
+            return {plan: (v["minute"], v["daily"]) for plan, v in table.items()}
+    return {}
+
+
+def rust_sets() -> dict[str, set[str]]:
+    src = RS.read_text()
+    out = {}
+    for rust_name, python_name in [
+        ("MCP_READ_TOOLS", "MCP_READ_TOOLS"),
+        ("MCP_WRITE_TOOLS", "MCP_WRITE_TOOLS"),
+        ("AGENT_WRITE_TOOLS", "_AGENT_WRITE_TOOLS"),
+    ]:
+        m = re.search(
+            rf"pub const {rust_name}: \[&str; \d+\] = \[(.*?)\];", src, re.S
+        )
+        if not m:
+            print(f"  FAIL  {rust_name} not found in scope.rs")
+            continue
+        out[python_name] = set(re.findall(r'"([^"]+)"', m.group(1)))
+    return out
+
+
+def rust_rate_limits() -> dict[str, tuple[int, int]]:
+    src = RS.read_text()
+    m = re.search(r"pub fn rate_limits\(plan: &str\) -> Option<\(usize, usize\)> \{(.*?)\n\}", src, re.S)
+    if not m:
+        return {}
+    out = {}
+    for line in m.group(1).splitlines():
+        arm = re.match(r'\s*("[^=]+?) => Some\(\((\d[\d_]*), (\d[\d_]*)\)\),', line)
+        if not arm:
+            continue
+        minute = int(arm.group(2).replace("_", ""))
+        daily = int(arm.group(3).replace("_", ""))
+        for plan in re.findall(r'"([^"]+)"', arm.group(1)):
+            out[plan] = (minute, daily)
+    return out
+
+
+def main() -> int:
+    bad = 0
+    py = python_sets()
+    rs = rust_sets()
+    if not py:
+        print("REFUSING: could not read the Python tool sets")
+        return 2
+    for name in sorted(py):
+        a, b = py[name], rs.get(name, set())
+        if a == b:
+            print(f"  ok    {name:22} {len(a)} tools")
+            continue
+        bad += 1
+        print(f"  FAIL  {name}")
+        for missing in sorted(a - b):
+            print(f"          only in python: {missing}")
+        for extra in sorted(b - a):
+            print(f"          only in rust:   {extra}")
+
+    # The derived agent set, checked as a whole rather than trusting
+    # that the right inputs imply the right output.
+    py_agent = (py["MCP_READ_TOOLS"] | py["_AGENT_WRITE_TOOLS"]) & (
+        py["MCP_READ_TOOLS"] | py["MCP_WRITE_TOOLS"]
+    )
+    excluded = (py["MCP_READ_TOOLS"] | py["MCP_WRITE_TOOLS"]) - py_agent
+    print(f"  ok    agent reaches {len(py_agent)}, excluded: {sorted(excluded) or 'nothing'}")
+    if not excluded:
+        print("  FAIL  the agent allowlist excludes NOTHING — it has stopped being one")
+        bad += 1
+
+    pl, rl = python_rate_limits(), rust_rate_limits()
+    if pl != rl:
+        bad += 1
+        print("  FAIL  RATE_LIMITS")
+        print(f"          python={pl}")
+        print(f"          rust=  {rl}")
+    else:
+        print(f"  ok    RATE_LIMITS          {len(pl)} plans")
+
+    print(f"\n{bad} mismatch(es)")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

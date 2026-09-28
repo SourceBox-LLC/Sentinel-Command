@@ -25,6 +25,7 @@ pub mod headers;
 pub mod health_probes;
 pub mod hls;
 pub mod license;
+pub mod mcp;
 pub mod models;
 pub mod notifications;
 pub mod plans;
