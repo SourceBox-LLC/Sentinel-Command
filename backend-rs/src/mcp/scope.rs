@@ -312,6 +312,79 @@ fn now_seconds() -> f64 {
         .unwrap_or_default()
 }
 
+// ---------------------------------------------------------------------
+// The catalog the scope picker renders
+// ---------------------------------------------------------------------
+
+// The descriptions the dashboard shows beside each tool in the scope
+// picker. In Python they are the `description=` on each `@mcp.tool`,
+// read back off the live FastMCP registry so a UI edit cannot desync
+// from the server. Here they are the registration, and mcp_parity.py
+// holds them to Python's — extracted with `ast`, not retyped.
+
+const DESC_ADD_OBSERVATION: &str = "Append a text observation to an existing incident. Use this to record what you saw on additional cameras, what you ruled out, or any other context that will help the human reviewer understand the situation.";
+const DESC_ATTACH_CLIP: &str = "Save a short video clip from a camera's recent live buffer as evidence on an incident. Pulls the most recent N segments from the in-memory HLS cache (no recording is started — this captures what's already buffered) and stores them as a single .ts blob the human reviewer can play back from the dashboard. Use after attach_snapshot when motion context matters more than a single frame. The camera's stream must have been live recently — only segments still in the buffer (~60s depending on server config) are available.";
+const DESC_ATTACH_SNAPSHOT: &str = "Capture a fresh JPEG snapshot from a camera and attach it as evidence to an incident. The camera must be online. Use this to preserve what you saw at the moment of investigation.";
+const DESC_CREATE_INCIDENT: &str = "Open a new incident report. Use when you observe something noteworthy (possible intruder, suspicious activity, equipment problem) that the user should review later. Returns the new incident_id, which you should pass to attach_snapshot/add_observation/finalize_incident as you continue investigating.";
+const DESC_FINALIZE_INCIDENT: &str = "Write the long-form markdown report body for the FIRST time at the end of your investigation, after you've attached snapshots/clips and added observations. This is the normal end-of-investigation step. If you need to revise an already-written report after new evidence, use update_incident with the report parameter instead — that path is designed for revisions.";
+const DESC_GET_CAMERA: &str = "Get full metadata for one camera by camera_id (status, codec, node, group, last seen). Use after list_cameras to inspect one closely. Returns text only — for the actual image, use view_camera.";
+const DESC_GET_CAMERA_RECORDING_POLICY: &str = "Return the recording policy for a specific camera: whether 24/7 continuous recording is on, whether scheduled recording is on, and the scheduled start/end times (HH:MM, interpreted in the org's configured timezone — NOT UTC). Per-camera since v0.1.43 — replaces the previous org-level get_recording_settings. Use when the user asks 'is the garage cam recording right now?' or before filing an incident if it's relevant whether the moment was being recorded to disk on the CameraNode.";
+const DESC_GET_INCIDENT: &str = "Get the full detail of a single incident: summary, full markdown report, all observations, and all evidence metadata (including evidence ids you can pass to get_incident_snapshot to see the attached images). Use this to read back a past report in full.";
+const DESC_GET_INCIDENT_CLIP: &str = "Look up metadata about a video clip previously attached to an incident with attach_clip. Returns size, approximate duration, MIME, and the camera it came from. Note: this returns metadata only — the agent can't watch video, but a human reviewer can play the clip from the dashboard. Use this to confirm a clip was saved correctly.";
+const DESC_GET_INCIDENT_SNAPSHOT: &str = "Fetch a snapshot image that was previously attached to an incident as evidence. Returns the stored JPEG so you can actually SEE what was captured. Pair with get_incident to discover evidence ids.";
+const DESC_GET_NODE: &str = "Get full detail for one CameraNode by node_id (hostname, IP, port, status, camera count). Use after list_nodes when you need detail on one specific box — e.g. to confirm which physical device the user should power-cycle.";
+const DESC_GET_STREAM_LOGS: &str = "Get recent stream-access log entries (one row per user × camera × ~5min window). Use to audit who watched a sensitive camera, check whether a user reviewed a feed during a time of interest, or investigate suspicious viewing activity. Filter by camera_id to scope to one feed.";
+const DESC_GET_STREAM_STATS: &str = "Get aggregated stream-viewing stats over the last N days: totals, by-camera, and by-user. Use to find the most-watched cameras, build a usage summary, or establish a baseline before deciding whether a viewing pattern looks unusual. For per-event detail, use get_stream_logs.";
+const DESC_GET_STREAM_URL: &str = "Return the authenticated HLS playlist URL for a camera. This is a URL a human or HLS player can open — YOU cannot watch video from it. Use only when you need to hand a stream URL back to the user. To see a frame yourself, use view_camera (single frame) or watch_camera (multi-frame burst).";
+const DESC_GET_SYSTEM_STATUS: &str = "High-level snapshot of the org's Sentinel deployment: camera count with online/offline split, node count with online/offline split, and the active plan. Good first call to orient before drilling in. For per-camera detail, use list_cameras.";
+const DESC_LIST_CAMERA_GROUPS: &str = "List the camera groups defined in the dashboard. A group is a user-defined zone (e.g. 'Front yard', 'Workshop') that bundles cameras together. Use when the user names a place and you need to find which cameras live there.";
+const DESC_LIST_CAMERAS: &str = "List every camera in the organization with status, codec info, and group assignment. Start here when you don't yet know what cameras exist — most other camera tools take a camera_id from this output.";
+const DESC_LIST_INCIDENTS: &str = "List incident reports for this organization, most recent first. Use this to check what incidents are already open before filing a duplicate, to follow up on past reports, or to look at activity patterns. Returns compact rows (id, title, severity, status, camera, timestamps, evidence count) without the full report body — call get_incident for the full detail of a specific one.";
+const DESC_LIST_NODES: &str = "List every CameraNode (the physical box running cameras on the local network) for the org with status, hostname, and camera count. Use when troubleshooting at the box level — e.g. whether a whole node is offline vs whether one of its cameras is. For per-camera state, use list_cameras.";
+const DESC_SET_CAMERA_RECORDING_POLICY: &str = "Set the recording policy for a specific camera. Any field omitted (or set to null) is left unchanged — pass only what you want to update. Use when the user asks 'turn on recording for the garage cam' or 'set scheduled recording on the front door cam from 18:00 to 06:00'. Times are HH:MM 24-hour, interpreted in the org's configured timezone (NOT UTC) — pass exactly what the user said, do not convert. Mutual-exclusion invariant: continuous_24_7 and scheduled_recording can't both be true; the call returns {error: 'modes_conflict'} if you try. Returns the new effective policy. Per-camera since v0.1.43.";
+const DESC_UPDATE_INCIDENT: &str = "Edit fields on an existing incident. Use to escalate severity if the situation worsens, mark resolved/dismissed after confirming a false alarm, fix the short summary, or revise the long-form markdown report after new evidence. Pass only the fields you want to change — others are left alone. The report parameter REPLACES the existing body, so include the full revised text (the agent must already have it in context, e.g. from get_incident). For the very first report write, use finalize_incident instead.";
+const DESC_VIEW_CAMERA: &str = "See what a camera sees RIGHT NOW — returns a single live JPEG you can actually look at. Use for a one-shot situational check ('is anyone in the workshop?'). For motion or change over time, use watch_camera instead. To preserve what you saw as evidence on an incident, follow up with attach_snapshot. The camera's node must be online.";
+const DESC_WATCH_CAMERA: &str = "Take a burst of snapshots from one camera (count × interval_seconds wide). Use when a single view_camera frame isn't enough — to confirm whether a subject is moving, whether motion is sustained or fleeting, or whether something is returning to a scene. Each frame is a JPEG you can look at. The total window is short by design (max 10 frames × 30s); for longer evidence retention on an incident, use attach_clip.";
+
+/// Every tool, with the description the picker shows. Sorted by name,
+/// which is the order `/api/mcp/tools` returns within each category.
+pub const TOOL_DESCRIPTIONS: [(&str, &str); 23] = [
+    ("add_observation", DESC_ADD_OBSERVATION),
+    ("attach_clip", DESC_ATTACH_CLIP),
+    ("attach_snapshot", DESC_ATTACH_SNAPSHOT),
+    ("create_incident", DESC_CREATE_INCIDENT),
+    ("finalize_incident", DESC_FINALIZE_INCIDENT),
+    ("get_camera", DESC_GET_CAMERA),
+    ("get_camera_recording_policy", DESC_GET_CAMERA_RECORDING_POLICY),
+    ("get_incident", DESC_GET_INCIDENT),
+    ("get_incident_clip", DESC_GET_INCIDENT_CLIP),
+    ("get_incident_snapshot", DESC_GET_INCIDENT_SNAPSHOT),
+    ("get_node", DESC_GET_NODE),
+    ("get_stream_logs", DESC_GET_STREAM_LOGS),
+    ("get_stream_stats", DESC_GET_STREAM_STATS),
+    ("get_stream_url", DESC_GET_STREAM_URL),
+    ("get_system_status", DESC_GET_SYSTEM_STATUS),
+    ("list_camera_groups", DESC_LIST_CAMERA_GROUPS),
+    ("list_cameras", DESC_LIST_CAMERAS),
+    ("list_incidents", DESC_LIST_INCIDENTS),
+    ("list_nodes", DESC_LIST_NODES),
+    ("set_camera_recording_policy", DESC_SET_CAMERA_RECORDING_POLICY),
+    ("update_incident", DESC_UPDATE_INCIDENT),
+    ("view_camera", DESC_VIEW_CAMERA),
+    ("watch_camera", DESC_WATCH_CAMERA),
+];
+
+/// The description for one tool, or `""` for a name the server does
+/// not serve — matching Python, where a name absent from the live
+/// registry describes as empty rather than raising.
+pub fn describe(name: &str) -> &'static str {
+    TOOL_DESCRIPTIONS
+        .iter()
+        .find(|(tool, _)| *tool == name)
+        .map(|(_, description)| *description)
+        .unwrap_or("")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

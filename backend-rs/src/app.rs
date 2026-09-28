@@ -301,7 +301,17 @@ pub fn build_router(state: AppState) -> Router {
                     .delete(api::incidents::delete_incident),
             ),
         )
-        .route("/api/mcp/keys", ported(api::keys::list_mcp_keys))
+        .route(
+            "/api/mcp/keys",
+            served(
+                axum::routing::get(api::keys::list_mcp_keys)
+                    .post(api::keys::create_mcp_key),
+            ),
+        )
+        // Pinned before `/api/mcp/keys/{key_id}` would otherwise be a
+        // candidate for it — see `still_python` below for why a static
+        // sibling of a parameterised route needs saying out loud.
+        .route("/api/mcp/tools", ported(api::keys::list_mcp_tools))
         .route(
             "/api/mcp/keys/{key_id}",
             served(axum::routing::delete(api::keys::revoke_mcp_key)),

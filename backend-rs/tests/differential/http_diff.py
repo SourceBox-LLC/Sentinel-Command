@@ -375,6 +375,13 @@ CASES = [
     ("GET", "/api/incidents/1/evidence/5", False),
     ("GET", "/api/incidents/1/evidence/5/playlist.m3u8", False),
 
+    # --- the MCP tool catalog, which the scope picker renders ----------
+    #
+    # Python reads the descriptions off the live FastMCP registry; the
+    # port has them as constants, so this compares the whole catalog
+    # including every description, category and the total.
+    ("GET", "/api/mcp/tools", True),
+
     # --- health: three endpoints, three audiences -----------------------
     #
     # `ready` answers 503 when a critical probe fails, which the

@@ -54,6 +54,44 @@ def python_sets() -> dict[str, set[str]]:
     return out
 
 
+def python_descriptions() -> dict[str, str]:
+    """The `description=` on every `@mcp.tool`.
+
+    Python reads these back off the live FastMCP registry so a UI edit
+    cannot desync from the server. The port has no registry to read, so
+    the strings are constants — which means they can drift, which is
+    why they are checked.
+    """
+    tree = ast.parse((BACKEND / "app/mcp/server.py").read_text())
+    out = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        for dec in node.decorator_list:
+            if not (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute)
+                    and dec.func.attr == "tool"):
+                continue
+            kw = {k.arg: k.value for k in dec.keywords}
+            name = ast.literal_eval(kw["name"]) if "name" in kw else node.name
+            out[name] = ast.literal_eval(kw["description"]) if "description" in kw else ""
+    return out
+
+
+def rust_descriptions() -> dict[str, str]:
+    src = RS.read_text()
+    consts = dict(re.findall(r'^const (DESC_[A-Z_]+): &str = "((?:[^"\\]|\\.)*)";',
+                             src, re.M))
+    out = {}
+    block = re.search(r"pub const TOOL_DESCRIPTIONS: \[\(&str, &str\); \d+\] = \[(.*?)\];",
+                      src, re.S)
+    if not block:
+        return out
+    for name, const in re.findall(r'\("([^"]+)", (DESC_[A-Z_]+)\)', block.group(1)):
+        raw = consts.get(const, "")
+        out[name] = raw.replace('\\"', '"').replace("\\\\", "\\")
+    return out
+
+
 def python_rate_limits() -> dict[str, tuple[int, int]]:
     tree = ast.parse((BACKEND / "app/mcp/server.py").read_text())
     for node in ast.walk(tree):
@@ -129,6 +167,35 @@ def main() -> int:
     if not excluded:
         print("  FAIL  the agent allowlist excludes NOTHING — it has stopped being one")
         bad += 1
+
+    pd, rd = python_descriptions(), rust_descriptions()
+    if not pd:
+        print("REFUSING: could not read the Python tool descriptions")
+        return 2
+    if set(pd) != set(rd):
+        bad += 1
+        print("  FAIL  the described tool set differs")
+        for missing in sorted(set(pd) - set(rd)):
+            print(f"          only in python: {missing}")
+        for extra in sorted(set(rd) - set(pd)):
+            print(f"          only in rust:   {extra}")
+    else:
+        differing = [n for n in sorted(pd) if pd[n].strip() != rd[n].strip()]
+        if differing:
+            bad += 1
+            print(f"  FAIL  {len(differing)} description(s) differ")
+            for name in differing[:3]:
+                print(f"          {name}")
+                print(f"            python={pd[name][:90]!r}")
+                print(f"            rust=  {rd[name][:90]!r}")
+        else:
+            print(f"  ok    descriptions        {len(pd)} tools")
+        # A description is what an agent reads to decide whether a tool
+        # is the one it wants. An empty one is not a port decision.
+        empty = [n for n in sorted(rd) if not rd[n].strip()]
+        if empty:
+            bad += 1
+            print(f"  FAIL  {len(empty)} tool(s) describe as empty: {empty[:5]}")
 
     pl, rl = python_rate_limits(), rust_rate_limits()
     if pl != rl:

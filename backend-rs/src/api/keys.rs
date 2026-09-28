@@ -5,10 +5,9 @@
 //! the Python is careful about: "an MCP key id passed here 404s rather
 //! than crossing surfaces".
 //!
-//! **Creation is not ported.** Both create routes mint a secret and fire
-//! a `create_notification` — an inbox entry plus an email telling admins
-//! a key was created, which is a security signal, not a nicety. That
-//! belongs with the email work in slice 7. Porting the response without
+//! Both create routes mint a secret and fire a `create_notification` —
+//! an inbox entry plus an email telling admins a key was created, which
+//! is a security signal and not a nicety. Porting the response without
 //! the notification would look right in a differential and quietly stop
 //! telling anyone that a key had appeared.
 //!
@@ -24,7 +23,7 @@ use serde_json::{json, Value};
 
 use crate::app::AppState;
 use crate::audit::{audit_label, python_json, write_audit};
-use crate::auth::RequireAdmin;
+use crate::auth::{RequireActiveBilling, RequireAdmin};
 use crate::error::ApiError;
 use crate::models::iso_naive;
 use crate::query::{int4, path_int, ModelBody};
@@ -215,6 +214,7 @@ pub async fn revoke_integration_key(
 /// `osi_` — the prefix that separates an integration key from an MCP
 /// one, both of which live in `mcp_api_keys` and are split by `kind`.
 const INTEGRATION_KEY_PREFIX: &str = "osi_";
+const MCP_KEY_PREFIX: &str = "osc_";
 
 /// What an admin reads when an integration key is created.
 fn integration_key_create_body(actor: &str, name: &str) -> String {
@@ -398,6 +398,210 @@ pub async fn revoke_mcp_key(
 
     Ok(Json(json!({ "success": true, "revoked": key_id })))
 }
+
+/// `POST /api/mcp/keys` — mint an `osc_` key, optionally scoped.
+pub async fn create_mcp_key(
+    rate: PerHour<10>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
+    ModelBody(RequireActiveBilling(user), body): ModelBody<RequireActiveBilling>,
+) -> Result<Json<Value>, ApiError> {
+    let mut errors = crate::query::BodyErrors::new();
+    // `name: str = Field("Default", max_length=100)`.
+    let name = match body.get("name") {
+        None => "Default".to_string(),
+        Some(Value::String(value)) => {
+            if value.chars().count() > 100 {
+                errors.too_long("name", value.as_str(), 100);
+            }
+            value.clone()
+        }
+        Some(other) => {
+            errors.string_type("name", other);
+            String::new()
+        }
+    };
+    // `Literal["all", "readonly", "custom"]`, so anything else is a 422
+    // rather than a silent fall-through to full access.
+    let scope_mode = match body.get("scope_mode") {
+        None => "all".to_string(),
+        Some(Value::String(value))
+            if matches!(value.as_str(), "all" | "readonly" | "custom") =>
+        {
+            value.clone()
+        }
+        Some(other) => {
+            errors.literal_error("scope_mode", other, &["all", "readonly", "custom"]);
+            "all".to_string()
+        }
+    };
+    // The validator deduplicates and drops empty names WITHOUT
+    // reordering: the list a customer picked is the list they see back.
+    let scope_tools = errors.optional_list_of_strings(&body, "scope_tools").map(|tools| {
+        let mut seen = std::collections::HashSet::new();
+        tools
+            .into_iter()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty() && seen.insert(name.clone()))
+            .collect::<Vec<String>>()
+    });
+    errors.finish()?;
+    rate.check().await?;
+
+    // Only `custom` carries a list; the other two ignore whatever was
+    // sent, which is what Python does by never reading it.
+    let scope_tools = if scope_mode == "custom" {
+        let Some(tools) = scope_tools.filter(|t| !t.is_empty()) else {
+            return Err(ApiError::bad_request(
+                "scope_tools must be a non-empty list when scope_mode='custom'.",
+            ));
+        };
+        let known = crate::mcp::scope::all_tools();
+        let unknown: Vec<&str> = tools
+            .iter()
+            .map(String::as_str)
+            .filter(|name| !known.contains(name))
+            .collect();
+        if !unknown.is_empty() {
+            return Err(ApiError::bad_request(format!(
+                "Unknown tool names: {}.",
+                unknown.join(", ")
+            )));
+        }
+        Some(tools)
+    } else {
+        None
+    };
+
+    let raw_key = format!("{MCP_KEY_PREFIX}{}", crate::crypto::token_hex(16));
+    let key_hash = crate::crypto::hex(&{ use sha2::Digest; sha2::Sha256::digest(raw_key.as_bytes()) });
+    // `json.dumps(scope_tools) if scope_tools else None` — an empty
+    // list is falsy and stores NULL, not "[]".
+    let stored_tools = scope_tools
+        .as_ref()
+        .filter(|tools| !tools.is_empty())
+        .map(|tools| crate::audit::python_json_value(&json!(tools)));
+
+    let (key_id, created_at): (i32, Option<NaiveDateTime>) = sqlx::query_as(
+        "INSERT INTO mcp_api_keys
+            (org_id, key_hash, name, kind, scope_mode, scope_tools, revoked, created_at)
+         VALUES ($1, $2, $3, 'mcp', $4, $5, false, $6)
+         RETURNING id, created_at",
+    )
+    .bind(&user.org_id)
+    .bind(&key_hash)
+    .bind(&name)
+    .bind(&scope_mode)
+    .bind(&stored_tools)
+    .bind(crate::models::now_naive())
+    .fetch_one(&state.pool)
+    .await?;
+
+    let label = audit_label(&user);
+    write_audit(
+        &state.pool,
+        &user.org_id,
+        "mcp_key_created",
+        &user.user_id,
+        &label,
+        Some(python_json(&[
+            ("key_id", json!(key_id)),
+            ("name", json!(name)),
+            ("scope_mode", json!(scope_mode)),
+            // `len(scope_tools) if scope_tools else None` — null, not
+            // zero, when the key is not scoped.
+            (
+                "scope_tool_count",
+                match &scope_tools {
+                    Some(tools) if !tools.is_empty() => json!(tools.len()),
+                    _ => Value::Null,
+                },
+            ),
+        ])),
+        &headers,
+        Some(&peer.ip().to_string()),
+    )
+    .await;
+
+    // The actor is named in the body so a recipient who IS the actor
+    // recognises their own action rather than reading it as a
+    // compromise.
+    let actor = [label, user.user_id.clone(), "unknown user".to_string()]
+        .into_iter()
+        .find(|candidate| !candidate.is_empty())
+        .unwrap_or_default();
+    let scope_summary = if scope_mode == "custom" {
+        format!("{} scoped tool(s)", scope_tools.as_ref().map_or(0, Vec::len))
+    } else {
+        "all tools".to_string()
+    };
+    crate::notifications::create_notification(
+        &state,
+        &user.org_id,
+        crate::notifications::NewNotification::new(
+            "mcp_key_created",
+            format!("New MCP API key created: {name}"),
+        )
+        .body(format!(
+            "{actor} just created a new MCP API key \"{name}\" with access to \
+             {scope_summary}. If this was you, no action needed.  If not, revoke \
+             it from the MCP settings page immediately."
+        ))
+        .severity("warning")
+        .audience("admin")
+        .link("/mcp")
+        .meta(json!({
+            "key_id": key_id,
+            "key_name": name,
+            "scope_mode": scope_mode,
+            "actor_user_id": user.user_id,
+        })),
+    )
+    .await;
+
+    Ok(Json(json!({
+        "id": key_id,
+        "name": name,
+        // Returned once; only the hash is stored.
+        "key": raw_key,
+        "created_at": created_at.map(crate::models::iso_naive),
+        "scope_mode": scope_mode,
+        // `mcp_key.get_scope_tools()`, which is `[]` for an unset or
+        // unparseable column — NOT null. The SPA iterates it.
+        "scope_tools": scope_tools.unwrap_or_default(),
+        "warning": "Save this key now. You won't be able to see it again.",
+    })))
+}
+
+/// `GET /api/mcp/tools` — the catalog the scope picker renders.
+///
+/// Python reads the descriptions off the live FastMCP registry so a UI
+/// edit cannot desync from the server; here the registration IS the
+/// constant, and `mcp_parity.py` holds it to Python's.
+pub async fn list_mcp_tools(RequireAdmin(_user): RequireAdmin) -> Json<Value> {
+    let describe = |names: &[&str], category: &str| -> Vec<Value> {
+        let mut out: Vec<Value> = names
+            .iter()
+            .map(|name| {
+                json!({
+                    "name": name,
+                    "description": crate::mcp::scope::describe(name).trim(),
+                    "category": category,
+                })
+            })
+            .collect();
+        // `sorted(..., key=lambda t: t["name"])`.
+        out.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+        out
+    };
+    Json(json!({
+        "read": describe(&crate::mcp::scope::MCP_READ_TOOLS, "read"),
+        "write": describe(&crate::mcp::scope::MCP_WRITE_TOOLS, "write"),
+        "total": crate::mcp::scope::all_tools().len(),
+    }))
+}
+
 
 #[cfg(test)]
 mod tests {

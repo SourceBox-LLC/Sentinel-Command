@@ -1481,6 +1481,66 @@ CASES += [
     ("revoke another tenant's key", "DELETE", "/api/integration/keys/10", None),
     ("revoke, non-integer id", "DELETE", "/api/integration/keys/abc", None),
 
+    # --- minting an MCP key --------------------------------------------
+    #
+    # The response hands back the only copy of the secret, and the row
+    # beside it carries the scope the key will be held to. Both are
+    # compared, along with the audit row and the admin notification —
+    # a key being created is a security signal, so losing the
+    # notification would be a regression a response diff cannot see.
+    *[(f"mcp key: {label}", "POST", "/api/mcp/keys", body)
+      for label, body in [
+          ("default everything", {}),
+          ("named", {"name": "CI"}),
+          ("readonly", {"name": "Reader", "scope_mode": "readonly"}),
+          ("custom", {"name": "Scoped", "scope_mode": "custom",
+                      "scope_tools": ["list_cameras", "get_camera"]}),
+          # Deduplicated and stripped, WITHOUT reordering.
+          ("custom with duplicates and blanks",
+           {"name": "Scoped", "scope_mode": "custom",
+            "scope_tools": ["get_camera", "list_cameras", "get_camera", "", "  ",
+                            " list_cameras "]}),
+          # `custom` with nothing usable is a 400, not an unscoped key.
+          ("custom with no tools", {"name": "x", "scope_mode": "custom"}),
+          ("custom with an empty list",
+           {"name": "x", "scope_mode": "custom", "scope_tools": []}),
+          ("custom with only blanks",
+           {"name": "x", "scope_mode": "custom", "scope_tools": ["", "   "]}),
+          # An unknown name is refused rather than silently dropped —
+          # the opposite of what compute_allowed_tools does at call
+          # time, and deliberately so: a typo here is a customer
+          # mistake worth reporting.
+          ("custom with an unknown tool",
+           {"name": "x", "scope_mode": "custom",
+            "scope_tools": ["list_cameras", "rm_minus_rf"]}),
+          ("custom with several unknown tools",
+           {"name": "x", "scope_mode": "custom", "scope_tools": ["nope", "also_nope"]}),
+          # A write tool by name is perfectly legal for a user key; it
+          # is only the AGENT that is held to an allowlist.
+          ("custom naming a write tool",
+           {"name": "x", "scope_mode": "custom",
+            "scope_tools": ["set_camera_recording_policy"]}),
+          # scope_tools on a non-custom mode is ignored, not an error.
+          ("readonly with tools anyway",
+           {"name": "x", "scope_mode": "readonly", "scope_tools": ["list_cameras"]}),
+          ("all with tools anyway",
+           {"name": "x", "scope_mode": "all", "scope_tools": ["list_cameras"]}),
+          # Validation.
+          ("an unknown scope mode", {"name": "x", "scope_mode": "nonsense"}),
+          ("scope mode of the wrong type", {"name": "x", "scope_mode": 5}),
+          ("scope mode null", {"name": "x", "scope_mode": None}),
+          ("name too long", {"name": "x" * 101}),
+          ("name of the wrong type", {"name": 5}),
+          ("scope_tools not a list",
+           {"name": "x", "scope_mode": "custom", "scope_tools": "list_cameras"}),
+          ("scope_tools holding a number",
+           {"name": "x", "scope_mode": "custom", "scope_tools": ["list_cameras", 5]}),
+          ("empty body", b""),
+          ("malformed json", b"{x"),
+          ("list body", [1, 2]),
+      ]],
+    ("mcp key: as a member", "POST", "/api/mcp/keys", {"name": "x"}, "member"),
+
     ("policy: bad HH:MM", "PATCH", "/api/cameras/cam-live/recording-settings",
      {"scheduled_start": "25:00"}),
     ("policy: single-digit hour", "PATCH", "/api/cameras/cam-live/recording-settings",

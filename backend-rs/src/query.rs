@@ -644,6 +644,31 @@ impl BodyErrors {
         out
     }
 
+    /// A `Literal[...]` field that got something not in the list.
+    ///
+    /// Pydantic renders the options as a quoted, comma-separated list
+    /// with "or" before the last — `'all', 'readonly' or 'custom'` —
+    /// and repeats it in `ctx.expected`. Verified against the running
+    /// Python rather than guessed, because the exact punctuation is
+    /// what the SPA shows.
+    pub fn literal_error(&mut self, field: &str, input: &Value, options: &[&str]) {
+        let expected = match options {
+            [] => String::new(),
+            [only] => format!("'{only}'"),
+            [rest @ .., last] => format!(
+                "{} or '{last}'",
+                rest.iter().map(|o| format!("'{o}'")).collect::<Vec<_>>().join(", ")
+            ),
+        };
+        self.push(
+            "literal_error",
+            field,
+            &format!("Input should be {expected}"),
+            input.clone(),
+            Some(json!({ "expected": expected })),
+        );
+    }
+
     /// A nested `BaseModel` handed something that is not a mapping.
     ///
     /// Distinct from `dict_type`, which is what a bare `dict` field
