@@ -5,5 +5,6 @@
 //! and how often, and it is all pure — which is what lets it be tested
 //! without a protocol, a database or a network.
 pub mod activity;
+pub mod auth;
 pub mod scope;
 pub mod snapshot;

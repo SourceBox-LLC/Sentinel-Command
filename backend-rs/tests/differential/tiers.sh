@@ -87,6 +87,11 @@ export SCRIPTS_DIR="$REPO/backend/scripts"
 # others, so it is pointed at fake_license.py, which answers exactly
 # what the seeded licence state says — a tick mid-run then rewrites the
 # same values instead of moving the gate underneath a case.
+# The agent's bearer for the MCP tool surface. Set so the SHARED
+# multi-tenant path is reachable at all — unset, every attempt to use
+# it falls through to the key lookup and the agent allowlist is never
+# exercised. Distinct from SENTINEL_AGENT_KEY, which is the run queue's.
+export SENTINEL_AGENT_MCP_KEY="${SENTINEL_AGENT_MCP_KEY:-harness-agent-mcp-key}"
 export SENTINEL_LICENSE_KEY="${SENTINEL_LICENSE_KEY:-harness-licence-key}"
 export SENTINEL_LICENSE_SERVICE_URL="${SENTINEL_LICENSE_SERVICE_URL:-http://127.0.0.1:18090}"
 

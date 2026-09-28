@@ -174,7 +174,9 @@ pub fn summarize_args(args: &serde_json::Map<String, serde_json::Value>) -> Stri
 /// "you have been looping since last night" are different messages to
 /// whoever has to fix it.
 pub struct RateLimiter {
-    inner: std::sync::Mutex<Windows>,
+    /// `Option` because `HashMap::new` is not const and this is a
+    /// static — the same shape `sse.rs` and the plan caches use.
+    inner: std::sync::Mutex<Option<Windows>>,
 }
 
 #[derive(Default)]
@@ -208,6 +210,16 @@ impl RateLimiter {
         Self::starting_at(now_seconds())
     }
 
+    /// A limiter that can be a `static`.
+    ///
+    /// `HashMap::new` is not const, so the maps are built on first use
+    /// — the same shape the broadcasters and the plan caches use. The
+    /// prune clock starts at zero, which means the first call sweeps;
+    /// on an empty map that is free.
+    pub const fn new_static() -> Self {
+        Self { inner: std::sync::Mutex::new(None) }
+    }
+
     /// The same, with the prune clock started at a supplied instant.
     ///
     /// Python initialises `_last_prune` to `time.time()`, so the sweep
@@ -216,11 +228,19 @@ impl RateLimiter {
     /// origin, or the sweep is permanently an eternity in the future.
     pub fn starting_at(now: f64) -> Self {
         Self {
-            inner: std::sync::Mutex::new(Windows {
+            inner: std::sync::Mutex::new(Some(Windows {
                 last_prune: now,
                 ..Default::default()
-            }),
+            })),
         }
+    }
+
+    fn with<T>(&self, f: impl FnOnce(&mut Windows) -> T) -> T {
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        f(guard.get_or_insert_with(|| Windows {
+            last_prune: now_seconds(),
+            ..Default::default()
+        }))
     }
 
     /// `(allowed, remaining_minute, breach)`.
@@ -237,12 +257,11 @@ impl RateLimiter {
         daily_limit: usize,
         now: f64,
     ) -> (bool, usize, Breach) {
-        let mut windows = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-
+        self.with(|windows| {
         // Opportunistic and time-gated: one comparison on the hot path,
         // an O(keys) walk at most hourly.
         if now - windows.last_prune >= PRUNE_INTERVAL {
-            prune(&mut windows, now);
+            prune(windows, now);
             windows.last_prune = now;
         }
 
@@ -276,13 +295,15 @@ impl RateLimiter {
             .expect("just inserted")
             .push_back(now);
         (true, minute_limit - (minute_len + 1), Breach::None)
+        })
     }
 
     /// Test-facing: forget every window.
     pub fn clear(&self) {
-        let mut windows = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        windows.minute.clear();
-        windows.daily.clear();
+        self.with(|windows| {
+            windows.minute.clear();
+            windows.daily.clear();
+        });
     }
 }
 
@@ -480,16 +501,14 @@ mod tests {
         let t = 1_000_000.0;
         let limiter = RateLimiter::starting_at(t);
         assert!(limiter.check_at("old", 10, 100, t).0);
-        {
-            let windows = limiter.inner.lock().unwrap();
-            assert!(windows.daily.contains_key("old"));
-        }
+        limiter.with(|windows| assert!(windows.daily.contains_key("old")));
         // An hour past the prune interval AND a day past the call.
         assert!(limiter.check_at("new", 10, 100, t + 90_000.0).0);
-        let windows = limiter.inner.lock().unwrap();
-        assert!(!windows.daily.contains_key("old"), "aged-out key was kept");
-        assert!(!windows.minute.contains_key("old"));
-        assert!(windows.daily.contains_key("new"));
+        limiter.with(|windows| {
+            assert!(!windows.daily.contains_key("old"), "aged-out key was kept");
+            assert!(!windows.minute.contains_key("old"));
+            assert!(windows.daily.contains_key("new"));
+        });
     }
 
     fn owned(names: &[&str]) -> Vec<String> {

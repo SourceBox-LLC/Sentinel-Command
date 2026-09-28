@@ -43,6 +43,10 @@ pub struct Config {
     /// disable the per-org scoped keys, since that deployment is
     /// exactly the one that issues them.
     pub sentinel_agent_key: Option<String>,
+    /// `SENTINEL_AGENT_MCP_KEY` — the agent's bearer for the tool
+    /// surface, distinct from the run-queue key above on the
+    /// first-party deployment.
+    pub sentinel_agent_mcp_key: Option<String>,
     /// The self-hosted Sentinel licence key. Absent means unlicensed,
     /// which is a different refusal from an ineligible plan.
     pub sentinel_license_key: Option<String>,
@@ -171,6 +175,9 @@ impl Config {
             min_supported_node_version: var_or("MIN_SUPPORTED_NODE_VERSION", "0.1.0"),
             latest_node_version: var_or("LATEST_NODE_VERSION", "0.1.77"),
             sentinel_agent_key: std::env::var("SENTINEL_AGENT_KEY").ok().filter(|v| !v.is_empty()),
+            sentinel_agent_mcp_key: std::env::var("SENTINEL_AGENT_MCP_KEY")
+                .ok()
+                .filter(|v| !v.is_empty()),
             sentinel_license_key: std::env::var("SENTINEL_LICENSE_KEY").ok().filter(|v| !v.is_empty()),
             // Python reads this as `.lower() == "true"`, so anything
             // else — including "1" — is false.
@@ -255,6 +262,7 @@ mod tests {
             min_supported_node_version: "0.1.0".into(),
             latest_node_version: "0.1.77".into(),
             sentinel_agent_key: None,
+            sentinel_agent_mcp_key: None,
             clerk_webhook_secret: None,
             sentinel_license_key: None,
             sentinel_dispatch_enabled: true,
