@@ -221,3 +221,64 @@ it matches Python exactly — including the part where "matches" means
 both are arbitrary. A port that added `ORDER BY id` here would be more
 predictable than the thing it is replacing and would diverge from it,
 which is the one thing this branch cannot do.
+
+## 13. A scoped agent key bypasses the agent tool allowlist entirely
+
+**This one is an escalation, not a quirk.** Everything else in this
+file is a behaviour worth knowing about. This is a hole.
+
+`_AGENT_ALLOWED_TOOLS` exists for a stated reason, and the comment
+above it says it plainly: the agent's LLM is steered by content an
+attacker can influence — camera names, and text held up to a lens —
+and "disable recording, then report all clear" is the canonical
+injection against a camera product. So the agent gets reads plus
+incident authoring, and `set_camera_recording_policy` is excluded.
+
+`ScopeMiddleware._lookup_allowed` enforces that for exactly one
+credential: the shared, multi-tenant `SENTINEL_AGENT_MCP_KEY`. It then
+falls through to `McpApiKey` by hash. A **scoped per-org agent key**
+lives in `sentinel_agent_keys`, a different table, so it matches
+neither — `_lookup_allowed` returns `None`, and `on_call_tool`'s gate
+is skipped:
+
+```python
+allowed = self._lookup_allowed()
+if allowed is not None and name not in allowed:   # allowed IS None
+    raise ToolError(...)
+```
+
+`_resolve_org`'s path 1b then authenticates the same key perfectly
+well. The tool runs.
+
+Verified against the running Python, not inferred. With
+`osa_…0001` from the fixture and Sentinel enabled for the org:
+
+```
+before: continuous_24_7 = t
+tools/call set_camera_recording_policy {camera_id: cam-live,
+                                        continuous_24_7: false}
+  -> {"success": true, ...}, isError: false
+after:  continuous_24_7 = f
+```
+
+`tools/list` on the same key returns all 23 tools, including the one
+the allowlist excludes.
+
+The credential this affects is the one given to customers running the
+agent themselves — the case the scoped key was introduced FOR. So the
+customer-hosted agent, on hardware SourceBox does not control, has
+strictly more tool access than SourceBox's own multi-tenant agent,
+which is backwards.
+
+The fix is one lookup: `_lookup_allowed` should consult
+`sentinel_agent_keys` the same way `_resolve_org` does, and return
+`_AGENT_ALLOWED_TOOLS` when it matches. `compute_agent_allowed_tools`
+already takes its inputs as parameters, so the allowlist itself needs
+no change.
+
+**Reproduced in the port, and it should not stay that way.** The two
+stacks have to agree while both are serving, and a port that quietly
+closed this would diverge on the one case that matters. It is
+reproduced, it is pinned by a differential case that asserts the
+CURRENT behaviour, and that case is marked so it fails loudly when
+master is fixed — which is the signal to change both together.

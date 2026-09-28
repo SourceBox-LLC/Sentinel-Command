@@ -46,6 +46,20 @@ chrono = { version = "0.4", features = ["serde"] }
 # crate for one call.
 libc = "0.2"
 
+# The MCP server. Replaces `fastmcp`, which is what the Python builds
+# `/mcp` from.
+rmcp = { version = "3.5", default-features = false, features = [
+    "server",
+    "macros",
+    "tower",
+    "transport-streamable-http-server",
+    # Stateless: every request carries its own bearer and resolves its
+    # own org, so there is nothing for a session to hold. It also keeps
+    # the port free of per-process session state, which is the thing
+    # that forces a producer and its consumers to move together.
+    "transport-streamable-http-server-session",
+] }
+
 # The strangler proxy, and outbound calls to Clerk / Resend.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 # The proxy uses hyper directly rather than reqwest: reqwest builds a
