@@ -33,7 +33,7 @@ fn require_admin_feature(user: &AuthUser) -> Result<(), ApiError> {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct StreamAccessLogRow {
+pub struct StreamAccessLogRow {
     pub(crate) id: i32,
     pub(crate) user_id: String,
     pub(crate) user_email: Option<String>,
@@ -45,7 +45,7 @@ pub(crate) struct StreamAccessLogRow {
 }
 
 impl StreamAccessLogRow {
-    pub(crate) fn to_json(&self) -> Value {
+    pub fn to_json(&self) -> Value {
         json!({
             "id": self.id,
             "user_id": self.user_id,
