@@ -103,9 +103,114 @@ fn encode(bytes: &[u8], alphabet: &[u8; 64], pad: bool) -> String {
     out
 }
 
+/// `base64.b64decode(s)` — CPython's LENIENT decode, errors and all.
+///
+/// Not the same function as a strict decoder, and the difference is
+/// visible to a user: the error text is interpolated into the message
+/// the snapshot route returns, so "corrupt snapshot data (…)" has to
+/// say what Python would have said.
+///
+/// The rules, measured against CPython rather than read off the docs:
+///
+///   * every character outside the alphabet and `=` is DISCARDED
+///     first, so `"aaaa!"` decodes and `"!!!!"` is empty;
+///   * a data-character count one past a multiple of four is the
+///     "cannot be 1 more than a multiple of 4" error, and the count in
+///     the message is of data characters only;
+///   * two or three data characters left over need ENOUGH TRAILING
+///     padding to close the quad — two for a leftover of two, one for
+///     three — and anything less is "Incorrect padding". Both halves
+///     matter: `"=qcYezdZ"` contains a `=` and still raises because a
+///     leading one closes no quad, and `"ab="` has trailing padding
+///     and still raises because one `=` cannot finish a pair.
+pub fn python_b64decode(input: &str) -> Result<Vec<u8>, String> {
+    let kept: Vec<u8> = input
+        .bytes()
+        .filter(|b| is_base64_alphabet(*b) || *b == b'=')
+        .collect();
+    let data: Vec<u8> = kept.iter().copied().filter(|b| *b != b'=').collect();
+    let trailing_padding = kept.iter().rev().take_while(|b| **b == b'=').count();
+
+    match data.len() % 4 {
+        1 => {
+            return Err(format!(
+                "Invalid base64-encoded string: number of data characters ({}) \
+                 cannot be 1 more than a multiple of 4",
+                data.len()
+            ))
+        }
+        // A leftover of two needs two `=`, three needs one: enough to
+        // finish the quad, not merely some.
+        leftover @ (2 | 3) if trailing_padding < 4 - leftover => {
+            return Err("Incorrect padding".to_string())
+        }
+        _ => {}
+    }
+
+    let mut out = Vec::with_capacity(data.len() / 4 * 3);
+    let mut acc: u32 = 0;
+    let mut bits = 0;
+    for byte in data {
+        acc = (acc << 6) | u32::from(sextet(byte));
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Ok(out)
+}
+
+fn is_base64_alphabet(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'+' || b == b'/'
+}
+
+fn sextet(b: u8) -> u8 {
+    match b {
+        b'A'..=b'Z' => b - b'A',
+        b'a'..=b'z' => b - b'a' + 26,
+        b'0'..=b'9' => b - b'0' + 52,
+        b'+' => 62,
+        _ => 63,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Held to CPython's own answers, generated from it: which inputs
+    /// decode, which raise, and the exact wording when they do — the
+    /// message is interpolated into what a user sees.
+    #[test]
+    fn base64_decoding_matches_cpython() {
+        let corpus: std::collections::BTreeMap<String, Option<String>> =
+            serde_json::from_str(include_str!("../tests/fixtures/b64_corpus.json"))
+                .expect("the corpus is JSON");
+        assert!(corpus.len() > 50, "a thin corpus proves little");
+        for (input, expected) in &corpus {
+            match (python_b64decode(input), expected) {
+                (Ok(_), None) => {}
+                (Err(got), Some(want)) => assert_eq!(&got, want, "input {input:?}"),
+                (Ok(_), Some(want)) => {
+                    panic!("input {input:?} decoded; CPython raised {want:?}")
+                }
+                (Err(got), None) => {
+                    panic!("input {input:?} raised {got:?}; CPython decoded it")
+                }
+            }
+        }
+    }
+
+    /// The filtering is what makes the lenient decoder lenient.
+    #[test]
+    fn everything_outside_the_alphabet_is_discarded() {
+        assert_eq!(python_b64decode("aGk=").unwrap(), b"hi");
+        assert_eq!(python_b64decode(" a G k = ").unwrap(), b"hi");
+        assert_eq!(python_b64decode("aG\nk=").unwrap(), b"hi");
+        assert_eq!(python_b64decode("!!!!").unwrap(), b"");
+        assert_eq!(python_b64decode("").unwrap(), b"");
+    }
 
     /// Checked against `hmac.new(key, msg, sha256).hexdigest()`.
     #[test]

@@ -332,6 +332,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/integration/cameras/{camera_id}/recording",
             served(axum::routing::post(api::integration::set_recording)),
         )
+        .route(
+            "/api/integration/cameras/{camera_id}/snapshot",
+            ported(api::integration::snapshot),
+        )
         .route("/api/integration/status", ported(api::integration::status))
 
         .route(

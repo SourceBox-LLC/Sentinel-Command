@@ -6,3 +6,4 @@
 //! without a protocol, a database or a network.
 pub mod activity;
 pub mod scope;
+pub mod snapshot;

@@ -367,6 +367,64 @@ pub async fn motion_stream(
     ))
 }
 
+/// `GET /api/integration/cameras/{camera_id}/snapshot` — the still
+/// image Home Assistant renders.
+///
+/// The same node round trip the `view_camera` tool makes: org-scoped,
+/// and refused when the node cannot currently capture. A 404 for a
+/// camera that is not this org's, and a 503 for everything else — Home
+/// Assistant shows "unavailable" for a 503 rather than an error, which
+/// is the right thing for a camera that is briefly down.
+pub async fn snapshot(
+    rate: PerMinute<30>,
+    State(state): State<AppState>,
+    Path(camera_id): Path<String>,
+    IntegrationUser(user): IntegrationUser,
+) -> Result<axum::response::Response, ApiError> {
+    rate.check().await?;
+
+    // Checked here as well as inside the capture, because the two
+    // answer differently: an unknown camera is a 404, and a camera
+    // that exists but cannot be captured from is a 503.
+    let known: Option<(i32,)> =
+        sqlx::query_as("SELECT id FROM cameras WHERE camera_id = $1 AND org_id = $2 LIMIT 1")
+            .bind(&camera_id)
+            .bind(&user.org_id)
+            .fetch_optional(&state.pool)
+            .await?;
+    if known.is_none() {
+        return Err(ApiError::not_found("Camera not found"));
+    }
+
+    let jpeg = match crate::mcp::snapshot::capture_bytes(&state.pool, &user.org_id, &camera_id)
+        .await
+    {
+        Ok((jpeg, _node_id)) => jpeg,
+        Err(err) => {
+            return Err(ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                serde_json::Value::String(err.0),
+            ))
+        }
+    };
+
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("image/jpeg"),
+    );
+    // `no-store`, not the evidence routes' `private, max-age=300`: this
+    // is a live frame, and a cached one is a lie about what the camera
+    // can see right now.
+    headers.insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    use axum::response::IntoResponse;
+    Ok((headers, jpeg).into_response())
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

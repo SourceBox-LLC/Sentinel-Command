@@ -85,6 +85,9 @@ PORTED = {
     # `core.clerk` through the Clerk probe, so like `core.plans` it has
     # to stop the walk: the Rust probe makes that same REST call.
     "core.health_probes",
+    # The `osi_` key resolver, ported with the integration slice as the
+    # `IntegrationUser` extractor.
+    "core.integration_auth",
 }
 
 # Modules only PART of which has a Rust equivalent. Importing one of the
@@ -118,7 +121,6 @@ PORTED_FUNCTIONS = {
 BLOCKERS = {
     "core.clerk": "Clerk Backend API",
     "core.license_client": "Sentinel License Service client",
-    "core.integration_auth": "Home Assistant integration key",
     "core.sync_client": "Sentinel Sync Service client",
     "api.hls": "in-process HLS segment + playlist caches",  # now Rust's — see PORTED_STATE
     "api.ws": "in-process WebSocket connection manager",  # likewise

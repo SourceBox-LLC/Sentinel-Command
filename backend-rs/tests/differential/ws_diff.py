@@ -21,6 +21,11 @@ uvicorn below the ASGI app, and carries neither. Having them is the
 point of that middleware, so this is a divergence worth keeping rather
 than a defect to match.
 
+Run it twice inside a minute and the later cases will report
+`InvalidStatus`: the connect throttle allows ten handshakes per node
+per minute, and one full pass spends most of them. That is the
+throttle working, not a difference — wait a minute between runs.
+
 Usage: ws_diff.py <node_key> [-v]
 """
 from __future__ import annotations
@@ -31,6 +36,9 @@ import pathlib
 import socket
 import subprocess
 import sys
+
+import urllib.error
+import urllib.request
 
 import websockets
 
@@ -163,9 +171,94 @@ async def converse(port, key, node, frames, headers=True):
     return {"replies": replies}
 
 
+# A one-pixel JPEG, base64-encoded, so a successful capture returns
+# bytes both stacks can be compared on without shipping a fixture file.
+TINY_JPEG_B64 = (
+    "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a"
+    "HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAA"
+    "AAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=="
+)
+
+
+async def command_roundtrip(port, key, node, auth, exchanges):
+    """Drive a series of node commands end to end, down ONE socket.
+
+    A route like the integration snapshot does not answer on its own:
+    it sends a `command` frame down the node's socket and waits for the
+    `command_result` that comes back. Neither half is visible to a
+    request/response differential — the HTTP side blocks until the
+    socket answers, and the socket side is a conversation.
+
+    So both are driven at once: open the socket, fire the request in the
+    background, answer the command frame it produces, and record both
+    the frame the node was sent AND the response the caller got.
+
+    One socket for every exchange, not one each. The connect throttle
+    allows ten per node per minute and the rest of this file has
+    already spent several — sixteen more refused every handshake and
+    turned eight cases into eight identical refusals that agreed
+    perfectly and tested nothing.
+    """
+    url = f"ws://127.0.0.1:{port}/ws/node"
+    extra = {"X-Node-API-Key": key, "X-Node-Id": node}
+
+    def fetch(path):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}{path}", headers={"Authorization": auth})
+        try:
+            with urllib.request.urlopen(request, timeout=25) as response:
+                return response.status, response.read()
+        except urllib.error.HTTPError as err:
+            return err.code, err.read()
+        except Exception as exc:  # noqa: BLE001
+            return None, str(exc).encode()
+
+    out = {}
+    try:
+        async with websockets.connect(
+            url, additional_headers=extra, open_timeout=5
+        ) as ws:
+            for label, path, reply in exchanges:
+                task = asyncio.get_running_loop().run_in_executor(None, fetch, path)
+                try:
+                    frame = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                except TimeoutError:
+                    frame = "<no command>"
+                if (isinstance(frame, dict) and frame.get("type") == "command"
+                        and reply is not None):
+                    await ws.send(json.dumps({
+                        "type": "command_result",
+                        # Generated per command, so echoed rather than
+                        # compared.
+                        "id": frame.get("id"),
+                        "payload": reply,
+                    }))
+                status, body = await task
+                if isinstance(frame, dict):
+                    frame = {k: v for k, v in frame.items() if k != "id"}
+                out[label] = {
+                    "command": frame,
+                    "status": status,
+                    # A JPEG on success and JSON on failure; the length
+                    # and a prefix say which without embedding an image.
+                    "body_len": len(body),
+                    "body_head": body[:160].decode("utf-8", "replace"),
+                }
+    except Exception as exc:  # noqa: BLE001
+        return {"failed": type(exc).__name__}
+    return out
+
+
 async def both(key, node, frames, headers=True):
     return {
         name: await converse(port, key, node, frames, headers)
+        for name, port in PORTS.items()
+    }
+
+
+async def both_commands(key, node, auth, exchanges):
+    return {
+        name: await command_roundtrip(port, key, node, auth, exchanges)
         for name, port in PORTS.items()
     }
 
@@ -267,6 +360,46 @@ async def main() -> int:
     for name, port in PORTS.items():
         statuses[name] = [handshake_status(port, query) for _ in range(11)]
     compare("eleven attempts", statuses, results)
+
+    print("a node command, end to end")
+    # The only place a node command is driven all the way through.
+    # Every route that issues one — the snapshot, the recording and
+    # snapshot listings, the wipe — goes down this path, and neither
+    # half is visible on its own: the HTTP side blocks on the socket,
+    # and the socket side never answers a request.
+    #
+    # `cam-live` belongs to node-aaaa1111, which is the node the socket
+    # authenticates as. All of them share one connection; see
+    # `command_roundtrip`.
+    auth = "Bearer osi_live_integration_key"
+    path = "/api/integration/cameras/cam-live/snapshot"
+    exchanges = [
+        # The envelope a current CameraNode sends.
+        ("a captured frame", path,
+         {"status": "success", "data": {"image_b64": TINY_JPEG_B64}}),
+        # The flat shape an older one sends.
+        ("a frame without the envelope", path, {"image_b64": TINY_JPEG_B64}),
+        # A dead pipeline, which must not be reported as an out-of-date
+        # node — the two patterns CameraNode actually sends.
+        ("a pipeline with no segments", path,
+         {"status": "error", "error": "no segments available yet"}),
+        ("an ffmpeg failure", path,
+         {"status": "error", "error": "ffmpeg exited with status 1"}),
+        # Anything else, surfaced verbatim.
+        ("an unrecognised failure", path, {"status": "error", "error": "disk full"}),
+        ("a failure with no message", path, {"status": "error"}),
+        # A node that answers with nothing usable blames its version.
+        ("an empty payload", path, {}),
+        ("an unparseable image", path,
+         {"status": "success", "data": {"image_b64": "not base64!!"}}),
+    ]
+    answers = await both_commands(key, "node-aaaa1111", auth, exchanges)
+    for label, _path, _reply in exchanges:
+        compare(
+            f"snapshot: {label}",
+            {name: answers[name].get(label, answers[name]) for name in PORTS},
+            results,
+        )
 
     same = sum(1 for _, ok in results if ok)
     differing = len(results) - same

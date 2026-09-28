@@ -327,6 +327,27 @@ CASES = [
     # A dashboard session token is not an integration key.
     ("GET", "/api/integration/cameras", True),
 
+    # The still image. No node socket is open here, so every one of
+    # these is a refusal — which is the half worth comparing anyway,
+    # because the messages are what Home Assistant surfaces. The
+    # success path needs a socket and lives in ws_diff.py.
+    *[("GET", f"/api/integration/cameras/{camera}/snapshot", False,
+       {"Authorization": "Bearer osi_live_integration_key"})
+      for camera in (
+          # A camera on a node that is not connected: 503, naming the
+          # node so an operator knows which box to look at.
+          "cam-live",
+          # Unknown, and another org's — both 404, and the second must
+          # not leak that it exists.
+          "nope",
+          "cam-theirs",
+          # A camera whose node_id is NULL reaches the capture and
+          # fails differently: "no assigned node".
+          "cam-orphan",
+      )],
+    ("GET", "/api/integration/cameras/cam-live/snapshot", False),
+    ("GET", "/api/integration/cameras/cam-live/snapshot", True),
+
     # --- install + MCP setup scripts: public, header-heavy -------------
     #
     # The bodies are read straight off disk, so a diff here is almost
