@@ -29,24 +29,24 @@ const SEVERITIES: [&str; 4] = ["low", "medium", "high", "critical"];
 const STATUSES: [&str; 4] = ["open", "acknowledged", "resolved", "dismissed"];
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct IncidentRow {
-    pub(crate) id: i32,
-    pub(crate) camera_id: Option<String>,
-    pub(crate) title: String,
-    pub(crate) summary: String,
-    pub(crate) report: Option<String>,
-    pub(crate) severity: String,
-    pub(crate) status: String,
-    pub(crate) created_by: String,
-    pub(crate) created_at: Option<NaiveDateTime>,
-    pub(crate) updated_at: Option<NaiveDateTime>,
-    pub(crate) resolved_at: Option<NaiveDateTime>,
-    pub(crate) resolved_by: Option<String>,
-    pub(crate) evidence_count: i64,
+pub struct IncidentRow {
+    pub id: i32,
+    pub camera_id: Option<String>,
+    pub title: String,
+    pub summary: String,
+    pub report: Option<String>,
+    pub severity: String,
+    pub status: String,
+    pub created_by: String,
+    pub created_at: Option<NaiveDateTime>,
+    pub updated_at: Option<NaiveDateTime>,
+    pub resolved_at: Option<NaiveDateTime>,
+    pub resolved_by: Option<String>,
+    pub evidence_count: i64,
 }
 
 impl IncidentRow {
-    pub(crate) fn to_json(&self) -> Value {
+    pub fn to_json(&self) -> Value {
         json!({
             "id": self.id,
             "camera_id": self.camera_id,
@@ -68,18 +68,18 @@ impl IncidentRow {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct EvidenceRow {
-    pub(crate) id: i32,
-    pub(crate) incident_id: i32,
-    pub(crate) kind: String,
-    pub(crate) text: Option<String>,
-    pub(crate) camera_id: Option<String>,
-    pub(crate) data_mime: Option<String>,
-    pub(crate) timestamp: Option<NaiveDateTime>,
+pub struct EvidenceRow {
+    pub id: i32,
+    pub incident_id: i32,
+    pub kind: String,
+    pub text: Option<String>,
+    pub camera_id: Option<String>,
+    pub data_mime: Option<String>,
+    pub timestamp: Option<NaiveDateTime>,
 }
 
 impl EvidenceRow {
-    pub(crate) fn to_json(&self) -> Value {
+    pub fn to_json(&self) -> Value {
         json!({
             "id": self.id,
             "incident_id": self.incident_id,
@@ -96,7 +96,7 @@ impl EvidenceRow {
     }
 }
 
-const INCIDENT_SELECT: &str = r#"
+pub const INCIDENT_SELECT: &str = r#"
     SELECT i.id, i.camera_id, i.title, i.summary, i.report, i.severity, i.status,
            i.created_by, i.created_at, i.updated_at, i.resolved_at, i.resolved_by,
            (SELECT COUNT(*) FROM incident_evidence e WHERE e.incident_id = i.id)
