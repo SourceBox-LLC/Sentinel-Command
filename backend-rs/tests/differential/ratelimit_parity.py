@@ -26,6 +26,15 @@ BACKEND = BACKEND_RS.parent / "backend"
 # reported as having no Python counterpart.
 WEBSOCKET_ROUTES = {("GET", "/ws/node")}
 
+# The MCP protocol surface. Neither path is a slowapi route on either
+# side: Python mounts FastMCP's ASGI app at `/mcp`, so there is no
+# `@router.post` to carry a `@limiter.limit` and no entry for this
+# script to compare against. The limiting that IS in force is per API
+# key and lives inside the server — `mcp/scope.rs::RateLimiter`, two
+# windows, checked in `mcp/auth.rs::resolve`. `mcp_parity.py` holds
+# those numbers to Python's `RATE_LIMITS`.
+MOUNTED_ROUTES = {("POST", "/mcp"), ("POST", "/mcp/")}
+
 
 def python_limits():
     """(METHOD, path) -> (n, window) or None."""
@@ -146,6 +155,14 @@ def rust_routes():
         if ported:
             routes.append(("GET", path, "::".join(ported.group(1).split("::")[-2:])))
             continue
+        # `post_service(...)`, which mounts a tower service rather than
+        # a handler function — the MCP protocol surface. Named here so
+        # the gap check sees the path; the exemption above is separate
+        # and says why there is no limit to compare.
+        service = re.search(r"(get|post)_service\(", body)
+        if service:
+            routes.append((service.group(1).upper(), path, "mounted::service"))
+            continue
         for verb in ("get", "post", "put", "patch", "delete"):
             # Both `get(...)` and `axum::routing::delete(...)` are used in
             # the route table. An earlier version of this pattern excluded
@@ -213,6 +230,9 @@ def main():
             continue
         if (method, path) in WEBSOCKET_ROUTES:
             print(f"  ok    {method:<6} {path:<46} websocket — throttled in ws.rs, not slowapi")
+            continue
+        if (method, path) in MOUNTED_ROUTES:
+            print(f"  ok    {method:<6} {path:<46} mounted app — per-key limit inside the server")
             continue
         if (method, path) not in py:
             print(f"  FAIL  {method:<6} {path:<46} no matching python route")

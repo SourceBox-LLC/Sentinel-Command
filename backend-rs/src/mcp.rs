@@ -7,5 +7,6 @@
 pub mod activity;
 pub mod auth;
 pub mod scope;
+pub mod server;
 pub mod snapshot;
 pub mod tools;

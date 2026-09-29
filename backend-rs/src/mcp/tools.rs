@@ -65,6 +65,39 @@ pub fn agent_label(key_name: &str) -> String {
 // passed validation.
 // ---------------------------------------------------------------------
 
+/// `note.strip() if note else None`.
+///
+/// The truthiness test is on the UNSTRIPPED value, so an empty note is
+/// NULL while a whitespace-only one is stored as the empty string. Both
+/// read as "no caption" to a human and they are different rows.
+fn python_note(note: Option<&str>) -> Option<&str> {
+    note.filter(|n| !n.is_empty()).map(str::trim)
+}
+
+/// Concatenate the buffered segments, dropping the OLDEST until they fit.
+///
+/// MPEG-TS is byte-concatenation-safe, so the pieces play end to end
+/// without remuxing. Which end the cap drops is the whole of the
+/// behaviour: an agent asking for a clip wants the most RECENT video, so
+/// a clip trimmed from the other end returns the beginning of the buffer
+/// and reports the same duration for it.
+///
+/// A function rather than a loop inline in `attach_clip` so the cap can
+/// be tested at all: the real cap is 32 MB, and reaching it through the
+/// differential would mean pushing tens of megabytes into each tier's
+/// segment cache per case. Here it takes three small chunks.
+fn trim_to_cap(mut chunks: Vec<bytes::Bytes>, max_bytes: usize) -> (Vec<u8>, usize, bool) {
+    let mut truncated = false;
+    let mut total: usize = chunks.iter().map(|c| c.len()).sum();
+    while !chunks.is_empty() && total > max_bytes {
+        total -= chunks.remove(0).len();
+        truncated = true;
+    }
+    let blob: Vec<u8> = chunks.iter().flat_map(|c| c.iter().copied()).collect();
+    let count = chunks.len();
+    (blob, count, truncated)
+}
+
 fn opt_str(args: &Map<String, Value>, key: &str) -> Option<String> {
     args.get(key)
         .filter(|v| !v.is_null())
@@ -125,14 +158,14 @@ pub async fn get_stream_url(
 }
 
 pub async fn list_camera_groups(state: &AppState, org_id: &str) -> ToolResult {
-    let rows: Vec<crate::models::CameraGroupRow> = sqlx::query_as(
-        "SELECT id, org_id, name, color, icon, created_at
-           FROM camera_groups WHERE org_id = $1 ORDER BY id",
-    )
-    .bind(org_id)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(db_error)?;
+    // The REST route's query verbatim, so the dashboard's list and the
+    // agent's cannot drift — `camera_count` is the whole of the shape.
+    let rows: Vec<crate::models::CameraGroupRow> =
+        sqlx::query_as(crate::api::cameras::CAMERA_GROUP_SELECT)
+            .bind(org_id)
+            .fetch_all(&state.pool)
+            .await
+            .map_err(db_error)?;
     Ok(Value::Array(rows.iter().map(|row| row.to_json()).collect()))
 }
 
@@ -226,10 +259,33 @@ pub async fn set_camera_recording_policy(
                     "error": "invalid_time_format",
                     "field": label,
                     "value": value,
-                    "expected": "HH:MM (24-hour), e.g. 22:00",
+                    "expected": "HH:MM 24-hour, e.g. 08:30",
                 }));
             }
         }
+    }
+
+    // Continuous and scheduled cannot both be on: the heartbeat's
+    // window check would silently ignore the schedule. An agent that
+    // wants to switch modes has to pass the OFF for the old one in the
+    // same call, which is also what the REST route requires.
+    let current: (Option<bool>, Option<bool>) = sqlx::query_as(
+        "SELECT continuous_24_7, scheduled_recording FROM cameras
+          WHERE camera_id = $1 AND org_id = $2",
+    )
+    .bind(&camera_id)
+    .bind(org_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(db_error)?;
+    let next_continuous = continuous.unwrap_or(current.0.unwrap_or(false));
+    let next_scheduled = scheduled.unwrap_or(current.1.unwrap_or(false));
+    if next_continuous && next_scheduled {
+        return Ok(json!({
+            "error": "modes_conflict",
+            "message": "continuous_24_7 and scheduled_recording can't both \
+be true. Pass one as false in the same call to switch.",
+        }));
     }
 
     let mut sets: Vec<String> = Vec::new();
@@ -307,7 +363,9 @@ pub async fn get_stream_logs(
     org_id: &str,
     args: &Map<String, Value>,
 ) -> ToolResult {
-    let camera_id = opt_str(args, "camera_id");
+    // `if camera_id:` — an empty string is falsy, so it is no filter
+    // at all rather than a filter that matches nothing.
+    let camera_id = opt_str(args, "camera_id").filter(|c| !c.is_empty());
     let limit = int_or(args, "limit", 50);
     // The same row the audit route serves, so the two agree on the
     // shape a client sees.
@@ -527,9 +585,14 @@ pub async fn list_incidents(
             // The body is stripped from the list view — `get_incident`
             // reads it — but a flag stays so an agent can tell whether
             // a second call is worth making.
+            // `shift_remove`, not `remove`: with `preserve_order`,
+            // serde_json's `remove` is a SWAP-remove, which would move
+            // the last key (`evidence_count`) into the hole `report`
+            // left. Python's `pop` closes the hole instead, and the key
+            // order is on the wire.
             let report = value
                 .as_object_mut()
-                .and_then(|map| map.remove("report"))
+                .and_then(|map| map.shift_remove("report"))
                 .unwrap_or(Value::Null);
             let has_report = report.as_str().is_some_and(|text| !text.trim().is_empty());
             value["has_report"] = json!(has_report);
@@ -625,15 +688,21 @@ pub async fn create_incident(
     // characters.
     let stored_title: String = title.trim().chars().take(200).collect();
     let (incident_id,): (i32,) = sqlx::query_as(
+        // `report` is named explicitly: SQLAlchemy fills it from
+        // `default=""` on insert, and leaving it out stores NULL — which
+        // `finalize_incident` then reads as "no report yet" correctly by
+        // accident and `list_incidents` reports differently.
         "INSERT INTO incidents
-            (org_id, camera_id, title, summary, severity, status, created_by,
+            (org_id, camera_id, title, summary, report, severity, status, created_by,
              created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, 'open', $6, $7, $7)
+         VALUES ($1, $2, $3, $4, '', $5, 'open', $6, $7, $7)
          RETURNING id",
     )
     .bind(org_id)
-    // An empty camera_id is falsy in Python and stores NULL.
-    .bind(camera_id.as_deref().filter(|c| !c.is_empty()))
+    // Verbatim, INCLUDING an empty string: Python's `if camera_id:`
+    // guards the existence check above and nothing else — the column
+    // is assigned the argument as given, so `""` is stored as `""`.
+    .bind(&camera_id)
     .bind(&stored_title)
     .bind(summary.trim())
     .bind(&severity)
@@ -659,7 +728,7 @@ pub async fn create_incident(
     notification.severity = notif_severity.to_string();
     notification.audience = "all".to_string();
     notification.link = Some(format!("/incidents/{incident_id}"));
-    notification.camera_id = camera_id.clone().filter(|c| !c.is_empty());
+    notification.camera_id = camera_id.clone();
     // `created_by` is what lets the dispatcher refuse to re-trigger on
     // an agent-authored incident. Without it: motion, run, incident,
     // notification, NEW run — self-amplifying until the monthly cap is
@@ -784,7 +853,8 @@ pub async fn update_incident(
             && !matches!(existing_status.as_str(), "resolved" | "dismissed")
         {
             sqlx::query(
-                "UPDATE incidents SET resolved_at = $1, resolved_by = $2 WHERE id = $3",
+                "UPDATE incidents SET resolved_at = $1, resolved_by = $2, updated_at = $1
+                  WHERE id = $3",
             )
             .bind(now)
             .bind(agent_label(key_name))
@@ -794,23 +864,27 @@ pub async fn update_incident(
             .map_err(db_error)?;
         } else if status == "open" {
             sqlx::query(
-                "UPDATE incidents SET resolved_at = NULL, resolved_by = NULL WHERE id = $1",
+                "UPDATE incidents SET resolved_at = NULL, resolved_by = NULL, updated_at = $1
+                  WHERE id = $2",
             )
+            .bind(now)
             .bind(incident_id as i32)
             .execute(&state.pool)
             .await
             .map_err(db_error)?;
         }
-        sqlx::query("UPDATE incidents SET status = $1 WHERE id = $2")
+        sqlx::query("UPDATE incidents SET status = $1, updated_at = $2 WHERE id = $3")
             .bind(status)
+            .bind(now)
             .bind(incident_id as i32)
             .execute(&state.pool)
             .await
             .map_err(db_error)?;
     }
     if let Some(severity) = &severity {
-        sqlx::query("UPDATE incidents SET severity = $1 WHERE id = $2")
+        sqlx::query("UPDATE incidents SET severity = $1, updated_at = $2 WHERE id = $3")
             .bind(severity)
+            .bind(now)
             .bind(incident_id as i32)
             .execute(&state.pool)
             .await
@@ -826,8 +900,9 @@ pub async fn update_incident(
                 summary.chars().count()
             ));
         }
-        sqlx::query("UPDATE incidents SET summary = $1 WHERE id = $2")
+        sqlx::query("UPDATE incidents SET summary = $1, updated_at = $2 WHERE id = $3")
             .bind(summary.trim())
+            .bind(now)
             .bind(incident_id as i32)
             .execute(&state.pool)
             .await
@@ -840,8 +915,9 @@ pub async fn update_incident(
                 report.chars().count()
             ));
         }
-        sqlx::query("UPDATE incidents SET report = $1 WHERE id = $2")
+        sqlx::query("UPDATE incidents SET report = $1, updated_at = $2 WHERE id = $3")
             .bind(report.trim())
+            .bind(now)
             .bind(incident_id as i32)
             .execute(&state.pool)
             .await
@@ -1086,7 +1162,7 @@ pub async fn attach_snapshot(
          VALUES ($1, 'snapshot', $2, $3, $4, 'image/jpeg', $5) RETURNING id",
     )
     .bind(incident_id as i32)
-    .bind(note.as_deref().map(str::trim))
+    .bind(python_note(note.as_deref()))
     .bind(&camera_id)
     .bind(&jpeg)
     .bind(now)
@@ -1124,7 +1200,7 @@ pub async fn attach_clip(
     // `max(1, round(duration / 1.0))`.
     let wanted = (crate::pyrepr::round_half_even(duration as f64 / APPROX_SEGMENT_SECONDS) as i64)
         .max(1) as usize;
-    let mut chunks = match state.hls.snapshot_recent(&camera_id, wanted) {
+    let chunks = match state.hls.snapshot_recent(&camera_id, wanted) {
         crate::hls::Snapshot::NoCamera => {
             return Err(format!(
                 "No buffered segments for camera '{camera_id}'. The stream must be \
@@ -1140,17 +1216,7 @@ pub async fn attach_clip(
         crate::hls::Snapshot::Segments(chunks) => chunks,
     };
 
-    // MPEG-TS is byte-concatenation-safe, so the pieces play end to end
-    // without remuxing. The cap drops the OLDEST first: the agent asked
-    // for the most recent video.
-    let mut truncated = false;
-    let mut total: usize = chunks.iter().map(|c| c.len()).sum();
-    while !chunks.is_empty() && total > MAX_CLIP_BYTES {
-        total -= chunks.remove(0).len();
-        truncated = true;
-    }
-    let blob: Vec<u8> = chunks.iter().flat_map(|c| c.iter().copied()).collect();
-    let segment_count = chunks.len();
+    let (blob, segment_count, truncated) = trim_to_cap(chunks, MAX_CLIP_BYTES);
     let approx_duration =
         crate::pyrepr::round_to(segment_count as f64 * APPROX_SEGMENT_SECONDS, 1);
 
@@ -1168,7 +1234,7 @@ pub async fn attach_clip(
          VALUES ($1, 'clip', $2, $3, $4, $5, $6) RETURNING id",
     )
     .bind(incident_id as i32)
-    .bind(note.as_deref().map(str::trim))
+    .bind(python_note(note.as_deref()))
     .bind(&camera_id)
     .bind(&blob)
     .bind(&mime)
@@ -1184,8 +1250,12 @@ pub async fn attach_clip(
         "id": evidence_id,
         "incident_id": incident_id,
         "kind": "clip",
-        "text": note.as_deref().map(str::trim),
+        "text": python_note(note.as_deref()),
         "camera_id": camera_id,
+        // `data_mime is not None`, not "a blob was written" — the two
+        // come apart on a row with data and no MIME, which the fixture
+        // now carries and `get_incident_clip` below reads.
+        "has_data": true,
         "data_mime": mime,
         "timestamp": crate::models::iso_naive(now),
         "segment_count": segment_count,
@@ -1285,7 +1355,11 @@ pub async fn get_incident_clip(
         "kind": kind,
         "text": text,
         "camera_id": camera_id,
-        "data_mime": raw_mime,
+        // Both from the STORED value, which may be NULL even on a row
+        // that has a blob: `to_dict` reports `has_data` from the MIME
+        // and not from the data. Only `mime` below takes the fallback.
+        "has_data": mime.is_some(),
+        "data_mime": mime,
         "timestamp": timestamp.map(crate::models::iso_naive),
         "mime": base_mime,
         "approx_duration_seconds": approx_duration,
@@ -1340,4 +1414,63 @@ async fn node_for_camera(
     };
     node.map(|(node_id,)| node_id)
         .ok_or_else(|| format!("Camera '{camera_id}' has no assigned node"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chunk(byte: u8, len: usize) -> bytes::Bytes {
+        bytes::Bytes::from(vec![byte; len])
+    }
+
+    /// The cap drops the OLDEST segments, keeping the newest video —
+    /// which is what an agent asking for a clip wants.
+    ///
+    /// Unreachable through the differential: the real cap is 32 MB, so a
+    /// case that triggered it would have to push tens of megabytes into
+    /// each tier's segment cache. Tested here against a cap of ten
+    /// bytes instead.
+    #[test]
+    fn a_clip_over_the_cap_loses_its_oldest_segments() {
+        let chunks = vec![chunk(1, 4), chunk(2, 4), chunk(3, 4)];
+        let (blob, count, truncated) = trim_to_cap(chunks, 10);
+        assert!(truncated);
+        assert_eq!(count, 2, "two of the three fit under ten bytes");
+        // The 2s and 3s, not the 1s and 2s.
+        assert_eq!(blob, vec![2, 2, 2, 2, 3, 3, 3, 3]);
+    }
+
+    /// Exactly at the cap is not over it: `>` and not `>=`, so a clip
+    /// that fits perfectly keeps every segment and is not reported
+    /// truncated.
+    #[test]
+    fn a_clip_exactly_at_the_cap_is_untouched() {
+        let chunks = vec![chunk(1, 4), chunk(2, 4)];
+        let (blob, count, truncated) = trim_to_cap(chunks, 8);
+        assert!(!truncated);
+        assert_eq!(count, 2);
+        assert_eq!(blob.len(), 8);
+    }
+
+    /// A single segment larger than the cap leaves nothing — the loop
+    /// stops at an empty list rather than underflowing the running
+    /// total, which is what `!chunks.is_empty()` is for.
+    #[test]
+    fn one_oversized_segment_leaves_an_empty_clip() {
+        let (blob, count, truncated) = trim_to_cap(vec![chunk(9, 100)], 10);
+        assert!(truncated);
+        assert_eq!(count, 0);
+        assert!(blob.is_empty());
+    }
+
+    /// `note.strip() if note else None`: the empty string is falsy and
+    /// becomes NULL, a whitespace-only one is truthy and becomes "".
+    #[test]
+    fn an_empty_note_is_null_and_a_blank_one_is_empty() {
+        assert_eq!(python_note(None), None);
+        assert_eq!(python_note(Some("")), None);
+        assert_eq!(python_note(Some("   ")), Some(""));
+        assert_eq!(python_note(Some("  hi  ")), Some("hi"));
+    }
 }

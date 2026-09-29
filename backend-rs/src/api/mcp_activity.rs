@@ -1,14 +1,17 @@
-//! `/api/mcp/activity/logs` and its stats sibling.
+//! `/api/mcp/activity/*` — the whole router.
 //!
-//! Ported from `backend/app/api/mcp_activity.py` — but only the two
-//! database-backed routes.
+//! Ported from `backend/app/api/mcp_activity.py`.
 //!
-//! `/recent`, `/sessions` and `/stats` on the same router are **not**
-//! portable: they read an in-memory tracker that lives in the Python
-//! process alongside the MCP server. There is no shared store behind
-//! them, so a Rust handler would answer from an empty tracker and report
-//! that nothing had happened. They stay proxied for as long as MCP stays
-//! Python, which the plan puts out of scope entirely.
+//! Two of these routes read the database and four read an in-memory
+//! tracker, and the split mattered: while the MCP server was still
+//! Python's, a Rust `/recent` would have answered from an empty tracker
+//! and reported that nothing had happened — a difference no differential
+//! could see, because both trackers are empty in a test environment
+//! until something calls a tool.
+//!
+//! So the four moved WITH their producer, in the same slice that ported
+//! `mcp/server.py`. `mcp::activity::TRACKER` is now the only writer and
+//! the only reader; the Python's tracker is dead code behind the proxy.
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
@@ -213,4 +216,79 @@ pub async fn mcp_log_stats(
             }))
             .collect::<Vec<_>>(),
     })))
+}
+
+// ---------------------------------------------------------------------
+// The in-memory tracker's routes.
+//
+// These four are the reason the MCP server could not be left in Python:
+// the tool wrapper is what fills the tracker, so the producer and every
+// consumer had to move together. See `tests/differential/in_process_state.md`.
+// ---------------------------------------------------------------------
+
+/// `GET /api/mcp/activity/recent`.
+pub async fn recent_activity(
+    RequireAdmin(user): RequireAdmin,
+    request: Request,
+) -> Result<Response, ApiError> {
+    let mut q = Query::parse(request.uri().query());
+    // `le=500` matches the tracker's own ring size. Without it an
+    // accidental `limit=10000` would be silently clamped inside the
+    // tracker; a 422 keeps the contract honest.
+    let limit = q.int("limit", 50, 1, 500);
+    q.finish()?;
+
+    let events = crate::mcp::activity::TRACKER.recent_events(&user.org_id, limit as usize);
+    Ok(axum::Json(
+        events.iter().map(crate::mcp::activity::McpEvent::to_json).collect::<Vec<_>>(),
+    )
+    .into_response())
+}
+
+/// `GET /api/mcp/activity/sessions`.
+pub async fn active_sessions(RequireAdmin(user): RequireAdmin) -> Response {
+    let sessions = crate::mcp::activity::TRACKER.active_sessions(&user.org_id, now_seconds());
+    axum::Json(sessions).into_response()
+}
+
+/// `GET /api/mcp/activity/stats`.
+pub async fn activity_stats(RequireAdmin(user): RequireAdmin) -> Response {
+    let stats = crate::mcp::activity::TRACKER.stats(&user.org_id, now_seconds());
+    axum::Json(stats).into_response()
+}
+
+/// `GET /api/mcp/activity/stream` — the live tool-call feed.
+pub async fn stream_activity(
+    // Python: @limiter.limit("60/minute") — connect attempts, not
+    // frames. Same threat model as the notification bell's stream.
+    rate: PerMinute<60>,
+    RequireAdmin(user): RequireAdmin,
+) -> Result<Response, ApiError> {
+    rate.check().await?;
+    let cap = crate::plans::get_plan_limits(&user.plan).max_sse_subscribers.max(0) as usize;
+    // `true` for the audience: this route is admin-only already, so
+    // every event on the org's channel is for this subscriber.
+    let Some(subscription) =
+        crate::mcp::activity::TRACKER.broadcaster.subscribe(&user.org_id, true, cap)
+    else {
+        return Err(ApiError::new(
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            format!(
+                "Too many open MCP activity streams for this org (cap: {cap} on your \
+                 current plan). Close unused tabs and retry, or upgrade for a higher cap."
+            ),
+        ));
+    };
+    Ok(crate::sse::stream_response(
+        subscription,
+        crate::sse::connected_frame(&user.org_id),
+    ))
+}
+
+/// `time.time()`, which is what the tracker's stored timestamps are.
+fn now_seconds() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or_default()
 }

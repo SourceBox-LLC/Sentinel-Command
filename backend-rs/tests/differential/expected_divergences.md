@@ -243,6 +243,16 @@ absence, and copying the gap would mean writing code to strip them.
 The HTTP differential compares status and body on a 500 but not headers,
 for this reason.
 
+**The same gap, on the SPA fallback.** Python's SPA middleware is
+registered LAST — the outermost — and returns a `FileResponse` directly
+without calling down, so `request_context` never runs and the dashboard
+document ships with no `X-Request-Id` either. Rust stamps it, for the
+same reasons as above. main.py already hit this for the *security*
+headers and fixed it with an explicit `_apply_security_headers` call from
+the SPA paths; the request id was not given the same treatment, which is
+PYTHON_BUGS #15. `http_diff.py` skips `x-request-id` on an SPA response
+and explains it at `is_spa_response`.
+
 
 ## `POST /api/cameras/{camera_id}/codec` with a list `audio_codec`
 
@@ -281,3 +291,70 @@ CameraNode's serde.
 Nesting past Python's recursion limit raises `RecursionError`, which
 FastAPI also reports as that 400. The exact depth depends on Python's
 stack at the time; Rust approximates it at 900.
+
+## The MCP surface names its own framework (slice: MCP)
+
+Three fields on `POST /mcp/` are FastMCP describing itself, and matching
+them would mean hard-coding another project's identity into the port
+that exists to delete it. `mcp_diff.py` normalises each one; everything
+else on that surface — the tool names, titles, descriptions, read-only
+annotations, and every call result's content blocks, `structuredContent`
+and `isError` — is compared unnormalised and matches.
+
+| field | Python | Rust |
+| --- | --- | --- |
+| `serverInfo.version` | fastmcp's release (`4.0.3`) | the app's own `VERSION` |
+| `tools[].outputSchema` | derived from the return annotation | absent |
+| `tools[].inputSchema` | derived from the signature | hand-written, WITH per-argument descriptions |
+| `tools[]._meta.fastmcp` | `{"tags": []}` | absent |
+| `result._meta.fastmcp.wrap_result` | `true` on a wrapped result | absent |
+
+`inputSchema` deserves the note: the port's is not a lossy copy. FastMCP
+turns `Annotated[str, "..."]` into a bare `{"type": "string"}` and drops
+the prose, so the hand-written schema carries strictly more of what a
+model needs to pick the right argument. The **required** lists and the
+enum-ish bounds do agree, which is the half a client enforces.
+
+One thing the differential normalises that is NOT a divergence between
+the stacks, but is worth writing down because it is a thing a client
+could wrongly rely on: **five tools have no `ORDER BY` behind them**, so
+their row order is unspecified on both sides.
+
+| tool | what is unordered |
+| --- | --- |
+| `list_cameras`, `list_camera_groups`, `list_nodes` | the whole array |
+| `get_stream_stats` | `by_camera` and `by_user`, two `GROUP BY`s |
+
+Postgres answers an unordered scan in physical order, and the physical
+order after a few hundred DELETE-and-reinsert reseeds is not the insert
+order — so this surfaced twice, on different cases, before it was named:
+once as `by_user` permuted with `total_views` and `by_camera` agreeing,
+and once as `list_cameras` starting at a different camera. `mcp_diff.py`
+sorts these by the same row key `http_diff.py` uses, which reached the
+same conclusion for the REST routes and states it in its docstring:
+anything order-dependent here would be a flake, not a finding.
+
+Adding an `ORDER BY` to the port instead would be a *different answer*
+from Python's, not a tidier one. Note the contrast with the REST stats
+route, which DOES sort by count descending — the MCP tool and the
+dashboard route are not the same query, and the port keeps each as it
+found it.
+
+Narrower than `http_diff.py`'s blanket sort on purpose: most lists on
+this surface ARE ordered and the order is the answer — `list_incidents`
+is `created_at DESC`, `get_stream_logs` is `accessed_at DESC`,
+`get_incident`'s evidence is `timestamp ASC`, `watch_camera`'s frames are
+capture order. Sorting those away would drop real coverage.
+
+Two related shapes are NOT divergences and are reproduced exactly,
+because a client reads both mechanically:
+
+* the `result` wrapping. MCP requires an output schema to be an object,
+  so FastMCP wraps a non-object return under a `result` key and wraps
+  the structured half of the result to match. Four tools are annotated
+  `list[dict]` and are wrapped; `mcp/scope.rs::WRAP_RESULT_TOOLS` names
+  them and `mcp_parity.py` holds that list to the Python annotations.
+* the missing content block on an empty list. FastMCP checks whether
+  every item is already a content block *before* serialising, and
+  `all()` of nothing is true — so an empty list passes through as an
+  empty block list rather than as the text `[]`.

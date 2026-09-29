@@ -354,7 +354,14 @@ VALUES
   -- 15: whitespace and a digit-group underscore, both of which
   --     Python's float() accepts and Rust's parser does not
   (1, 'clip', NULL, 'cam-live', '\x47400011'::bytea, 'video/mp2t; duration= 1_0.5',
-   timestamp '2026-09-01 08:14:00');
+   timestamp '2026-09-01 08:14:00'),
+  -- 16: a clip WITH data and NO mime. `has_data` is read off the MIME
+  --     and not off the blob, so this is the one row where the two come
+  --     apart: has_data is false while the bytes are right there. The
+  --     duration then takes the fallback while data_mime stays null,
+  --     which is a second pair a single field cannot separate.
+  (1, 'clip', NULL, 'cam-live', '\x47400011'::bytea, NULL,
+   timestamp '2026-09-01 08:15:00');
 
 -- ---- api keys -------------------------------------------------------
 DELETE FROM mcp_api_keys;
@@ -409,7 +416,28 @@ VALUES
   ('self-host', '5e136420d4db74b8fec00578900fbb7a3faf3043ca3526785b7041a336dd1b16', 'HA Revoked',
    timestamp '2026-09-11 11:00:00', NULL, true, 'all', NULL, 'integration'),
   ('self-host', '9e6a477e4b9c3ccd58cd8027d87d55c34fdb59c06d53f9bacceeb4aef5646cba', 'MCP Not Integration',
-   timestamp '2026-09-11 12:00:00', NULL, false, 'all', NULL, 'mcp');
+   timestamp '2026-09-11 12:00:00', NULL, false, 'all', NULL, 'mcp'),
+  -- 15-18: MCP keys with REAL hashes and every SCOPE MODE, for
+  --   mcp_diff.py. Before these, the fixture carried exactly one
+  --   authenticating MCP key and it was scope_mode 'all' — so the scope
+  --   gate, which is the entire product of the dashboard's scope picker,
+  --   was never exercised over the wire at all. Every mode agreed
+  --   because none of them ran.
+  --   15  osc_readonly_key      the 16 read tools, no writes
+  --   16  osc_custom_key        two named tools and nothing else
+  --   17  osc_badscope_key      'custom' with unparseable JSON -> [] -> no
+  --                             access, rather than an error or full access
+  --   18  osc_emptyscope_key    'custom' with an EMPTY list, which is the
+  --                             same answer by a different route
+  ('self-host', '8a9b4e04265aec8658daeec86f9d498130f478d2b17bbda88ebe7400a8c9becb', 'Readonly MCP',
+   timestamp '2026-09-11 13:00:00', NULL, false, 'readonly', NULL, 'mcp'),
+  ('self-host', '28ef83f023f31f3dff9950f31e2d5d66f5e198762efd96a15a90b3085025454d', 'Custom MCP',
+   timestamp '2026-09-11 14:00:00', NULL, false, 'custom',
+   '["list_cameras", "create_incident", "not_a_tool"]', 'mcp'),
+  ('self-host', '2488fb6e3c7e797debbec5d0410ed341a26dcd5c6f2ac774350c1dc4ce75786f', 'Bad Scope MCP',
+   timestamp '2026-09-11 15:00:00', NULL, false, 'custom', '{not json', 'mcp'),
+  ('self-host', '632235020159ea200da207ca86b216f5212f82f5d3f0a5331a918849295d3559', 'Empty Scope MCP',
+   timestamp '2026-09-11 16:00:00', NULL, false, 'custom', '[]', 'mcp');
 
 -- ---- notifications --------------------------------------------------
 DELETE FROM user_notification_state;

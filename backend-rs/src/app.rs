@@ -45,6 +45,56 @@ pub struct AppState {
     pub started_at_wall: chrono::DateTime<chrono::Utc>,
 }
 
+/// `POST /mcp` — Starlette's mount redirect, reproduced.
+///
+/// The Location is ABSOLUTE, because that is what Starlette builds: it
+/// reconstructs the request URL and appends the slash. A relative one
+/// works in a browser and breaks a client that compares hosts.
+async fn mcp_redirect(request: axum::extract::Request) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let scheme = request.uri().scheme_str().unwrap_or("http");
+    let host = request
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    let query = request.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
+    let location = format!("{scheme}://{host}/mcp/{query}");
+    (
+        axum::http::StatusCode::TEMPORARY_REDIRECT,
+        [(axum::http::header::LOCATION, location)],
+    )
+        .into_response()
+}
+
+/// The rmcp streamable-HTTP service, which replaces `fastmcp`.
+fn mcp_service(
+    state: AppState,
+) -> rmcp::transport::streamable_http_server::StreamableHttpService<
+    crate::mcp::server::SentinelMcp,
+    rmcp::transport::streamable_http_server::session::local::LocalSessionManager,
+> {
+    use rmcp::transport::streamable_http_server::{
+        session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
+    };
+    // Stateless, and deliberately: every request carries its own
+    // bearer and resolves its own org, so a session would hold nothing
+    // — and per-process session state is exactly what forces a
+    // producer and its consumers to move together.
+    let mut config = StreamableHttpServerConfig::default();
+    config.legacy_session_mode = false;
+    // JSON, not SSE. Both are legal for a request/response call and
+    // FastMCP answers with JSON when the client accepts it, so a
+    // client written against the Python and parsing the body directly
+    // would break on an event-stream frame.
+    config.json_response = true;
+    StreamableHttpService::new(
+        move || Ok(crate::mcp::server::SentinelMcp { state: state.clone() }),
+        Arc::new(LocalSessionManager::default()),
+        config,
+    )
+}
+
 /// Reported by `/api/health`. Tracks the Python service's version so a
 /// client cannot tell which stack answered — during the migration both
 /// are the same application.
@@ -383,9 +433,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/motion/events/stats",
             ported(api::motion::motion_stats),
         )
-        // Only the DB-backed MCP routes. /recent, /sessions and /stats
-        // read an in-memory tracker inside the Python process and stay
-        // proxied — see api/mcp_activity.rs.
+        // The whole activity router, including the four routes that
+        // read the in-memory tracker — which only became portable when
+        // the MCP server that FILLS that tracker moved too, in this
+        // same slice. See api/mcp_activity.rs.
         .route(
             "/api/mcp/activity/logs",
             ported(api::mcp_activity::list_mcp_logs),
@@ -394,6 +445,39 @@ pub fn build_router(state: AppState) -> Router {
             "/api/mcp/activity/logs/stats",
             ported(api::mcp_activity::mcp_log_stats),
         )
+        .route(
+            "/api/mcp/activity/recent",
+            ported(api::mcp_activity::recent_activity),
+        )
+        .route(
+            "/api/mcp/activity/sessions",
+            ported(api::mcp_activity::active_sessions),
+        )
+        .route(
+            "/api/mcp/activity/stats",
+            ported(api::mcp_activity::activity_stats),
+        )
+        .route(
+            "/api/mcp/activity/stream",
+            ported(api::mcp_activity::stream_activity),
+        )
+        // ---- the MCP protocol surface -----------------------------------
+        //
+        // Python mounts FastMCP's ASGI app at `/mcp`, and Starlette's
+        // mount redirects the un-slashed path — so `POST /mcp` is a 307
+        // to `/mcp/` and only `/mcp/` carries the protocol. Both are
+        // reproduced, because a client that follows the redirect once
+        // and caches it would otherwise break.
+        //
+        // GET is NOT claimed. Python's SPA middleware answers every GET
+        // under this path with the React page, `/mcp/` included, so
+        // both fall through to the proxy exactly as they did.
+        .route("/mcp", served(axum::routing::post(mcp_redirect)))
+        .route(
+            "/mcp/",
+            served(axum::routing::post_service(mcp_service(state.clone()))),
+        )
+
         // ---- SPA --------------------------------------------------------
         // Static assets are files on disk; serving them through the Python
         // proxy would double the cost of every page load for no reason.

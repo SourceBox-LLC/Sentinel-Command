@@ -77,7 +77,7 @@ reader of them is now reading the wrong process's memory:
 
 | still in Python | what it does to the cache | what breaks until it moves |
 | --- | --- | --- |
-| `mcp/server.py` `attach_clip` | `snapshot_recent_segment_bytes` | clips attach from an empty cache: "stream must be live" |
+| ~~`mcp/server.py` `attach_clip`~~ | `snapshot_recent_segment_bytes` | **closed** — the MCP surface is Rust's, see below |
 | `cameras.py` delete camera | `cleanup_camera_cache` | a deleted camera keeps serving until the stale sweep |
 | `nodes.py` delete, decommission, register | `cleanup_camera_cache` | same |
 | `webhooks.py` `organization.deleted` | `cleanup_camera_cache` | same |
@@ -96,6 +96,25 @@ What *is* verified is the part that moved:
 requests, because a segment is only readable from the process that was
 pushed it. Forty-seven of them, covering the round trip, all three
 eviction policies, the playlist rewriter, and every refusal.
+
+## The MCP surface moved with it (2026-09-28)
+
+Option 2, which the list below calls a contradiction of the plan: the
+MCP server is Rust's now, all 23 tools, on `rmcp` instead of `fastmcp`.
+That closes the first row of the table above, and it closes it in the
+only way the rule in this document allows — `attach_clip` reads the
+segment cache, so it had to move to the process that owns the segment
+cache, not merely be taught to reach it.
+
+The clip path is verified the same way `hls.py` is, by scenario rather
+than by request: `mcp_diff.py` pushes the same segments into EACH tier's
+own cache and then calls `attach_clip` against each, because a cache
+that lives in a process cannot be shared between two of them. That is
+the shape any test of in-process state has to take here, and the reason
+the naive form of this test would have passed on two empty caches.
+
+Option 1 would still be the better architecture if the segment cache
+ever needs to outlive one machine. Nothing in this slice forecloses it.
 
 ## Options for unblocking `hls.py`
 

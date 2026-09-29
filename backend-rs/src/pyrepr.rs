@@ -177,6 +177,33 @@ pub fn round_to(x: f64, digits: usize) -> f64 {
 }
 
 
+/// Python's `str.title()`.
+///
+/// Not "uppercase each word": Python titlecases the first CASED
+/// character after any uncased one and lowercases every cased character
+/// that follows a cased one. A digit is uncased, so `"a1b".title()` is
+/// `"A1B"` and not `"A1b"` — and `str::to_uppercase` on word starts
+/// after splitting on spaces gets that wrong.
+///
+/// Used for an MCP tool's display `title`, which FastMCP derives from
+/// the tool name rather than declaring.
+pub fn title_case(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut previous_is_cased = false;
+    for c in s.chars() {
+        if previous_is_cased {
+            out.extend(c.to_lowercase());
+        } else {
+            // `char::to_uppercase` rather than a titlecase mapping: the
+            // two differ only for a handful of digraphs (ǆ), and a tool
+            // name is ASCII.
+            out.extend(c.to_uppercase());
+        }
+        previous_is_cased = c.is_alphabetic();
+    }
+    out
+}
+
 /// Python's `float()`, which accepts more than Rust's `f64::from_str`:
 /// underscores between digits, and `infinity` as a spelling of `inf`.
 /// It rejects a few things Rust takes as well — a leading or trailing
@@ -214,6 +241,29 @@ pub fn python_float(raw: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
+    /// `str.title()`, against what CPython actually returns. The
+    /// interesting rows are the ones a naive "capitalise each
+    /// space-separated word" gets wrong: a digit is uncased, so the
+    /// letter after it starts a new word.
+    #[test]
+    fn title_case_matches_python() {
+        for (input, expected) in [
+            ("get stream url", "Get Stream Url"),
+            ("list camera groups", "List Camera Groups"),
+            ("a1b", "A1B"),
+            ("HELLO world", "Hello World"),
+            ("o'clock", "O'Clock"),
+            ("24 7", "24 7"),
+            ("\u{c9}COLE", "\u{c9}cole"),
+            ("", ""),
+            (" leading", " Leading"),
+            ("mcp", "Mcp"),
+            ("MCP", "Mcp"),
+        ] {
+            assert_eq!(super::title_case(input), expected, "{input:?}");
+        }
+    }
+
     use super::*;
 
     /// Held to what CPython's `float()` actually answers.

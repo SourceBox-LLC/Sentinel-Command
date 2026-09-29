@@ -58,27 +58,32 @@ pub async fn get_camera(
     Ok(Json(row.to_json()))
 }
 
+/// The group list, shared by the REST route and the MCP tool.
+///
+/// Python's `len(self.cameras)` loads the group's cameras to count them;
+/// a correlated count does the same job in the query. Cameras are
+/// counted without an org filter of their own because a group is
+/// already org-scoped and a camera cannot join a group from another
+/// organisation.
+///
+/// No ORDER BY, because Python's `.all()` has none — adding one here
+/// would be a different answer, not a tidier one.
+pub const CAMERA_GROUP_SELECT: &str = r#"
+    SELECT g.id, g.name, g.color, g.icon,
+           (SELECT COUNT(*) FROM cameras c WHERE c.group_id = g.id) AS camera_count
+      FROM camera_groups g
+     WHERE g.org_id = $1
+"#;
+
 /// `GET /api/camera-groups`.
 pub async fn list_camera_groups(
     State(state): State<AppState>,
     RequireView(user): RequireView,
 ) -> Result<Json<Vec<Value>>, ApiError> {
-    // Python's `len(self.cameras)` loads the group's cameras to count
-    // them; a correlated count does the same job in the query. Cameras
-    // are counted without an org filter of their own because a group is
-    // already org-scoped and a camera cannot join a group from another
-    // organisation.
-    let rows: Vec<CameraGroupRow> = sqlx::query_as(
-        r#"
-        SELECT g.id, g.name, g.color, g.icon,
-               (SELECT COUNT(*) FROM cameras c WHERE c.group_id = g.id) AS camera_count
-          FROM camera_groups g
-         WHERE g.org_id = $1
-        "#,
-    )
-    .bind(&user.org_id)
-    .fetch_all(&state.pool)
-    .await?;
+    let rows: Vec<CameraGroupRow> = sqlx::query_as(CAMERA_GROUP_SELECT)
+        .bind(&user.org_id)
+        .fetch_all(&state.pool)
+        .await?;
 
     Ok(Json(rows.iter().map(CameraGroupRow::to_json).collect()))
 }

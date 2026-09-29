@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hold the MCP tool catalog and rate limits to Python's.
+"""Hold the MCP tool catalog, rate limits and result framing to Python's.
 
 Three lists and a table decide what an MCP key can reach and how often,
 and all four are transcribed constants. A transcription slip in any of
@@ -7,6 +7,14 @@ them is silent: a tool missing from the READ set is simply unreachable
 by a readonly key, an extra name in the agent's allowlist is a tool the
 agent can call that Python would refuse, and a wrong rate limit is only
 visible under load.
+
+A fourth list decides how each tool's result is FRAMED, and it is
+transcribed from something even less visible: the return annotation on
+the Python function. MCP requires an output schema to be an object, so
+FastMCP wraps a non-object return under a `result` key and wraps the
+structured half of every call result to match. Change `-> dict` to
+`-> list[dict]` on either side and the wire shape moves under a client
+that is reading `structuredContent`.
 
 The agent allowlist is the one that matters most. It is an allowlist
 rather than a denylist because the agent's model is steered by content
@@ -89,6 +97,77 @@ def rust_descriptions() -> dict[str, str]:
     for name, const in re.findall(r'\("([^"]+)", (DESC_[A-Z_]+)\)', block.group(1)):
         raw = consts.get(const, "")
         out[name] = raw.replace('\\"', '"').replace("\\\\", "\\")
+    return out
+
+
+def python_result_framing() -> dict[str, str]:
+    """How FastMCP frames each tool's result, per its return annotation.
+
+    Three outcomes, and the annotation alone decides which:
+
+      * `dict` — already an object, so the structured half is the
+        returned value as-is;
+      * `list[dict]` — not an object, so the schema (and the structured
+        half) is wrapped under `result`;
+      * `Image`, or no annotation at all — no serialisable schema, so
+        there is no structured half whatsoever.
+    """
+    tree = ast.parse((BACKEND / "app/mcp/server.py").read_text())
+    out: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        if not any(
+            isinstance(dec, ast.Call)
+            and isinstance(dec.func, ast.Attribute)
+            and dec.func.attr == "tool"
+            for dec in node.decorator_list
+        ):
+            continue
+        if node.returns is None:
+            out[node.name] = "media"
+            continue
+        annotation = ast.unparse(node.returns)
+        if annotation == "dict":
+            out[node.name] = "object"
+        elif annotation.startswith(("list[", "tuple[")):
+            out[node.name] = "wrapped"
+        else:
+            # Image / Audio / File / ToolResult all reach FastMCP's
+            # `_UnserializableType` sentinel and produce no schema.
+            out[node.name] = "media"
+    return out
+
+
+def rust_result_framing() -> dict[str, str]:
+    """The same three outcomes, read off the port.
+
+    `WRAP_RESULT_TOOLS` names the wrapped ones. The media ones are the
+    dispatch arms that do NOT go through the `json(...)` adapter — that
+    adapter is what attaches a structured half, so its absence IS the
+    media case.
+    """
+    scope = RS.read_text()
+    server = (RS.parent / "server.rs").read_text()
+    out: dict[str, str] = {}
+
+    block = re.search(r"pub const WRAP_RESULT_TOOLS: \[&str; \d+\] = \[(.*?)\];", scope, re.S)
+    wrapped = set(re.findall(r'"([^"]+)"', block.group(1))) if block else set()
+
+    dispatch = re.search(r"match name \{(.*?)\n        \}", server, re.S)
+    if not dispatch:
+        return out
+    # Two arm shapes: `"x" => json(...)` and the braced
+    # `"x" => {\n json(...) }` rustfmt produces for a long call.
+    for arm, body in re.findall(
+        r'"([a-z_]+)" =>\s*\{?\s*(json\(|t::)', dispatch.group(1), re.S
+    ):
+        if arm in wrapped:
+            out[arm] = "wrapped"
+        else:
+            out[arm] = "object" if body == "json(" else "media"
+    for name in wrapped - set(out):
+        out[name] = "wrapped"
     return out
 
 
@@ -196,6 +275,26 @@ def main() -> int:
         if empty:
             bad += 1
             print(f"  FAIL  {len(empty)} tool(s) describe as empty: {empty[:5]}")
+
+    pf, rf = python_result_framing(), rust_result_framing()
+    if not pf:
+        print("REFUSING: could not read the Python return annotations")
+        return 2
+    if pf != rf:
+        bad += 1
+        print("  FAIL  result framing")
+        for name in sorted(set(pf) | set(rf)):
+            if pf.get(name) != rf.get(name):
+                print(f"          {name:28} python={pf.get(name)} rust={rf.get(name)}")
+    else:
+        counts = {kind: sum(1 for v in pf.values() if v == kind) for kind in
+                  ("object", "wrapped", "media")}
+        print(f"  ok    result framing       {counts}")
+        # If nothing is wrapped, the wrap path is dead and this check
+        # has stopped testing anything.
+        if not counts["wrapped"]:
+            print("  FAIL  no tool wraps its result — the check proves nothing")
+            bad += 1
 
     pl, rl = python_rate_limits(), rust_rate_limits()
     if pl != rl:

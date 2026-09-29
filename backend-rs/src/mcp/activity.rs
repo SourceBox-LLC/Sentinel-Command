@@ -148,11 +148,19 @@ impl McpActivityTracker {
             persist_event(&pool, &persisted).await;
         });
 
+        // `payload["type"] = "tool_call"` — assigned AFTER `to_dict()`,
+        // so it is the LAST key rather than the first. The frame is a
+        // serialised dict either way, and the SSE differential compares
+        // the bytes.
+        let mut payload = event.to_json();
+        if let Some(map) = payload.as_object_mut() {
+            map.insert("type".into(), json!("tool_call"));
+        }
         // `"all"`, not `"admin"`: the activity stream's route is
         // already admin-only, and the audience filter here is for
         // events that reach a mixed set of subscribers.
         self.broadcaster
-            .notify(&event.org_id, "all", &crate::audit::python_json_value(&event.to_json()));
+            .notify(&event.org_id, "all", &crate::audit::python_json_value(&payload));
     }
 
     /// The most recent events for an org, oldest first.

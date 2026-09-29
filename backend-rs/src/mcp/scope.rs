@@ -66,6 +66,30 @@ pub const AGENT_WRITE_TOOLS: [&str; 6] = [
     "finalize_incident",
 ];
 
+/// The tools whose Python return annotation is NOT an object.
+///
+/// MCP requires an output schema to be an object, so FastMCP wraps a
+/// non-object return in a one-key `result` schema and marks it
+/// `x-fastmcp-wrap-result` — and then wraps the structured half of the
+/// call result to match. Four tools are annotated `list[dict]`; every
+/// other one is annotated `dict` and travels unwrapped. (The media
+/// tools have no serialisable annotation at all, so they get no
+/// structured half whatsoever — a third case, handled by their own
+/// `ToolOutput` variant rather than here.)
+///
+/// The TEXT block is never wrapped: FastMCP builds it from the
+/// serialised return value, not from the wrapper.
+///
+/// `mcp_parity.py` checks this list against the Python annotations.
+pub const WRAP_RESULT_TOOLS: [&str; 4] = [
+    "list_cameras",
+    "list_camera_groups",
+    "list_nodes",
+    // Easy to miss reading the Python — its `-> list[dict]` sits four
+    // lines below the `def`, unlike the other three.
+    "get_stream_logs",
+];
+
 pub fn all_tools() -> BTreeSet<&'static str> {
     MCP_READ_TOOLS.iter().chain(MCP_WRITE_TOOLS.iter()).copied().collect()
 }

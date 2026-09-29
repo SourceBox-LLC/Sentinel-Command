@@ -282,3 +282,86 @@ closed this would diverge on the one case that matters. It is
 reproduced, it is pinned by a differential case that asserts the
 CURRENT behaviour, and that case is marked so it fails loudly when
 master is fixed — which is the signal to change both together.
+
+## 14. Three MCP tools validate the same `camera_id` three different ways
+
+Severity: **low** — a cosmetic inconsistency, not a security or data
+problem. Recorded because it is the kind of thing a port has to decide
+about deliberately, and all three behaviours are reproduced.
+
+`camera_id` is the same optional string argument on all three, and the
+empty string reaches three different answers:
+
+| tool | the check | `camera_id: ""` |
+| --- | --- | --- |
+| `create_incident` | `if camera_id:` | accepted, **and stored as `""`** |
+| `add_observation` | `if camera_id is not None:` | looked up and refused, "not found" |
+| `get_stream_logs` | `if camera_id:` | no filter at all — every row comes back |
+
+The middle one is defensible and the first is not: `create_incident`
+skips the existence check for a falsy value and then assigns the column
+the argument anyway, so the incident row ends up naming a camera id that
+matches no camera. Nothing reads it back for a join, so nothing breaks —
+it just means an incident can carry `camera_id = ''` where every other
+"no camera" incident carries NULL, and a `GROUP BY camera_id` over
+incidents shows an extra bucket.
+
+`get_stream_logs` is the surprising one to a caller rather than a bug:
+passing an empty filter widens the result instead of narrowing it.
+
+The fix, if it is ever worth making, is to normalise the empty string to
+`None` at the argument boundary for all three, which makes `""` mean
+"absent" everywhere. That changes `add_observation`'s refusal into a
+success, so it is a behaviour change and not a tidy-up.
+
+**Reproduced in the port**, all three, and pinned: `mcp_diff.py` carries
+an empty-`camera_id` case for each, with a comment on each pair saying
+which way it goes and why. The pairs were not chosen for coverage — I had
+written the Rust with the falsy reading applied uniformly, and the cases
+exist because writing them down is what showed the three tools disagree.
+
+## 15. The dashboard document ships with no `X-Request-Id`
+
+Severity: **low** — a support-and-debugging gap, not a correctness or
+security one. It is here because it is the *same bug, in the same place*,
+as one already fixed beside it.
+
+`app/main.py`'s `request_context` middleware stamps `X-Request-Id` on the
+response, and its own comment says why: "returned in the response header
+so a customer can quote it in a support ticket and we can find their
+exact request in seconds."
+
+The SPA middleware is registered LAST, which makes it the OUTERMOST
+middleware, and it returns a `FileResponse` directly without calling down
+the stack. So `request_context` never runs for it, and every response it
+serves — the dashboard HTML document, `/assets/*` — carries no request
+id. Measured on both stacks: Python omits it on `/`, `/dashboard`,
+`/incidents`, `/mcp`, `/mcp/`; Rust emits it on all five.
+
+The document is the one response a customer is actually looking at when
+they open a ticket, so it is the worst one to be missing.
+
+This is the exact failure `_apply_security_headers` exists to fix. Its
+docstring:
+
+> Factored out because the SPA middleware below is registered LAST —
+> making it the OUTERMOST middleware — and it returns FileResponse
+> objects directly, without calling down through this middleware.
+> Result before the factor-out: the dashboard HTML document and every
+> /assets/* file shipped with NO X-Frame-Options / nosniff / HSTS
+
+The security headers were given an explicit call from the SPA paths.
+`X-Request-Id` was not, and nothing pointed at it — which is how one half
+of a two-part bug survives its own fix. The fix is the same shape: set it
+on the SPA responses too, from the same place the security headers are
+set.
+
+**NOT reproduced in the port**, deliberately, on the same grounds as the
+500-headers divergence already recorded in `expected_divergences.md`:
+nothing can depend on the header's absence, and matching it would mean
+writing code whose only purpose is to strip it. `http_diff.py` therefore
+does not compare `x-request-id` on an SPA response, and says so at
+`is_spa_response`.
+
+Found by adding `GET /mcp` to the read differential — the first case in
+the suite to compare an SPA response's headers at all.

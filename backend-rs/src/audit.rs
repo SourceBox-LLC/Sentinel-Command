@@ -89,6 +89,30 @@ pub fn python_json(pairs: &[(&str, Value)]) -> String {
     out
 }
 
+/// The same, with no spaces after the separators.
+///
+/// `json.dumps(x, separators=(",", ":"))`, which is what FastMCP uses
+/// for a tool result's text block — the value is repeated as
+/// `structuredContent` beside it, so the text is for a model to read
+/// and the bytes are not padded for a human.
+pub fn python_json_compact(value: &Value) -> String {
+    match value {
+        Value::String(s) => python_json_string(s),
+        Value::Array(items) => {
+            let inner: Vec<String> = items.iter().map(python_json_compact).collect();
+            format!("[{}]", inner.join(","))
+        }
+        Value::Object(map) => {
+            let inner: Vec<String> = map
+                .iter()
+                .map(|(k, v)| format!("{}:{}", python_json_string(k), python_json_compact(v)))
+                .collect();
+            format!("{{{}}}", inner.join(","))
+        }
+        other => python_json_value(other),
+    }
+}
+
 pub fn python_json_value(value: &Value) -> String {
     match value {
         Value::String(s) => python_json_string(s),

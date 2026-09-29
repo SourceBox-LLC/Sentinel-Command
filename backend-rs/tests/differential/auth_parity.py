@@ -56,6 +56,24 @@ INLINE_AUTH = {
     ("POST", "/api/webhooks/resend"),
 }
 
+# The MCP protocol surface, which has no Python route to compare to at
+# all: Python mounts FastMCP's ASGI app there, so there is no `def` with
+# a `Depends(require_admin)` for this script to read.
+#
+# It is NOT open. `mcp/auth.rs::resolve` hashes the bearer and matches
+# `mcp_api_keys` with `kind='mcp'`, and `lookup_allowed` gates each tool
+# against the key's scope — two passes over the same token, as in
+# `ScopeMiddleware`. `mcp_diff.py` drives every credential shape through
+# it: no bearer, empty bearer, unknown key, revoked key, an integration
+# key on the MCP surface, and both agent-key forms.
+#
+# The un-slashed path is a 307 to the slashed one and carries no auth of
+# its own, which is Starlette's mount behaviour reproduced.
+MOUNTED_AUTH = {
+    ("POST", "/mcp"),
+    ("POST", "/mcp/"),
+}
+
 
 def python_gates():
     """(METHOD, path) -> the auth dependency name, or None."""
@@ -147,6 +165,13 @@ def rust_routes():
         if ported:
             routes.append(("GET", path, "::".join(ported.group(1).split("::")[-2:])))
             continue
+        # A mounted tower service rather than a handler. Parsed so the
+        # path is visible to the check below rather than absent from it —
+        # a route this script cannot see is a route it cannot vouch for.
+        service = re.search(r"(get|post)_service\(", body)
+        if service:
+            routes.append((service.group(1).upper(), path, "mounted::service"))
+            continue
         for verb in ("get", "post", "put", "patch", "delete"):
             for h in re.finditer(
                 rf"(?:^|[^\w])(?:axum::routing::)?{verb}\(\s*(?:api::)?([\w:]+)", body
@@ -164,6 +189,9 @@ def main():
     print(f"checking {len(routes)} ported method+path pairs\n")
     for method, path, handler in routes:
         if handler == "health":
+            continue
+        if (method, path) in MOUNTED_AUTH:
+            print(f"  ok    {method:<6} {path:<46} mounted app — bearer checked in mcp/auth.rs")
             continue
         if (method, path) not in py:
             print(f"  FAIL  {method:<6} {path:<46} no matching python route")

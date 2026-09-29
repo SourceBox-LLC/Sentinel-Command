@@ -44,6 +44,12 @@ FEEDS = [
     ("notifications", "/api/notifications/stream", "session", 50),
     ("motion", "/api/motion/events/stream", "session", 50),
     ("integration motion", "/api/integration/motion/stream", "integration", 10),
+    # A fourth pool, admin-only, on the same plan cap as the session
+    # feeds. It became comparable only once the MCP server moved: the
+    # tracker that feeds it is filled by the tool wrapper, so while that
+    # wrapper was Python's, this route in Rust would have greeted a
+    # subscriber and then never said anything.
+    ("mcp activity", "/api/mcp/activity/stream", "session", 50),
 ]
 
 # The fixture's live integration key, as the read differential uses it.

@@ -602,8 +602,16 @@ check that cannot fail is worse than no check.
 See `in_process_state.md`. Several modules keep state in the Python
 process's memory with no shared store behind it, so the routes reading it
 cannot move one at a time. `hls.py` — the plan's headline slice-3 target
-— is the most thoroughly blocked, because `mcp/server.py` imports its
-segment cache directly and MCP stays Python by plan.
+— was the most thoroughly blocked, because `mcp/server.py` imports its
+segment cache directly.
+
+That is resolved rather than outstanding: **MCP is ported**, which the
+original plan said it would not be (it proposed leaving `/mcp` behind
+the proxy indefinitely, on the grounds that `fastmcp` never has to be
+replaced). `rmcp` replaced it, so `attach_clip` now reads the Rust
+tier's own segment cache and the two halves of that shared state moved
+together — which is the rule `in_process_state.md` states and the whole
+reason the pair was blocked.
 
 ## Writes: side effects, not just responses (slice 4)
 
@@ -797,6 +805,96 @@ when a stream fails on both stacks the comparison itself is meaningless —
 two identical failures would otherwise read as a pass. The guard's
 message names both plausible causes (proxy vs stale fixture) and says
 which log line tells them apart.
+
+## The MCP surface (JSON-RPC, not REST)
+
+```bash
+tests/differential/mcp_run.sh          # add -v to list every case
+tests/differential/mcp_parity.py       # static: the catalog and the framing
+```
+
+`POST /mcp/` is one path and one method name, so it is neither a read nor
+a write case: the interesting variables are which credential asked and
+which tool it named. `mcp_diff.py` drives both stacks through the same
+JSON-RPC calls and compares the parsed responses, reseeding before every
+one — `effective_status` ages a camera offline ninety seconds after its
+last heartbeat, so a fixture that drifts between the two calls makes
+`get_system_status` report different counts for reasons that have nothing
+to do with the port.
+
+Three shapes of case, and the second two exist because the first cannot
+reach most of the code:
+
+* **request/response** — the handshake, the catalog per credential, every
+  auth refusal, and every tool whose answer is a database read.
+* **node-backed** — `view_camera`, `watch_camera` and `attach_snapshot`
+  do not answer on their own: the tool sends a `command` frame down the
+  node's WebSocket and awaits the `command_result`. Neither half is
+  visible to a request differential, so both are driven at once, down one
+  socket per tier (the connect throttle allows ten per node per minute,
+  and a socket per case would spend the budget and turn the rest of the
+  run into matching refusals). Reseeded per TIER rather than per case:
+  `attach_snapshot` writes an evidence row, so the ids climb through the
+  sequence and the two sides agree about them only if each pass starts
+  from the same state.
+* **cache-backed** — `attach_clip` reads the in-memory segment cache, so
+  the same segments are pushed into EACH tier before the call. This is
+  the one place the harness writes the same bytes twice instead of
+  reseeding one database, and it is the shape any test of in-process
+  state has to take here: the naive version passes on two empty caches.
+
+  Pushed before every clip case, not once per pass — another instance of
+  the trap in "Relative timestamps" below. The cache drops a camera whose
+  newest segment is over 60 seconds old, swept on a 60-second loop, and
+  the node cases ahead of the clip ones take longer than that (two of
+  them sleep a second per frame). Filled once at the top, whichever
+  tier's sweep fired first answered "the stream must be live" while the
+  other returned a clip — one differing case out of 143, with nothing
+  wrong on either side. Both carry the same 60-second cutoff; the
+  harness was measuring how long it had taken to get there.
+
+### The coverage guard
+
+Nearly every tool needs a live node or a stored blob, so the failure mode
+this file drifts into is that every case becomes a matching *refusal* —
+which agrees perfectly and proves only that both stacks refuse. The run
+therefore counts how many cases came back as a successful tool call and
+fails below sixty.
+
+### What `mcp_parity.py` adds
+
+Four transcribed constants that no request can check, read out of the
+Python source with `ast` rather than by importing it (importing
+`app.mcp.server` builds a FastMCP instance and opens a database):
+
+| checked | why it cannot drift silently otherwise |
+| --- | --- |
+| the READ / WRITE / agent tool sets | a name missing from READ is unreachable by a readonly key |
+| the derived agent allowlist | a write tool leaking in is a real escalation — the agent's model is steered by whatever an attacker can put in front of a lens |
+| `RATE_LIMITS` per plan | a wrong number is only visible under load |
+| the result **framing** per tool | see below |
+
+The framing one is the least visible and was the last to be found. MCP
+requires an output schema to be an object, so FastMCP wraps a non-object
+return under a `result` key and wraps the structured half of the call
+result to match. Which tools that applies to is decided by the *return
+annotation* on the Python function — `-> dict` versus `-> list[dict]` —
+and `WRAP_RESULT_TOOLS` in `mcp/scope.rs` is a transcription of it. The
+checker parses those annotations and compares. It immediately caught a
+fourth wrapped tool I had missed: `get_stream_logs`, whose
+`-> list[dict]` sits four lines below its `def` rather than on the same
+line as the other three.
+
+### What is deliberately not compared
+
+`serverInfo.version`, every tool's `inputSchema` / `outputSchema` /
+`_meta.fastmcp`, and `result._meta`. All four are FastMCP describing
+itself, and matching them would mean hard-coding another project's
+identity into the port that exists to delete it. Written up in
+`expected_divergences.md`, including the note that the port's
+hand-written `inputSchema` carries strictly *more* than FastMCP's derived
+one — FastMCP turns `Annotated[str, "..."]` into a bare
+`{"type": "string"}` and drops the prose.
 
 ## Request bodies: correctness and memory
 

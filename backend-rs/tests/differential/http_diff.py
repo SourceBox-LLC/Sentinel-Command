@@ -365,6 +365,21 @@ CASES = [
     ("GET", "/downloads/linux/x86_64", False),
     ("GET", "/downloads/nope/x86_64", False),
 
+    # --- the MCP paths under a method that is NOT the protocol ---------
+    #
+    # `/mcp` and `/mcp/` carry JSON-RPC on POST (mcp_diff.py compares
+    # that) and the React page on everything else — Python's SPA
+    # middleware does not look at the method, so a PUT gets the page
+    # too. Worth pinning here rather than assuming: in axum a
+    # `post(...)` route answers 405 to a GET by default, so "the rest
+    # falls through to the SPA" is a property of how the route is
+    # mounted and not something the framework gives for free.
+    ("GET", "/mcp", False),
+    ("GET", "/mcp/", False),
+    ("GET", "/mcp", True),
+    # A path BELOW the mount, which is the SPA's own client-side route.
+    ("GET", "/mcp/activity", True),
+
     # --- incident evidence blobs and their synthetic playlists ---------
     #
     # One case per fixture row (see seed_cameras.sql ids 2, 5-15): each
@@ -701,6 +716,10 @@ def served_paths():
     return sorted(set(out))
 
 
+def _raw(msg):
+    return {k.lower(): v for k, v in msg.items()}
+
+
 def fetch(base, method, path, with_auth, extra_headers=None):
     req = urllib.request.Request(base + path, method=method)
     if with_auth == "member":
@@ -711,23 +730,55 @@ def fetch(base, method, path, with_auth, extra_headers=None):
         req.add_header(k, v)
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
-            return r.status, r.read(), _headers(r.headers)
+            return r.status, r.read(), _headers(r.headers, is_spa_response(_raw(r.headers)))
     except urllib.error.HTTPError as e:
-        return e.code, e.read(), _headers(e.headers)
+        return e.code, e.read(), _headers(e.headers, is_spa_response(_raw(e.headers)))
     except Exception as e:  # noqa: BLE001
         return None, str(e).encode(), {}
 
 
-def _headers(msg):
+def _headers(msg, spa=False):
     out = {}
     for k in COMPARED_HEADERS:
         v = msg.get(k)
         if v is None:
             continue
-        if k == "x-request-id" and MINTED_ID.match(v):
-            v = "<minted>"
+        if k == "x-request-id":
+            # Not compared on an SPA response — see `is_spa_response`.
+            if spa:
+                continue
+            if MINTED_ID.match(v):
+                v = "<minted>"
         out[k] = v
     return out
+
+
+def is_spa_response(headers):
+    """Whether this response came from the SPA fallback.
+
+    Python's SPA middleware is registered LAST, which makes it the
+    OUTERMOST middleware, and it returns a `FileResponse` directly
+    without calling down the stack — so the `request_context`
+    middleware that stamps `X-Request-Id` never runs for it. The
+    dashboard document and every `/assets/*` file therefore ship with no
+    request id, which is the one response a customer could quote in a
+    support ticket. main.py already hit this for the SECURITY headers
+    and fixed it by calling `_apply_security_headers` explicitly from
+    the SPA paths; `X-Request-Id` was not given the same treatment.
+    PYTHON_BUGS #15.
+
+    Rust stamps it on every response, deliberately — same reasoning as
+    the 500 case in expected_divergences.md: nothing can depend on the
+    header's absence, and matching it would mean writing code to strip
+    it. So it is not compared here.
+
+    Detected from the content type rather than the path, because the
+    fallback answers any unrouted path and the route table decides which
+    those are. `/assets/*` is served by Rust's own ServeDir and reaches
+    Python's SPA branch too.
+    """
+    kind = (headers.get("content-type") or "").split(";")[0].strip()
+    return kind in ("text/html", "application/javascript", "text/css")
 
 
 def normalise(body, path=""):
