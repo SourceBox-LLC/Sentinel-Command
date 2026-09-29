@@ -15,14 +15,16 @@
    "file": "src/loops.rs",
    "_why": "`last_seen IS NOT NULL` is the filter that keeps a row which has never reported from being announced as having gone offline. Drop it and every freshly created node gets a spurious 'went offline' the first time the sweep runs — before its first heartbeat, which is exactly the window an operator is watching.",
    "old": "        \"UPDATE camera_nodes SET status = 'offline'\n          WHERE status = 'online' AND last_seen IS NOT NULL AND last_seen < $1",
-   "new": "        \"UPDATE camera_nodes SET status = 'offline'\n          WHERE status = 'online' AND last_seen < $1"
+   "new": "        \"UPDATE camera_nodes SET status = 'offline'\n          WHERE status = 'online' AND last_seen < $1",
+   "equivalent": "Equivalent, and verified rather than assumed: `NULL < timestamp` evaluates to NULL and `WHERE` treats that as not-true, so the comparison ALONE already excludes a row that has never reported. Checked against the fixture — 2 rows matched with the predicate and 2 without. SQLAlchemy emits the same SQL, so it is equally redundant in the Python. The predicate stays in both because it states the intent, and this entry stays so the next reader does not take its presence for evidence that it is load-bearing."
   },
   {
    "name": "a camera never heard from is announced as offline",
    "file": "src/loops.rs",
    "_why": "The same filter on the camera half. Separate mutation because it is a separate statement and a port can easily carry one and not the other.",
    "old": "          WHERE c.status = 'online' AND c.last_seen IS NOT NULL AND c.last_seen < $1",
-   "new": "          WHERE c.status = 'online' AND c.last_seen < $1"
+   "new": "          WHERE c.status = 'online' AND c.last_seen < $1",
+   "equivalent": "Equivalent, and verified rather than assumed: `NULL < timestamp` evaluates to NULL and `WHERE` treats that as not-true, so the comparison ALONE already excludes a row that has never reported. Checked against the fixture — 2 rows matched with the predicate and 2 without. SQLAlchemy emits the same SQL, so it is equally redundant in the Python. The predicate stays in both because it states the intent, and this entry stays so the next reader does not take its presence for evidence that it is load-bearing."
   },
   {
    "name": "an already-offline node is announced again",
@@ -111,9 +113,9 @@
   {
    "name": "the org list counts duplicates",
    "file": "src/loops.rs",
-   "_why": "UNION, not UNION ALL: an org with rows in all six tables appears six times under ALL, which sweeps it six times (harmless, the second is a no-op) and reports orgs_processed six times too high — the one number an operator uses to sanity-check the sweep.",
-   "old": "        \"SELECT org_id FROM stream_access_logs\n         UNION SELECT org_id FROM mcp_activity_logs",
-   "new": "        \"SELECT org_id FROM stream_access_logs\n         UNION ALL SELECT org_id FROM mcp_activity_logs"
+   "_why": "UNION, not UNION ALL: an org with rows in all six tables appears six times under ALL, which sweeps it six times (harmless, the second is a no-op) and reports orgs_processed six times too high — the one number an operator uses to sanity-check the sweep. EVERY union has to change: the first version of this mutation changed only the first, and `A UNION ALL B UNION C` still dedupes the whole accumulated result at the later UNION, so the mutant was equivalent by construction.",
+   "old": "        \"SELECT org_id FROM stream_access_logs\n         UNION SELECT org_id FROM mcp_activity_logs\n         UNION SELECT org_id FROM audit_log\n         UNION SELECT org_id FROM motion_events\n         UNION SELECT org_id FROM notifications\n         UNION SELECT org_id FROM email_log\",",
+   "new": "        \"SELECT org_id FROM stream_access_logs\n         UNION ALL SELECT org_id FROM mcp_activity_logs\n         UNION ALL SELECT org_id FROM audit_log\n         UNION ALL SELECT org_id FROM motion_events\n         UNION ALL SELECT org_id FROM notifications\n         UNION ALL SELECT org_id FROM email_log\","
   },
   {
    "name": "the cutoff is inclusive",

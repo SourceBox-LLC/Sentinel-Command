@@ -55,10 +55,16 @@ struct StaleRow {
 ///
 /// Two details that are easy to lose:
 ///
-///   * `last_seen IS NOT NULL` is part of the filter. A row that has
-///     never been heard from has no transition to announce — if its
-///     status says `online` that is a different bug, and emitting
-///     "went offline" for it would invent an event that never happened.
+///   * `last_seen IS NOT NULL` is part of the filter, and it does NOT
+///     do the work its presence suggests. A row that has never been
+///     heard from has no transition to announce — emitting "went
+///     offline" for it would invent an event that never happened — but
+///     what actually excludes it is SQL's three-valued logic:
+///     `NULL < timestamp` is NULL, and `WHERE` treats that as not-true.
+///     The predicate is Python's, carried for fidelity and because it
+///     states the intent; removing it changes no row. Verified against
+///     the fixture, and both mutations for it are marked equivalent in
+///     `mutations/loops.json` rather than left looking uncovered.
 ///   * the notifications are emitted AFTER the commit, so one can never
 ///     reference a row that was rolled back. That ordering is why the
 ///     rows are collected first rather than emitted in the loop.
