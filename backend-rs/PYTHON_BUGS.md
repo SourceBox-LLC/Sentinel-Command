@@ -365,3 +365,69 @@ does not compare `x-request-id` on an SPA response, and says so at
 
 Found by adding `GET /mcp` to the read differential — the first case in
 the suite to compare an SPA response's headers at all.
+
+## 16. Four of the nine synced tables never reach the cloud mirror
+
+Severity: **high** — no local data is lost, but the backup this feature
+exists to be is missing the cameras, the camera groups, the nodes and
+the Sentinel run history. A restore from it rebuilds an install with
+incidents and motion events attached to cameras that do not exist.
+
+Found by the loops differential: the port pushed nine tables and the
+Python pushed five.
+
+`app/core/sync_client.py::_push_table` builds each row's envelope
+inline:
+
+```python
+"rows": [
+    {
+        "id": str(row.id),
+        "updated_at": getattr(row, spec.cursor_attr).isoformat(),
+        "data": _row_payload(row),
+    }
+    for row in rows
+],
+```
+
+`getattr(...)` returns `None` for a row whose cursor column is NULL, and
+`None.isoformat()` raises `AttributeError`. That happens while building
+the payload — **before the POST** — so the caller's per-table `except`
+catches it, logs a warning, and moves on having sent *nothing at all*
+for that table. Not a partial batch: nothing.
+
+Measured against the differential fixture:
+
+| table | rows with a NULL cursor | reaches the mirror |
+| --- | --- | --- |
+| `cameras` | 22 of 37 | **no** |
+| `camera_groups` | some | **no** |
+| `camera_nodes` | some | **no** |
+| `sentinel_runs` | 7 of 16 | **no** |
+| `incidents`, `incident_evidence`, `motion_events`, `sentinel_config`, `notifications` | none | yes |
+
+The NULLs are legitimate. `updated_at` has no `server_default` on these
+models, so any row written by a path that does not set it explicitly
+keeps NULL — and ONE such row is enough to block the entire table
+forever, because the failure is per-table and every cycle hits it again.
+
+The warning it logs is indistinguishable from a transient 5xx, which is
+why this has never surfaced: the loop looks like it is working, and the
+only way to notice is to attempt a restore.
+
+Three fixes, and the first two are both needed:
+
+1. Exclude rows whose cursor column is NULL in the query — a row with no
+   cursor cannot participate in an incremental sync meaningfully, and
+   including one poisons the table.
+2. Give those columns a `server_default` so the NULLs stop being
+   created. `scripts/restore_from_cloud.py` should then be run against a
+   real mirror to find out what is actually in it, since the table above
+   says the answer today is "less than anyone would assume".
+3. Separately, one unserialisable row should not discard a whole batch
+   of good ones.
+
+**Reproduced in the port**, deliberately and loudly: `src/sync.rs`
+rejects the batch before the push, with a comment pointing here. The two
+stacks have to agree while both are serving, and this is the single most
+important thing in that file to fix on master.

@@ -334,3 +334,25 @@ SELECT 'rec-cam-' || n, 'rec-downgrade', NULL, 'Cam ' || n, 'offline', NULL,
        'rtsp', 'streaming', false, false, false,
        now()::timestamp - make_interval(days => 10 - n), now()::timestamp
   FROM generate_series(1, 8) AS n;
+
+-- ---- the data sync --------------------------------------------------
+--
+-- The mirror only runs when the licence carries the sync entitlement,
+-- which is a separate opt-in from Sentinel validity. Without this the
+-- whole body no-ops and both sides agree on having done nothing.
+DELETE FROM settings WHERE org_id = 'self-host'
+   AND (key LIKE 'sentinel_license_%' OR key = 'sentinel_data_sync_enabled'
+        OR key LIKE 'sentinel_sync_cursor_%');
+INSERT INTO settings (org_id, key, value, updated_at) VALUES
+  -- The entitlement itself, and the licence state behind it:
+  -- `is_sync_enabled` checks local auth, a licence key, a VALID licence
+  -- and then the entitlement, in that order. Miss any one and the whole
+  -- body no-ops — which it did, silently, until the sync coverage guard
+  -- was added below.
+  ('self-host', 'sentinel_data_sync_enabled', 'true', now()::timestamp),
+  ('self-host', 'sentinel_license_valid', 'true', now()::timestamp),
+  ('self-host', 'sentinel_license_last_check_reachable', 'true', now()::timestamp),
+  ('self-host', 'sentinel_license_last_check_at',
+   to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US+00:00'), now()::timestamp),
+  ('self-host', 'sentinel_license_last_ok_at',
+   to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US+00:00'), now()::timestamp);

@@ -55,6 +55,8 @@ pub struct Config {
     /// contract existed in the port until the loops slice; this is what
     /// the write half posts to.
     pub sentinel_license_service_url: String,
+    /// `SENTINEL_SYNC_SERVICE_URL` — the mirror's destination.
+    pub sentinel_sync_service_url: String,
     /// Fleet-wide kill switch for agent dispatch.
     pub sentinel_dispatch_enabled: bool,
     /// Fleet-wide monthly run ceiling; 0 disables the ceiling.
@@ -190,6 +192,7 @@ impl Config {
                 .filter(|v| !v.is_empty()),
             sentinel_license_key: std::env::var("SENTINEL_LICENSE_KEY").ok().filter(|v| !v.is_empty()),
             sentinel_license_service_url: var_or("SENTINEL_LICENSE_SERVICE_URL", ""),
+            sentinel_sync_service_url: var_or("SENTINEL_SYNC_SERVICE_URL", ""),
             // Python reads this as `.lower() == "true"`, so anything
             // else — including "1" — is false.
             sentinel_dispatch_enabled: var_or("SENTINEL_DISPATCH_ENABLED", "true").to_lowercase() == "true",
@@ -279,6 +282,7 @@ mod tests {
             clerk_webhook_secret: None,
             sentinel_license_key: None,
             sentinel_license_service_url: String::new(),
+            sentinel_sync_service_url: String::new(),
             sentinel_dispatch_enabled: true,
             sentinel_global_monthly_run_cap: 0,
             sentinel_agent_webhook_url: None,

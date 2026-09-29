@@ -40,10 +40,11 @@ def main() -> int:
     ap.add_argument("--db", default=os.environ.get("PROBE_DATABASE_URL", ""))
     ap.add_argument("--body",
                     choices=("sweep", "cleanup", "reaper", "digest", "license",
-                             "reconcile"),
+                             "reconcile", "sync"),
                     required=True)
     ap.add_argument("--license-url", default="")
     ap.add_argument("--clerk-url", default="")
+    ap.add_argument("--sync-url", default="")
     ap.add_argument("--license-key", default="probe-license-key")
     args = ap.parse_args()
     if args.db:
@@ -74,6 +75,8 @@ def main() -> int:
         elif args.body == "reaper":
             from app.core.sentinel_dispatch import reap_stranded_runs  # noqa: PLC0415
             summary = reap_stranded_runs(db)
+        elif args.body == "sync":
+            summary = run_data_sync(args)
         elif args.body == "reconcile":
             summary = run_plan_reconcile(args, main_mod)
         elif args.body == "license":
@@ -94,7 +97,7 @@ def main() -> int:
         db.close()
 
     print(json.dumps({"summary": summary}, sort_keys=True), flush=True)
-    if args.body == "license":
+    if args.body in ("license", "sync"):
         # The summary IS the comparison here: every scenario's resulting
         # rows are in it, and there is nothing else the check-in touches.
         return 0
@@ -106,6 +109,113 @@ def main() -> int:
     finally:
         db.close()
     return 0
+
+
+def run_data_sync(args) -> dict:
+    """Two push cycles, and a scripted per-table failure between them.
+
+    Two, because the cursor is the whole of the incremental contract:
+    the second cycle must push NOTHING, and a port whose cursor did not
+    advance would re-push every row while still looking correct on the
+    first.
+    """
+    import asyncio  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+    import app.core.config as config_mod  # noqa: PLC0415
+    from app.core.database import SessionLocal  # noqa: PLC0415
+    from app.core.sync_client import push_pending_changes  # noqa: PLC0415
+
+    settings = config_mod.settings
+    settings.SENTINEL_SYNC_SERVICE_URL = args.sync_url.rstrip("/")
+    settings.SENTINEL_LICENSE_KEY = args.license_key
+    # LOCAL auth for this body, and only this body. The mirror is a
+    # self-host feature — `is_sync_enabled` returns False for a hosted
+    # org before it looks at anything else — while the reconcile needs
+    # the opposite. Set per body rather than for the process, which is
+    # what left this one pushing nothing while both sides agreed.
+    settings.AUTH_PROVIDER = "local"
+
+    def post(path, body=None):
+        data = json.dumps(body or {}).encode()
+        return json.loads(urllib.request.urlopen(urllib.request.Request(
+            f"{args.sync_url.rstrip('/')}{path}", data=data,
+            headers={"Content-Type": "application/json"}), timeout=5).read() or b"{}")
+
+    def pushes():
+        return json.loads(urllib.request.urlopen(
+            f"{args.sync_url.rstrip('/')}/__pushes", timeout=5).read())
+
+    out = {}
+    post("/__reset")
+    db = SessionLocal()
+    try:
+        asyncio.run(push_pending_changes(db))
+        out["first"] = summarise_pushes(pushes())
+        out["cursors_after_first"] = read_cursors(db, settings.LOCAL_ORG_ID)
+
+        # Nothing has changed since, so a correct cursor means an empty
+        # cycle. This is the case a port that never advanced its cursor
+        # fails, and the only one that catches it.
+        post("/__reset")
+        asyncio.run(push_pending_changes(db))
+        out["second"] = summarise_pushes(pushes())
+
+        # One table scripted to 500. Its cursor must NOT advance, and
+        # every other table must still push — the cursors are
+        # independent and partial progress is the design.
+        post("/__reset")
+        post("/__fail", {"tables": ["motion_events"]})
+        db.execute(_text("DELETE FROM settings WHERE key LIKE 'sentinel_sync_cursor_%'"))
+        db.commit()
+        asyncio.run(push_pending_changes(db))
+        out["with_failure"] = summarise_pushes(pushes())
+        out["cursors_after_failure"] = read_cursors(db, settings.LOCAL_ORG_ID)
+    finally:
+        db.close()
+    return out
+
+
+def _text(sql):
+    from sqlalchemy import text  # noqa: PLC0415
+
+    return text(sql)
+
+
+def summarise_pushes(pushes: list) -> list:
+    """What was sent, reduced to what is actually a contract.
+
+    Row VALUES are not compared — they are the fixture, and comparing
+    them would make this a slow copy of the write differential. The
+    column NAMES are, because the denylist is only observable here, and
+    so is the id list, the order of the tables and the row counts.
+    """
+    out = []
+    for push in pushes:
+        rows = push.get("rows") or []
+        columns = sorted({k for row in rows for k in (row.get("data") or {})})
+        out.append({
+            "table": push["table"],
+            "authorized": push["authorized"],
+            "row_count": push["row_count"],
+            "columns": columns,
+            # Sorted: the id set is a set, and the query behind it has
+            # no ORDER BY on either side.
+            "known_ids": sorted(push["known_ids"]) if push["known_ids"] is not None else None,
+            # That every row carries an `id` and an `updated_at` beside
+            # its data is the envelope the service reads.
+            "envelope": sorted({k for row in rows for k in row}),
+        })
+    return out
+
+
+def read_cursors(db, org_id: str) -> dict:
+    """Cursor presence, not value: the values are fixture timestamps."""
+    rows = db.execute(
+        _text("SELECT key, value FROM settings WHERE org_id = :o "
+              "AND key LIKE 'sentinel_sync_cursor_%' ORDER BY key"),
+        {"o": org_id},
+    ).all()
+    return {key: bool(value) for key, value in rows}
 
 
 # Which answer the fake Clerk gives for each org. The names are the

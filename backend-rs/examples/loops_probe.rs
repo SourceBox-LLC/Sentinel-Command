@@ -35,6 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut license_url = String::new();
     let mut license_key = "probe-license-key".to_string();
     let mut clerk_url = String::new();
+    let mut sync_url = String::new();
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
     while i < args.len() {
@@ -57,6 +58,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--clerk-url" => {
                 clerk_url = args[i + 1].clone();
+                i += 2;
+            }
+            "--sync-url" => {
+                sync_url = args[i + 1].clone();
                 i += 2;
             }
             _ => i += 1,
@@ -126,6 +131,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             for (label, sql) in SWEEP_ROWS {
                 dump(&pool, label, sql).await?;
             }
+        }
+        "sync" => {
+            let base = sync_url.trim_end_matches('/').to_string();
+            let mut sync_state = state.clone();
+            let mut config = (*state.config).clone();
+            config.sentinel_sync_service_url = base.clone();
+            config.sentinel_license_key = Some(license_key.clone());
+            // LOCAL auth for this body, and only this body. The mirror
+            // is a self-host feature — `is_sync_enabled` returns false
+            // for a hosted org before it looks at anything else — while
+            // the reconcile above needs the opposite, because a
+            // self-host short-circuit would skip the live Clerk lookup
+            // that is its entire purpose. Set per body rather than for
+            // the process, which is what left this one pushing nothing
+            // while both sides agreed about it.
+            config.auth_provider = "local".to_string();
+            sync_state.config = Arc::new(config);
+            let http = &state.http;
+
+            let mut out = serde_json::Map::new();
+            post(http, &base, "/__reset", &json!({})).await?;
+            sentinel_command::sync::push_pending_changes(&sync_state).await;
+            out.insert("first".into(), summarise_pushes(http, &base).await?);
+            out.insert("cursors_after_first".into(), read_cursors(&pool, &org).await?);
+
+            // Nothing has changed since, so a correct cursor means an
+            // empty cycle. This is the case a port that never advanced
+            // its cursor fails, and the only one that catches it.
+            post(http, &base, "/__reset", &json!({})).await?;
+            sentinel_command::sync::push_pending_changes(&sync_state).await;
+            out.insert("second".into(), summarise_pushes(http, &base).await?);
+
+            // One table scripted to 500. Its cursor must NOT advance,
+            // and every other table must still push — the cursors are
+            // independent and partial progress is the design.
+            post(http, &base, "/__reset", &json!({})).await?;
+            post(http, &base, "/__fail", &json!({"tables": ["motion_events"]})).await?;
+            sqlx::query("DELETE FROM settings WHERE key LIKE 'sentinel_sync_cursor_%'")
+                .execute(&pool)
+                .await?;
+            sentinel_command::sync::push_pending_changes(&sync_state).await;
+            out.insert("with_failure".into(), summarise_pushes(http, &base).await?);
+            out.insert("cursors_after_failure".into(), read_cursors(&pool, &org).await?);
+
+            println!(
+                "{}",
+                serde_json::to_string(&json!({"summary": serde_json::Value::Object(out)}))?
+            );
         }
         "reconcile" => {
             // NOT local auth for this body: `fetch_live_plan_slug` is
@@ -223,6 +276,83 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+async fn post(
+    client: &reqwest::Client,
+    base: &str,
+    path: &str,
+    body: &serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    client.post(format!("{base}{path}")).json(body).send().await?.error_for_status()?;
+    Ok(())
+}
+
+/// What was sent, reduced to what is actually a contract.
+///
+/// Row VALUES are not compared — they are the fixture, and comparing
+/// them would make this a slow copy of the write differential. The
+/// column NAMES are, because the denylist is only observable in the
+/// request body, and so is the id list, the table order and the counts.
+async fn summarise_pushes(
+    client: &reqwest::Client,
+    base: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let pushes: Vec<serde_json::Value> =
+        client.get(format!("{base}/__pushes")).send().await?.json().await?;
+    let mut out = Vec::new();
+    for push in pushes {
+        let rows = push["rows"].as_array().cloned().unwrap_or_default();
+        let mut columns = std::collections::BTreeSet::new();
+        let mut envelope = std::collections::BTreeSet::new();
+        for row in &rows {
+            if let Some(map) = row.as_object() {
+                envelope.extend(map.keys().cloned());
+                if let Some(data) = map.get("data").and_then(|d| d.as_object()) {
+                    columns.extend(data.keys().cloned());
+                }
+            }
+        }
+        let known_ids = match push["known_ids"].as_array() {
+            // Sorted: the id set is a set, and the query behind it has
+            // no ORDER BY on either side.
+            Some(ids) => {
+                let mut ids: Vec<String> =
+                    ids.iter().filter_map(|i| i.as_str().map(str::to_string)).collect();
+                ids.sort();
+                json!(ids)
+            }
+            None => serde_json::Value::Null,
+        };
+        out.push(json!({
+            "table": push["table"],
+            "authorized": push["authorized"],
+            "row_count": push["row_count"],
+            "columns": columns.into_iter().collect::<Vec<_>>(),
+            "known_ids": known_ids,
+            "envelope": envelope.into_iter().collect::<Vec<_>>(),
+        }));
+    }
+    Ok(json!(out))
+}
+
+/// Cursor presence, not value: the values are fixture timestamps.
+async fn read_cursors(
+    pool: &sqlx::PgPool,
+    org: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT key, value FROM settings
+          WHERE org_id = $1 AND key LIKE 'sentinel_sync_cursor_%' ORDER BY key",
+    )
+    .bind(org)
+    .fetch_all(pool)
+    .await?;
+    let mut out = serde_json::Map::new();
+    for (key, value) in rows {
+        out.insert(key, json!(value.is_some_and(|v| !v.is_empty())));
+    }
+    Ok(serde_json::Value::Object(out))
 }
 
 /// Which answer the fake Clerk gives for each org. The names are the

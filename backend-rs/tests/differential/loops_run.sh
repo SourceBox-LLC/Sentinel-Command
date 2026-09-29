@@ -85,6 +85,22 @@ for _ in $(seq 20); do
     sleep 0.2
 done
 
+# And a fake Sentinel-Sync-Service. Unlike the other two this one exists
+# to be READ BACK: the mirror's behaviour is almost entirely in what it
+# sends, and none of that is visible locally afterwards except the
+# cursors.
+SYNC_PORT="${LOOPS_SYNC_PORT:-18091}"
+SYNC_URL="http://127.0.0.1:$SYNC_PORT"
+holder="$(ss -lptnH "sport = :$SYNC_PORT" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1)"
+[ -n "$holder" ] && kill "$holder" 2>/dev/null
+"$PYTHON" "$HERE/fake_sync.py" --port "$SYNC_PORT" >/dev/null 2>&1 &
+SYNC_PID=$!
+trap 'rm -rf "$WORK"; kill $FAKE_PID $CLERK_PID $SYNC_PID 2>/dev/null' EXIT
+for _ in $(seq 20); do
+    curl -fsS -m 1 "$SYNC_URL/__pushes" >/dev/null 2>&1 && break
+    sleep 0.2
+done
+
 seed() {
     docker exec -i "$PG_CONTAINER" psql -U cc -d cc -q < "$HERE/seed_cameras.sql" >/dev/null 2>&1
     # The loop fixture goes on top: seed_cameras.sql cannot exercise
@@ -96,17 +112,17 @@ seed() {
 
 bad=0
 compared=0
-for body in sweep cleanup reaper digest license reconcile; do
+for body in sweep cleanup reaper digest license reconcile sync; do
     seed || { echo "REFUSING: the loop fixture did not apply cleanly"; exit 2; }
     "$PYTHON" "$HERE/py_loops_probe.py" --db "postgresql+psycopg://${PG_URL#postgresql://}" \
         --body "$body" --license-url "$LICENSE_URL" --clerk-url "$CLERK_URL" \
-        2>/dev/null \
+        --sync-url "$SYNC_URL" 2>/dev/null \
         | grep '^{' > "$WORK/py-$body.jsonl"
 
     seed || { echo "REFUSING: the loop fixture did not apply cleanly"; exit 2; }
     ( cd "$RS" && cargo run --quiet --example loops_probe -- \
         --db "$PG_URL" --body "$body" --license-url "$LICENSE_URL" \
-        --clerk-url "$CLERK_URL" ) \
+        --clerk-url "$CLERK_URL" --sync-url "$SYNC_URL" ) \
         > "$WORK/rs-$body.jsonl"
 
     # Compared as parsed JSON per line: Python's json.dumps and
@@ -201,6 +217,16 @@ done
 # perfectly and prove nothing — which is what a fake Clerk answering the
 # cached plan for every org produces, and what an unreachable fake
 # produces too, since an unreachable Clerk is a SKIP by design.
+# The sync's guard. It pushed NOTHING for its first several runs --
+# `is_sync_enabled` requires local auth, a licence key, a VALID licence
+# and the entitlement, and the probe was running the reconcile's clerk
+# mode. Both sides agreed about having done nothing and the run was
+# green. Count the rows that actually went up.
+synced=$("$PYTHON" -c "
+import json
+d=json.loads(open('$WORK/rs-sync.jsonl').readline())['summary']
+print(sum(p['row_count'] for p in d['first']))
+" 2>/dev/null || echo 0)
 corrected=$("$PYTHON" -c "
 import json
 print(json.loads(open('$WORK/rs-reconcile.jsonl').readline())['summary']['changed'])
@@ -232,10 +258,10 @@ print(json.loads(open('$WORK/rs-cleanup.jsonl').readline())['summary']['total_de
 echo
 echo "fixture: sweep flipped $flips, cleanup deleted $deleted, reaper stamped $reaped,"
 echo "         digest emitted $digested, licence reached $verdicts distinct verdict(s),"
-echo "         reconcile corrected $corrected plan(s)"
+echo "         reconcile corrected $corrected plan(s), sync pushed $synced row(s)"
 if [ "$flips" -lt 4 ] || [ "$deleted" -lt 20 ] || [ "$reaped" -lt 2 ] \
    || [ "$digested" -lt 1 ] || [ "$verdicts" -lt 3 ] \
-   || [ "$corrected" -lt 2 ]; then
+   || [ "$corrected" -lt 2 ] || [ "$synced" -lt 50 ]; then
     echo "FIXTURE TOO THIN — every body must actually do work, or no-ops agree"
     exit 2
 fi

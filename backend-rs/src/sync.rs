@@ -1,0 +1,339 @@
+//! The one-way data mirror to Sentinel-Sync-Service.
+//!
+//! Ported from `backend/app/core/sync_client.py`. Local Postgres (or
+//! SQLite, self-hosted) stays the source of truth and the install works
+//! with no internet at all; this pushes changed rows so a dead disk is
+//! recoverable.
+//!
+//! Two decisions in the Python are load-bearing and easy to undo by
+//! accident:
+//!
+//! **The payload is RAW COLUMN VALUES, not `to_dict()`.** It reused
+//! `to_dict()` once, on the reasoning that anything its author had not
+//! chosen to expose over the API could not leak into the cloud either.
+//! That held for secrecy and silently made the mirror *unrestorable*:
+//! Camera lost 11 of 21 columns (the whole recording policy nests under
+//! `recording_policy`; both codecs vanish) and `SentinelRun` never
+//! carried `tool_trace`. A backup you cannot restore from is not a
+//! backup. So the columns go raw and the exclusions are stated.
+//!
+//! **Deletions propagate only for the small identity tables.** Cameras,
+//! groups and nodes send a full `known_ids` snapshot so the service can
+//! tombstone what is gone. The log and event tables deliberately do not:
+//! local retention prunes them *because* local disk is finite, and the
+//! cloud copy exists to outlive that. A local delete must never delete
+//! the cloud row.
+
+use crate::app::AppState;
+
+/// `_PUSH_TIMEOUT_SECONDS`.
+const PUSH_TIMEOUT_SECONDS: u64 = 30;
+/// `_BATCH_SIZE`.
+const BATCH_SIZE: i64 = 500;
+
+/// One syncable table: what to page by, and whether deletes propagate.
+pub struct SyncTableSpec {
+    pub table: &'static str,
+    /// The column pushes are filtered and ordered by. Three different
+    /// ones across the nine tables, and they are not interchangeable —
+    /// `notifications` has no `updated_at` at all.
+    pub cursor: &'static str,
+    pub reconcile_deletes: bool,
+}
+
+/// The nine tables, in Python's order. The order matters only for which
+/// partial progress a failing cycle makes, but it is compared.
+pub const SYNC_TABLES: [SyncTableSpec; 9] = [
+    SyncTableSpec { table: "cameras", cursor: "updated_at", reconcile_deletes: true },
+    SyncTableSpec { table: "camera_groups", cursor: "updated_at", reconcile_deletes: true },
+    SyncTableSpec { table: "camera_nodes", cursor: "updated_at", reconcile_deletes: true },
+    SyncTableSpec { table: "incidents", cursor: "updated_at", reconcile_deletes: false },
+    SyncTableSpec { table: "incident_evidence", cursor: "timestamp", reconcile_deletes: false },
+    SyncTableSpec { table: "motion_events", cursor: "timestamp", reconcile_deletes: false },
+    SyncTableSpec { table: "sentinel_config", cursor: "updated_at", reconcile_deletes: false },
+    SyncTableSpec { table: "sentinel_runs", cursor: "updated_at", reconcile_deletes: false },
+    SyncTableSpec { table: "notifications", cursor: "created_at", reconcile_deletes: false },
+];
+
+/// Columns that must never leave this install.
+///
+/// `api_key_hash` authenticates a node to THIS Command Center — useless
+/// to a restore, since a restored node re-registers and is issued a
+/// fresh key, and actively dangerous sitting in a cloud mirror.
+///
+/// `data` is snapshot and clip bytes, tens of megabytes a row. The
+/// metadata columns around it still sync, so a restore knows the
+/// evidence existed and what it was. The column is `deferred()` on the
+/// Python model and the denylist is checked BEFORE the attribute is
+/// read, which is what stops iterating columns from lazy-loading every
+/// blob — reproduced here by never naming the column in the projection
+/// rather than by selecting it and dropping it afterwards.
+pub fn denied_columns(table: &str) -> &'static [&'static str] {
+    match table {
+        "camera_nodes" => &["api_key_hash"],
+        "incident_evidence" => &["data"],
+        _ => &[],
+    }
+}
+
+/// `sentinel_sync_cursor_<table>`.
+pub fn cursor_setting_key(table: &str) -> String {
+    format!("sentinel_sync_cursor_{table}")
+}
+
+/// What one push cycle did, per table.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct SyncSummary {
+    pub enabled: bool,
+    /// `(table, rows_pushed, batches)`.
+    pub pushed: Vec<(String, i64, i64)>,
+    pub failed: Vec<String>,
+}
+
+impl SyncSummary {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "enabled": self.enabled,
+            "pushed": self.pushed.iter()
+                .map(|(t, rows, batches)| serde_json::json!([t, rows, batches]))
+                .collect::<Vec<_>>(),
+            "failed": self.failed,
+        })
+    }
+}
+
+/// `push_pending_changes` — every syncable table's changes since its
+/// own cursor.
+///
+/// **Never raises**, the same fail-open contract as the licence
+/// check-in: a push failure means this cycle's data waits for the next
+/// tick, and cursors advance only on a confirmed success. One table's
+/// failure must not block the others — the cursors are independent, so
+/// partial progress is both safe and useful.
+pub async fn push_pending_changes(state: &AppState) -> SyncSummary {
+    let ctx = crate::license::LicenseContext {
+        pool: &state.pool,
+        org_id: &state.config.local_org_id,
+        local_auth: state.config.is_local_auth(),
+        license_key: state.config.sentinel_license_key.as_deref(),
+    };
+    if !crate::license::is_sync_enabled(&ctx).await {
+        return SyncSummary::default();
+    }
+
+    let mut summary = SyncSummary { enabled: true, ..Default::default() };
+    for spec in &SYNC_TABLES {
+        match push_table(state, spec).await {
+            Ok((rows, batches)) => summary.pushed.push((spec.table.to_string(), rows, batches)),
+            Err(error) => {
+                tracing::warn!(table = spec.table, %error, "[SentinelSync] push failed");
+                summary.failed.push(spec.table.to_string());
+            }
+        }
+    }
+    summary
+}
+
+/// One table, paged until a short batch.
+async fn push_table(
+    state: &AppState,
+    spec: &SyncTableSpec,
+) -> Result<(i64, i64), Box<dyn std::error::Error + Send + Sync>> {
+    let org = &state.config.local_org_id;
+    let cursor_key = cursor_setting_key(spec.table);
+    let mut cursor: Option<chrono::NaiveDateTime> =
+        crate::settings::get(&state.pool, org, &cursor_key, Some(""))
+            .await
+            .ok()
+            .flatten()
+            .filter(|raw| !raw.is_empty())
+            .and_then(|raw| crate::pydatetime::fromisoformat(&raw).ok().map(|t| t.naive));
+
+    // The projection, built from the live column list minus the denied
+    // ones. Naming the allowed columns rather than selecting the row and
+    // stripping afterwards is what reproduces Python's "check before
+    // read" — a `to_jsonb(t)` would load every deferred blob to build a
+    // payload that then drops it.
+    let columns = allowed_columns(state, spec.table).await?;
+    if columns.is_empty() {
+        return Ok((0, 0));
+    }
+    let projection = columns
+        .iter()
+        .map(|c| format!("'{c}', t.\"{c}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut total = 0;
+    let mut batches = 0;
+    loop {
+        // Ordered by (cursor, id) so paging is stable, and filtered
+        // strictly greater so a row is never pushed twice.
+        let sql = format!(
+            "SELECT t.id::text,
+                    to_char(t.\"{cursor}\", 'YYYY-MM-DD\"T\"HH24:MI:SS.US') AS cursor_iso,
+                    t.\"{cursor}\" AS cursor_raw,
+                    json_build_object({projection}) AS data
+               FROM {table} t
+              WHERE ($1::timestamp IS NULL OR t.\"{cursor}\" > $1)
+              ORDER BY t.\"{cursor}\" ASC, t.id ASC
+              LIMIT {BATCH_SIZE}",
+            cursor = spec.cursor,
+            table = spec.table,
+        );
+        let rows: Vec<(String, Option<String>, Option<chrono::NaiveDateTime>, serde_json::Value)> =
+            sqlx::query_as(&sql).bind(cursor).fetch_all(&state.pool).await?;
+        if rows.is_empty() {
+            break;
+        }
+
+        // A NULL cursor anywhere in the batch aborts the table, BEFORE
+        // the push. Python builds the envelope with
+        // `getattr(row, spec.cursor_attr).isoformat()` inside the row
+        // comprehension, so a single row whose cursor column is NULL
+        // raises AttributeError there — and the per-table `except`
+        // catches it, logs a warning, and moves on having sent nothing.
+        //
+        // The consequence is not a slow sync. It is that four of the
+        // nine tables — cameras, camera_groups, camera_nodes and
+        // sentinel_runs, the four that hold NULL cursor rows — NEVER
+        // reach the service. See PYTHON_BUGS #16; this is reproduced
+        // rather than fixed because the two stacks have to agree, and
+        // it is the single most important thing in this file to fix on
+        // master.
+        if rows.iter().any(|(_, iso, _, _)| iso.is_none()) {
+            return Err(format!(
+                "row with a NULL {} cannot be serialised for the sync envelope",
+                spec.cursor
+            )
+            .into());
+        }
+
+        let mut payload = serde_json::json!({
+            "table": spec.table,
+            "rows": rows.iter().map(|(id, iso, _, data)| serde_json::json!({
+                "id": id,
+                "updated_at": iso,
+                "data": data,
+            })).collect::<Vec<_>>(),
+        });
+        if spec.reconcile_deletes {
+            // The FULL current id set, not just this batch — cheap for
+            // these small identity tables, and it is what lets the
+            // service tombstone a row that is no longer here at all.
+            let ids: Vec<(String,)> =
+                sqlx::query_as(&format!("SELECT id::text FROM {}", spec.table))
+                    .fetch_all(&state.pool)
+                    .await?;
+            payload["known_ids"] =
+                serde_json::json!(ids.into_iter().map(|(id,)| id).collect::<Vec<_>>());
+        }
+
+        let response = state
+            .http
+            .post(format!(
+                "{}/v1/sync/push",
+                state.config.sentinel_sync_service_url.trim_end_matches('/')
+            ))
+            .bearer_auth(state.config.sentinel_license_key.clone().unwrap_or_default())
+            .timeout(std::time::Duration::from_secs(PUSH_TIMEOUT_SECONDS))
+            .json(&payload)
+            .send()
+            .await?;
+        // `raise_for_status()`: the cursor advances only past rows the
+        // service CONFIRMED. A cursor moved on an unacknowledged push is
+        // data silently missing from the mirror.
+        response.error_for_status_ref()?;
+
+        let count = rows.len() as i64;
+        total += count;
+        batches += 1;
+
+        // Unreachable now that the batch is rejected above, and kept
+        // as a guard rather than an `unwrap`: falling through with a
+        // None cursor would leave `$1 IS NULL` matching every row on
+        // the next iteration, and a table over one batch would spin
+        // forever re-fetching the same five hundred.
+        let Some(last_iso) = rows.last().and_then(|(_, iso, _, _)| iso.clone()) else {
+            break;
+        };
+        cursor = rows.last().and_then(|(_, _, raw, _)| *raw);
+        crate::settings::set(&state.pool, org, &cursor_key, &last_iso).await.ok();
+
+        if count < BATCH_SIZE {
+            break;
+        }
+    }
+    Ok((total, batches))
+}
+
+/// The table's columns, in ordinal order, minus the denied ones.
+async fn allowed_columns(
+    state: &AppState,
+    table: &str,
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT column_name FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = $1
+          ORDER BY ordinal_position",
+    )
+    .bind(table)
+    .fetch_all(&state.pool)
+    .await?;
+    let denied = denied_columns(table);
+    Ok(rows
+        .into_iter()
+        .map(|(name,)| name)
+        .filter(|name| !denied.contains(&name.as_str()))
+        .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The three tables whose deletions propagate, and only those.
+    ///
+    /// Widening this is the dangerous direction: a log table that
+    /// reconciled deletes would have the cloud copy pruned every time
+    /// local retention ran, which is the exact opposite of why the
+    /// mirror exists.
+    #[test]
+    fn only_the_identity_tables_reconcile_deletes() {
+        let reconciled: Vec<&str> = SYNC_TABLES
+            .iter()
+            .filter(|s| s.reconcile_deletes)
+            .map(|s| s.table)
+            .collect();
+        assert_eq!(reconciled, ["cameras", "camera_groups", "camera_nodes"]);
+    }
+
+    /// Three different cursor columns across nine tables, and a table
+    /// paged by a column it does not have would fail every cycle.
+    #[test]
+    fn each_table_pages_by_a_column_that_suits_it() {
+        for spec in &SYNC_TABLES {
+            assert!(
+                matches!(spec.cursor, "updated_at" | "timestamp" | "created_at"),
+                "{}: {}",
+                spec.table,
+                spec.cursor
+            );
+        }
+        let notifications = SYNC_TABLES.iter().find(|s| s.table == "notifications").unwrap();
+        // The one that is neither: `notifications` has no `updated_at`.
+        assert_eq!(notifications.cursor, "created_at");
+    }
+
+    #[test]
+    fn the_denylist_covers_the_credential_and_the_blob() {
+        assert_eq!(denied_columns("camera_nodes"), ["api_key_hash"]);
+        assert_eq!(denied_columns("incident_evidence"), ["data"]);
+        assert!(denied_columns("cameras").is_empty());
+    }
+
+    #[test]
+    fn a_cursor_key_names_its_table() {
+        assert_eq!(cursor_setting_key("cameras"), "sentinel_sync_cursor_cameras");
+    }
+}
