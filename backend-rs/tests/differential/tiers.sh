@@ -54,6 +54,26 @@ export LOCAL_ADMIN_EMAIL=admin@example.com
 export LOCAL_ADMIN_PASSWORD_HASH='$argon2id$v=19$m=65536,t=3,p=4$Ro3CVUFhr5w3hNxP8Cfe9A$8L+JCXU1z+/zs9b32O92qCPEvf8AhWmpViV5KwwLRfc'
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:16379/0}"
 
+# The sweeps are pushed out of the way for BOTH tiers.
+#
+# They are not a no-op on this fixture: it carries a stranded
+# `sentinel_run`, and the reaper's five-minute tick landed inside one
+# tier's window and not the other's, which the write differential
+# correctly reported as a side-effect difference in `sentinel_runs`
+# with no code behind it. The two tiers start seconds apart, so their
+# ticks never align.
+#
+# What the loops DO is compared by loops_run.sh, which calls the bodies
+# directly. What the HTTP differentials compare is routes, and a sweep
+# firing mid-case is noise in that. Python reads all four from the
+# environment; `sentinel_dispatch`'s own comment calls the reaper
+# cadence "tunable down for ops or up for quieter environments", and
+# this is the quietest environment there is.
+export OFFLINE_SWEEP_INTERVAL_SECONDS="${OFFLINE_SWEEP_INTERVAL_SECONDS:-86400}"
+export SENTINEL_REAPER_INTERVAL_SECONDS="${SENTINEL_REAPER_INTERVAL_SECONDS:-86400}"
+export MOTION_DIGEST_INTERVAL_SECONDS="${MOTION_DIGEST_INTERVAL_SECONDS:-86400}"
+export DISK_CHECK_INTERVAL_SECONDS="${DISK_CHECK_INTERVAL_SECONDS:-86400}"
+
 # The scripts directory is the Python's own, resolved the way install.py
 # resolves it: `Path(__file__).parent.parent.parent / "scripts"`. Both
 # tiers must read the same bytes or /install.sh diffs for a reason that

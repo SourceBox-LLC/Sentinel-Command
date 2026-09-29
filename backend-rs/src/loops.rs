@@ -826,12 +826,6 @@ pub async fn reconcile_org_plans(state: &AppState) -> Result<ReconcileSummary, s
     Ok(summary)
 }
 
-/// `DISK_CHECK_INTERVAL_SECONDS`.
-const DISK_CHECK_INTERVAL_SECONDS: u64 = 300;
-/// `MOTION_DIGEST_INTERVAL_SECONDS`.
-const MOTION_DIGEST_INTERVAL_SECONDS: u64 = 60;
-/// `SENTINEL_REAPER_INTERVAL_SECONDS`.
-const SENTINEL_REAPER_INTERVAL_SECONDS: u64 = 300;
 /// `SENTINEL_LICENSE_CHECKIN_INTERVAL_SECONDS` — fifteen minutes,
 /// deliberately tighter than the hourly plan reconcile: a revoked
 /// self-host licence should stop working within a quarter of an hour,
@@ -911,7 +905,7 @@ pub fn spawn_loops(state: AppState) {
 
     spawn_reaper(state.clone());
     spawn_motion_digest(state.clone());
-    spawn_disk_check();
+    spawn_disk_check(state.config.disk_check_interval_seconds);
 
     if state.config.is_local_auth() {
         // Self-host only, and `main.py` gates them the same way. Both
@@ -928,12 +922,10 @@ pub fn spawn_loops(state: AppState) {
 }
 
 fn spawn_reaper(state: AppState) {
+    let interval = state.config.sentinel_reaper_interval_seconds;
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(
-                SENTINEL_REAPER_INTERVAL_SECONDS,
-            ))
-            .await;
+            tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
             match reap_stranded_runs(&state).await {
                 Ok(summary) => {
                     if summary.reaped > 0 {
@@ -951,12 +943,10 @@ fn spawn_reaper(state: AppState) {
 }
 
 fn spawn_motion_digest(state: AppState) {
+    let interval = state.config.motion_digest_interval_seconds;
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(
-                MOTION_DIGEST_INTERVAL_SECONDS,
-            ))
-            .await;
+            tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
             match run_motion_digest(&state).await {
                 Ok(summary) => {
                     if summary.digests_emitted > 0 {
@@ -979,14 +969,14 @@ fn spawn_motion_digest(state: AppState) {
 /// queried", since disk-full is platform state rather than any org's.
 /// Not carried: an unused parameter is a claim about what a function
 /// might touch.
-fn spawn_disk_check() {
+fn spawn_disk_check(interval: u64) {
     tokio::spawn(async move {
         // The debounce lives with the loop rather than in a static: one
         // process, one loop, and a static would be shared with a test.
         let mut debounce = DiskDebounce::default();
         let started = std::time::Instant::now();
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(DISK_CHECK_INTERVAL_SECONDS)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
             let path = if std::path::Path::new("/data").is_dir() { "/data" } else { "." };
             // `(total, free, used)` — the same reading the health probe
             // takes, so a volume cannot be 96% full on one surface and

@@ -107,6 +107,14 @@ pub struct Config {
     /// 24 hours and the 90-second heartbeat threshold are both
     /// hard-coded there.
     pub offline_sweep_interval_seconds: u64,
+    /// The other three sweeps Python reads from the environment too.
+    /// Tunable "down for ops or up for quieter environments", as its own
+    /// comment says — and the differential is the quietest environment
+    /// there is: a five-minute reaper firing mid-case in one tier and
+    /// not the other is a side-effect difference with no code behind it.
+    pub disk_check_interval_seconds: u64,
+    pub motion_digest_interval_seconds: u64,
+    pub sentinel_reaper_interval_seconds: u64,
     pub email_worker_batch_size: i64,
     pub email_max_attempts: i64,
 
@@ -230,6 +238,15 @@ impl Config {
             offline_sweep_interval_seconds: var_or("OFFLINE_SWEEP_INTERVAL_SECONDS", "30")
                 .parse()
                 .unwrap_or(30),
+            disk_check_interval_seconds: var_or("DISK_CHECK_INTERVAL_SECONDS", "300")
+                .parse()
+                .unwrap_or(300),
+            motion_digest_interval_seconds: var_or("MOTION_DIGEST_INTERVAL_SECONDS", "60")
+                .parse()
+                .unwrap_or(60),
+            sentinel_reaper_interval_seconds: var_or("SENTINEL_REAPER_INTERVAL_SECONDS", "300")
+                .parse()
+                .unwrap_or(300),
             email_worker_batch_size: var_or("EMAIL_WORKER_BATCH_SIZE", "20")
                 .parse()
                 .unwrap_or(20),
@@ -305,6 +322,9 @@ mod tests {
             email_from_name: String::new(),
             email_worker_interval_seconds: 5,
             offline_sweep_interval_seconds: 30,
+            disk_check_interval_seconds: 300,
+            motion_digest_interval_seconds: 60,
+            sentinel_reaper_interval_seconds: 300,
             email_worker_batch_size: 20,
             email_max_attempts: 3,
             frontend_url: String::new(),
