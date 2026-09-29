@@ -41,6 +41,7 @@ pub mod query;
 pub mod ratelimit;
 pub mod recipients;
 pub mod settings;
+pub mod spa;
 pub mod sse;
 pub mod sync;
 pub mod tz_names;

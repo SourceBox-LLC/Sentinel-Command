@@ -13,7 +13,7 @@ use serde_json::json;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::config::Config;
-use crate::{api, proxy};
+use crate::{api, proxy, spa};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -518,11 +518,13 @@ pub fn build_router(state: AppState) -> Router {
     }
 
     router
-        // ---- everything else is still Python ---------------------------
-        // Deliberately last. Every slice that lands removes routes from
-        // this fallback; when it forwards nothing, the Python process and
-        // proxy.rs are deleted together.
-        .fallback(proxy::forward)
+        // ---- the SPA, and then Python ----------------------------------
+        // Deliberately last. `spa::fallback` serves the React document
+        // and the files beside it, and forwards what it must not answer
+        // — the pass-through list, and `POST /mcp` after its pre-auth
+        // gates. When that forward is unreachable, the Python process
+        // and proxy.rs are deleted together.
+        .fallback(spa::fallback)
         // CORS for routes Rust answers itself. Applied to the whole
         // router but a no-op on proxied responses, which already carry
         // Python's headers — a second Access-Control-Allow-Origin makes
