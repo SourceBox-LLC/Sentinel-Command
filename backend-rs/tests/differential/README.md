@@ -806,6 +806,106 @@ two identical failures would otherwise read as a pass. The guard's
 message names both plausible causes (proxy vs stale fixture) and says
 which log line tells them apart.
 
+## The background loops (a probe pair, not requests)
+
+```bash
+tests/differential/loops_run.sh
+```
+
+Seven loop bodies, compared by calling them directly. The plan names
+these as "the least testable part and the most likely to silently
+diverge, because nothing calls them and nothing returns", and the
+Python's own history bears it out: an `AttributeError` in the log
+cleanup ran nightly, swallowed by the loop's `try/except`, until a
+Sentry alert surfaced it — and the response was to extract the body,
+which is what makes a probe possible at all.
+
+| body | shape |
+| --- | --- |
+| offline sweep | extracted in Python (`run_offline_sweep`) |
+| log cleanup | extracted (`run_log_cleanup`) |
+| sentinel reaper | extracted (`reap_stranded_runs`) |
+| motion digest | **not** extracted — the probe drives the real loop for one tick |
+| licence check-in | extracted, and needs a fake service |
+| plan reconcile | extracted, and needs a fake Clerk |
+| data sync | extracted, and needs a fake sync service that RECORDS |
+
+Each body runs against a freshly seeded database on each side, and both
+the summary it returns **and the rows it left behind** are compared. A
+body that returns the right counts while writing the wrong rows is
+exactly what a count-only check cannot see.
+
+### One tick, not one loop
+
+The motion digest is the one body Python keeps inline. Rather than
+reimplement it in the probe — which would only encode what I already
+believe it does — the probe runs the real `_motion_digest_loop` and
+bounds it: the loop sleeps first and works second, so counting sleeps
+and raising on the second executes exactly one tick.
+
+### The main fixture cannot reach any of this
+
+`seed_cameras.sql` exercises neither sweep, and that is not an oversight
+in it:
+
+* the offline sweep filters `status = 'online' AND last_seen IS NOT
+  NULL`. Every camera there is `streaming`, `offline` or NULL, and the
+  five nodes that ARE `online` have a NULL `last_seen`. This is why
+  Python's sweep has been running every thirty seconds against the
+  shared database throughout the project without disturbing anything —
+  and why nothing had ever tested the flip.
+* the log cleanup deletes past a 30/90/365-day cutoff; those rows are
+  days old at most.
+
+So `loops_fixture.sql` adds its own orgs, one per retention tier, with
+rows at 1/45/200/400 days — chosen so a port applying the WRONG TIER to
+an org is visible rather than merely differently-numbered.
+
+### The guards did the work here
+
+Three of the seven bodies passed while doing nothing at all, and the
+diff could not tell:
+
+| body | why it was vacuous |
+| --- | --- |
+| motion digest | both probes left `EMAIL_ENABLED` off, so the emit branch never ran |
+| licence check-in | every scenario would have written the same verdict |
+| data sync | `is_sync_enabled` needs local auth, a key, a VALID licence AND the entitlement — the probe was in the reconcile's Clerk mode |
+
+Each body now has a guard that counts what it actually did: rows
+flipped, rows deleted, runs stamped, digests emitted, **distinct**
+licence verdicts, plans corrected, rows pushed. A run where a body did
+nothing fails rather than passing.
+
+### What it found
+
+`PYTHON_BUGS.md` #16, and it is the most serious thing this project has
+turned up: **four of the nine synced tables never reach the cloud
+mirror.** `_push_table` builds each row's envelope with
+`getattr(row, cursor_attr).isoformat()`, which raises on a row whose
+cursor column is NULL — *while building the payload, before the POST*.
+The per-table `except` catches it, logs a warning indistinguishable from
+a transient 5xx, and sends nothing at all for that table. Every cycle.
+`cameras`, `camera_groups`, `camera_nodes` and `sentinel_runs` all hold
+NULL cursor rows. Found because the port pushed nine tables and the
+Python pushed five.
+
+### Two traps this harness set for the rest of the suite
+
+* **It polluted the shared database.** Its `loops-%` rows survive
+  `seed_cameras.sql`, which restarts `settings_id_seq` at 1 but deletes
+  only two orgs — so the restarted sequence handed out ids the survivors
+  held and the write differential died on a duplicate key.
+  `loops_teardown.sql` runs from the `EXIT` trap, so an interrupted run
+  cannot leave it broken either.
+* **It made the sweeps fire mid-case.** Once the loops actually ran in
+  the Rust tier, the reaper's five-minute tick landed inside one tier's
+  window and not the other's — a side-effect difference in
+  `sentinel_runs` with no code behind it. `tiers.sh` pushes all four
+  cadences out to a day for both tiers. Python read them from the
+  environment already; the port had them as consts, which is the real
+  defect that difference exposed.
+
 ## The MCP surface (JSON-RPC, not REST)
 
 ```bash

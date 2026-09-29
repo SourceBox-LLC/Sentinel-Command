@@ -84,6 +84,20 @@ reader of them is now reading the wrong process's memory:
 | `settings.py` full reset | `cleanup_camera_cache` | same |
 | `nodes.py` `/plan` | `get_viewer_seconds_used` | the usage gauge reads zero while Rust counts |
 
+Every row above is closed as of the loops slice. The order out was the
+one this document predicted — the MCP surface, then the WebSocket
+manager, then the routes, then the loops in `main.py` — and the last of
+those is what closed the table.
+
+**All twelve loops are Rust's now**, which matters to this document
+specifically because two of them own in-process state of their own: the
+disk check's six-hour re-emit debounce, and the email worker's last-tick
+stamp that the readiness probe reads. Both live in whichever process
+answers the probe, so neither could have moved separately from it — the
+same rule the rest of this file is about, applied to a loop rather than
+a route.
+
+
 None of that is hypothetical and none of it is visible to a
 differential, because both processes' caches are cold in a test
 environment — which is exactly the failure mode this document was
