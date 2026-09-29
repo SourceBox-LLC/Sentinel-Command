@@ -464,16 +464,23 @@ async fn dump(pool: &sqlx::PgPool, label: &str, sql: &str) -> Result<(), sqlx::E
 /// an unordered snapshot of a result is a flake rather than a finding.
 const SWEEP_ROWS: [(&str, &str); 4] = [
     (
+        // `touched` is whether `updated_at` was stamped by THIS sweep,
+        // not its value — the two probes run seconds apart. It is here
+        // because the column is the data-sync cursor for both these
+        // tables: a row flipped offline without bumping it is a row the
+        // mirror never hears about again. The snapshot missed that until
+        // `column_defaults.py` found the omission, which was a gap here
+        // as much as a bug in the code.
         "nodes",
-        "SELECT json_agg(json_build_array(node_id, status)) FROM (
-           SELECT node_id, status FROM camera_nodes
-            WHERE org_id LIKE 'loops-%' ORDER BY node_id) t",
+        "SELECT json_agg(json_build_array(node_id, status, touched)) FROM (
+           SELECT node_id, status, updated_at >= now()::timestamp - interval '2 minutes' AS touched
+             FROM camera_nodes WHERE org_id LIKE 'loops-%' ORDER BY node_id) t",
     ),
     (
         "cameras",
-        "SELECT json_agg(json_build_array(camera_id, status)) FROM (
-           SELECT camera_id, status FROM cameras
-            WHERE org_id LIKE 'loops-%' ORDER BY camera_id) t",
+        "SELECT json_agg(json_build_array(camera_id, status, touched)) FROM (
+           SELECT camera_id, status, updated_at >= now()::timestamp - interval '2 minutes' AS touched
+             FROM cameras WHERE org_id LIKE 'loops-%' ORDER BY camera_id) t",
     ),
     (
         "notifications",
@@ -532,8 +539,9 @@ const DIGEST_ROWS: [(&str, &str); 2] = [
 /// comparable and its PRESENCE is the behaviour.
 const REAPER_ROWS: [(&str, &str); 1] = [(
     "runs",
-    "SELECT json_agg(json_build_array(id, outcome, summary, completed)) FROM (
-       SELECT id, outcome, summary, completed_at IS NOT NULL AS completed
+    "SELECT json_agg(json_build_array(id, outcome, summary, completed, touched)) FROM (
+       SELECT id, outcome, summary, completed_at IS NOT NULL AS completed,
+              updated_at >= now()::timestamp - interval '2 minutes' AS touched
          FROM sentinel_runs WHERE org_id LIKE 'loops-%' ORDER BY id) t",
 )];
 

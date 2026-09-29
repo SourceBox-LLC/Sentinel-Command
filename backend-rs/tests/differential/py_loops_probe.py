@@ -455,17 +455,37 @@ def snapshot(db, body: str) -> dict:
 
     if body == "reaper":
         return {
+            # `touched` is whether `updated_at` was stamped by THIS
+            # pass, not its value. It is here because the column is the
+            # data-sync cursor for this table: a run the reaper stamps
+            # as errored without bumping it is a run the mirror never
+            # hears about again.
             "runs": q("""SELECT id, outcome, summary,
-                                completed_at IS NOT NULL AS completed
+                                completed_at IS NOT NULL AS completed,
+                                updated_at >= now()::timestamp
+                                  - interval '2 minutes' AS touched
                            FROM sentinel_runs WHERE org_id LIKE 'loops-%'
                           ORDER BY id"""),
         }
 
     if body == "sweep":
         return {
-            "nodes": q("""SELECT node_id, status FROM camera_nodes
+            # `touched` is whether the sweep STAMPED `updated_at`, not
+            # its value — the two probes run seconds apart. It is here
+            # because that column is the data-sync cursor for both these
+            # tables: a row flipped offline without bumping it is a row
+            # the cloud mirror never hears about again. The port omitted
+            # exactly that until `column_defaults.py` found it, and this
+            # snapshot could not have.
+            "nodes": q("""SELECT node_id, status,
+                                 updated_at >= now()::timestamp
+                                   - interval '2 minutes' AS touched
+                            FROM camera_nodes
                            WHERE org_id LIKE 'loops-%' ORDER BY node_id"""),
-            "cameras": q("""SELECT camera_id, status FROM cameras
+            "cameras": q("""SELECT camera_id, status,
+                                   updated_at >= now()::timestamp
+                                     - interval '2 minutes' AS touched
+                              FROM cameras
                              WHERE org_id LIKE 'loops-%' ORDER BY camera_id"""),
             # The transitions the sweep announced. `meta_json` carries
             # nothing here; the title is what a reader sees and the
@@ -491,30 +511,6 @@ def snapshot(db, body: str) -> dict:
                      FROM notifications
                     WHERE org_id LIKE 'loops-%'
                       AND kind IN ('node_offline', 'camera_offline')), false)"""),
-        }
-
-    if body == "sweep":
-        return {
-            "nodes": q("""SELECT node_id, status FROM camera_nodes
-                           WHERE org_id LIKE 'loops-%' ORDER BY node_id"""),
-            "cameras": q("""SELECT camera_id, status FROM cameras
-                             WHERE org_id LIKE 'loops-%' ORDER BY camera_id"""),
-            # The transitions the sweep announced. `meta_json` carries
-            # nothing here; the title is what a reader sees and the
-            # `name or id` fallback shows up in it.
-            #
-            # `seq` is a row_number over id rather than the id itself: it
-            # makes the emit ORDER comparable — nodes before cameras,
-            # which is a claim the code makes and nothing else here
-            # checks — without pinning absolute ids that any fixture
-            # change would shift.
-            "notifications": q("""SELECT row_number() OVER (ORDER BY id) AS seq,
-                                         org_id, kind, audience, title, body, severity,
-                                         link, camera_id, node_id
-                                    FROM notifications
-                                   WHERE org_id LIKE 'loops-%'
-                                     AND kind IN ('node_offline', 'camera_offline')
-                                   ORDER BY id"""),
         }
 
     return {

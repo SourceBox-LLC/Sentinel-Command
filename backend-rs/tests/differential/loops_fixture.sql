@@ -49,18 +49,25 @@ INSERT INTO settings (org_id, key, value, updated_at) VALUES
 -- rather than announced as having gone offline — it has never been
 -- heard from, so there is no transition to report. `sweep-already` is
 -- stale but already offline, so it must not be announced twice.
-INSERT INTO camera_nodes (node_id, org_id, api_key_hash, name, status, last_seen) VALUES
+-- `updated_at` is set an hour back on every row below, and that is
+-- load-bearing for the probe rather than cosmetic: the snapshot reports
+-- whether the sweep STAMPED `updated_at`, and a row inserted with
+-- `now()` reads as freshly stamped whether the sweep touched it or not.
+-- An hour makes the stamp mean something. It matters because that
+-- column is the data-sync cursor for both these tables.
+INSERT INTO camera_nodes (node_id, org_id, api_key_hash, name, status, last_seen,
+                          updated_at) VALUES
   ('sweep-stale',   'loops-free', 'x', 'Stale Node',   'online',
-   now()::timestamp - interval '300 seconds'),
+   now()::timestamp - interval '300 seconds', now()::timestamp - interval '1 hour'),
   ('sweep-fresh',   'loops-free', 'x', 'Fresh Node',   'online',
-   now()::timestamp - interval '10 seconds'),
-  ('sweep-null',    'loops-free', 'x', 'Never Seen',   'online', NULL),
+   now()::timestamp - interval '10 seconds', now()::timestamp - interval '1 hour'),
+  ('sweep-null',    'loops-free', 'x', 'Never Seen',   'online', NULL, now()::timestamp - interval '1 hour'),
   ('sweep-already', 'loops-free', 'x', 'Already Down', 'offline',
-   now()::timestamp - interval '300 seconds'),
+   now()::timestamp - interval '300 seconds', now()::timestamp - interval '1 hour'),
   -- An empty name, so the `name or node_id` fallback runs. The
   -- notification title carries whichever it picks.
   ('sweep-noname',  'loops-free', 'x', '',             'online',
-   now()::timestamp - interval '300 seconds');
+   now()::timestamp - interval '300 seconds', now()::timestamp - interval '1 hour');
 
 -- Cameras, the same four states plus one on a node so the
 -- notification's `node_id` is populated through the FK, and one with no
@@ -72,11 +79,11 @@ VALUES
   ('sweep-cam-stale', 'loops-free',
    (SELECT id FROM camera_nodes WHERE node_id = 'sweep-stale'),
    'Stale Cam', 'online', now()::timestamp - interval '300 seconds',
-   'rtsp', 'streaming', false, false, now()::timestamp, now()::timestamp),
+   'rtsp', 'streaming', false, false, now()::timestamp, now()::timestamp - interval '1 hour'),
   ('sweep-cam-fresh', 'loops-free',
    (SELECT id FROM camera_nodes WHERE node_id = 'sweep-fresh'),
    'Fresh Cam', 'online', now()::timestamp - interval '10 seconds',
-   'rtsp', 'streaming', false, false, now()::timestamp, now()::timestamp),
+   'rtsp', 'streaming', false, false, now()::timestamp, now()::timestamp - interval '1 hour'),
   ('sweep-cam-null', 'loops-free',
    (SELECT id FROM camera_nodes WHERE node_id = 'sweep-stale'),
    'Never Seen Cam', 'online', NULL,
@@ -92,7 +99,7 @@ VALUES
   ('sweep-cam-other', 'loops-pro',
    (SELECT id FROM camera_nodes WHERE node_id = 'sweep-stale'),
    'Other Org Cam', 'online', now()::timestamp - interval '300 seconds',
-   'rtsp', 'streaming', false, false, now()::timestamp, now()::timestamp);
+   'rtsp', 'streaming', false, false, now()::timestamp, now()::timestamp - interval '1 hour');
 
 -- ---- log retention --------------------------------------------------
 --
@@ -356,3 +363,25 @@ INSERT INTO settings (org_id, key, value, updated_at) VALUES
    to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US+00:00'), now()::timestamp),
   ('self-host', 'sentinel_license_last_ok_at',
    to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US+00:00'), now()::timestamp);
+
+-- ---- age every row this fixture wrote --------------------------------
+--
+-- One statement at the end rather than a literal per INSERT, which was
+-- fiddly enough to get wrong twice.
+--
+-- The probe reports whether each body STAMPED `updated_at`, and a row
+-- inserted with `now()` reads as freshly stamped whether anything
+-- touched it or not — so the check could not discriminate and every row
+-- came back `true`. An hour back makes the stamp mean something.
+--
+-- This is not a presentation detail: `updated_at` is the data-sync
+-- cursor for `cameras`, `camera_nodes` and `sentinel_runs`, so a row a
+-- sweep flips without bumping it is a row the mirror never hears about
+-- again. The port omitted exactly that on four UPDATEs until
+-- `column_defaults.py` found it, and this snapshot could not have.
+UPDATE camera_nodes  SET updated_at = now()::timestamp - interval '1 hour'
+ WHERE org_id LIKE 'loops-%';
+UPDATE cameras       SET updated_at = now()::timestamp - interval '1 hour'
+ WHERE org_id LIKE 'loops-%';
+UPDATE sentinel_runs SET updated_at = now()::timestamp - interval '1 hour'
+ WHERE org_id LIKE 'loops-%';

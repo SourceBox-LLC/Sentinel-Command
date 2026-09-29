@@ -76,6 +76,12 @@ async fn main() -> anyhow::Result<()> {
     // The outbox drain. It owns the last-tick stamp the health probe
     // reads, so it has to run in whichever process answers that probe.
     tokio::spawn(sentinel_command::email_worker::email_worker_loop(state.clone()));
+    // And the database-backed sweeps: the offline sweep, log cleanup,
+    // sentinel reaper, motion digest and disk check, plus whichever of
+    // the licence check-in, data sync and plan reconcile this auth mode
+    // calls for. `loops::spawn_loops` decides that, the way main.py's
+    // lifespan does.
+    sentinel_command::loops::spawn_loops(state.clone());
 
     let upstream = state.config.upstream.clone();
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;

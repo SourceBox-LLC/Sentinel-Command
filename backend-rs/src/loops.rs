@@ -78,31 +78,40 @@ pub async fn run_offline_sweep_with(
     state: &AppState,
     timeout_seconds: i64,
 ) -> Result<SweepSummary, sqlx::Error> {
-    let cutoff = crate::models::now_naive() - chrono::Duration::seconds(timeout_seconds);
+    let now = crate::models::now_naive();
+    let cutoff = now - chrono::Duration::seconds(timeout_seconds);
 
     // RETURNING rather than SELECT-then-UPDATE: Python reads the rows,
     // mutates them and commits in one session, and a separate SELECT
     // here would let a heartbeat land between the two and flip a row
     // that had just come back.
+    // `updated_at` is stamped because SQLAlchemy's `onupdate` stamps it
+    // on `node.status = "offline"; db.commit()` — and for this table it
+    // is also the DATA SYNC CURSOR. A row flipped offline without
+    // bumping it is a row the mirror never hears about again: the cloud
+    // copy keeps saying online, forever. Caught by
+    // `column_defaults.py`, which is the only thing that would have.
     let nodes: Vec<StaleRow> = sqlx::query_as(
-        "UPDATE camera_nodes SET status = 'offline'
+        "UPDATE camera_nodes SET status = 'offline', updated_at = $2
           WHERE status = 'online' AND last_seen IS NOT NULL AND last_seen < $1
          RETURNING node_id AS ident, org_id,
                    COALESCE(NULLIF(name, ''), node_id) AS display,
                    NULL::text AS parent",
     )
     .bind(cutoff)
+    .bind(now)
     .fetch_all(&state.pool)
     .await?;
 
     let cameras: Vec<StaleRow> = sqlx::query_as(
-        "UPDATE cameras c SET status = 'offline'
+        "UPDATE cameras c SET status = 'offline', updated_at = $2
           WHERE c.status = 'online' AND c.last_seen IS NOT NULL AND c.last_seen < $1
          RETURNING c.camera_id AS ident, c.org_id,
                    COALESCE(NULLIF(c.name, ''), c.camera_id) AS display,
                    (SELECT n.node_id FROM camera_nodes n WHERE n.id = c.node_id) AS parent",
     )
     .bind(cutoff)
+    .bind(now)
     .fetch_all(&state.pool)
     .await?;
 
@@ -391,7 +400,7 @@ pub async fn reap_stranded_runs(state: &AppState) -> Result<ReaperSummary, sqlx:
         // succeeded.
         summary.reaped = sqlx::query(
             "UPDATE sentinel_runs
-                SET outcome = 'error', summary = $1, completed_at = $2
+                SET outcome = 'error', summary = $1, completed_at = $2, updated_at = $2
               WHERE id = ANY($3) AND outcome = 'running'",
         )
         .bind(format!(
@@ -442,7 +451,7 @@ pub async fn reap_stranded_runs(state: &AppState) -> Result<ReaperSummary, sqlx:
     let abandoned_cutoff = now - chrono::Duration::hours(ABANDONED_PENDING_HOURS);
     summary.abandoned = sqlx::query(
         "UPDATE sentinel_runs
-            SET outcome = 'error', summary = $1, completed_at = $2
+            SET outcome = 'error', summary = $1, completed_at = $2, updated_at = $2
           WHERE outcome = 'pending' AND triggered_at < $3",
     )
     .bind(
@@ -817,12 +826,38 @@ pub async fn reconcile_org_plans(state: &AppState) -> Result<ReconcileSummary, s
     Ok(summary)
 }
 
-/// Spawn the two loops.
+/// `DISK_CHECK_INTERVAL_SECONDS`.
+const DISK_CHECK_INTERVAL_SECONDS: u64 = 300;
+/// `MOTION_DIGEST_INTERVAL_SECONDS`.
+const MOTION_DIGEST_INTERVAL_SECONDS: u64 = 60;
+/// `SENTINEL_REAPER_INTERVAL_SECONDS`.
+const SENTINEL_REAPER_INTERVAL_SECONDS: u64 = 300;
+/// `SENTINEL_LICENSE_CHECKIN_INTERVAL_SECONDS` — fifteen minutes,
+/// deliberately tighter than the hourly plan reconcile: a revoked
+/// self-host licence should stop working within a quarter of an hour,
+/// not up to an hour.
+const SENTINEL_LICENSE_CHECKIN_INTERVAL_SECONDS: u64 = 15 * 60;
+/// `SENTINEL_SYNC_INTERVAL_SECONDS` — thirty, not fifteen: sync pushes
+/// real data batches rather than one small check-in, and
+/// `push_pending_changes` no-ops immediately without the entitlement, so
+/// a tighter interval would only mean more wasted ticks for the common
+/// case of sync not being bought.
+const SENTINEL_SYNC_INTERVAL_SECONDS: u64 = 30 * 60;
+/// The plan reconcile's hourly cadence.
+const PLAN_RECONCILE_INTERVAL_SECONDS: u64 = 3600;
+
+/// Spawn the database-backed loops.
 ///
 /// Each catches its own body's failure and keeps its cadence. A loop
 /// that exits on one bad tick stops sweeping for the process's
 /// lifetime, and nothing announces that it has — which is strictly
 /// worse than a tick that failed loudly and will be retried.
+///
+/// Which loops run depends on the auth mode, exactly as `main.py`'s
+/// lifespan decides: the licence check-in and the data sync are
+/// self-host concerns and the plan reconcile is a Clerk one, and
+/// scheduling any of them in the wrong mode would have it wake every
+/// interval to do nothing.
 pub fn spawn_loops(state: AppState) {
     let sweep_interval = state.config.offline_sweep_interval_seconds;
     let sweep_state = state.clone();
@@ -851,7 +886,9 @@ pub fn spawn_loops(state: AppState) {
         }
     });
 
+    let cleanup_state = state.clone();
     tokio::spawn(async move {
+        let state = cleanup_state;
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(
                 LOG_CLEANUP_INTERVAL_HOURS * 3600,
@@ -868,6 +905,184 @@ pub fn spawn_loops(state: AppState) {
                 // what hid a nightly AttributeError for an unknown
                 // stretch; see the module note.
                 Err(error) => tracing::error!(%error, "log cleanup failed"),
+            }
+        }
+    });
+
+    spawn_reaper(state.clone());
+    spawn_motion_digest(state.clone());
+    spawn_disk_check();
+
+    if state.config.is_local_auth() {
+        // Self-host only, and `main.py` gates them the same way. Both
+        // no-op without a licence key, but a loop that wakes every
+        // fifteen minutes to return immediately is still a loop someone
+        // has to explain when they read the logs.
+        spawn_license_checkin(state.clone());
+        spawn_data_sync(state.clone());
+    } else {
+        // Clerk only: `fetch_live_plan_slug` is the whole body, and
+        // under local auth `resolve_org_plan` short-circuits before it.
+        spawn_plan_reconcile(state);
+    }
+}
+
+fn spawn_reaper(state: AppState) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(
+                SENTINEL_REAPER_INTERVAL_SECONDS,
+            ))
+            .await;
+            match reap_stranded_runs(&state).await {
+                Ok(summary) => {
+                    if summary.reaped > 0 {
+                        tracing::info!(
+                            reaped = summary.reaped,
+                            ids = ?summary.ids,
+                            "sentinel reaper stamped stranded run(s)"
+                        );
+                    }
+                }
+                Err(error) => tracing::error!(%error, "sentinel reaper failed"),
+            }
+        }
+    });
+}
+
+fn spawn_motion_digest(state: AppState) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(
+                MOTION_DIGEST_INTERVAL_SECONDS,
+            ))
+            .await;
+            match run_motion_digest(&state).await {
+                Ok(summary) => {
+                    if summary.digests_emitted > 0 {
+                        tracing::info!(
+                            emitted = summary.digests_emitted,
+                            "motion digest emitted digest(s)"
+                        );
+                    }
+                }
+                Err(error) => tracing::error!(%error, "motion digest failed"),
+            }
+        }
+    });
+}
+
+/// No state: the disk check reads the filesystem and logs, and touches
+/// no database at all. Python's `_check_and_emit_disk_critical(db)` still
+/// takes a session and its own docstring says the parameter is vestigial
+/// — "kept in the signature for forward-compat but is no longer
+/// queried", since disk-full is platform state rather than any org's.
+/// Not carried: an unused parameter is a claim about what a function
+/// might touch.
+fn spawn_disk_check() {
+    tokio::spawn(async move {
+        // The debounce lives with the loop rather than in a static: one
+        // process, one loop, and a static would be shared with a test.
+        let mut debounce = DiskDebounce::default();
+        let started = std::time::Instant::now();
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(DISK_CHECK_INTERVAL_SECONDS)).await;
+            let path = if std::path::Path::new("/data").is_dir() { "/data" } else { "." };
+            // `(total, free, used)` — the same reading the health probe
+            // takes, so a volume cannot be 96% full on one surface and
+            // fine on the other.
+            let Some((total, free, used)) = crate::health_probes::statvfs_usage(path) else {
+                tracing::warn!(path, "[DiskCheck] disk_usage failed");
+                continue;
+            };
+            let alert = check_disk_critical(
+                &mut debounce,
+                path,
+                total,
+                free,
+                used,
+                started.elapsed().as_secs_f64(),
+            );
+            if let Some(alert) = alert {
+                // ERROR, not warn, and that is the whole delivery
+                // mechanism: Sentry samples warnings away by default,
+                // so a warning here would page nobody. Operator-side
+                // only — see `check_disk_critical`.
+                tracing::error!(
+                    disk_percent_used = alert.percent_used,
+                    disk_bytes_free = alert.bytes_free,
+                    disk_path = %alert.path,
+                    alert_audience = "operator_only",
+                    "[DiskCheck] OPERATOR ALERT — Command Center volume {}% full \
+                     ({:.1} GB free). Resize the Fly volume or trigger early log \
+                     retention cleanup. Platform state, intentionally NOT routed to \
+                     customer notifications — see /api/health/detailed.",
+                    alert.percent_used,
+                    alert.bytes_free as f64 / (1024.0 * 1024.0 * 1024.0),
+                );
+            }
+        }
+    });
+}
+
+fn spawn_license_checkin(state: AppState) {
+    tokio::spawn(async move {
+        loop {
+            // Checks in FIRST, then sleeps — the only loop here that
+            // does. A freshly started self-hosted install with a valid
+            // key should not wait fifteen minutes for Sentinel access to
+            // light up.
+            crate::license::check_in(
+                &state.pool,
+                &state.http,
+                &state.config.local_org_id,
+                &state.config.sentinel_license_service_url,
+                state.config.sentinel_license_key.as_deref(),
+            )
+            .await;
+            tokio::time::sleep(std::time::Duration::from_secs(
+                SENTINEL_LICENSE_CHECKIN_INTERVAL_SECONDS,
+            ))
+            .await;
+        }
+    });
+}
+
+fn spawn_data_sync(state: AppState) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(SENTINEL_SYNC_INTERVAL_SECONDS))
+                .await;
+            let summary = crate::sync::push_pending_changes(&state).await;
+            if !summary.pushed.is_empty() || !summary.failed.is_empty() {
+                tracing::info!(
+                    pushed = ?summary.pushed,
+                    failed = ?summary.failed,
+                    "data sync cycle complete"
+                );
+            }
+        }
+    });
+}
+
+fn spawn_plan_reconcile(state: AppState) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(
+                PLAN_RECONCILE_INTERVAL_SECONDS,
+            ))
+            .await;
+            match reconcile_org_plans(&state).await {
+                Ok(summary) => {
+                    if summary.changed > 0 {
+                        tracing::warn!(
+                            changed = summary.changed,
+                            corrections = ?summary.corrections,
+                            "plan reconcile corrected org plan(s)"
+                        );
+                    }
+                }
+                Err(error) => tracing::error!(%error, "plan reconcile failed"),
             }
         }
     });

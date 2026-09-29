@@ -95,7 +95,16 @@ holder="$(ss -lptnH "sport = :$SYNC_PORT" 2>/dev/null | grep -oP 'pid=\K[0-9]+' 
 [ -n "$holder" ] && kill "$holder" 2>/dev/null
 "$PYTHON" "$HERE/fake_sync.py" --port "$SYNC_PORT" >/dev/null 2>&1 &
 SYNC_PID=$!
-trap 'rm -rf "$WORK"; kill $FAKE_PID $CLERK_PID $SYNC_PID 2>/dev/null' EXIT
+# Teardown in the trap, not at the end: an interrupted run must not
+# leave the next harness with a settings-id collision. See the header of
+# loops_teardown.sql for why leaving these rows behind breaks a reseed.
+teardown() {
+    docker exec -i "$PG_CONTAINER" psql -U cc -d cc -q \
+        < "$HERE/loops_teardown.sql" >/dev/null 2>&1
+    docker exec -i "$PG_CONTAINER" psql -U cc -d cc -q \
+        < "$HERE/seed_cameras.sql" >/dev/null 2>&1
+}
+trap 'rm -rf "$WORK"; kill $FAKE_PID $CLERK_PID $SYNC_PID 2>/dev/null; teardown' EXIT
 for _ in $(seq 20); do
     curl -fsS -m 1 "$SYNC_URL/__pushes" >/dev/null 2>&1 && break
     sleep 0.2
