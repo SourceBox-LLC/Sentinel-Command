@@ -59,7 +59,7 @@ seed() {
 
 bad=0
 compared=0
-for body in sweep cleanup reaper; do
+for body in sweep cleanup reaper digest; do
     seed || { echo "REFUSING: the loop fixture did not apply cleanly"; exit 2; }
     "$PYTHON" "$HERE/py_loops_probe.py" --db "postgresql+psycopg://${PG_URL#postgresql://}" \
         --body "$body" 2>/dev/null | grep '^{' > "$WORK/py-$body.jsonl"
@@ -73,6 +73,31 @@ for body in sweep cleanup reaper; do
     # finding.
     if "$PYTHON" - "$WORK/py-$body.jsonl" "$WORK/rs-$body.jsonl" "$body" <<'PY'
 import json, sys
+
+
+def blank_window(rows):
+    """Blank the digest meta's window timestamps.
+
+    They are derived from the ANCHOR, and each side seeds its own
+    fixture — so the two anchors are the seconds apart the two runs are,
+    and so are these. The COUNT and the cooldown in the same blob are
+    compared, which is what the window is there to describe.
+    """
+    for row in rows or []:
+        if not isinstance(row, list) or not row:
+            continue
+        for i, cell in enumerate(row):
+            if not isinstance(cell, str) or '"window_start"' not in cell:
+                continue
+            try:
+                meta = json.loads(cell)
+            except json.JSONDecodeError:
+                continue
+            for key in ("window_start", "window_end"):
+                if key in meta:
+                    meta[key] = "<derived from the anchor>"
+            row[i] = json.dumps(meta)
+    return rows
 
 
 def normalise(entry):
@@ -89,6 +114,8 @@ def normalise(entry):
     summary = entry.get("summary")
     if isinstance(summary, dict) and isinstance(summary.get("ids"), list):
         summary["ids"] = sorted(summary["ids"])
+    if entry.get("rows") == "digests":
+        blank_window(entry.get("value"))
     return entry
 
 
@@ -125,6 +152,11 @@ done
 
 # A run where both bodies did nothing would agree perfectly and prove
 # nothing. Both summaries have to report work.
+digested=$("$PYTHON" -c "
+import json
+rows=[json.loads(l) for l in open('$WORK/rs-digest.jsonl')]
+print(sum(len(r['value'] or []) for r in rows if r.get('rows') == 'digests'))
+" 2>/dev/null || echo 0)
 reaped=$("$PYTHON" -c "
 import json
 d=json.loads(open('$WORK/rs-reaper.jsonl').readline())['summary']
@@ -140,8 +172,9 @@ import json,sys
 print(json.loads(open('$WORK/rs-cleanup.jsonl').readline())['summary']['total_deleted'])
 " 2>/dev/null || echo 0)
 echo
-echo "fixture: the sweep flipped $flips row(s), the cleanup deleted $deleted, the reaper stamped $reaped"
-if [ "$flips" -lt 4 ] || [ "$deleted" -lt 20 ] || [ "$reaped" -lt 2 ]; then
+echo "fixture: the sweep flipped $flips row(s), the cleanup deleted $deleted, the reaper stamped $reaped, the digest emitted $digested"
+if [ "$flips" -lt 4 ] || [ "$deleted" -lt 20 ] || [ "$reaped" -lt 2 ] \
+   || [ "$digested" -lt 1 ]; then
     echo "FIXTURE TOO THIN — every body must actually do work, or no-ops agree"
     exit 2
 fi

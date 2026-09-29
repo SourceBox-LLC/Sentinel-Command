@@ -56,6 +56,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // to separate. The Python probe sets the same thing for the same
     // reason.
     std::env::set_var("AUTH_PROVIDER", "clerk");
+    // The digest's emit branch is behind `email_enabled`, whose first
+    // gate is the global EMAIL_ENABLED kill-switch. Left off, the branch
+    // never runs — and both sides agree on having done nothing, which is
+    // the exact failure loops_run.sh's coverage guard exists to catch.
+    // It caught it.
+    std::env::set_var("EMAIL_ENABLED", "true");
 
     let config = Config::from_env();
     let pool = sqlx::postgres::PgPoolOptions::new()
@@ -99,6 +105,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }}))?
             );
             for (label, sql) in SWEEP_ROWS {
+                dump(&pool, label, sql).await?;
+            }
+        }
+        "digest" => {
+            // The summary is NOT printed for this body. Python's loop
+            // keeps no tally — it logs per anchor and moves on — so
+            // there is nothing on that side to compare a count against,
+            // and printing one would be comparing the probe's own
+            // arithmetic. The rows are the comparison.
+            let _ = sentinel_command::loops::run_motion_digest(&state).await?;
+            println!("{}", serde_json::to_string(&json!({"summary": {"ticked": true}}))?);
+            for (label, sql) in DIGEST_ROWS {
                 dump(&pool, label, sql).await?;
             }
         }
@@ -191,6 +209,26 @@ const SWEEP_ROWS: [(&str, &str); 4] = [
                 FROM notifications
                WHERE org_id LIKE 'loops-%'
                  AND kind IN ('node_offline', 'camera_offline')), false) AS claim) t",
+    ),
+];
+
+/// The digest's rows: which anchors survived and what was announced.
+const DIGEST_ROWS: [(&str, &str); 2] = [
+    (
+        "anchors",
+        "SELECT json_agg(json_build_array(org_id, key, rearmed, blank)) FROM (
+           SELECT org_id, key, value = '@rearmed' AS rearmed,
+                  value IS NULL OR value = '' AS blank
+             FROM settings WHERE key LIKE 'motion_email_cooldown_start:%'
+            ORDER BY org_id, key) t",
+    ),
+    (
+        "digests",
+        "SELECT json_agg(json_build_array(org_id, title, body, severity, audience,
+                                          link, camera_id, meta_json)) FROM (
+           SELECT org_id, title, body, severity, audience, link, camera_id, meta_json
+             FROM notifications WHERE kind = 'motion_digest'
+            ORDER BY org_id, title) t",
     ),
 ];
 

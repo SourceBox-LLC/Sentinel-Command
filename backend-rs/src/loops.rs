@@ -464,6 +464,265 @@ pub async fn reap_stranded_runs(state: &AppState) -> Result<ReaperSummary, sqlx:
     Ok(summary)
 }
 
+/// `DISK_CRITICAL_THRESHOLD_PERCENT`.
+const DISK_CRITICAL_THRESHOLD_PERCENT: f64 = 95.0;
+/// `DISK_CRITICAL_REEMIT_INTERVAL_SECONDS` — six hours.
+const DISK_CRITICAL_REEMIT_INTERVAL_SECONDS: f64 = 6.0 * 3600.0;
+
+/// The operator alert the disk check emits, or nothing.
+///
+/// Returned rather than logged from the decision function so the choice
+/// is testable: the whole of this loop's behaviour is a boolean and the
+/// numbers on one log line, and neither reaches a database.
+#[derive(Debug, PartialEq)]
+pub struct DiskAlert {
+    /// `round(pct, 1)`.
+    pub percent_used: f64,
+    pub bytes_free: u64,
+    pub path: String,
+}
+
+/// The debounce state, which is per PROCESS and not per org.
+///
+/// `None` means nothing has been emitted, or that usage fell back below
+/// the threshold since the last one — a recovery clears the debounce so
+/// the next crossing alerts immediately instead of waiting out a stale
+/// six-hour cooldown from an incident that is already over.
+#[derive(Debug, Default)]
+pub struct DiskDebounce {
+    last_emit_seconds: Option<f64>,
+}
+
+/// `_check_and_emit_disk_critical`, with the reading and the clock as
+/// arguments.
+///
+/// **Operator-side only.** This deliberately does not reach customer
+/// notifications: a customer cannot `fly volumes extend` SourceBox's
+/// infrastructure, and routing platform state through their inbox was a
+/// multi-tenant violation removed in May 2026. The channels that matter
+/// are `/api/health/detailed`, which any external monitor polls, and
+/// Sentry, which is why the real loop logs this at ERROR — a warning
+/// gets sampled away by default and never wakes anyone.
+///
+/// `db` is in Python's signature and unused there for the same reason;
+/// it is simply absent here.
+pub fn check_disk_critical(
+    debounce: &mut DiskDebounce,
+    path: &str,
+    total: u64,
+    free: u64,
+    used: u64,
+    now_seconds: f64,
+) -> Option<DiskAlert> {
+    if total == 0 {
+        return None;
+    }
+    let pct = (used as f64 / total as f64) * 100.0;
+
+    if pct < DISK_CRITICAL_THRESHOLD_PERCENT {
+        debounce.last_emit_seconds = None;
+        return None;
+    }
+
+    if let Some(last) = debounce.last_emit_seconds {
+        if now_seconds - last < DISK_CRITICAL_REEMIT_INTERVAL_SECONDS {
+            return None;
+        }
+    }
+
+    debounce.last_emit_seconds = Some(now_seconds);
+    Some(DiskAlert {
+        percent_used: crate::pyrepr::round_to(pct, 1),
+        bytes_free: free,
+        path: path.to_string(),
+    })
+}
+
+/// What one digest tick did, per anchor.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct DigestSummary {
+    pub anchors_seen: usize,
+    /// Dropped without a digest: no colon in the key, an empty value,
+    /// or a timestamp that would not parse.
+    pub anchors_dropped: usize,
+    /// Left in place because the window is still open.
+    pub anchors_open: usize,
+    pub digests_emitted: usize,
+    /// Closed with nothing extra to report — the anchor still goes.
+    pub anchors_closed_empty: usize,
+    /// The anchor was re-armed while this tick worked, so it was left
+    /// for the next one. See the note in `run_motion_digest`.
+    pub anchors_rearmed: usize,
+}
+
+impl DigestSummary {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "anchors_seen": self.anchors_seen,
+            "anchors_dropped": self.anchors_dropped,
+            "anchors_open": self.anchors_open,
+            "digests_emitted": self.digests_emitted,
+            "anchors_closed_empty": self.anchors_closed_empty,
+            "anchors_rearmed": self.anchors_rearmed,
+        })
+    }
+}
+
+/// `_motion_digest_loop`'s body — drain the expired motion cooldown
+/// anchors and emit one digest per camera that had extras.
+///
+/// An anchor is a `Setting` row keyed `motion_email_cooldown_start:<camera_id>`,
+/// written by the immediate-email path when it sends the FIRST alert for
+/// a camera. Everything after that is silenced until the window closes;
+/// this is what closes it, and what tells the operator how much they
+/// missed.
+///
+/// Python's body is inline in the loop rather than extracted, so this is
+/// the one place the port has no `run_*` counterpart to diff against
+/// directly — the probe drives the real loop for exactly one tick
+/// instead. See `py_loops_probe.py`.
+pub async fn run_motion_digest(state: &AppState) -> Result<DigestSummary, sqlx::Error> {
+    let now = crate::models::now_naive();
+    let mut summary = DigestSummary::default();
+
+    let anchors: Vec<(i32, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, org_id, key, value FROM settings
+          WHERE key LIKE 'motion_email_cooldown_start:%'",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    summary.anchors_seen = anchors.len();
+
+    for (id, org_id, key, value) in anchors {
+        // Each anchor is handled independently: Python wraps the body in
+        // its own try/except so one corrupt row cannot poison the tick,
+        // and the loop keeps going rather than leaving the rest of the
+        // cameras silenced until someone notices.
+        let Some((_, camera_id)) = key.split_once(':') else {
+            // A key that matched the LIKE but holds no colon cannot
+            // name a camera. Drop it rather than carry it forever.
+            drop_anchor(state, id).await?;
+            summary.anchors_dropped += 1;
+            continue;
+        };
+        let Some(anchor_value) = value.filter(|v| !v.is_empty()) else {
+            drop_anchor(state, id).await?;
+            summary.anchors_dropped += 1;
+            continue;
+        };
+        // The anchor is written naive by the immediate-email path, so
+        // the naive half is the one to compare against `now()`. A value
+        // carrying an offset would still parse; Python compares the
+        // naive datetime too, and would raise on a mixed comparison
+        // rather than convert.
+        let Ok(anchor_ts) = crate::pydatetime::fromisoformat(&anchor_value).map(|t| t.naive)
+        else {
+            // Corrupt timestamp. Dropped so the next motion event starts
+            // a fresh window, rather than the camera being silenced
+            // forever by a value nothing can parse.
+            drop_anchor(state, id).await?;
+            summary.anchors_dropped += 1;
+            continue;
+        };
+
+        let cooldown_min = crate::notifications::motion_cooldown_minutes(&state.pool, &org_id).await;
+        if (now - anchor_ts).num_seconds() < cooldown_min * 60 {
+            summary.anchors_open += 1;
+            continue;
+        }
+
+        let window_end = anchor_ts + chrono::Duration::minutes(cooldown_min);
+        // Strictly AFTER the anchor: the immediate email already covered
+        // the event at anchor time. The upper bound is defensive —
+        // events past `window_end` belong to a later cycle, and no later
+        // cycle exists yet because this anchor is still here.
+        let (extra_count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM motion_events
+              WHERE org_id = $1 AND camera_id = $2 AND timestamp > $3 AND timestamp <= $4",
+        )
+        .bind(&org_id)
+        .bind(camera_id)
+        .bind(anchor_ts)
+        .bind(window_end)
+        .fetch_one(&state.pool)
+        .await?;
+
+        let mut emitted = false;
+        if extra_count > 0
+            && crate::notifications::email_enabled(&state.config, &state.pool, &org_id, "motion")
+                .await
+        {
+            // Re-resolved at emit time: the camera may have been renamed
+            // since the immediate email, and the digest should say what
+            // it is called now.
+            let (display,): (String,) = sqlx::query_as(
+                "SELECT COALESCE(NULLIF(name, ''), $2) FROM cameras
+                  WHERE camera_id = $2 AND org_id = $1",
+            )
+            .bind(&org_id)
+            .bind(camera_id)
+            .fetch_optional(&state.pool)
+            .await?
+            .unwrap_or_else(|| (camera_id.to_string(),));
+
+            let plural = if extra_count != 1 { "s" } else { "" };
+            let were = if extra_count != 1 { "s were" } else { " was" };
+            let mut notification = crate::notifications::NewNotification::new(
+                "motion_digest",
+                format!("{extra_count} more motion event{plural} on {display}"),
+            )
+            .body(format!(
+                "{extra_count} additional motion event{were} detected on \"{display}\" \
+                 in the {cooldown_min}-minute window after the first alert."
+            ))
+            .severity("info")
+            .audience("all")
+            .link(format!("/dashboard?camera={camera_id}"))
+            .camera(camera_id);
+            notification.meta = Some(serde_json::json!({
+                "event_count": extra_count,
+                "window_start": crate::models::iso_naive(anchor_ts),
+                "window_end": crate::models::iso_naive(window_end),
+                "cooldown_minutes": cooldown_min,
+            }));
+            crate::notifications::create_notification(state, &org_id, notification).await;
+            emitted = true;
+            summary.digests_emitted += 1;
+        }
+
+        // Delete the anchor — the window has closed — but ONLY if it
+        // still holds the value this tick processed. The counting and
+        // emitting above take real time (a plan lookup, an outbox
+        // commit); a motion event landing in that gap sees the same
+        // expired anchor, sends its own immediate email, and re-arms the
+        // row with a fresh timestamp. An unconditional delete would
+        // erase that brand-new window, so the NEXT event would email
+        // immediately again — double immediate emails on exactly the
+        // busy cameras digests exist for.
+        let removed = sqlx::query("DELETE FROM settings WHERE id = $1 AND value = $2")
+            .bind(id)
+            .bind(&anchor_value)
+            .execute(&state.pool)
+            .await?
+            .rows_affected();
+        if removed == 0 {
+            summary.anchors_rearmed += 1;
+        } else if !emitted {
+            summary.anchors_closed_empty += 1;
+        }
+    }
+
+    Ok(summary)
+}
+
+async fn drop_anchor(state: &AppState, id: i32) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM settings WHERE id = $1")
+        .bind(id)
+        .execute(&state.pool)
+        .await?;
+    Ok(())
+}
+
 /// Spawn the two loops.
 ///
 /// Each catches its own body's failure and keeps its cadence. A loop

@@ -38,7 +38,8 @@ import sys
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default=os.environ.get("PROBE_DATABASE_URL", ""))
-    ap.add_argument("--body", choices=("sweep", "cleanup", "reaper"), required=True)
+    ap.add_argument("--body", choices=("sweep", "cleanup", "reaper", "digest"),
+                    required=True)
     args = ap.parse_args()
     if args.db:
         os.environ["DATABASE_URL"] = args.db
@@ -49,6 +50,12 @@ def main() -> int:
     # same 365-day retention and collapse the three tiers this fixture
     # exists to separate.
     os.environ["AUTH_PROVIDER"] = "clerk"
+    # The digest's emit branch is behind `email_enabled_for_kind`, whose
+    # first gate is the global EMAIL_ENABLED kill-switch. Left off, the
+    # branch never runs — and both sides agree on having done nothing,
+    # which is the exact failure loops_run.sh's coverage guard exists to
+    # catch. It caught it.
+    os.environ["EMAIL_ENABLED"] = "true"
 
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "backend"))
 
@@ -62,6 +69,16 @@ def main() -> int:
         elif args.body == "reaper":
             from app.core.sentinel_dispatch import reap_stranded_runs  # noqa: PLC0415
             summary = reap_stranded_runs(db)
+        elif args.body == "digest":
+            # The digest is the one body Python did NOT extract from its
+            # loop — it is all inline. So run the real loop for exactly
+            # one tick rather than reimplementing it here, which would
+            # only encode what I already believe it does.
+            #
+            # The loop sleeps FIRST and then works, so the second sleep
+            # is the signal that one tick has completed. Counting sleeps
+            # and raising on the second is what bounds it.
+            summary = run_one_digest_tick(main_mod)
         else:
             summary = main_mod.run_log_cleanup(db)
     finally:
@@ -78,6 +95,42 @@ def main() -> int:
     return 0
 
 
+class _TickDone(Exception):
+    """Raised inside the patched sleep to end the loop after one tick."""
+
+
+def run_one_digest_tick(main_mod) -> dict:
+    """Drive `_motion_digest_loop` for a single tick.
+
+    The loop has no summary to return — it logs and moves on — so the
+    probe reports the anchor COUNTS it can see, which is what the Rust
+    body returns. The rows are the real comparison either way.
+    """
+    import asyncio  # noqa: PLC0415
+
+    real_sleep = asyncio.sleep
+    ticks = {"n": 0}
+
+    async def counted(delay, *args, **kwargs):
+        ticks["n"] += 1
+        if ticks["n"] > 1:
+            raise _TickDone()
+        return await real_sleep(0)
+
+    asyncio.sleep = counted
+    try:
+        asyncio.run(main_mod._motion_digest_loop())
+    except _TickDone:
+        pass
+    finally:
+        asyncio.sleep = real_sleep
+    # Deliberately not a count of what the tick did: Python's loop keeps
+    # no such tally, and inventing one here would be comparing the
+    # probe's arithmetic rather than the code's. The rows below are the
+    # comparison.
+    return {"ticked": True}
+
+
 def snapshot(db, body: str) -> dict:
     """Every row either body could have touched, as comparable tuples.
 
@@ -90,6 +143,23 @@ def snapshot(db, body: str) -> dict:
 
     def q(sql: str) -> list:
         return [list(row) for row in db.execute(text(sql)).all()]
+
+    if body == "digest":
+        return {
+            # What survived, and with what value: a re-armed anchor must
+            # still be here holding its NEW timestamp, and a closed one
+            # must be gone.
+            "anchors": q("""SELECT org_id, key,
+                                   value = '@rearmed' AS rearmed,
+                                   value IS NULL OR value = '' AS blank
+                              FROM settings
+                             WHERE key LIKE 'motion_email_cooldown_start:%'
+                             ORDER BY org_id, key"""),
+            "digests": q("""SELECT org_id, title, body, severity, audience, link,
+                                   camera_id, meta_json
+                              FROM notifications WHERE kind = 'motion_digest'
+                             ORDER BY org_id, title"""),
+        }
 
     if body == "reaper":
         return {

@@ -202,3 +202,93 @@ VALUES
   ('loops-run-done',     'loops-plus', now()::timestamp - interval '9 hours',
    'motion', 'incident', now()::timestamp - interval '9 hours',
    now()::timestamp - interval '8 hours', 3);
+
+-- ---- the motion digest ----------------------------------------------
+--
+-- An anchor is a Setting keyed `motion_email_cooldown_start:<camera_id>`,
+-- written by the immediate-email path when it sends the FIRST alert for
+-- a camera. Everything after is silenced until the window closes; the
+-- digest is what closes it and says how much was missed.
+--
+-- One anchor per branch. The cooldown is the org's
+-- `motion_cooldown_minutes` setting, defaulted — loops-free leaves it
+-- at the default and loops-plus sets it explicitly, so a port reading
+-- the wrong org's setting shows up as the wrong window.
+DELETE FROM settings WHERE key LIKE 'motion_email_cooldown_start:%'
+                        AND org_id LIKE 'loops-%';
+DELETE FROM notifications WHERE kind = 'motion_digest';
+
+INSERT INTO settings (org_id, key, value, updated_at) VALUES
+  -- Expired with extras behind it: the digest case.
+  ('loops-free', 'motion_email_cooldown_start:dig-busy',
+   to_char(now()::timestamp - interval '40 minutes', 'YYYY-MM-DD"T"HH24:MI:SS.US'),
+   now()::timestamp),
+  -- Expired with NOTHING behind it: the anchor still goes, and no
+  -- digest is emitted. A port that deleted only on emit would silence
+  -- this camera forever.
+  ('loops-free', 'motion_email_cooldown_start:dig-quiet',
+   to_char(now()::timestamp - interval '40 minutes', 'YYYY-MM-DD"T"HH24:MI:SS.US'),
+   now()::timestamp),
+  -- Window still OPEN: left alone entirely.
+  ('loops-free', 'motion_email_cooldown_start:dig-open',
+   to_char(now()::timestamp - interval '30 seconds', 'YYYY-MM-DD"T"HH24:MI:SS.US'),
+   now()::timestamp),
+  -- Unparseable timestamp: dropped, so the next motion event starts a
+  -- fresh window rather than the camera being silenced by a value
+  -- nothing can read.
+  ('loops-free', 'motion_email_cooldown_start:dig-corrupt', 'not a timestamp',
+   now()::timestamp),
+  -- Empty value: same treatment, different branch.
+  ('loops-free', 'motion_email_cooldown_start:dig-empty', '',
+   now()::timestamp),
+  -- The per-kind email default for motion is FALSE, so without this the
+  -- digest's emit branch never runs and both sides agree on having done
+  -- nothing — which the coverage guard in loops_run.sh caught.
+  ('loops-free', 'email_motion', 'true', now()::timestamp),
+  ('loops-plus', 'email_motion', 'true', now()::timestamp),
+  -- Another org, whose own cooldown setting is longer — so this anchor
+  -- is still OPEN at an age that has expired for loops-free. A port
+  -- reading the wrong org's cooldown flips exactly this row. The key is
+  -- `email_motion_cooldown_minutes`, not `motion_cooldown_minutes`;
+  -- the wrong one reads as the 15-minute default and this row expires.
+  ('loops-plus', 'email_motion_cooldown_minutes', '120', now()::timestamp),
+  ('loops-plus', 'motion_email_cooldown_start:dig-slow',
+   to_char(now()::timestamp - interval '40 minutes', 'YYYY-MM-DD"T"HH24:MI:SS.US'),
+   now()::timestamp);
+
+-- The cameras the digests name. `dig-busy` has a name, so the title
+-- carries it; `dig-quiet` has none, so a digest for it would fall back
+-- to the id — which is worth having even though it emits nothing,
+-- because the fallback is one line away from the emitting path.
+INSERT INTO cameras (camera_id, org_id, node_id, name, status, last_seen,
+                     node_type, capabilities, continuous_24_7, scheduled_recording,
+                     created_at, updated_at)
+VALUES
+  ('dig-busy',  'loops-free', NULL, 'Back Gate', 'offline', NULL,
+   'rtsp', 'streaming', false, false, now()::timestamp, now()::timestamp),
+  ('dig-quiet', 'loops-free', NULL, '',          'offline', NULL,
+   'rtsp', 'streaming', false, false, now()::timestamp, now()::timestamp);
+
+-- Offsets from the ANCHOR's stored value, not from now(). psql runs
+-- each statement in its own implicit transaction, so now() advances
+-- between them — timestamps written as `now() - 40 minutes` in two
+-- statements are microseconds apart, and the event meant to land exactly
+-- ON the anchor landed just after it and was counted. The case existed
+-- and was not testing what its comment claimed. Deriving from the stored
+-- anchor makes every offset exact.
+--
+-- The default cooldown is 15 minutes, so the window is (anchor,
+-- anchor+15min]. Five events at +0, +2, +8, +14 and +35 minutes:
+--
+--   +0   AT the anchor   -> NOT counted; the immediate email covered it
+--   +2 +8 +14            -> counted, three of them
+--   +35                  -> past the edge, belongs to a later cycle
+--
+-- A port using >= on the lower bound reports four; one that dropped the
+-- upper bound reports five.
+INSERT INTO motion_events (org_id, camera_id, node_id, score, timestamp)
+SELECT 'loops-free', 'dig-busy', 'n1', 60,
+       (SELECT value::timestamp FROM settings
+         WHERE org_id = 'loops-free'
+           AND key = 'motion_email_cooldown_start:dig-busy') + make_interval(mins => m)
+  FROM (VALUES (0), (2), (8), (14), (35)) AS t(m);
