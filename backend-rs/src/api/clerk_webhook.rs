@@ -41,7 +41,7 @@ use crate::ratelimit::PerMinute;
 /// Member limits per plan. Mirrors `PLAN_LIMITS.max_seats`; the source
 /// of truth is plans.rs, and this exists because the Clerk call wants
 /// the integer directly.
-fn plan_member_limit(slug: &str) -> i64 {
+pub(crate) fn plan_member_limit(slug: &str) -> i64 {
     match slug {
         "pro" => 10,
         "pro_plus" => 20,
@@ -129,7 +129,7 @@ fn has_active_item(items: &[Value]) -> bool {
 ///
 /// Best-effort by design: a failure here must not fail the webhook, or
 /// Svix retries the whole handler over a seat count.
-async fn set_org_member_limit(state: &AppState, org_id: &str, limit: i64) {
+pub(crate) async fn set_org_member_limit(state: &AppState, org_id: &str, limit: i64) {
     // Built through `Url`, like `fetch_live_plan_slug`: an org id is
     // opaque, and the trailing slash is load-bearing — `join` treats
     // the base's last segment as a file and would drop the `/v1`.

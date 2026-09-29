@@ -70,6 +70,21 @@ for _ in $(seq 20); do
     sleep 0.2
 done
 
+# And a fake Clerk for the plan reconcile, whose whole job is a live
+# lookup. Same treatment: its own port, and whatever holds it first is
+# killed rather than trusted.
+CLERK_PORT="${LOOPS_CLERK_PORT:-18089}"
+CLERK_URL="http://127.0.0.1:$CLERK_PORT"
+holder="$(ss -lptnH "sport = :$CLERK_PORT" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1)"
+[ -n "$holder" ] && kill "$holder" 2>/dev/null
+"$PYTHON" "$HERE/fake_clerk.py" --port "$CLERK_PORT" >/dev/null 2>&1 &
+CLERK_PID=$!
+trap 'rm -rf "$WORK"; kill $FAKE_PID $CLERK_PID 2>/dev/null' EXIT
+for _ in $(seq 20); do
+    curl -fsS -m 1 "$CLERK_URL/__calls" >/dev/null 2>&1 && break
+    sleep 0.2
+done
+
 seed() {
     docker exec -i "$PG_CONTAINER" psql -U cc -d cc -q < "$HERE/seed_cameras.sql" >/dev/null 2>&1
     # The loop fixture goes on top: seed_cameras.sql cannot exercise
@@ -81,15 +96,17 @@ seed() {
 
 bad=0
 compared=0
-for body in sweep cleanup reaper digest license; do
+for body in sweep cleanup reaper digest license reconcile; do
     seed || { echo "REFUSING: the loop fixture did not apply cleanly"; exit 2; }
     "$PYTHON" "$HERE/py_loops_probe.py" --db "postgresql+psycopg://${PG_URL#postgresql://}" \
-        --body "$body" --license-url "$LICENSE_URL" 2>/dev/null \
+        --body "$body" --license-url "$LICENSE_URL" --clerk-url "$CLERK_URL" \
+        2>/dev/null \
         | grep '^{' > "$WORK/py-$body.jsonl"
 
     seed || { echo "REFUSING: the loop fixture did not apply cleanly"; exit 2; }
     ( cd "$RS" && cargo run --quiet --example loops_probe -- \
-        --db "$PG_URL" --body "$body" --license-url "$LICENSE_URL" ) \
+        --db "$PG_URL" --body "$body" --license-url "$LICENSE_URL" \
+        --clerk-url "$CLERK_URL" ) \
         > "$WORK/rs-$body.jsonl"
 
     # Compared as parsed JSON per line: Python's json.dumps and
@@ -180,6 +197,14 @@ done
 # would agree perfectly and prove nothing — which is what happens if the
 # fake stops distinguishing them, or if the client stops reading the
 # body. Count the distinct verdicts instead of the calls.
+# The reconcile's guard. A sweep that corrected NOTHING would agree
+# perfectly and prove nothing — which is what a fake Clerk answering the
+# cached plan for every org produces, and what an unreachable fake
+# produces too, since an unreachable Clerk is a SKIP by design.
+corrected=$("$PYTHON" -c "
+import json
+print(json.loads(open('$WORK/rs-reconcile.jsonl').readline())['summary']['changed'])
+" 2>/dev/null || echo 0)
 verdicts=$("$PYTHON" -c "
 import json
 d=json.loads(open('$WORK/rs-license.jsonl').readline())['summary']
@@ -206,9 +231,11 @@ print(json.loads(open('$WORK/rs-cleanup.jsonl').readline())['summary']['total_de
 " 2>/dev/null || echo 0)
 echo
 echo "fixture: sweep flipped $flips, cleanup deleted $deleted, reaper stamped $reaped,"
-echo "         digest emitted $digested, licence reached $verdicts distinct verdict(s)"
+echo "         digest emitted $digested, licence reached $verdicts distinct verdict(s),"
+echo "         reconcile corrected $corrected plan(s)"
 if [ "$flips" -lt 4 ] || [ "$deleted" -lt 20 ] || [ "$reaped" -lt 2 ] \
-   || [ "$digested" -lt 1 ] || [ "$verdicts" -lt 3 ]; then
+   || [ "$digested" -lt 1 ] || [ "$verdicts" -lt 3 ] \
+   || [ "$corrected" -lt 2 ]; then
     echo "FIXTURE TOO THIN — every body must actually do work, or no-ops agree"
     exit 2
 fi

@@ -34,6 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut body = String::new();
     let mut license_url = String::new();
     let mut license_key = "probe-license-key".to_string();
+    let mut clerk_url = String::new();
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
     while i < args.len() {
@@ -52,6 +53,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--license-key" => {
                 license_key = args[i + 1].clone();
+                i += 2;
+            }
+            "--clerk-url" => {
+                clerk_url = args[i + 1].clone();
                 i += 2;
             }
             _ => i += 1,
@@ -122,6 +127,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 dump(&pool, label, sql).await?;
             }
         }
+        "reconcile" => {
+            // NOT local auth for this body: `fetch_live_plan_slug` is
+            // the whole point and a self-host short-circuit would skip
+            // it. The probe's AUTH_PROVIDER is already clerk.
+            let base = format!("{}/v1", clerk_url.trim_end_matches('/'));
+            state
+                .http
+                .post(format!("{}/__scenario", clerk_url.trim_end_matches('/')))
+                .json(&reconcile_scenarios())
+                .send()
+                .await?
+                .error_for_status()?;
+            let mut reconcile_state = state.clone();
+            let mut config = (*state.config).clone();
+            config.clerk_api_url = base;
+            config.clerk_secret_key = "sk_test_probe".to_string();
+            reconcile_state.config = Arc::new(config);
+
+            let summary = sentinel_command::loops::reconcile_org_plans(&reconcile_state).await?;
+            // Only `changed` is printed, because only `changed` is what
+            // Python's `_reconcile_org_plans` RETURNS — the rest of the
+            // struct feeds the port's log line and has no counterpart
+            // to compare against. What it would show is in the rows
+            // below anyway: `corrections` is the `plans` snapshot said
+            // twice.
+            println!(
+                "{}",
+                serde_json::to_string(&json!({"summary": {"changed": summary.changed}}))?
+            );
+            for (label, sql) in RECONCILE_ROWS {
+                dump(&pool, label, sql).await?;
+            }
+        }
         "license" => {
             let mut out = serde_json::Map::new();
             for scenario in LICENSE_SCENARIOS {
@@ -186,6 +224,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
+/// Which answer the fake Clerk gives for each org. The names are the
+/// fake's own contract; `loops_fixture.sql` says what each org proves.
+fn reconcile_scenarios() -> serde_json::Value {
+    json!({
+        "rec-agree": "active_pro",
+        "rec-downgrade": "active_free",
+        "rec-upgrade": "active_pro_plus",
+        "rec-unreachable": "error_500",
+        "rec-free": "active_pro",
+    })
+}
+
+const RECONCILE_ROWS: [(&str, &str); 2] = [
+    (
+        "plans",
+        "SELECT json_agg(json_build_array(org_id, value)) FROM (
+           SELECT org_id, value FROM settings
+            WHERE key = 'org_plan' AND org_id LIKE 'rec-%' ORDER BY org_id) t",
+    ),
+    (
+        // The cap's work. A reconcile that wrote the setting and skipped
+        // `enforce_camera_cap` looks right in `settings` and leaves the
+        // org streaming past its new plan.
+        "capped",
+        "SELECT json_agg(json_build_array(camera_id, disabled_by_plan)) FROM (
+           SELECT camera_id, disabled_by_plan FROM cameras
+            WHERE org_id LIKE 'rec-%' ORDER BY camera_id) t",
+    ),
+];
 
 /// Every answer the check-in has to tell apart.
 const LICENSE_SCENARIOS: [&str; 11] = [

@@ -39,9 +39,11 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default=os.environ.get("PROBE_DATABASE_URL", ""))
     ap.add_argument("--body",
-                    choices=("sweep", "cleanup", "reaper", "digest", "license"),
+                    choices=("sweep", "cleanup", "reaper", "digest", "license",
+                             "reconcile"),
                     required=True)
     ap.add_argument("--license-url", default="")
+    ap.add_argument("--clerk-url", default="")
     ap.add_argument("--license-key", default="probe-license-key")
     args = ap.parse_args()
     if args.db:
@@ -72,6 +74,8 @@ def main() -> int:
         elif args.body == "reaper":
             from app.core.sentinel_dispatch import reap_stranded_runs  # noqa: PLC0415
             summary = reap_stranded_runs(db)
+        elif args.body == "reconcile":
+            summary = run_plan_reconcile(args, main_mod)
         elif args.body == "license":
             summary = run_license_checkin(args)
         elif args.body == "digest":
@@ -102,6 +106,60 @@ def main() -> int:
     finally:
         db.close()
     return 0
+
+
+# Which answer the fake Clerk gives for each org. The names are the
+# fake's own contract; see the header of loops_fixture.sql for what each
+# org is meant to prove.
+RECONCILE_SCENARIOS = {
+    "rec-agree": "active_pro",
+    "rec-downgrade": "active_free",
+    "rec-upgrade": "active_pro_plus",
+    "rec-unreachable": "error_500",
+    "rec-free": "active_pro",
+}
+
+
+def run_plan_reconcile(args, main_mod) -> dict:
+    """One hourly sweep, against the fake Clerk.
+
+    NOT local auth for this body: `fetch_live_plan_slug` is the whole
+    point and a self-host short-circuit would skip it entirely.
+    """
+    import urllib.request  # noqa: PLC0415
+
+    from clerk_backend_api import Clerk  # noqa: PLC0415
+    from clerk_backend_api.utils import BackoffStrategy, RetryConfig  # noqa: PLC0415
+    import app.core.clerk as clerk_mod  # noqa: PLC0415
+
+    # `fetch_live_plan_slug` does `from app.core.clerk import clerk`
+    # INSIDE the function, so patching the module attribute is enough —
+    # nothing in backend/ changes.
+    #
+    # Retries disabled, and this is not an optimisation. The SDK's
+    # default is BackoffStrategy(500, 60000, 1.5, 3600000): it retries a
+    # 5xx or a connection failure for up to ONE HOUR before raising. The
+    # `error_500` scenario stalled this probe for nineteen minutes
+    # before I killed it. The outcome being tested — the lookup returns
+    # None, so the cached plan is KEPT — is reached either way; only the
+    # latency differs, and latency is not what this compares.
+    #
+    # PYTHON_BUGS #1 is that same one-hour retry running on the event
+    # loop in `get_hls_segment`, which is a rather more serious
+    # consequence than a slow probe.
+    clerk_mod.clerk = Clerk(
+        bearer_auth="sk_test_probe",
+        server_url=f"{args.clerk_url.rstrip('/')}/v1",
+        retry_config=RetryConfig("backoff", BackoffStrategy(50, 200, 1.5, 1000), False),
+    )
+
+    body = json.dumps(RECONCILE_SCENARIOS).encode()
+    urllib.request.urlopen(urllib.request.Request(
+        f"{args.clerk_url.rstrip('/')}/__scenario", data=body,
+        headers={"Content-Type": "application/json"}), timeout=5).read()
+
+    changed = main_mod._reconcile_org_plans()
+    return {"changed": changed}
 
 
 def run_license_checkin(args) -> dict:
@@ -256,6 +314,17 @@ def snapshot(db, body: str) -> dict:
 
     def q(sql: str) -> list:
         return [list(row) for row in db.execute(text(sql)).all()]
+
+    if body == "reconcile":
+        return {
+            "plans": q("""SELECT org_id, value FROM settings
+                           WHERE key = 'org_plan' AND org_id LIKE 'rec-%'
+                           ORDER BY org_id"""),
+            # The cap's work, which a reconcile that wrote the setting
+            # and skipped `enforce_camera_cap` would leave undone.
+            "capped": q("""SELECT camera_id, disabled_by_plan FROM cameras
+                            WHERE org_id LIKE 'rec-%' ORDER BY camera_id"""),
+        }
 
     if body == "digest":
         return {

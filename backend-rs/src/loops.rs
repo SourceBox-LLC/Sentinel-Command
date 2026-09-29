@@ -723,6 +723,100 @@ async fn drop_anchor(state: &AppState, id: i32) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// What one plan reconcile corrected.
+///
+/// Python returns a bare `int` — the count — so `changed` is the only
+/// field with a counterpart to diff against. The rest feeds the port's
+/// log line, which is worth more than the count alone when someone is
+/// reading it at three in the morning wondering which org moved.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ReconcileSummary {
+    pub checked: usize,
+    pub changed: usize,
+    /// `(org_id, cached, live)` per correction, for the log line.
+    pub corrections: Vec<(String, String, String)>,
+}
+
+impl ReconcileSummary {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "checked": self.checked,
+            "changed": self.changed,
+            "corrections": self.corrections.iter()
+                .map(|(org, cached, live)| serde_json::json!([org, cached, live]))
+                .collect::<Vec<_>>(),
+        })
+    }
+}
+
+/// `_reconcile_org_plans` — re-verify every PAID cached plan against
+/// Clerk, hourly.
+///
+/// The gap this closes: the webhook handler is the only path that ever
+/// writes free over a paid `org_plan`, and `resolve_org_plan`'s live
+/// fallback only fires when the cached slug is NOT paid. So a single
+/// missed cancellation — the endpoint down past Svix's retry window, a
+/// rotated secret, an out-of-order redelivery rewriting an old snapshot
+/// — left an org on Pro caps forever, free of charge. Nothing else in
+/// the system would ever notice.
+///
+/// Corrects in BOTH directions, which also rescues a scheduled
+/// downgrade that the `.ended` handler defaulted to free on a failed
+/// lookup.
+///
+/// `live is None` is a SKIP, not a downgrade. An unreachable Clerk must
+/// not cost a paying customer their plan — the whole sweep exists
+/// because a missing answer was treated as an answer once already.
+pub async fn reconcile_org_plans(state: &AppState) -> Result<ReconcileSummary, sqlx::Error> {
+    let paid: Vec<(String, String)> = sqlx::query_as(
+        "SELECT org_id, value FROM settings WHERE key = 'org_plan' AND value = ANY($1)",
+    )
+    .bind(&crate::plans::PAID_PLAN_SLUGS[..])
+    .fetch_all(&state.pool)
+    .await?;
+
+    let mut summary = ReconcileSummary { checked: paid.len(), ..Default::default() };
+    for (org_id, cached) in paid {
+        let live = crate::plans::fetch_live_plan_slug(
+            &state.http,
+            &state.config.clerk_api_url,
+            &state.config.clerk_secret_key,
+            &org_id,
+        )
+        .await;
+        let Some(live) = live.filter(|slug| *slug != cached) else {
+            continue;
+        };
+        tracing::warn!(
+            org = %org_id, cached = %cached, live = %live,
+            "[PlanReconcile] cached plan disagrees with Clerk — correcting"
+        );
+        crate::plans::invalidate_effective_plan_cache(Some(&org_id));
+        crate::settings::set(&state.pool, &org_id, "org_plan", &live).await.ok();
+        crate::api::clerk_webhook::set_org_member_limit(
+            state,
+            &org_id,
+            crate::api::clerk_webhook::plan_member_limit(&live),
+        )
+        .await;
+        // The cap runs AFTER the setting is written, because it reads
+        // the plan back: enforcing before the write would apply the cap
+        // the org is leaving rather than the one it is arriving at.
+        let ctx = crate::plans::PlanContext {
+            pool: &state.pool,
+            client: &state.http,
+            clerk_base_url: &state.config.clerk_api_url,
+            clerk_secret: &state.config.clerk_secret_key,
+            local_auth: state.config.is_local_auth(),
+        };
+        crate::plans::enforce_camera_cap(&ctx, &state.pool, &org_id).await.ok();
+        summary.changed += 1;
+        summary.corrections.push((org_id, cached, live));
+    }
+
+    Ok(summary)
+}
+
 /// Spawn the two loops.
 ///
 /// Each catches its own body's failure and keeps its cadence. A loop
@@ -810,6 +904,27 @@ mod tests {
         assert_eq!(summary.to_json()["total_deleted"], 255);
         assert_eq!(summary.to_json()["orgs_processed"], 2);
         assert_eq!(summary.to_json()["totals"]["processed_webhooks"], 128);
+    }
+
+    /// The reconcile's summary carries more than Python's int return,
+    /// so the differential compares only `changed`. Its shape is
+    /// pinned here instead of nowhere.
+    #[test]
+    fn a_reconcile_summary_names_both_sides_of_each_correction() {
+        let summary = ReconcileSummary {
+            checked: 3,
+            changed: 1,
+            corrections: vec![("org-a".into(), "pro".into(), "free_org".into())],
+        };
+        let json = summary.to_json();
+        assert_eq!(json["checked"], 3);
+        assert_eq!(json["changed"], 1);
+        // Cached first, live second. Inverted, the log line says an org
+        // moved the opposite way — and this is the sweep whose entire
+        // purpose is telling those two apart.
+        assert_eq!(json["corrections"][0][1], "pro");
+        assert_eq!(json["corrections"][0][2], "free_org");
+        assert_eq!(ReconcileSummary::default().to_json()["corrections"], serde_json::json!([]));
     }
 
     /// An empty pass reports zeroes rather than omitting the keys — a

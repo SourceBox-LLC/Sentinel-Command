@@ -292,3 +292,45 @@ SELECT 'loops-free', 'dig-busy', 'n1', 60,
          WHERE org_id = 'loops-free'
            AND key = 'motion_email_cooldown_start:dig-busy') + make_interval(mins => m)
   FROM (VALUES (0), (2), (8), (14), (35)) AS t(m);
+
+-- ---- the plan reconcile ---------------------------------------------
+--
+-- Every org whose CACHED plan is paid gets re-verified against Clerk.
+-- The gap this closes: the webhook is the only path that writes free
+-- over a paid plan, and `resolve_org_plan`'s live fallback only fires
+-- when the cached slug is NOT paid — so one missed cancellation left an
+-- org on Pro caps forever, free of charge, with nothing to notice it.
+--
+-- One org per outcome. The scenario each maps to is set on the fake
+-- Clerk by the probes, keyed on org_id, so the names here are the
+-- contract between the fixture and both probes.
+--
+--   rec-agree      Clerk says pro, cached says pro       -> no change
+--   rec-downgrade  Clerk says free, cached says pro      -> corrected DOWN
+--   rec-upgrade    Clerk says pro_plus, cached says pro  -> corrected UP
+--   rec-unreachable  Clerk errors                        -> SKIPPED, not
+--                    downgraded. An unreachable Clerk must never cost a
+--                    paying customer their plan, which is the mistake
+--                    that made this sweep necessary in the first place.
+--   rec-free       cached free                           -> not even looked at
+DELETE FROM settings WHERE org_id LIKE 'rec-%';
+DELETE FROM cameras  WHERE org_id LIKE 'rec-%';
+INSERT INTO settings (org_id, key, value, updated_at) VALUES
+  ('rec-agree',       'org_plan', 'pro',      now()::timestamp),
+  ('rec-downgrade',   'org_plan', 'pro',      now()::timestamp),
+  ('rec-upgrade',     'org_plan', 'pro',      now()::timestamp),
+  ('rec-unreachable', 'org_plan', 'pro',      now()::timestamp),
+  ('rec-free',        'org_plan', 'free_org', now()::timestamp);
+
+-- Cameras for the downgraded org, so `enforce_camera_cap` has something
+-- to act on: the free cap is five, and eight cameras means three get
+-- flagged. A reconcile that corrected the setting and skipped the cap
+-- would look right in `settings` and leave the org streaming past its
+-- new plan.
+INSERT INTO cameras (camera_id, org_id, node_id, name, status, last_seen,
+                     node_type, capabilities, continuous_24_7, scheduled_recording,
+                     disabled_by_plan, created_at, updated_at)
+SELECT 'rec-cam-' || n, 'rec-downgrade', NULL, 'Cam ' || n, 'offline', NULL,
+       'rtsp', 'streaming', false, false, false,
+       now()::timestamp - make_interval(days => 10 - n), now()::timestamp
+  FROM generate_series(1, 8) AS n;
