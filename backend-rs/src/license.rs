@@ -144,6 +144,148 @@ fn parse_iso_or_none(raw: &str) -> Option<DateTime<Utc>> {
         .map(|naive| naive.and_utc())
 }
 
+/// `sentinel_install_id` — minted once and kept, so the licence service
+/// can tell one install from another across restarts.
+pub const INSTALL_ID: &str = "sentinel_install_id";
+
+/// `_CHECKIN_TIMEOUT_SECONDS`.
+const CHECKIN_TIMEOUT_SECONDS: u64 = 10;
+
+/// What one check-in wrote, for the probe and the log line.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct CheckInOutcome {
+    /// False when there is no licence key at all — nothing was written.
+    pub attempted: bool,
+    pub reachable: bool,
+    pub valid: bool,
+    pub sync_enabled: bool,
+}
+
+impl CheckInOutcome {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "attempted": self.attempted,
+            "reachable": self.reachable,
+            "valid": self.valid,
+            "sync_enabled": self.sync_enabled,
+        })
+    }
+}
+
+/// `check_in_with_license_service` — one round trip, then cache the
+/// verdict in `Setting`.
+///
+/// **Never fails.** A check-in that cannot complete IS the "unreachable"
+/// state this module exists to handle gracefully, not an error for a
+/// caller to guard against — so a network failure, a non-2xx and a
+/// malformed body all land in the same branch and all still write
+/// `last_check_at` and `last_check_reachable`. Letting any of them
+/// escape would skip those writes and leave a stale cached verdict in
+/// place indefinitely, which is the one outcome the grace window cannot
+/// reason about.
+pub async fn check_in(
+    pool: &sqlx::PgPool,
+    client: &reqwest::Client,
+    org_id: &str,
+    service_url: &str,
+    license_key: Option<&str>,
+) -> CheckInOutcome {
+    let Some(key) = license_key.filter(|k| !k.is_empty()) else {
+        // Nothing to check in with. `is_sentinel_licensed` already
+        // hard-fails closed on exactly this, so there is nothing to
+        // record either.
+        return CheckInOutcome::default();
+    };
+
+    // `datetime.now(tz=UTC).isoformat()` — tz-AWARE, so it carries a
+    // `+00:00` suffix. The read side parses both shapes, but writing the
+    // naive one here would be a different string in the row from the
+    // one Python writes, and the row is compared.
+    let now_iso = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.6f+00:00").to_string();
+    let install_id = get_or_create_install_id(pool, org_id).await;
+
+    let response = client
+        .post(format!(
+            "{}/v1/licenses/check-in",
+            service_url.trim_end_matches('/')
+        ))
+        .bearer_auth(key)
+        .timeout(std::time::Duration::from_secs(CHECKIN_TIMEOUT_SECONDS))
+        .json(&serde_json::json!({
+            "install_id": install_id,
+            "product": "sentinel_ai",
+            "client_version": crate::app::VERSION,
+        }))
+        .send()
+        .await;
+
+    // `resp.raise_for_status()` then `resp.json()`, then a check that
+    // the body is an OBJECT — a bare `true` or a list parses as JSON and
+    // is not an answer.
+    let body = match response {
+        Ok(resp) if resp.status().is_success() => resp.json::<serde_json::Value>().await.ok(),
+        _ => None,
+    };
+    let Some(data) = body.filter(serde_json::Value::is_object) else {
+        tracing::warn!(
+            "[SentinelLicense] check-in failed (network/5xx/malformed response) — \
+             treating as unreachable, grace window (if any) applies"
+        );
+        crate::settings::set(pool, org_id, LAST_CHECK_AT, &now_iso).await.ok();
+        crate::settings::set(pool, org_id, LAST_CHECK_REACHABLE, "false").await.ok();
+        return CheckInOutcome { attempted: true, ..Default::default() };
+    };
+
+    // `bool(data.get("valid"))` — Python's truthiness, so a non-boolean
+    // is not an error. `pyrepr::truthy` is the same rule.
+    let valid = data.get("valid").map(crate::pyrepr::truthy).unwrap_or(false);
+    // False whenever the licence itself is invalid, regardless of what
+    // the body says about sync: a licence losing validity loses sync
+    // access in the same breath rather than coasting on a stale `true`.
+    let sync = valid && data.get("sync_enabled").map(crate::pyrepr::truthy).unwrap_or(false);
+
+    crate::settings::set(pool, org_id, LAST_CHECK_AT, &now_iso).await.ok();
+    crate::settings::set(pool, org_id, LAST_CHECK_REACHABLE, "true").await.ok();
+    crate::settings::set(pool, org_id, LICENSE_VALID, bool_str(valid)).await.ok();
+    crate::settings::set(pool, org_id, SYNC_ENABLED, bool_str(sync)).await.ok();
+    if valid {
+        crate::settings::set(pool, org_id, LAST_OK_AT, &now_iso).await.ok();
+    } else {
+        tracing::info!(
+            reason = ?data.get("reason"),
+            "[SentinelLicense] check-in reachable, license not valid"
+        );
+    }
+
+    CheckInOutcome { attempted: true, reachable: true, valid, sync_enabled: sync }
+}
+
+/// `"true"` / `"false"` — the strings the Setting rows hold, which the
+/// read side compares literally.
+fn bool_str(value: bool) -> &'static str {
+    if value {
+        "true"
+    } else {
+        "false"
+    }
+}
+
+/// `_get_or_create_install_id` — `secrets.token_hex(16)` on first use.
+///
+/// Persisted rather than derived so it survives a restart: the licence
+/// service counts installs, and an id that changed every boot would read
+/// as an install per restart.
+pub async fn get_or_create_install_id(pool: &sqlx::PgPool, org_id: &str) -> String {
+    if let Ok(Some(existing)) = crate::settings::get(pool, org_id, INSTALL_ID, Some("")).await {
+        if !existing.is_empty() {
+            return existing;
+        }
+    }
+    let minted = crate::crypto::token_hex(16);
+    crate::settings::set(pool, org_id, INSTALL_ID, &minted).await.ok();
+    minted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

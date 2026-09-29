@@ -38,8 +38,11 @@ import sys
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default=os.environ.get("PROBE_DATABASE_URL", ""))
-    ap.add_argument("--body", choices=("sweep", "cleanup", "reaper", "digest"),
+    ap.add_argument("--body",
+                    choices=("sweep", "cleanup", "reaper", "digest", "license"),
                     required=True)
+    ap.add_argument("--license-url", default="")
+    ap.add_argument("--license-key", default="probe-license-key")
     args = ap.parse_args()
     if args.db:
         os.environ["DATABASE_URL"] = args.db
@@ -69,6 +72,8 @@ def main() -> int:
         elif args.body == "reaper":
             from app.core.sentinel_dispatch import reap_stranded_runs  # noqa: PLC0415
             summary = reap_stranded_runs(db)
+        elif args.body == "license":
+            summary = run_license_checkin(args)
         elif args.body == "digest":
             # The digest is the one body Python did NOT extract from its
             # loop — it is all inline. So run the real loop for exactly
@@ -85,6 +90,10 @@ def main() -> int:
         db.close()
 
     print(json.dumps({"summary": summary}, sort_keys=True), flush=True)
+    if args.body == "license":
+        # The summary IS the comparison here: every scenario's resulting
+        # rows are in it, and there is nothing else the check-in touches.
+        return 0
 
     db = SessionLocal()
     try:
@@ -93,6 +102,110 @@ def main() -> int:
     finally:
         db.close()
     return 0
+
+
+def run_license_checkin(args) -> dict:
+    """One check-in per scenario, against the fake licence service.
+
+    The scenarios are selected by URL prefix rather than by a mode
+    endpoint, so the fake stays stateless and the two probes cannot
+    leave each other a surprise.
+
+    Local auth on purpose: this whole module is a self-host concern and
+    the read side short-circuits for hosted orgs.
+    """
+    import asyncio  # noqa: PLC0415
+    import app.core.config as config_mod  # noqa: PLC0415
+    from app.core.database import SessionLocal  # noqa: PLC0415
+    from app.core.license_client import check_in_with_license_service  # noqa: PLC0415
+
+    settings = config_mod.settings
+    settings.SENTINEL_LICENSE_KEY = args.license_key
+    out = {}
+    for scenario in LICENSE_SCENARIOS:
+        settings.SENTINEL_LICENSE_SERVICE_URL = scenario_url(args, scenario)
+        db = SessionLocal()
+        try:
+            # Wipe the cached verdict between scenarios: what is being
+            # compared is what THIS check-in wrote, not what survived
+            # from the previous one.
+            clear_license_settings(db, settings.LOCAL_ORG_ID)
+            asyncio.run(check_in_with_license_service(db))
+            out[scenario] = read_license_settings(db, settings.LOCAL_ORG_ID)
+        finally:
+            db.close()
+    return out
+
+
+# Every answer the check-in has to tell apart. `unreachable` points at a
+# port nothing is listening on, which is the state the grace window
+# exists for and the one a port is most likely to turn into an error.
+LICENSE_SCENARIOS = (
+    "valid",
+    "valid-sync",
+    "revoked",
+    "sync-without-valid",
+    "truthy",
+    "falsy",
+    "not-an-object",
+    "garbage",
+    "server-error",
+    "missing-valid",
+    "unreachable",
+)
+
+
+def scenario_url(args, scenario: str) -> str:
+    if scenario == "unreachable":
+        return "http://127.0.0.1:1"
+    return f"{args.license_url.rstrip('/')}/scenario/{scenario}"
+
+
+LICENSE_KEYS = (
+    "sentinel_license_valid",
+    "sentinel_license_last_check_reachable",
+    "sentinel_data_sync_enabled",
+    "sentinel_install_id",
+)
+
+
+def clear_license_settings(db, org_id: str) -> None:
+    from sqlalchemy import text  # noqa: PLC0415
+
+    db.execute(
+        text("DELETE FROM settings WHERE org_id = :o AND key LIKE 'sentinel_license_%'"),
+        {"o": org_id},
+    )
+    db.execute(
+        text("DELETE FROM settings WHERE org_id = :o AND key = 'sentinel_data_sync_enabled'"),
+        {"o": org_id},
+    )
+    db.commit()
+
+
+def read_license_settings(db, org_id: str) -> dict:
+    """The rows the check-in wrote.
+
+    `install_id` is reported as whether it EXISTS, not as its value: it
+    is `secrets.token_hex(16)`, random per mint, and the behaviour under
+    test is that one gets minted and then reused — not which one.
+    The two timestamps are reported as presence for the same reason.
+    """
+    from sqlalchemy import text  # noqa: PLC0415
+
+    rows = dict(
+        db.execute(
+            text("SELECT key, value FROM settings WHERE org_id = :o"), {"o": org_id}
+        ).all()
+    )
+    return {
+        "valid": rows.get("sentinel_license_valid"),
+        "reachable": rows.get("sentinel_license_last_check_reachable"),
+        "sync_enabled": rows.get("sentinel_data_sync_enabled"),
+        "has_install_id": bool(rows.get("sentinel_install_id")),
+        "has_last_check_at": bool(rows.get("sentinel_license_last_check_at")),
+        "has_last_ok_at": bool(rows.get("sentinel_license_last_ok_at")),
+    }
 
 
 class _TickDone(Exception):

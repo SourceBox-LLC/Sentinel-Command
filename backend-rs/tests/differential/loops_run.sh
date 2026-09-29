@@ -48,6 +48,28 @@ fi
 # sides disagree for that reason alone.
 ( cd "$RS" && cargo build --quiet --example loops_probe ) || exit 2
 
+# The licence check-in talks to a service, so it gets a fake — the same
+# one the tiers use, with scenario prefixes for the answers a live
+# service would never produce on demand (a revoked licence, a malformed
+# body, a 500). Its own port, so a tier's fake left running does not
+# collide with this one.
+LICENSE_PORT="${LOOPS_LICENSE_PORT:-18099}"
+LICENSE_URL="http://127.0.0.1:$LICENSE_PORT"
+holder="$(ss -lptnH "sport = :$LICENSE_PORT" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1)"
+# A stale fake from an earlier run answers on this port and is NOT
+# necessarily the file on disk — one served an entire email run once,
+# scenarios and all, and every case agreed with a version of the code
+# nobody was looking at. Kill the holder rather than assume.
+[ -n "$holder" ] && kill "$holder" 2>/dev/null
+"$PYTHON" "$HERE/fake_license.py" --port "$LICENSE_PORT" >/dev/null 2>&1 &
+FAKE_PID=$!
+trap 'rm -rf "$WORK"; kill $FAKE_PID 2>/dev/null' EXIT
+for _ in $(seq 20); do
+    curl -fsS -m 1 -X POST "$LICENSE_URL/scenario/valid/v1/licenses/check-in" \
+        >/dev/null 2>&1 && break
+    sleep 0.2
+done
+
 seed() {
     docker exec -i "$PG_CONTAINER" psql -U cc -d cc -q < "$HERE/seed_cameras.sql" >/dev/null 2>&1
     # The loop fixture goes on top: seed_cameras.sql cannot exercise
@@ -59,14 +81,16 @@ seed() {
 
 bad=0
 compared=0
-for body in sweep cleanup reaper digest; do
+for body in sweep cleanup reaper digest license; do
     seed || { echo "REFUSING: the loop fixture did not apply cleanly"; exit 2; }
     "$PYTHON" "$HERE/py_loops_probe.py" --db "postgresql+psycopg://${PG_URL#postgresql://}" \
-        --body "$body" 2>/dev/null | grep '^{' > "$WORK/py-$body.jsonl"
+        --body "$body" --license-url "$LICENSE_URL" 2>/dev/null \
+        | grep '^{' > "$WORK/py-$body.jsonl"
 
     seed || { echo "REFUSING: the loop fixture did not apply cleanly"; exit 2; }
     ( cd "$RS" && cargo run --quiet --example loops_probe -- \
-        --db "$PG_URL" --body "$body" ) > "$WORK/rs-$body.jsonl"
+        --db "$PG_URL" --body "$body" --license-url "$LICENSE_URL" ) \
+        > "$WORK/rs-$body.jsonl"
 
     # Compared as parsed JSON per line: Python's json.dumps and
     # serde_json space their separators differently, and that is not a
@@ -152,6 +176,15 @@ done
 
 # A run where both bodies did nothing would agree perfectly and prove
 # nothing. Both summaries have to report work.
+# The licence body's own guard. Every scenario writing the SAME verdict
+# would agree perfectly and prove nothing — which is what happens if the
+# fake stops distinguishing them, or if the client stops reading the
+# body. Count the distinct verdicts instead of the calls.
+verdicts=$("$PYTHON" -c "
+import json
+d=json.loads(open('$WORK/rs-license.jsonl').readline())['summary']
+print(len({(v['valid'], v['reachable'], v['sync_enabled']) for v in d.values()}))
+" 2>/dev/null || echo 0)
 digested=$("$PYTHON" -c "
 import json
 rows=[json.loads(l) for l in open('$WORK/rs-digest.jsonl')]
@@ -172,9 +205,10 @@ import json,sys
 print(json.loads(open('$WORK/rs-cleanup.jsonl').readline())['summary']['total_deleted'])
 " 2>/dev/null || echo 0)
 echo
-echo "fixture: the sweep flipped $flips row(s), the cleanup deleted $deleted, the reaper stamped $reaped, the digest emitted $digested"
+echo "fixture: sweep flipped $flips, cleanup deleted $deleted, reaper stamped $reaped,"
+echo "         digest emitted $digested, licence reached $verdicts distinct verdict(s)"
 if [ "$flips" -lt 4 ] || [ "$deleted" -lt 20 ] || [ "$reaped" -lt 2 ] \
-   || [ "$digested" -lt 1 ]; then
+   || [ "$digested" -lt 1 ] || [ "$verdicts" -lt 3 ]; then
     echo "FIXTURE TOO THIN — every body must actually do work, or no-ops agree"
     exit 2
 fi

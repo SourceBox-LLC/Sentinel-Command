@@ -32,6 +32,8 @@ use sentinel_command::config::Config;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut db = String::new();
     let mut body = String::new();
+    let mut license_url = String::new();
+    let mut license_key = "probe-license-key".to_string();
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
     while i < args.len() {
@@ -42,6 +44,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--body" => {
                 body = args[i + 1].clone();
+                i += 2;
+            }
+            "--license-url" => {
+                license_url = args[i + 1].clone();
+                i += 2;
+            }
+            "--license-key" => {
+                license_key = args[i + 1].clone();
                 i += 2;
             }
             _ => i += 1,
@@ -94,6 +104,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         started_at_wall: chrono::Utc::now(),
     };
 
+    // `LOCAL_ORG_ID` — the licence is a self-host concern and every one
+    // of its Settings lives under the single local org.
+    let org = state.config.local_org_id.clone();
+
     match body.as_str() {
         "sweep" => {
             let summary = sentinel_command::loops::run_offline_sweep(&state).await?;
@@ -107,6 +121,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             for (label, sql) in SWEEP_ROWS {
                 dump(&pool, label, sql).await?;
             }
+        }
+        "license" => {
+            let mut out = serde_json::Map::new();
+            for scenario in LICENSE_SCENARIOS {
+                // Selected by URL prefix so the fake stays stateless;
+                // see fake_license.py. `unreachable` points at a port
+                // nothing listens on, which is the grace window's whole
+                // reason for existing and the branch a port is most
+                // likely to turn into an error.
+                let url = if scenario == "unreachable" {
+                    "http://127.0.0.1:1".to_string()
+                } else {
+                    format!("{}/scenario/{scenario}", license_url.trim_end_matches('/'))
+                };
+                // Wiped between scenarios: what is compared is what THIS
+                // check-in wrote, not what survived the last one.
+                clear_license_settings(&pool, &org).await?;
+                sentinel_command::license::check_in(
+                    &pool,
+                    &state.http,
+                    &org,
+                    &url,
+                    Some(&license_key),
+                )
+                .await;
+                out.insert(scenario.to_string(), read_license_settings(&pool, &org).await?);
+            }
+            println!(
+                "{}",
+                serde_json::to_string(&json!({"summary": serde_json::Value::Object(out)}))?
+            );
         }
         "digest" => {
             // The summary is NOT printed for this body. Python's loop
@@ -140,6 +185,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+/// Every answer the check-in has to tell apart.
+const LICENSE_SCENARIOS: [&str; 11] = [
+    "valid",
+    "valid-sync",
+    "revoked",
+    "sync-without-valid",
+    "truthy",
+    "falsy",
+    "not-an-object",
+    "garbage",
+    "server-error",
+    "missing-valid",
+    "unreachable",
+];
+
+async fn clear_license_settings(pool: &sqlx::PgPool, org: &str) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "DELETE FROM settings
+          WHERE org_id = $1
+            AND (key LIKE 'sentinel_license_%' OR key = 'sentinel_data_sync_enabled')",
+    )
+    .bind(org)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The rows the check-in wrote.
+///
+/// `install_id` is reported as whether it EXISTS, not as its value: it
+/// is sixteen random bytes, and the behaviour under test is that one
+/// gets minted and reused, not which one. The timestamps likewise.
+async fn read_license_settings(
+    pool: &sqlx::PgPool,
+    org: &str,
+) -> Result<serde_json::Value, sqlx::Error> {
+    let (value,): (Option<serde_json::Value>,) = sqlx::query_as(
+        "SELECT json_build_object(
+           'valid',             max(value) FILTER (WHERE key = 'sentinel_license_valid'),
+           'reachable',         max(value) FILTER (WHERE key = 'sentinel_license_last_check_reachable'),
+           'sync_enabled',      max(value) FILTER (WHERE key = 'sentinel_data_sync_enabled'),
+           'has_install_id',    COALESCE(bool_or(key = 'sentinel_install_id'), false),
+           'has_last_check_at', COALESCE(bool_or(key = 'sentinel_license_last_check_at'), false),
+           'has_last_ok_at',    COALESCE(bool_or(key = 'sentinel_license_last_ok_at'), false))
+           FROM settings WHERE org_id = $1",
+    )
+    .bind(org)
+    .fetch_one(pool)
+    .await?;
+    Ok(value.unwrap_or_else(|| json!({})))
 }
 
 /// One snapshot query, printed as the Python probe prints it.

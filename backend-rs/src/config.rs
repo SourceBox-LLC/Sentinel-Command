@@ -50,6 +50,11 @@ pub struct Config {
     /// The self-hosted Sentinel licence key. Absent means unlicensed,
     /// which is a different refusal from an ineligible plan.
     pub sentinel_license_key: Option<String>,
+    /// `SENTINEL_LICENSE_SERVICE_URL` — the sibling service the
+    /// check-in loop talks to. Only the READ half of the licence
+    /// contract existed in the port until the loops slice; this is what
+    /// the write half posts to.
+    pub sentinel_license_service_url: String,
     /// Fleet-wide kill switch for agent dispatch.
     pub sentinel_dispatch_enabled: bool,
     /// Fleet-wide monthly run ceiling; 0 disables the ceiling.
@@ -184,6 +189,7 @@ impl Config {
                 .ok()
                 .filter(|v| !v.is_empty()),
             sentinel_license_key: std::env::var("SENTINEL_LICENSE_KEY").ok().filter(|v| !v.is_empty()),
+            sentinel_license_service_url: var_or("SENTINEL_LICENSE_SERVICE_URL", ""),
             // Python reads this as `.lower() == "true"`, so anything
             // else — including "1" — is false.
             sentinel_dispatch_enabled: var_or("SENTINEL_DISPATCH_ENABLED", "true").to_lowercase() == "true",
@@ -272,6 +278,7 @@ mod tests {
             sentinel_agent_mcp_key: None,
             clerk_webhook_secret: None,
             sentinel_license_key: None,
+            sentinel_license_service_url: String::new(),
             sentinel_dispatch_enabled: true,
             sentinel_global_monthly_run_cap: 0,
             sentinel_agent_webhook_url: None,
