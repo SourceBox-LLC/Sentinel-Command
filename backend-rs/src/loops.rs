@@ -315,6 +315,155 @@ pub async fn run_log_cleanup(state: &AppState) -> Result<CleanupSummary, sqlx::E
     Ok(summary)
 }
 
+/// `STRANDED_RUN_AGE_MINUTES` — how long a `running` row may sit before
+/// the reaper calls it lost.
+const STRANDED_RUN_AGE_MINUTES: i64 = 20;
+/// A `pending` row unclaimed for this long re-fires the wakeup.
+const STALE_PENDING_MINUTES: i64 = 2;
+/// And one unclaimed for this long is given up on.
+const ABANDONED_PENDING_HOURS: i64 = 6;
+
+/// What one reaper pass did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ReaperSummary {
+    pub reaped: u64,
+    /// The ids the SELECT found — `stranded_ids if reaped else []`.
+    ///
+    /// The ORDER is not a contract: the SELECT behind it has no
+    /// ORDER BY on either side, so Postgres answers in physical order
+    /// and may answer differently twice. `loops_run.sh` sorts it before
+    /// comparing.
+    ///
+    /// Note that this is the ids the SELECT found, not the ids the
+    /// UPDATE changed. When a concurrent `/complete` lands between the
+    /// two, the count is lower than the list and Python reports both as
+    /// they are. Reproduced rather than tidied: a log line that names a
+    /// run the reaper did NOT touch is a smaller problem than a port
+    /// that quietly disagrees with the one on the other machine.
+    pub ids: Vec<String>,
+    pub rewoken_pending: i64,
+    pub abandoned: u64,
+}
+
+impl ReaperSummary {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "reaped": self.reaped,
+            "ids": self.ids,
+            "rewoken_pending": self.rewoken_pending,
+            "abandoned": self.abandoned,
+        })
+    }
+}
+
+/// `reap_stranded_runs` — three sweeps over `sentinel_runs`, in order.
+///
+/// The agent's own wall-clock wrapper handles the common timeout by
+/// POSTing `/complete`. This is the backstop for when the agent never
+/// got that far: an OOM, a container kill, a partition long enough that
+/// the cleanup POST itself failed. Without it the row sits at `running`
+/// forever — `/runs/pending` only returns `pending`, `/start` does not
+/// re-claim `running`, and the dashboard spins.
+///
+/// Cross-org by design: a stranded run is stranded regardless of who
+/// owns it.
+pub async fn reap_stranded_runs(state: &AppState) -> Result<ReaperSummary, sqlx::Error> {
+    let now = crate::models::now_naive();
+    let cutoff = now - chrono::Duration::minutes(STRANDED_RUN_AGE_MINUTES);
+
+    let stranded: Vec<(String,)> = sqlx::query_as(
+        "SELECT id FROM sentinel_runs
+          WHERE outcome = 'running' AND started_at IS NOT NULL AND started_at < $1",
+    )
+    .bind(cutoff)
+    .fetch_all(&state.pool)
+    .await?;
+    let stranded_ids: Vec<String> = stranded.into_iter().map(|(id,)| id).collect();
+
+    let mut summary = ReaperSummary::default();
+    if !stranded_ids.is_empty() {
+        // The `outcome = 'running'` re-check belongs in the WRITE, not
+        // just the SELECT. The load-then-stamp version had a window in
+        // which a concurrent `/complete` landed and had its real
+        // outcome overwritten with `error` — leaving a row carrying
+        // `error` beside the completion's own severity and incident_id,
+        // and no repair path, because the agent's POST had already
+        // succeeded.
+        summary.reaped = sqlx::query(
+            "UPDATE sentinel_runs
+                SET outcome = 'error', summary = $1, completed_at = $2
+              WHERE id = ANY($3) AND outcome = 'running'",
+        )
+        .bind(format!(
+            "Stranded — agent never completed within {STRANDED_RUN_AGE_MINUTES} min.  \
+             Reaped automatically."
+        ))
+        .bind(now)
+        .bind(&stranded_ids)
+        .execute(&state.pool)
+        .await?
+        .rows_affected();
+        if summary.reaped > 0 {
+            tracing::warn!(
+                reaped = summary.reaped,
+                "sentinel: reaper marked stranded run(s) as error"
+            );
+        }
+        summary.ids = stranded_ids;
+    }
+
+    // A lost wakeup used to strand rows at `pending` FOREVER on a quiet
+    // system: the reaper only handled `running`, `/runs/pending` only
+    // helps an agent already awake, and "the next wakeup" never comes
+    // when this org's motion was the only trigger. One webhook wakes the
+    // agent, which then drains every pending run across all orgs.
+    let pending_cutoff = now - chrono::Duration::minutes(STALE_PENDING_MINUTES);
+    let (stale_pending,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM sentinel_runs
+          WHERE outcome = 'pending' AND triggered_at < $1",
+    )
+    .bind(pending_cutoff)
+    .fetch_one(&state.pool)
+    .await?;
+    summary.rewoken_pending = stale_pending;
+    if stale_pending > 0 {
+        tracing::warn!(
+            pending = stale_pending,
+            "sentinel: pending run(s) unclaimed for >2 min — re-firing wakeup"
+        );
+        crate::api::sentinel_config::fire_wakeup_webhook(state);
+    }
+
+    // Terminal backstop. Six hours of pending means the agent has been
+    // unreachable across seventy-odd re-fired wakeups; surface the
+    // failure rather than hold a cap slot and a spinner forever. The
+    // error → real-outcome upgrade path still applies if the agent ever
+    // completes one of these later.
+    let abandoned_cutoff = now - chrono::Duration::hours(ABANDONED_PENDING_HOURS);
+    summary.abandoned = sqlx::query(
+        "UPDATE sentinel_runs
+            SET outcome = 'error', summary = $1, completed_at = $2
+          WHERE outcome = 'pending' AND triggered_at < $3",
+    )
+    .bind(
+        "Abandoned — agent never claimed this run within 6 hours \
+         (wakeup webhook unreachable?).  Marked errored automatically.",
+    )
+    .bind(now)
+    .bind(abandoned_cutoff)
+    .execute(&state.pool)
+    .await?
+    .rows_affected();
+    if summary.abandoned > 0 {
+        tracing::warn!(
+            abandoned = summary.abandoned,
+            "sentinel: marked abandoned pending run(s) as error"
+        );
+    }
+
+    Ok(summary)
+}
+
 /// Spawn the two loops.
 ///
 /// Each catches its own body's failure and keeps its cadence. A loop

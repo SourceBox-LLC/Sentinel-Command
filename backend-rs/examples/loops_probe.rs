@@ -102,6 +102,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 dump(&pool, label, sql).await?;
             }
         }
+        "reaper" => {
+            let summary = sentinel_command::loops::reap_stranded_runs(&state).await?;
+            println!("{}", serde_json::to_string(&json!({"summary": summary.to_json()}))?);
+            for (label, sql) in REAPER_ROWS {
+                dump(&pool, label, sql).await?;
+            }
+        }
         "cleanup" => {
             let summary = sentinel_command::loops::run_log_cleanup(&state).await?;
             println!("{}", serde_json::to_string(&json!({"summary": summary.to_json()}))?);
@@ -142,7 +149,7 @@ async fn dump(pool: &sqlx::PgPool, label: &str, sql: &str) -> Result<(), sqlx::E
 /// unspecified order cannot leak into the comparison. The bodies' reads
 /// have no ORDER BY either, but what is compared here is the RESULT, and
 /// an unordered snapshot of a result is a flake rather than a finding.
-const SWEEP_ROWS: [(&str, &str); 3] = [
+const SWEEP_ROWS: [(&str, &str); 4] = [
     (
         "nodes",
         "SELECT json_agg(json_build_array(node_id, status)) FROM (
@@ -156,20 +163,46 @@ const SWEEP_ROWS: [(&str, &str); 3] = [
             WHERE org_id LIKE 'loops-%' ORDER BY camera_id) t",
     ),
     (
-        // `seq` is a row_number over id, not the id itself: it makes the
-        // emit ORDER comparable — nodes before cameras, which is a claim
-        // the code makes and nothing else here checks — without pinning
-        // absolute ids that any fixture change would shift.
         "notifications",
-        "SELECT json_agg(json_build_array(seq, org_id, kind, audience, title, body,
+        "SELECT json_agg(json_build_array(org_id, kind, audience, title, body,
                                           severity, link, camera_id, node_id)) FROM (
-           SELECT row_number() OVER (ORDER BY id) AS seq,
-                  org_id, kind, audience, title, body, severity, link, camera_id, node_id
+           SELECT org_id, kind, audience, title, body, severity, link, camera_id, node_id
              FROM notifications
             WHERE org_id LIKE 'loops-%' AND kind IN ('node_offline', 'camera_offline')
-            ORDER BY id) t",
+            ORDER BY org_id, kind, title) t",
+    ),
+    (
+        // The emit ORDER, reduced to the one thing about it that IS a
+        // claim. The row order WITHIN each group is not: the sweep reads
+        // its stale rows with no ORDER BY on either side, so two stale
+        // cameras may be announced in either order. What the code does
+        // claim is that every NODE is announced before every CAMERA, so
+        // an operator sees the uplink drop before the cameras behind it.
+        // A row_number comparison caught the within-group order too and
+        // differed for that reason alone.
+        "nodes_before_cameras",
+        // Wrapped as a one-row, one-column result like every other
+        // entry here: the Python probe returns rows and this has to be
+        // the same SHAPE, not merely the same value.
+        "SELECT json_agg(json_build_array(claim)) FROM (
+           SELECT COALESCE(
+             (SELECT max(id) FILTER (WHERE kind = 'node_offline')
+                   < min(id) FILTER (WHERE kind = 'camera_offline')
+                FROM notifications
+               WHERE org_id LIKE 'loops-%'
+                 AND kind IN ('node_offline', 'camera_offline')), false) AS claim) t",
     ),
 ];
+
+/// The reaper's rows. `completed_at` is reduced to whether it is set:
+/// both sides stamp `now()`, seconds apart, so the value itself is not
+/// comparable and its PRESENCE is the behaviour.
+const REAPER_ROWS: [(&str, &str); 1] = [(
+    "runs",
+    "SELECT json_agg(json_build_array(id, outcome, summary, completed)) FROM (
+       SELECT id, outcome, summary, completed_at IS NOT NULL AS completed
+         FROM sentinel_runs WHERE org_id LIKE 'loops-%' ORDER BY id) t",
+)];
 
 /// Ages in whole days rather than timestamps: the two probes run seconds
 /// apart, and a literal timestamp would differ for that reason alone.

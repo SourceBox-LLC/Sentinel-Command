@@ -38,7 +38,7 @@ import sys
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default=os.environ.get("PROBE_DATABASE_URL", ""))
-    ap.add_argument("--body", choices=("sweep", "cleanup"), required=True)
+    ap.add_argument("--body", choices=("sweep", "cleanup", "reaper"), required=True)
     args = ap.parse_args()
     if args.db:
         os.environ["DATABASE_URL"] = args.db
@@ -59,6 +59,9 @@ def main() -> int:
     try:
         if args.body == "sweep":
             summary = main_mod.run_offline_sweep(db)
+        elif args.body == "reaper":
+            from app.core.sentinel_dispatch import reap_stranded_runs  # noqa: PLC0415
+            summary = reap_stranded_runs(db)
         else:
             summary = main_mod.run_log_cleanup(db)
     finally:
@@ -87,6 +90,46 @@ def snapshot(db, body: str) -> dict:
 
     def q(sql: str) -> list:
         return [list(row) for row in db.execute(text(sql)).all()]
+
+    if body == "reaper":
+        return {
+            "runs": q("""SELECT id, outcome, summary,
+                                completed_at IS NOT NULL AS completed
+                           FROM sentinel_runs WHERE org_id LIKE 'loops-%'
+                          ORDER BY id"""),
+        }
+
+    if body == "sweep":
+        return {
+            "nodes": q("""SELECT node_id, status FROM camera_nodes
+                           WHERE org_id LIKE 'loops-%' ORDER BY node_id"""),
+            "cameras": q("""SELECT camera_id, status FROM cameras
+                             WHERE org_id LIKE 'loops-%' ORDER BY camera_id"""),
+            # The transitions the sweep announced. `meta_json` carries
+            # nothing here; the title is what a reader sees and the
+            # `name or id` fallback shows up in it.
+            "notifications": q("""SELECT org_id, kind, audience, title, body, severity,
+                                         link, camera_id, node_id
+                                    FROM notifications
+                                   WHERE org_id LIKE 'loops-%'
+                                     AND kind IN ('node_offline', 'camera_offline')
+                                   ORDER BY org_id, kind, title"""),
+            # The emit ORDER, reduced to the one thing about it that IS
+            # a claim. The row order WITHIN each group is not: the sweep
+            # reads its stale rows with no ORDER BY on either side, so
+            # two stale cameras may be announced in either order. What
+            # the code does claim is that every NODE is announced before
+            # every CAMERA, so an operator sees the uplink drop before
+            # the cameras behind it. A row_number comparison caught the
+            # within-group order too and differed for that reason alone.
+            "nodes_before_cameras": q("""
+                SELECT COALESCE(
+                  (SELECT max(id) FILTER (WHERE kind = 'node_offline')
+                        < min(id) FILTER (WHERE kind = 'camera_offline')
+                     FROM notifications
+                    WHERE org_id LIKE 'loops-%'
+                      AND kind IN ('node_offline', 'camera_offline')), false)"""),
+        }
 
     if body == "sweep":
         return {

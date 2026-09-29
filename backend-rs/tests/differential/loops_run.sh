@@ -59,7 +59,7 @@ seed() {
 
 bad=0
 compared=0
-for body in sweep cleanup; do
+for body in sweep cleanup reaper; do
     seed || { echo "REFUSING: the loop fixture did not apply cleanly"; exit 2; }
     "$PYTHON" "$HERE/py_loops_probe.py" --db "postgresql+psycopg://${PG_URL#postgresql://}" \
         --body "$body" 2>/dev/null | grep '^{' > "$WORK/py-$body.jsonl"
@@ -74,9 +74,27 @@ for body in sweep cleanup; do
     if "$PYTHON" - "$WORK/py-$body.jsonl" "$WORK/rs-$body.jsonl" "$body" <<'PY'
 import json, sys
 
+
+def normalise(entry):
+    """Sort the one list whose order is not a contract.
+
+    The reaper's `ids` comes from a SELECT with no ORDER BY, on both
+    sides — so Postgres answers in physical order and is free to answer
+    differently twice. The same trap the MCP differential hit on
+    `list_cameras` and `get_stream_stats`, and the same treatment: sort
+    it, and say here that the order is not being compared. Everything
+    else keeps its order, including the rows, which the probes order
+    explicitly in SQL.
+    """
+    summary = entry.get("summary")
+    if isinstance(summary, dict) and isinstance(summary.get("ids"), list):
+        summary["ids"] = sorted(summary["ids"])
+    return entry
+
+
 py, rs, body = sys.argv[1], sys.argv[2], sys.argv[3]
-a = [json.loads(line) for line in open(py) if line.strip()]
-b = [json.loads(line) for line in open(rs) if line.strip()]
+a = [normalise(json.loads(line)) for line in open(py) if line.strip()]
+b = [normalise(json.loads(line)) for line in open(rs) if line.strip()]
 if not a or not b:
     print(f"  REFUSING  {body}: one side produced nothing "
           f"(python {len(a)} line(s), rust {len(b)})")
@@ -107,6 +125,11 @@ done
 
 # A run where both bodies did nothing would agree perfectly and prove
 # nothing. Both summaries have to report work.
+reaped=$("$PYTHON" -c "
+import json
+d=json.loads(open('$WORK/rs-reaper.jsonl').readline())['summary']
+print(d['reaped'] + d['abandoned'])
+" 2>/dev/null || echo 0)
 flips=$("$PYTHON" -c "
 import json,sys
 d=json.loads(open('$WORK/rs-sweep.jsonl').readline())['summary']
@@ -117,9 +140,9 @@ import json,sys
 print(json.loads(open('$WORK/rs-cleanup.jsonl').readline())['summary']['total_deleted'])
 " 2>/dev/null || echo 0)
 echo
-echo "fixture: the sweep flipped $flips row(s), the cleanup deleted $deleted"
-if [ "$flips" -lt 4 ] || [ "$deleted" -lt 20 ]; then
-    echo "FIXTURE TOO THIN — both bodies must actually do work, or two no-ops agree"
+echo "fixture: the sweep flipped $flips row(s), the cleanup deleted $deleted, the reaper stamped $reaped"
+if [ "$flips" -lt 4 ] || [ "$deleted" -lt 20 ] || [ "$reaped" -lt 2 ]; then
+    echo "FIXTURE TOO THIN — every body must actually do work, or no-ops agree"
     exit 2
 fi
 

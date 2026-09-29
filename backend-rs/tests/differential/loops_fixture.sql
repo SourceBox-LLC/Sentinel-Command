@@ -161,3 +161,44 @@ SELECT o.org_id, 'a@example.com', 's', 'b', '<p>b</p>', 'motion', st.status, 0,
 INSERT INTO processed_webhooks (svix_msg_id, event_type, processed_at)
 SELECT 'loops-' || d, 'probe.event', now()::timestamp - make_interval(days => d)
   FROM (VALUES (1), (29), (31), (400)) AS ages(d);
+
+-- ---- the sentinel reaper --------------------------------------------
+--
+-- Three sweeps, in order, and a row for every branch of each:
+--
+--   running    > 20 min  -> error, "Stranded"
+--   pending    >  2 min  -> re-fire the wakeup (a COUNT, not a write)
+--   pending    >  6 hr   -> error, "Abandoned"
+--
+-- The 3-hour pending row is the one that separates the second sweep
+-- from the third: it is counted for the re-fire and must NOT be
+-- abandoned. A port that used one cutoff for both would still report a
+-- plausible count.
+DELETE FROM sentinel_runs WHERE org_id LIKE 'loops-%';
+INSERT INTO sentinel_runs (id, org_id, triggered_at, trigger_type, outcome,
+                           started_at, completed_at, tool_call_count)
+VALUES
+  -- running, well past the 20-minute strand threshold
+  ('loops-run-stranded', 'loops-free', now()::timestamp - interval '40 minutes',
+   'motion', 'running', now()::timestamp - interval '40 minutes', NULL, 0),
+  -- running, INSIDE it: a run that is merely slow is not a run that is lost
+  ('loops-run-working',  'loops-free', now()::timestamp - interval '5 minutes',
+   'motion', 'running', now()::timestamp - interval '5 minutes', NULL, 0),
+  -- running with a NULL started_at. `/start` sets both together, so this
+  -- is a row that should not exist — and it must be left alone rather
+  -- than reaped on the strength of a NULL comparison.
+  ('loops-run-nostart',  'loops-free', now()::timestamp - interval '40 minutes',
+   'motion', 'running', NULL, NULL, 0),
+  -- pending, old enough to re-fire the wakeup and NOT old enough to abandon
+  ('loops-run-pending',  'loops-free', now()::timestamp - interval '3 hours',
+   'motion', 'pending', NULL, NULL, 0),
+  -- pending, fresh: neither counted nor abandoned
+  ('loops-run-fresh',    'loops-free', now()::timestamp - interval '30 seconds',
+   'motion', 'pending', NULL, NULL, 0),
+  -- pending past six hours: abandoned
+  ('loops-run-lost',     'loops-plus', now()::timestamp - interval '9 hours',
+   'motion', 'pending', NULL, NULL, 0),
+  -- already terminal, and must stay exactly as it is
+  ('loops-run-done',     'loops-plus', now()::timestamp - interval '9 hours',
+   'motion', 'incident', now()::timestamp - interval '9 hours',
+   now()::timestamp - interval '8 hours', 3);
