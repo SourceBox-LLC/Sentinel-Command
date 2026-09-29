@@ -445,8 +445,16 @@ VALUES
   --   because no MCP-kind row had a hash a request could present. Two
   --   mutations scored zero on that and neither was a coverage problem
   --   in the harness; the fixture simply could not express the case.
+  --
+  --   `custom` with ONE tool, not `all`, and that matters for the
+  --   second of those two. The scope lookup returns None for a key it
+  --   does not recognise, which leaves the catalog UNFILTERED — so a
+  --   revoked key with scope_mode 'all' produces the same 23 tools
+  --   whether the filter is there or not, and the mutation was
+  --   equivalent rather than uncaught. Narrow scope makes the two
+  --   answers differ: unrecognised is still 23 tools, recognised is 1.
   ('self-host', 'dee914a7baab90d887d15beb9dd9514655f42ebda38689895f1c481688d6a191', 'Revoked MCP Live',
-   timestamp '2026-09-11 17:00:00', NULL, true, 'all', NULL, 'mcp');
+   timestamp '2026-09-11 17:00:00', NULL, true, 'custom', '["list_cameras"]', 'mcp');
 
 -- ---- notifications --------------------------------------------------
 DELETE FROM user_notification_state;

@@ -267,7 +267,7 @@
   {
    "name": "a revoked key is still scoped",
    "file": "src/mcp/auth.rs",
-   "_why": "The scope lookup runs on tools/list as well as tools/call, and it has its OWN copy of the kind+revoked filter. Only the call path is covered by the resolver's mutations above; this one is the catalog. Scored zero until the fixture gained a real-hash revoked MCP key: the only revoked row with a hash a request could present was an INTEGRATION key, so the filter had nothing to act on and removing it changed nothing.",
+   "_why": "The scope lookup runs on tools/list as well as tools/call, and it has its OWN copy of the kind+revoked filter. Only the call path is covered by the resolver's mutations above; this one is the catalog. Scored zero until the fixture gained a real-hash revoked MCP key: the only revoked row with a hash a request could present was an INTEGRATION key, so the filter had nothing to act on and removing it changed nothing. The fixture's revoked key is scope_mode 'custom' with ONE tool rather than 'all' for this mutation's sake: the lookup returns None for an unrecognised key, which leaves the catalog unfiltered, so a revoked key with full scope produces the same 23 tools either way and the mutant was equivalent. Narrow scope makes recognising it visible.",
    "old": "    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(\n        \"SELECT scope_mode, scope_tools FROM mcp_api_keys\n          WHERE key_hash = $1 AND revoked = false AND kind = 'mcp' LIMIT 1\",",
    "new": "    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(\n        \"SELECT scope_mode, scope_tools FROM mcp_api_keys\n          WHERE key_hash = $1 AND kind = 'mcp' LIMIT 1\",",
    "env": {
