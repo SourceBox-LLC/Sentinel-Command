@@ -20,6 +20,13 @@ Spec format (tests/differential/mutations/*.json):
       "restart_rust": true,                 # rebuild + restart :8000 per mutation
       "harness": [["tests/differential/http_run.sh"], ...],
       "env": {"DIFF_ONLY": "sentinel"},      # optional, passed to harness
+                                             # a mutation may carry its own
+                                             # "env" too, merged over this one:
+                                             # useful where one harness run is
+                                             # minutes and most of its cases
+                                             # cannot reach the mutation. It can
+                                             # only narrow, so it can only cost
+                                             # a catch, never manufacture one.
       "mutations": [
         {"name": "...", "file": "src/...", "old": "...", "new": "...",
          "equivalent": "optional: why no observable behaviour changes"}
@@ -189,7 +196,11 @@ def _main() -> tuple[int, bool]:
                 results.append((mut, "DID NOT BUILD", ""))
                 print(f"  !!  did not build: {mut['name']}", flush=True)
                 continue
-            caught, notes = run_harness(spec["harness"], env)
+            # A mutation may narrow the harness's own selection — see
+            # the note on `env` in the docstring. Narrowing can only
+            # REMOVE cases, so it can only turn a catch into a miss;
+            # there is no way to use it to make a mutation pass.
+            caught, notes = run_harness(spec["harness"], {**env, **mut.get("env", {})})
             results.append((mut, caught, notes))
             print(f"  {str(caught):>5}  {mut['name']}" + (f"   [{notes}]" if notes else ""), flush=True)
         finally:

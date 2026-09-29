@@ -1,0 +1,278 @@
+{
+ "_comment": "Mutations for the MCP surface: the scope gate, the auth resolver, the result framing and the 23 tools. Scored against mcp_run.sh, which is the only harness that speaks JSON-RPC, plus unit_run.sh for the pure functions. Two classes of mutation here are worth naming. First, the FRAMING ones: `structuredContent` is what a client parses mechanically, and every one of these mutations leaves a response that still reads correctly to a human. Second, the SCOPE ones: the gate is the whole of what a scoped key buys, and a mutation that widens it produces no error anywhere — the tool simply works for a key that should not have reached it. Each mutation carries its own DIFF_ONLY: the full run is 143 cases at two reseeds apiece and most of them cannot reach any given mutation. Narrowing can only remove cases, so it can only cost a catch. Three mutations are marked `_unit_only` — nothing a differential can drive reaches them, and the note on each says what does.",
+ "restart_rust": true,
+ "harness": [
+  [
+   "tests/differential/mcp_run.sh"
+  ],
+  [
+   "tests/differential/unit_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "a readonly key gets every tool",
+   "file": "src/mcp/scope.rs",
+   "_why": "The whole of what `readonly` buys. Widened, a key an operator minted to let an agent LOOK can also open incidents and change recording policy.",
+   "old": "    if mode == \"readonly\" {\n        return read_tools();\n    }",
+   "new": "    if mode == \"readonly\" {\n        return all_tools();\n    }",
+   "env": {
+    "DIFF_ONLY": "readonly key"
+   }
+  },
+  {
+   "name": "an empty custom scope means full access",
+   "file": "src/mcp/scope.rs",
+   "_why": "`if not scope_tools` — absent OR empty is NO access. Falling through to `all_tools()` is the classic inverted default: the key with the narrowest configuration gets the widest reach.",
+   "old": "            return BTreeSet::new();",
+   "new": "            return all_tools();",
+   "env": {
+    "DIFF_ONLY": "custom scope"
+   }
+  },
+  {
+   "name": "a custom scope is not intersected with the catalog",
+   "file": "src/mcp/scope.rs",
+   "_why": "Python intersects with MCP_ALL_TOOLS so an unknown name is dropped. Without it, a typo in a stored scope list becomes a name that matches nothing — harmless — but a LATER server-side write tool named by that typo would be silently enabled on an existing key.",
+   "old": "        return tools\n            .iter()\n            .filter_map(|name| known.get(name.as_str()).copied())\n            .collect();",
+   "new": "        return tools.iter().map(|name| name.as_str()).filter_map(|name| known.get(name).copied().or(Some(\"list_cameras\"))).collect();",
+   "env": {
+    "DIFF_ONLY": "custom key|custom scope"
+   }
+  },
+  {
+   "name": "the agent allowlist becomes a denylist",
+   "file": "src/mcp/scope.rs",
+   "_why": "This is the security property the list exists for, stated in its own doc comment: the agent's model is steered by whatever an attacker can put in front of a lens, so a write tool has to be named IN rather than merely not named out. Inverted, every future write tool is enabled for the agent by default.",
+   "old": "    reads\n        .union(agent_writes)\n        .copied()\n        .filter(|tool| all.contains(tool))\n        .collect()",
+   "new": "    all.iter().copied().filter(|tool| reads.contains(tool) || agent_writes.contains(tool) || true).collect()",
+   "env": {
+    "DIFF_ONLY": "agent key"
+   }
+  },
+  {
+   "name": "pro gets pro-plus rate limits",
+   "file": "src/mcp/scope.rs",
+   "_why": "30/min × 5000/day versus 120 × 30000. The tiers are four and six times apart, and a Pro key on Pro Plus limits is the paid difference given away.",
+   "old": "        \"pro\" => Some((30, 5_000)),",
+   "new": "        \"pro\" => Some((120, 30_000)),",
+   "_unit_only": "No case can spend 30 calls in a minute, so the differential cannot see this — `scope.rs`'s own tests and `mcp_parity.py` are what hold the numbers.",
+   "env": {
+    "DIFF_ONLY": "nothing-reaches-this"
+   }
+  },
+  {
+   "name": "an arg summary is not shortened",
+   "file": "src/mcp/scope.rs",
+   "_why": "30 characters, cut to 27 plus an ellipsis. The summary goes in an audit row; a 64 kB `report` argument written whole turns the activity log into the storage for the report.",
+   "old": "        let shortened = if rendered.chars().count() > 30 {",
+   "new": "        let shortened = if rendered.chars().count() > 30_000 {",
+   "_unit_only": "The summary lands in `mcp_activity_logs` and in the tracker's ring, neither of which the MCP differential reads; the tracker's contents cannot be compared across a mutation run at all, because the runner restarts only the Rust tier and Python's ring survives. `scope.rs`'s own test is what holds it.",
+   "env": {
+    "DIFF_ONLY": "nothing-reaches-this"
+   }
+  },
+  {
+   "name": "an integration key authenticates on the MCP surface",
+   "file": "src/mcp/auth.rs",
+   "_why": "`kind='mcp'` on every McpApiKey query is what keeps the two key kinds from crossing surfaces. Dropped, an `osi_` key minted for Home Assistant — a key with NO scope picker and no tool gate — reaches all 23 tools.",
+   "old": "    let key: Option<(i32, String, String)> = sqlx::query_as(\n        \"SELECT id, org_id, name FROM mcp_api_keys\n          WHERE key_hash = $1 AND revoked = false AND kind = 'mcp' LIMIT 1\",",
+   "new": "    let key: Option<(i32, String, String)> = sqlx::query_as(\n        \"SELECT id, org_id, name FROM mcp_api_keys\n          WHERE key_hash = $1 AND revoked = false LIMIT 1\",",
+   "env": {
+    "DIFF_ONLY": "an integration key"
+   }
+  },
+  {
+   "name": "a revoked key still works",
+   "file": "src/mcp/auth.rs",
+   "_why": "Revocation is the only way to withdraw a key that has leaked. If the filter goes, the dashboard shows it revoked and it keeps working — the worst shape this bug can take.",
+   "old": "    let key: Option<(i32, String, String)> = sqlx::query_as(\n        \"SELECT id, org_id, name FROM mcp_api_keys\n          WHERE key_hash = $1 AND revoked = false AND kind = 'mcp' LIMIT 1\",",
+   "new": "    let key: Option<(i32, String, String)> = sqlx::query_as(\n        \"SELECT id, org_id, name FROM mcp_api_keys\n          WHERE key_hash = $1 AND kind = 'mcp' LIMIT 1\",",
+   "env": {
+    "DIFF_ONLY": "a revoked key"
+   }
+  },
+  {
+   "name": "a list result is not wrapped",
+   "file": "src/mcp/server.rs",
+   "_why": "MCP requires an output schema to be an object, so FastMCP wraps a non-object return under `result` — and a client reading `structuredContent` mechanically gets an array where it expected `{result: [...]}`. Nothing about the response LOOKS wrong.",
+   "old": "                if crate::mcp::scope::WRAP_RESULT_TOOLS.contains(&name) {\n                    json!({ \"result\": value })\n                } else {\n                    value\n                },",
+   "new": "                value,",
+   "env": {
+    "DIFF_ONLY": "list_cameras|list_nodes|get_stream_logs"
+   }
+  },
+  {
+   "name": "every result is wrapped",
+   "file": "src/mcp/server.rs",
+   "_why": "The other direction, which is the easier mistake: wrapping is a property of the tool's declared return type, not of the value, so a dict-returning tool must stay unwrapped.",
+   "old": "                if crate::mcp::scope::WRAP_RESULT_TOOLS.contains(&name) {\n                    json!({ \"result\": value })\n                } else {\n                    value\n                },",
+   "new": "                json!({ \"result\": value }),",
+   "env": {
+    "DIFF_ONLY": "get_camera|get_system_status"
+   }
+  },
+  {
+   "name": "an empty list still gets a text block",
+   "file": "src/mcp/server.rs",
+   "_why": "FastMCP checks whether every item is already a content block before serialising, and `all()` of nothing is true — so an empty list passes through as an empty block list. A `[]` text block is the plausible-looking wrong answer.",
+   "old": "            let blocks = if value.as_array().is_some_and(|items| items.is_empty()) {\n                vec![]\n            } else {",
+   "new": "            let blocks = if false {\n                vec![]\n            } else {",
+   "env": {
+    "DIFF_ONLY": "list_camera_groups|list_nodes|list_cameras"
+   }
+  },
+  {
+   "name": "a write tool declares readOnlyHint false",
+   "file": "src/mcp/server.rs",
+   "_why": "Python decorates only the READ tools, so a write tool carries no annotations object at all. `readOnlyHint: false` says the same thing to a human reader and a different thing on the wire — present-and-false versus absent.",
+   "old": "    if crate::mcp::scope::MCP_READ_TOOLS.contains(&name) {\n        let mut annotations = ToolAnnotations::default();\n        annotations.read_only_hint = Some(true);\n        tool.annotations = Some(annotations);\n    }",
+   "new": "    let mut annotations = ToolAnnotations::default();\n    annotations.read_only_hint = Some(crate::mcp::scope::MCP_READ_TOOLS.contains(&name));\n    tool.annotations = Some(annotations);",
+   "env": {
+    "DIFF_ONLY": "tools/list"
+   }
+  },
+  {
+   "name": "a read tool claims to be a write",
+   "file": "src/mcp/server.rs",
+   "_why": "The hint is what a client uses to decide whether a tool is safe to call speculatively. Inverted, a read tool needs confirmation and a write tool does not.",
+   "old": "    tool.title = Some(crate::pyrepr::title_case(&name.replace(['_', '-'], \" \")));\n    if crate::mcp::scope::MCP_READ_TOOLS.contains(&name) {",
+   "new": "    tool.title = Some(crate::pyrepr::title_case(&name.replace(['_', '-'], \" \")));\n    if crate::mcp::scope::MCP_WRITE_TOOLS.contains(&name) {",
+   "env": {
+    "DIFF_ONLY": "tools/list"
+   }
+  },
+  {
+   "name": "the derived title is the raw name",
+   "file": "src/mcp/server.rs",
+   "_why": "FastMCP always emits a title because some clients DROP a tool that has none rather than falling back to the name as the spec says. The underscored name is what a client would then show a user.",
+   "old": "    tool.title = Some(crate::pyrepr::title_case(&name.replace(['_', '-'], \" \")));",
+   "new": "    tool.title = Some(name.to_string());",
+   "env": {
+    "DIFF_ONLY": "tools/list"
+   }
+  },
+  {
+   "name": "an error carries a structured half",
+   "file": "src/mcp/server.rs",
+   "_why": "FastMCP omits `structuredContent` entirely on an error. A client that branches on its presence would read a refusal as a result.",
+   "old": "    result.structured_content = None;\n    result.is_error = Some(true);",
+   "new": "    result.structured_content = Some(json!({\"error\": message.clone()}));\n    result.is_error = Some(true);",
+   "env": {
+    "DIFF_ONLY": "not found|unknown tool"
+   }
+  },
+  {
+   "name": "list_incidents swap-removes the report key",
+   "file": "src/mcp/tools.rs",
+   "_why": "This one shipped. serde_json's `remove` is a SWAP-remove under `preserve_order`, so dropping `report` moves the LAST key into its slot — `evidence_count` lands between `summary` and `severity`. Every value is right and the key order is not.",
+   "old": "                .and_then(|map| map.shift_remove(\"report\"))",
+   "new": "                .and_then(|map| map.remove(\"report\"))",
+   "env": {
+    "DIFF_ONLY": "list_incidents"
+   }
+  },
+  {
+   "name": "an empty camera filter matches nothing",
+   "file": "src/mcp/tools.rs",
+   "_why": "`if camera_id:` in get_stream_logs, `is not None` in list_incidents — the same argument name, the opposite answer for the empty string. Making them agree is a one-character change and it silently empties one of the two.",
+   "old": "    let camera_id = opt_str(args, \"camera_id\").filter(|c| !c.is_empty());\n    let limit = int_or(args, \"limit\", 50);",
+   "new": "    let camera_id = opt_str(args, \"camera_id\");\n    let limit = int_or(args, \"limit\", 50);",
+   "env": {
+    "DIFF_ONLY": "get_stream_logs"
+   }
+  },
+  {
+   "name": "an empty camera_id is stored as NULL",
+   "file": "src/mcp/tools.rs",
+   "_why": "Python's `if camera_id:` guards the existence check and nothing else — the column is assigned the argument as given. Normalising to NULL is the tidier-looking wrong answer, and it changes what the incident row says about which camera saw it.",
+   "old": "    // is assigned the argument as given, so `\"\"` is stored as `\"\"`.\n    .bind(&camera_id)",
+   "new": "    // is assigned the argument as given, so `\"\"` is stored as `\"\"`.\n    .bind(camera_id.as_deref().filter(|c| !c.is_empty()))",
+   "env": {
+    "DIFF_ONLY": "create_incident"
+   }
+  },
+  {
+   "name": "an empty note is stored as the empty string",
+   "file": "src/mcp/tools.rs",
+   "_why": "`note.strip() if note else None` tests the UNSTRIPPED value, so `\"\"` is NULL and `\"   \"` is `\"\"`. Both read as “no caption” to a human and they are different rows — one has evidence text, one does not. Caught twice over: by the node-backed attach_snapshot cases, and by `python_note`'s own test — the second one because the first depends on a live socket and could age out.",
+   "old": "fn python_note(note: Option<&str>) -> Option<&str> {\n    note.filter(|n| !n.is_empty()).map(str::trim)\n}",
+   "new": "fn python_note(note: Option<&str>) -> Option<&str> {\n    note.map(str::trim)\n}",
+   "env": {
+    "DIFF_ONLY": "attach_snapshot|node commands"
+   }
+  },
+  {
+   "name": "has_data is read off the blob",
+   "file": "src/mcp/tools.rs",
+   "_why": "`has_data` is `data_mime is not None`, which is NOT the same as “has bytes”: the fixture's evidence 16 has a blob and no MIME, and Python reports has_data FALSE for it. Reading the blob would also defeat the column's deferral, which is the reason the flag is derived this way at all.",
+   "old": "        \"has_data\": mime.is_some(),",
+   "new": "        \"has_data\": byte_len > 0,",
+   "env": {
+    "DIFF_ONLY": "get_incident_clip"
+   }
+  },
+  {
+   "name": "a clip is truncated from the newest end",
+   "file": "src/mcp/tools.rs",
+   "_why": "The cap drops the OLDEST segments: an agent asking for a clip wants the most recent video. Dropping from the other end returns the beginning of the buffer and reports the same duration for it. No differential case can reach this — the real cap is 32 MB, so triggering it would mean pushing tens of megabytes into each tier's segment cache per case, which is why `trim_to_cap` was extracted as a function and is tested against a ten-byte cap.",
+   "old": "        total -= chunks.remove(0).len();",
+   "new": "        total -= chunks.pop().map(|c| c.len()).unwrap_or(0);",
+   "env": {
+    "DIFF_ONLY": "nothing-reaches-this"
+   },
+   "_unit_only": "32 MB is out of a differential's reach; `trim_to_cap`'s own tests are what hold which end is dropped."
+  },
+  {
+   "name": "the incident daily cap is off by one",
+   "file": "src/mcp/tools.rs",
+   "_why": "`>=`, so the 200th is the last one allowed. A `>` lets 201 through — which matters not for the extra row but because this cap is the rail against a prompt-injected loop, and an off-by-one here is the shape a real regression takes.",
+   "old": "    if created_today >= MAX_INCIDENTS_PER_ORG_PER_DAY {",
+   "new": "    if created_today > MAX_INCIDENTS_PER_ORG_PER_DAY {",
+   "_unit_only": "Reaching it needs 200 incidents in a day, which no fixture carries. The cap is a rail rather than a behaviour, and `tools.rs` exercises the comparison directly.",
+   "env": {
+    "DIFF_ONLY": "nothing-reaches-this"
+   }
+  },
+  {
+   "name": "a title is truncated by bytes",
+   "file": "src/mcp/tools.rs",
+   "_why": "`title.strip()[:200]` counts CHARACTERS. Slicing bytes cuts a multi-byte character in half at the boundary — and the column is 200 characters wide, so a byte slice can still overflow it.",
+   "old": "    let stored_title: String = title.trim().chars().take(200).collect();",
+   "new": "    let stored_title: String = title.trim().bytes().take(200).map(|b| b as char).collect();",
+   "env": {
+    "DIFF_ONLY": "create_incident"
+   }
+  },
+  {
+   "name": "both recording modes can be true at once",
+   "file": "src/mcp/tools.rs",
+   "_why": "Continuous and scheduled are mutually exclusive, and the refusal is a RESULT rather than an error — a shape easy to drop entirely when porting, because nothing else in this file answers that way. Without it the camera gets a policy the dashboard cannot express.",
+   "old": "    if next_continuous && next_scheduled {",
+   "new": "    if false {",
+   "env": {
+    "DIFF_ONLY": "set_camera_recording_policy"
+   }
+  },
+  {
+   "name": "an incident is found across orgs",
+   "file": "src/mcp/tools.rs",
+   "_why": "The org filter on the ownership lookup is the tenant boundary for every incident write: observations, snapshots, clips, the report body. Without it an agent key for one org can append evidence to another's incident, and the response looks entirely normal. Reached by the two evidence readers' other-org cases (incident 4, evidence 4): with the filter gone they find another tenant's incident and return its evidence.",
+   "old": "        \"{} WHERE i.id = $1 AND i.org_id = $2\",\n        crate::api::incidents::INCIDENT_SELECT",
+   "new": "        \"{} WHERE i.id = $1 AND $2 = $2\",\n        crate::api::incidents::INCIDENT_SELECT",
+   "env": {
+    "DIFF_ONLY": "get_incident_clip|get_incident_snapshot"
+   }
+  },
+  {
+   "name": "a revoked key is still scoped",
+   "file": "src/mcp/auth.rs",
+   "_why": "The scope lookup runs on tools/list as well as tools/call, and it has its OWN copy of the kind+revoked filter. Only the call path is covered by the resolver's mutations above; this one is the catalog.",
+   "old": "    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(\n        \"SELECT scope_mode, scope_tools FROM mcp_api_keys\n          WHERE key_hash = $1 AND revoked = false AND kind = 'mcp' LIMIT 1\",",
+   "new": "    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(\n        \"SELECT scope_mode, scope_tools FROM mcp_api_keys\n          WHERE key_hash = $1 AND kind = 'mcp' LIMIT 1\",",
+   "env": {
+    "DIFF_ONLY": "tools/list"
+   }
+  }
+ ]
+}
