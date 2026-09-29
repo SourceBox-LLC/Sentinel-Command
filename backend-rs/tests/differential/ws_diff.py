@@ -102,7 +102,20 @@ def rows():
     }
 
 
+# Functional cases that saw a throttled handshake this run. Populated by
+# `compare`, read by the verdict — see the note there.
+throttled: list[str] = []
+
+
 def compare(label, values, results):
+    # 429 is the throttle; `InvalidStatus` is what the client library
+    # raises on one. Either, on a case that is not ABOUT the throttle,
+    # means the connect budget was spent before this run started.
+    if not label.startswith(("refused:", "eleven attempts")):
+        rendered = repr(values)
+        if "InvalidStatus" in rendered or "429" in rendered:
+            throttled.append(label)
+
     same = values["rust"] == values["python"]
     results.append((label, same))
     if same:
@@ -404,6 +417,22 @@ async def main() -> int:
     same = sum(1 for _, ok in results if ok)
     differing = len(results) - same
     print()
+
+    # The throttle is per node and lives in memory, so two runs inside a
+    # minute leave the two tiers with UNEVEN budgets — one answers a
+    # functional case and the other refuses it, which presents as a
+    # difference rather than as the throttle working. The docstring has
+    # said so since this file was written and I still spent a cycle on
+    # it, so it says so here too, where someone reading a failure sees
+    # it without having to go looking.
+    if differing and throttled:
+        print("REFUSING: a functional case saw a throttled handshake, so this run")
+        print("cannot tell a port difference from a spent connect budget.")
+        print(f"  affected: {', '.join(throttled[:4])}")
+        print("Ten handshakes per node per minute, and one full pass spends most of")
+        print("them. Wait a minute, or restart the tiers.")
+        return 2
+
     print(f"{same}/{len(results)} identical ({len(results)} compared, {differing} differing)")
     return 1 if differing else 0
 
