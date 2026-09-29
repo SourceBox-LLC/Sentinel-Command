@@ -74,6 +74,28 @@ fn python_note(note: Option<&str>) -> Option<&str> {
     note.filter(|n| !n.is_empty()).map(str::trim)
 }
 
+/// The daily incident-creation cap, as a refusal or nothing.
+///
+/// `>=`, so the 200th incident of the day is the last one allowed. The
+/// off-by-one matters less for the extra row than for what the cap is:
+/// a rail against a looping or prompt-injected agent, which is the one
+/// place an off-by-one is a real regression rather than a rounding
+/// difference.
+///
+/// A function rather than the comparison inline because reaching it
+/// through the differential would mean a fixture carrying 200 incidents
+/// in one day. Nothing else made it testable, and a `_unit_only` note
+/// claiming it was already covered was simply wrong.
+fn daily_cap_refusal(created_today: i64, cap: i64) -> Option<String> {
+    if created_today >= cap {
+        return Some(format!(
+            "Daily incident-creation cap reached ({cap}/day). \
+             Update an existing incident instead, or wait until tomorrow."
+        ));
+    }
+    None
+}
+
 /// Concatenate the buffered segments, dropping the OLDEST until they fit.
 ///
 /// MPEG-TS is byte-concatenation-safe, so the pieces play end to end
@@ -668,11 +690,8 @@ pub async fn create_incident(
     .fetch_one(&state.pool)
     .await
     .map_err(db_error)?;
-    if created_today >= MAX_INCIDENTS_PER_ORG_PER_DAY {
-        return Err(format!(
-            "Daily incident-creation cap reached ({MAX_INCIDENTS_PER_ORG_PER_DAY}/day). \
-             Update an existing incident instead, or wait until tomorrow."
-        ));
+    if let Some(refusal) = daily_cap_refusal(created_today, MAX_INCIDENTS_PER_ORG_PER_DAY) {
+        return Err(refusal);
     }
 
     // A camera named on an incident has to be this org's — otherwise
@@ -1462,6 +1481,23 @@ mod tests {
         assert!(truncated);
         assert_eq!(count, 0);
         assert!(blob.is_empty());
+    }
+
+    /// `>=` and not `>`: the 200th incident of the day is the last one
+    /// allowed, so a count already AT the cap is refused.
+    #[test]
+    fn the_daily_cap_refuses_at_the_limit_not_past_it() {
+        assert_eq!(daily_cap_refusal(0, 3), None);
+        assert_eq!(daily_cap_refusal(2, 3), None, "the third is still allowed");
+        assert!(daily_cap_refusal(3, 3).is_some(), "the fourth is not");
+        assert!(daily_cap_refusal(9, 3).is_some());
+        // The message names the cap, because an agent reading it has to
+        // know whether to wait or to update an existing incident.
+        assert_eq!(
+            daily_cap_refusal(3, 3).unwrap(),
+            "Daily incident-creation cap reached (3/day). Update an existing \
+             incident instead, or wait until tomorrow."
+        );
     }
 
     /// `note.strip() if note else None`: the empty string is falsy and

@@ -76,6 +76,13 @@ CUSTOM_KEY = "osc_custom_key"
 BAD_SCOPE_KEY = "osc_badscope_key"
 EMPTY_SCOPE_KEY = "osc_emptyscope_key"
 
+# An MCP key with a real hash AND revoked=true. Fixture row 19, added
+# because `osc_revoked_key` below hashes to nothing: the only real-hash
+# revoked row was an INTEGRATION key, so dropping `revoked = false` from
+# either MCP query changed nothing and two mutations scored zero on a
+# case the fixture could not express.
+REVOKED_LIVE_KEY = "osc_revoked_mcp_key"
+
 
 def psql(sql: str) -> str:
     return subprocess.run(
@@ -290,6 +297,11 @@ CASES: list[tuple] = [
           ("a custom key", CUSTOM_KEY),
           ("a key whose custom scope is unparseable", BAD_SCOPE_KEY),
           ("a key whose custom scope is empty", EMPTY_SCOPE_KEY),
+          # A revoked key is not recognised by the scope lookup either,
+          # so it sees the UNFILTERED catalog and is refused only when
+          # it calls something — the same shape as an unknown key, and
+          # the reason the lookup never raises.
+          ("a revoked key with a real hash", REVOKED_LIVE_KEY),
       ]],
     *[(f"call: {tool} with {label}", {"method": "tools/call",
                                       "params": {"name": tool, "arguments": args}}, key, None)
@@ -314,6 +326,16 @@ CASES: list[tuple] = [
           # the case that proves it is a plain read being refused.
           ("an unparseable custom scope", BAD_SCOPE_KEY, "list_cameras", {}),
           ("an empty custom scope", EMPTY_SCOPE_KEY, "list_cameras", {}),
+          # A tool NOT in the custom key's list, and one it would only
+          # reach if an unknown name in that list leaked a real tool.
+          # The key's stored scope names `not_a_tool`; this is the tool
+          # that must stay out of reach regardless.
+          ("a custom key", CUSTOM_KEY, "set_camera_recording_policy",
+           {"camera_id": "cam-live", "continuous_24_7": False}),
+          # Revocation is the only way to withdraw a leaked key, so the
+          # refusal has to come from the key's own row and not from the
+          # hash failing to match anything.
+          ("a revoked key with a real hash", REVOKED_LIVE_KEY, "list_cameras", {}),
       ]],
 
     # ---- auth refusals -----------------------------------------------
@@ -449,6 +471,15 @@ CASES: list[tuple] = [
            {"title": "T", "summary": "x" * 2001}),
           ("create_incident", "a title that needs truncating",
            {"title": "x" * 250, "summary": "S"}),
+          # `title.strip()[:200]` counts CHARACTERS. Every title case
+          # above is ASCII, where bytes and characters agree — so a port
+          # that sliced bytes scored identical on all of them while
+          # cutting a multi-byte character in half here, and overflowing
+          # a column that is 200 characters wide.
+          ("create_incident", "a multi-byte title that needs truncating",
+           {"title": "é" * 250, "summary": "S"}),
+          ("create_incident", "an astral title that needs truncating",
+           {"title": "🎥" * 250, "summary": "S"}),
           ("add_observation", "ok", {"incident_id": 1, "text": "saw a thing"}),
           ("add_observation", "with a camera",
            {"incident_id": 1, "text": "t", "camera_id": "cam-live"}),
@@ -490,6 +521,20 @@ CASES: list[tuple] = [
            {"camera_id": "cam-stale", "scheduled_start": ""}),
           ("set_camera_recording_policy", "an unknown camera",
            {"camera_id": "nope", "continuous_24_7": True}),
+          # cam-live is continuous in the fixture, so turning the
+          # SCHEDULE on without turning continuous off is the
+          # mutual-exclusion refusal — which is a RESULT, not an error,
+          # and the only answer on this surface shaped that way. No case
+          # reached it until this one: the others each set a mode whose
+          # counterpart was already off.
+          ("set_camera_recording_policy", "both modes at once",
+           {"camera_id": "cam-live", "scheduled_recording": True}),
+          # And the same conflict reached from the other side:
+          # cam-failed is the fixture's scheduled camera (22:00), so
+          # turning continuous on without clearing the schedule
+          # conflicts too.
+          ("set_camera_recording_policy", "both modes from the other side",
+           {"camera_id": "cam-failed", "continuous_24_7": True}),
           # The node is offline in the fixture, so these are refusals —
           # and the refusal text is the thing worth comparing.
           ("attach_snapshot", "with an offline node",

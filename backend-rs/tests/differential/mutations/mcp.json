@@ -33,9 +33,9 @@
   {
    "name": "a custom scope is not intersected with the catalog",
    "file": "src/mcp/scope.rs",
-   "_why": "Python intersects with MCP_ALL_TOOLS so an unknown name is dropped. Without it, a typo in a stored scope list becomes a name that matches nothing — harmless — but a LATER server-side write tool named by that typo would be silently enabled on an existing key.",
+   "_why": "Python intersects with MCP_ALL_TOOLS so an unknown name is dropped. Without it, a typo in a stored scope list becomes a name that matches nothing — harmless — but a LATER server-side write tool named by that typo would be silently enabled on an existing key. The leaked tool has to be one the fixture key does NOT already name: the first version of this mutation leaked `list_cameras`, which that key already has, and so behaved identically and scored zero.",
    "old": "        return tools\n            .iter()\n            .filter_map(|name| known.get(name.as_str()).copied())\n            .collect();",
-   "new": "        return tools.iter().map(|name| name.as_str()).filter_map(|name| known.get(name).copied().or(Some(\"list_cameras\"))).collect();",
+   "new": "        return tools.iter().map(|name| name.as_str()).filter_map(|name| known.get(name).copied().or(Some(\"set_camera_recording_policy\"))).collect();",
    "env": {
     "DIFF_ONLY": "custom key|custom scope"
    }
@@ -85,7 +85,7 @@
   {
    "name": "a revoked key still works",
    "file": "src/mcp/auth.rs",
-   "_why": "Revocation is the only way to withdraw a key that has leaked. If the filter goes, the dashboard shows it revoked and it keeps working — the worst shape this bug can take.",
+   "_why": "Revocation is the only way to withdraw a key that has leaked. If the filter goes, the dashboard shows it revoked and it keeps working — the worst shape this bug can take. Scored zero until the fixture gained a real-hash revoked MCP key: the only revoked row with a hash a request could present was an INTEGRATION key, so the filter had nothing to act on and removing it changed nothing.",
    "old": "    let key: Option<(i32, String, String)> = sqlx::query_as(\n        \"SELECT id, org_id, name FROM mcp_api_keys\n          WHERE key_hash = $1 AND revoked = false AND kind = 'mcp' LIMIT 1\",",
    "new": "    let key: Option<(i32, String, String)> = sqlx::query_as(\n        \"SELECT id, org_id, name FROM mcp_api_keys\n          WHERE key_hash = $1 AND kind = 'mcp' LIMIT 1\",",
    "env": {
@@ -156,10 +156,10 @@
    "name": "an error carries a structured half",
    "file": "src/mcp/server.rs",
    "_why": "FastMCP omits `structuredContent` entirely on an error. A client that branches on its presence would read a refusal as a result.",
-   "old": "    result.structured_content = None;\n    result.is_error = Some(true);",
-   "new": "    result.structured_content = Some(json!({\"error\": message.clone()}));\n    result.is_error = Some(true);",
+   "old": "fn tool_error(message: String) -> CallToolResult {\n    let mut result = CallToolResult::success(vec![ContentBlock::text(message)]);\n    result.structured_content = None;",
+   "new": "fn tool_error(message: String) -> CallToolResult {\n    let echoed = message.clone();\n    let mut result = CallToolResult::success(vec![ContentBlock::text(message)]);\n    result.structured_content = Some(json!({\"error\": echoed}));",
    "env": {
-    "DIFF_ONLY": "not found|unknown tool"
+    "DIFF_ONLY": "not found|an unknown tool|a revoked key"
    }
   },
   {
@@ -227,9 +227,9 @@
    "name": "the incident daily cap is off by one",
    "file": "src/mcp/tools.rs",
    "_why": "`>=`, so the 200th is the last one allowed. A `>` lets 201 through — which matters not for the extra row but because this cap is the rail against a prompt-injected loop, and an off-by-one here is the shape a real regression takes.",
-   "old": "    if created_today >= MAX_INCIDENTS_PER_ORG_PER_DAY {",
-   "new": "    if created_today > MAX_INCIDENTS_PER_ORG_PER_DAY {",
-   "_unit_only": "Reaching it needs 200 incidents in a day, which no fixture carries. The cap is a rail rather than a behaviour, and `tools.rs` exercises the comparison directly.",
+   "old": "    if created_today >= cap {",
+   "new": "    if created_today > cap {",
+   "_unit_only": "Reaching it through the differential needs a fixture carrying 200 incidents in one day. An earlier version of this note claimed `tools.rs` already exercised the comparison; it did not, and the mutation scored zero. `daily_cap_refusal` was extracted so there is something to test, and `the_daily_cap_refuses_at_the_limit_not_past_it` is what catches this now.",
    "env": {
     "DIFF_ONLY": "nothing-reaches-this"
    }
@@ -237,7 +237,7 @@
   {
    "name": "a title is truncated by bytes",
    "file": "src/mcp/tools.rs",
-   "_why": "`title.strip()[:200]` counts CHARACTERS. Slicing bytes cuts a multi-byte character in half at the boundary — and the column is 200 characters wide, so a byte slice can still overflow it.",
+   "_why": "`title.strip()[:200]` counts CHARACTERS. Slicing bytes cuts a multi-byte character in half at the boundary — and the column is 200 characters wide, so a byte slice can still overflow it. Every title case in the differential was ASCII until this mutation scored zero, where bytes and characters agree; there are now a two-byte and an astral case as well.",
    "old": "    let stored_title: String = title.trim().chars().take(200).collect();",
    "new": "    let stored_title: String = title.trim().bytes().take(200).map(|b| b as char).collect();",
    "env": {
@@ -247,7 +247,7 @@
   {
    "name": "both recording modes can be true at once",
    "file": "src/mcp/tools.rs",
-   "_why": "Continuous and scheduled are mutually exclusive, and the refusal is a RESULT rather than an error — a shape easy to drop entirely when porting, because nothing else in this file answers that way. Without it the camera gets a policy the dashboard cannot express.",
+   "_why": "Continuous and scheduled are mutually exclusive, and the refusal is a RESULT rather than an error — a shape easy to drop entirely when porting, because nothing else in this file answers that way. Without it the camera gets a policy the dashboard cannot express. No case reached it until this mutation scored zero: each of the others set a mode whose counterpart was already off, so the conflict branch never ran.",
    "old": "    if next_continuous && next_scheduled {",
    "new": "    if false {",
    "env": {
@@ -267,11 +267,11 @@
   {
    "name": "a revoked key is still scoped",
    "file": "src/mcp/auth.rs",
-   "_why": "The scope lookup runs on tools/list as well as tools/call, and it has its OWN copy of the kind+revoked filter. Only the call path is covered by the resolver's mutations above; this one is the catalog.",
+   "_why": "The scope lookup runs on tools/list as well as tools/call, and it has its OWN copy of the kind+revoked filter. Only the call path is covered by the resolver's mutations above; this one is the catalog. Scored zero until the fixture gained a real-hash revoked MCP key: the only revoked row with a hash a request could present was an INTEGRATION key, so the filter had nothing to act on and removing it changed nothing.",
    "old": "    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(\n        \"SELECT scope_mode, scope_tools FROM mcp_api_keys\n          WHERE key_hash = $1 AND revoked = false AND kind = 'mcp' LIMIT 1\",",
    "new": "    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(\n        \"SELECT scope_mode, scope_tools FROM mcp_api_keys\n          WHERE key_hash = $1 AND kind = 'mcp' LIMIT 1\",",
    "env": {
-    "DIFF_ONLY": "tools/list"
+    "DIFF_ONLY": "tools/list|a revoked key"
    }
   }
  ]

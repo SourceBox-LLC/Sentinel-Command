@@ -437,7 +437,16 @@ VALUES
   ('self-host', '2488fb6e3c7e797debbec5d0410ed341a26dcd5c6f2ac774350c1dc4ce75786f', 'Bad Scope MCP',
    timestamp '2026-09-11 15:00:00', NULL, false, 'custom', '{not json', 'mcp'),
   ('self-host', '632235020159ea200da207ca86b216f5212f82f5d3f0a5331a918849295d3559', 'Empty Scope MCP',
-   timestamp '2026-09-11 16:00:00', NULL, false, 'custom', '[]', 'mcp');
+   timestamp '2026-09-11 16:00:00', NULL, false, 'custom', '[]', 'mcp'),
+  -- 19: osc_revoked_mcp_key — an MCP key with a REAL hash and
+  --   revoked=true. Row 4 is revoked but its hash is a placeholder, and
+  --   the only real-hash revoked key was an INTEGRATION one — so
+  --   dropping `revoked = false` from either MCP query changed nothing,
+  --   because no MCP-kind row had a hash a request could present. Two
+  --   mutations scored zero on that and neither was a coverage problem
+  --   in the harness; the fixture simply could not express the case.
+  ('self-host', 'dee914a7baab90d887d15beb9dd9514655f42ebda38689895f1c481688d6a191', 'Revoked MCP Live',
+   timestamp '2026-09-11 17:00:00', NULL, true, 'all', NULL, 'mcp');
 
 -- ---- notifications --------------------------------------------------
 DELETE FROM user_notification_state;
