@@ -95,6 +95,11 @@ pub struct Config {
     pub email_from_address: String,
     pub email_from_name: String,
     pub email_worker_interval_seconds: u64,
+    /// `OFFLINE_SWEEP_INTERVAL_SECONDS`. The only one of the loop
+    /// cadences Python takes from the environment — the log cleanup's
+    /// 24 hours and the 90-second heartbeat threshold are both
+    /// hard-coded there.
+    pub offline_sweep_interval_seconds: u64,
     pub email_worker_batch_size: i64,
     pub email_max_attempts: i64,
 
@@ -213,6 +218,9 @@ impl Config {
             email_worker_interval_seconds: var_or("EMAIL_WORKER_INTERVAL_SECONDS", "5")
                 .parse()
                 .unwrap_or(5),
+            offline_sweep_interval_seconds: var_or("OFFLINE_SWEEP_INTERVAL_SECONDS", "30")
+                .parse()
+                .unwrap_or(30),
             email_worker_batch_size: var_or("EMAIL_WORKER_BATCH_SIZE", "20")
                 .parse()
                 .unwrap_or(20),
@@ -246,7 +254,6 @@ pub fn normalize_database_url(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     fn config_with(auth_provider: &str, secret: &str, publishable: &str) -> Config {
         Config {
             database_url: String::new(),
@@ -286,6 +293,7 @@ mod tests {
             email_from_address: String::new(),
             email_from_name: String::new(),
             email_worker_interval_seconds: 5,
+            offline_sweep_interval_seconds: 30,
             email_worker_batch_size: 20,
             email_max_attempts: 3,
             frontend_url: String::new(),

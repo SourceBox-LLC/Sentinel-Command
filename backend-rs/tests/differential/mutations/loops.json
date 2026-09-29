@@ -1,0 +1,134 @@
+{
+ "_comment": "Mutations for the two background-loop bodies. Scored against loops_run.sh, the probe pair — no HTTP harness can reach either one. This spec matters more than most: the plan names these loops as \"the least testable part and the most likely to silently diverge, because nothing calls them and nothing returns\", and the Python's own history bears that out — an AttributeError in the cleanup ran nightly, swallowed by the loop's try/except, until a Sentry alert surfaced it. Several mutations here change a COUNT and nothing else, or the rows and not the count; the probe prints both for that reason.",
+ "restart_rust": false,
+ "harness": [
+  [
+   "tests/differential/loops_run.sh"
+  ],
+  [
+   "tests/differential/unit_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "a node never heard from is announced as offline",
+   "file": "src/loops.rs",
+   "_why": "`last_seen IS NOT NULL` is the filter that keeps a row which has never reported from being announced as having gone offline. Drop it and every freshly created node gets a spurious 'went offline' the first time the sweep runs — before its first heartbeat, which is exactly the window an operator is watching.",
+   "old": "        \"UPDATE camera_nodes SET status = 'offline'\n          WHERE status = 'online' AND last_seen IS NOT NULL AND last_seen < $1",
+   "new": "        \"UPDATE camera_nodes SET status = 'offline'\n          WHERE status = 'online' AND last_seen < $1"
+  },
+  {
+   "name": "a camera never heard from is announced as offline",
+   "file": "src/loops.rs",
+   "_why": "The same filter on the camera half. Separate mutation because it is a separate statement and a port can easily carry one and not the other.",
+   "old": "          WHERE c.status = 'online' AND c.last_seen IS NOT NULL AND c.last_seen < $1",
+   "new": "          WHERE c.status = 'online' AND c.last_seen < $1"
+  },
+  {
+   "name": "an already-offline node is announced again",
+   "file": "src/loops.rs",
+   "_why": "`status = 'online'` is what makes the sweep a TRANSITION and not a state assertion. Without it every stale row is re-announced on every tick — one notification per node every thirty seconds, forever.",
+   "old": "          WHERE status = 'online' AND last_seen IS NOT NULL AND last_seen < $1",
+   "new": "          WHERE last_seen IS NOT NULL AND last_seen < $1"
+  },
+  {
+   "name": "the heartbeat threshold is ten times too long",
+   "file": "src/loops.rs",
+   "_why": "90 seconds, and it has to be the same 90 `effective_status` uses — at 900 a camera reads offline in the dashboard for a quarter of an hour while the sweep still thinks it is online, so no notification ever fires for it.",
+   "old": "pub const OFFLINE_HEARTBEAT_TIMEOUT_SECONDS: i64 = 90;",
+   "new": "pub const OFFLINE_HEARTBEAT_TIMEOUT_SECONDS: i64 = 900;"
+  },
+  {
+   "name": "a nameless node is announced with an empty title",
+   "file": "src/loops.rs",
+   "_why": "`name or node_id` — a node whose name is blank is announced by its id, because a notification reading \"Node '' went offline\" tells an operator nothing about which box to go and look at.",
+   "old": "                   COALESCE(NULLIF(name, ''), node_id) AS display,",
+   "new": "                   name AS display,"
+  },
+  {
+   "name": "a camera's transition loses its parent node",
+   "file": "src/loops.rs",
+   "_why": "The notification's `node_id` is how the dashboard groups a camera's alert under the box that hosts it. Resolved through the FK rather than assumed, because a camera may have no node at all.",
+   "old": "                   (SELECT n.node_id FROM camera_nodes n WHERE n.id = c.node_id) AS parent\",",
+   "new": "                   NULL::text AS parent\","
+  },
+  {
+   "name": "cameras are announced before nodes",
+   "file": "src/loops.rs",
+   "_why": "Nodes first, then cameras — the notification ids follow the emit order and a client renders the inbox by id, so an operator sees the uplink drop before the cameras behind it rather than after. Invisible to a snapshot that sorts by anything but id, which is why the probe carries a row_number.",
+   "old": "    for node in &nodes {\n        crate::notifications::emit_node_transition(",
+   "new": "    for camera in &cameras {\n        crate::notifications::emit_camera_transition(\n            state,\n            &camera.org_id,\n            &camera.ident,\n            &camera.display,\n            \"offline\",\n            camera.parent.as_deref(),\n        )\n        .await;\n    }\n    for node in &nodes {\n        crate::notifications::emit_node_transition("
+  },
+  {
+   "name": "every org gets the same retention",
+   "file": "src/loops.rs",
+   "_why": "Retention is the tier's, not a constant: Free 30 days, Pro 90, Pro Plus 365. A fixed 90 silently deletes eleven months of a Pro Plus org's audit trail and keeps two months of a free one's.",
+   "old": "        let retention = crate::plans::get_plan_limits(&plan).log_retention_days;",
+   "new": "        let retention = 90;"
+  },
+  {
+   "name": "notifications are swept on the wrong column",
+   "file": "src/loops.rs",
+   "_why": "`notifications` is the one log table whose timestamp is `created_at`; three others use `timestamp` and the stream log uses `accessed_at`. They are not interchangeable — and a wrong guess here does not error, it deletes nothing and reports zero, which reads exactly like a clean sweep.",
+   "old": "                \"DELETE FROM notifications WHERE org_id = $1 AND created_at < $2\",",
+   "new": "                \"DELETE FROM notifications WHERE org_id = $1 AND created_at < $2 AND false\","
+  },
+  {
+   "name": "a pending email is deleted with the old sent ones",
+   "file": "src/loops.rs",
+   "_why": "The outbox sweep is terminal-state only. A pending or sending row is an email that has NOT gone out yet, and deleting one loses it with nothing left to show it existed — the fixture carries a 400-day pending row for exactly this.",
+   "old": "          WHERE status IN ('sent', 'failed', 'suppressed') AND created_at < $1\",",
+   "new": "          WHERE created_at < $1\","
+  },
+  {
+   "name": "the outbox window follows the tier",
+   "file": "src/loops.rs",
+   "_why": "Seven days, fixed and cross-org. The outbox is a queue the worker scans every tick, so it wants to be small at all times; the long-term per-org trail is email_log's job. A 365-day window on a Pro Plus org makes the hot scan target a year deep.",
+   "old": "const OUTBOX_TERMINAL_DAYS: i64 = 7;",
+   "new": "const OUTBOX_TERMINAL_DAYS: i64 = 365;"
+  },
+  {
+   "name": "webhook markers are swept inside Svix's retry window",
+   "file": "src/loops.rs",
+   "_why": "30 days, chosen to comfortably exceed Svix's ~5-day retry window. Sweep at 3 and a retried delivery finds no marker and double-processes — which for a subscription webhook means re-applying a plan change, and for Resend means re-suppressing an address.",
+   "old": "const WEBHOOK_MARKER_DAYS: i64 = 30;",
+   "new": "const WEBHOOK_MARKER_DAYS: i64 = 3;"
+  },
+  {
+   "name": "an org with only email activity is skipped",
+   "file": "src/loops.rs",
+   "_why": "`email_log` is in the UNION so an org whose only rows are emails still has its retention applied. Without it that org's log grows forever, and it is the least likely to be noticed because nothing else about the org looks active.",
+   "old": "         UNION SELECT org_id FROM email_log\",",
+   "new": "\","
+  },
+  {
+   "name": "an empty org_id is swept as an org",
+   "file": "src/loops.rs",
+   "_why": "Python filters on `if row[0]`, which is false for an empty string as well as NULL. An empty org_id is a corrupt row; resolving a plan for it means a Clerk lookup for an org that does not exist, and counting it inflates orgs_processed.",
+   "old": "    for (org_id,) in org_ids.iter().filter(|(id,)| !id.is_empty()) {",
+   "new": "    for (org_id,) in org_ids.iter() {"
+  },
+  {
+   "name": "the org list counts duplicates",
+   "file": "src/loops.rs",
+   "_why": "UNION, not UNION ALL: an org with rows in all six tables appears six times under ALL, which sweeps it six times (harmless, the second is a no-op) and reports orgs_processed six times too high — the one number an operator uses to sanity-check the sweep.",
+   "old": "        \"SELECT org_id FROM stream_access_logs\n         UNION SELECT org_id FROM mcp_activity_logs",
+   "new": "        \"SELECT org_id FROM stream_access_logs\n         UNION ALL SELECT org_id FROM mcp_activity_logs"
+  },
+  {
+   "name": "the cutoff is inclusive",
+   "file": "src/loops.rs",
+   "_why": "`<`, not `<=`. Not about the single row that lands exactly on the boundary so much as the shape: a retention window stated as \"90 days\" should keep the row at exactly 90 days old. Scored against the probe's whole-day ages, where a row sits on the boundary by construction.",
+   "old": "                \"DELETE FROM stream_access_logs WHERE org_id = $1 AND accessed_at < $2\",",
+   "new": "                \"DELETE FROM stream_access_logs WHERE org_id = $1 AND accessed_at <= $2\",",
+   "equivalent": "A row exactly on the cutoff to the microsecond cannot be arranged from a fixture written in whole days — the ages are relative to now() and every row is milliseconds off the boundary. Kept in the spec as a record of the comparison being deliberate; the boundary itself is pinned by the fixture's 45-and-200-day rows sitting either side of each tier."
+  },
+  {
+   "name": "the summary under-reports the sweep",
+   "file": "src/loops.rs",
+   "_why": "The total is what the log line shows an operator. Leaving a table out of the sum under-reports a nightly sweep that deleted hundreds of thousands of rows, and there is nothing else to notice it by.",
+   "old": "            + self.processed_webhooks\n    }",
+   "new": "    }"
+  }
+ ]
+}
