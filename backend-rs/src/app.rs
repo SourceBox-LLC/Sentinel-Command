@@ -50,9 +50,37 @@ pub struct AppState {
 /// The Location is ABSOLUTE, because that is what Starlette builds: it
 /// reconstructs the request URL and appends the slash. A relative one
 /// works in a browser and breaks a client that compares hosts.
+///
+/// **The scheme comes from `X-Forwarded-Proto` first**, and that is not
+/// a nicety. `uri().scheme_str()` is `None` for an origin-form request —
+/// which is every request from a proxy — so on its own it falls back to
+/// `http` and emits `http://…/mcp/` for a request that arrived over
+/// HTTPS. Strict MCP clients refuse the downgrade and the connection
+/// fails with an unhelpful content-type error.
+///
+/// This is exactly what uvicorn's `--forwarded-allow-ips=*` does on the
+/// Python side, and the Dockerfile's comment there records the same
+/// symptom being hit for the same reason. The differential cannot catch
+/// it: the harness speaks plain HTTP to both tiers, so both say `http`
+/// and agree.
+///
+/// Trusting the header unconditionally is safe for the same reason
+/// uvicorn is configured to: Fly's private network means only their edge
+/// can reach this container.
 async fn mcp_redirect(request: axum::extract::Request) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let scheme = request.uri().scheme_str().unwrap_or("http");
+    let forwarded = request
+        .headers()
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        // A proxy chain sends a comma-separated list; the first entry is
+        // the client-facing scheme.
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let scheme = forwarded
+        .or_else(|| request.uri().scheme_str())
+        .unwrap_or("http");
     let host = request
         .headers()
         .get(axum::http::header::HOST)
@@ -604,4 +632,53 @@ pub struct IndexPath(pub String);
 /// rotation. Matches the Python body exactly.
 async fn health() -> Json<serde_json::Value> {
     Json(json!({ "status": "healthy", "version": VERSION }))
+}
+
+#[cfg(test)]
+mod tests {
+    /// The redirect's scheme comes from `X-Forwarded-Proto` when there
+    /// is one, because `uri().scheme_str()` is None for every request a
+    /// proxy forwards. Without this the port emits an HTTPS->HTTP
+    /// downgrade that strict MCP clients refuse — and the differential
+    /// cannot see it, since the harness speaks plain HTTP to both tiers
+    /// and they agree on `http`.
+    #[tokio::test]
+    async fn the_mcp_redirect_honours_the_forwarded_scheme() {
+        async fn location(headers: &[(&str, &str)]) -> String {
+            let mut builder = axum::http::Request::builder().method("POST").uri("/mcp");
+            for (name, value) in headers {
+                builder = builder.header(*name, *value);
+            }
+            let request = builder.body(axum::body::Body::empty()).unwrap();
+            let response = super::mcp_redirect(request).await;
+            response
+                .headers()
+                .get(axum::http::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string()
+        }
+
+        assert_eq!(
+            location(&[("host", "sentinel-command.com"), ("x-forwarded-proto", "https")]).await,
+            "https://sentinel-command.com/mcp/"
+        );
+        // A proxy chain sends a list; the first entry is the
+        // client-facing scheme.
+        assert_eq!(
+            location(&[
+                ("host", "sentinel-command.com"),
+                ("x-forwarded-proto", "https, http"),
+            ])
+            .await,
+            "https://sentinel-command.com/mcp/"
+        );
+        // No header: http, which is what a direct plaintext request is.
+        assert_eq!(
+            location(&[("host", "127.0.0.1:8000")]).await,
+            "http://127.0.0.1:8000/mcp/"
+        );
+        // An empty header is not an answer.
+        assert_eq!(location(&[("host", "h"), ("x-forwarded-proto", "")]).await, "http://h/mcp/");
+    }
 }
