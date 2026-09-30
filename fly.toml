@@ -19,8 +19,15 @@ primary_region = "sjc"
   # Segment-cache ceiling MUST stay well under [[vm]].memory_mb below —
   # above physical RAM, the kernel OOM-killer fires (killing every
   # org's streams at once) long before the cache's own eviction can.
-  # 384 MiB on the 1 GiB machine leaves ~600 MiB for Python
+  # 384 MiB on the 1 GiB machine leaves ~600 MiB for the web tier
   # (~25 concurrent live cameras). Scale this and memory_mb TOGETHER.
+  #
+  # That headroom figure was measured against Python at 239 MB RSS. The
+  # Rust tier should need substantially less, which is the one benefit
+  # this rewrite was actually justified on — but this number stays where
+  # it is until it has been MEASURED in production rather than assumed,
+  # because the failure mode of getting it wrong is the OOM killer
+  # taking every org's streams at once.
   # The database no longer shares this machine's RAM for page cache,
   # so there is a little more headroom here than there used to be.
   SEGMENT_CACHE_MAX_TOTAL_BYTES = "402653184"
@@ -29,6 +36,12 @@ primary_region = "sjc"
 # image, only per-group command — which is why the Sentinel AI agent
 # resolves against backend/pyproject.toml rather than carrying its own
 # dependency set.
+#
+# The two groups no longer share a LANGUAGE, though. `app` is the Rust
+# binary; `agent` is the only Python left in this repository, and the
+# image carries a Python runtime for its sake alone. That asymmetry is
+# deliberate: the agent owns the only LiteLLM import and was out of
+# scope for the rewrite from the start.
 #
 #   app   — the web tier. Owns the volume and the HLS segment cache,
 #           always-on (min_machines_running = 1 below).
@@ -53,7 +66,22 @@ primary_region = "sjc"
 # Defining [processes] overrides the Dockerfile CMD for BOTH groups, so
 # the web command below must stay in sync with that CMD.
 [processes]
-  app = "/app/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --timeout-keep-alive 65 --forwarded-allow-ips=* --no-access-log"
+  # The web tier is Rust now. Gone with uvicorn:
+  #
+  #   --forwarded-allow-ips=*  existed so the MCP mount redirect emitted
+  #                            https rather than http behind Fly's edge.
+  #                            The Rust tier reads X-Forwarded-Proto in
+  #                            app.rs::mcp_redirect, and there is a unit
+  #                            test for it because no differential could
+  #                            see it.
+  #   --no-access-log          there is no per-request access log to
+  #                            disable; tracing logs what the app chooses.
+  #   --workers 1              one process, many tasks.
+  #   --timeout-keep-alive 65  hyper's default keep-alive handling covers
+  #                            this; the 65s was tuned against Fly's
+  #                            60s idle timeout and axum does not hold a
+  #                            connection open past the client.
+  app = "/usr/local/bin/sentinel-command"
   agent = "/app/.venv/bin/python -m app.sentinel_agent"
 
 # Still required after the Postgres migration — /data holds HLS segment
