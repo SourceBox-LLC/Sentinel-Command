@@ -100,6 +100,36 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:
                 self._send(200, list(PUSHES))
             return
+
+        # The READ half, for `sentinel-restore-from-cloud`. Served from
+        # whatever was pushed, so a round-trip test is a real one: the
+        # rows the restore pulls are the rows the sync sent, not a
+        # separate fixture that could agree with neither.
+        if self.path.split("?")[0] == "/v1/sync/tables":
+            with _lock:
+                by_table = {}
+                for push in PUSHES:
+                    by_table.setdefault(push["table"], 0)
+                    by_table[push["table"]] += push["row_count"]
+            self._send(200, {"tables": [
+                {"table": t, "rows": n, "deleted": 0} for t, n in sorted(by_table.items())
+            ]})
+            return
+
+        if self.path.split("?")[0] == "/v1/sync/rows":
+            from urllib.parse import parse_qs, urlparse
+            params = parse_qs(urlparse(self.path).query)
+            table = (params.get("table") or [""])[0]
+            with _lock:
+                rows = [r for push in PUSHES if push["table"] == table
+                        for r in (push["rows"] or [])]
+            # Unpaginated: the fixture is small, and a `next_cursor` the
+            # client must follow is the one thing a single page cannot
+            # exercise. The restore's paging loop is still driven, because
+            # it asks for a cursor and gets none.
+            self._send(200, {"rows": rows, "next_cursor": None})
+            return
+
         self._send(404, {"detail": "no route"})
 
 

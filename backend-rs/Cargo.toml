@@ -133,3 +133,9 @@ path = "src/main.rs"
 [[bin]]
 name = "sentinel-hash-password"
 path = "src/bin/hash_password.rs"
+
+# The documented disaster-recovery path — DISASTER_RECOVERY.md names it
+# in three places.
+[[bin]]
+name = "sentinel-restore-from-cloud"
+path = "src/bin/restore_from_cloud.rs"
