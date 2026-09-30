@@ -104,15 +104,11 @@ fn export_filename(org_id: &str, now: chrono::DateTime<Utc>) -> String {
     format!("gdpr-export-{org}-{date}.csv").replace(".csv", ".zip")
 }
 
-/// `_SAFE_RE.sub("-", text)`, where `_SAFE_RE` is `[^A-Za-z0-9._-]`.
-///
-/// One replacement per *code point*, not per byte, because the Python
-/// substitutes over a `str`.
-fn safe_segment(text: &str) -> String {
-    text.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '-' })
-        .collect()
-}
+// `safe_segment` lives in `crate::csv_export`, which is where the Python
+// kept it: `gdpr.py` imported `filename_for` from `csv_export` rather
+// than sanitising its own filename, and two copies of that rule would be
+// two things to keep in step.
+use crate::csv_export::safe_segment;
 
 /// Build the whole archive in memory, as the Python does.
 ///

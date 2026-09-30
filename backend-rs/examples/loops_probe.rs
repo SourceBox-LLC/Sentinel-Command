@@ -100,7 +100,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &config,
             http.clone(),
         )),
-        proxy: sentinel_command::proxy::build_client(),
         cors: sentinel_command::cors::CorsConfig::from_env(
             &config.frontend_url,
             &config.cors_allowed_origins,

@@ -1,8 +1,8 @@
 //! `GET /api/audit-logs`.
 //!
-//! Ported from `list_audit_logs` in `backend/app/api/cameras.py`. The
-//! `?format=csv` branch is a streaming download and is *not* ported —
-//! it still falls through to Python. See `list_audit_logs` below.
+//! Ported from `list_audit_logs` in `backend/app/api/cameras.py`,
+//! including the `?format=csv` streaming export — see `csv_export`
+//! below and `crate::csv_export` for the quoting and the headers.
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 
 use crate::app::AppState;
 use crate::auth::RequireAdmin;
+use crate::csv_export::Cell;
 use crate::error::ApiError;
 use crate::models::iso_naive;
 use crate::query::Query;
@@ -84,26 +85,29 @@ pub async fn list_audit_logs(
     q.finish()?;
     rate.check().await?;
 
-    // The CSV branch is a streaming export with a 50,000-row window and
-    // its own filename convention. Streaming it is a different shape of
-    // work from this handler, and getting the download headers subtly
-    // wrong would break an auditor's export silently — so it stays with
-    // Python until it can be ported and diffed on its own terms.
-    // Validation above still runs first, so a bad `limit` is rejected
-    // here exactly as it would have been there.
-    if format == "csv" {
-        return Ok(crate::proxy::forward(State(state), request).await);
+    // Build the filter clauses once and use them for the count, the
+    // page and the CSV window, so a total can never disagree with the
+    // rows beside it and an export can never cover different rows from
+    // the page an auditor was looking at when they clicked download.
+    let mut where_sql = String::from(" WHERE org_id = $1");
+    let mut binds: Vec<String> = vec![user.org_id.clone()];
+    if let Some(ref e) = event {
+        binds.push(e.clone());
+        where_sql.push_str(&format!(" AND event = ${}", binds.len()));
+    }
+    if let Some(ref u) = username {
+        binds.push(format!("%{}%", escape_like(u)));
+        where_sql.push_str(&format!(" AND username ILIKE ${} ESCAPE '\\'", binds.len()));
     }
 
-    // Build the filter clauses once and use them for both the count and
-    // the page, so a total can never disagree with the rows beside it.
-    let mut where_sql = String::from(" WHERE org_id = $1");
-    if event.is_some() {
-        where_sql.push_str(" AND event = $2");
-    }
-    if username.is_some() {
-        let n = if event.is_some() { 3 } else { 2 };
-        where_sql.push_str(&format!(" AND username ILIKE ${n} ESCAPE '\\'"));
+    // The CSV branch is bound by row count, not payload size: the JSON
+    // `limit`/`offset` caps are bypassed and a flat 50,000-row window
+    // takes their place, so an auditor gets a meaningful slice of
+    // history in one call rather than a page. Validation above still
+    // ran first, so a bad `limit` is rejected even though CSV ignores
+    // its value.
+    if format == "csv" {
+        return csv_export(&state, &user.org_id, &where_sql, binds);
     }
 
     let count_sql = format!("SELECT COUNT(*) FROM audit_log{where_sql}");
@@ -139,6 +143,48 @@ pub async fn list_audit_logs(
         "logs": logs.iter().map(AuditLogRow::to_json).collect::<Vec<_>>(),
     }))
     .into_response())
+}
+
+/// The `?format=csv` window: the same filters, no pagination, 50,000
+/// rows.
+///
+/// Ordered `timestamp DESC` with no tiebreak, which is what the JSON
+/// page beside it does. Ties are therefore in whatever order Postgres
+/// returns them — adding an `id DESC` here and not there would make the
+/// export and the page disagree about which rows a window contains,
+/// which is worse than both being arbitrary in the same way.
+fn csv_export(
+    state: &AppState,
+    org_id: &str,
+    where_sql: &str,
+    binds: Vec<String>,
+) -> Result<Response, ApiError> {
+    let sql = format!(
+        "SELECT timestamp, event, username, user_id, ip_address, details \
+           FROM audit_log{where_sql} ORDER BY timestamp DESC LIMIT 50000"
+    );
+    let rows = crate::csv_export::stream_rows(state.pool.clone(), sql, binds, |row| {
+        use sqlx::Row;
+        Ok(vec![
+            // `log.timestamp.isoformat() if log.timestamp else ""` —
+            // guarded here, unlike the JSON path's unguarded call.
+            Cell::Text(
+                row.try_get::<Option<NaiveDateTime>, _>("timestamp")?
+                    .map(iso_naive)
+                    .unwrap_or_default(),
+            ),
+            Cell::text(row.try_get("event")?),
+            Cell::text(row.try_get("username")?),
+            Cell::text(row.try_get("user_id")?),
+            Cell::text(row.try_get("ip_address")?),
+            Cell::text(row.try_get("details")?),
+        ])
+    });
+    crate::csv_export::stream_csv_response(
+        &crate::csv_export::filename_for("audit-log", Some(org_id)),
+        &["timestamp", "event", "username", "user_id", "ip_address", "details"],
+        rows,
+    )
 }
 
 #[cfg(test)]

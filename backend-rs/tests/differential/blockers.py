@@ -355,6 +355,9 @@ class ModuleIndex:
 
 def routes() -> list[tuple[str, str, str]]:
     """(path, methods, "module:function") for every HTTP route."""
+    import deleted_python
+
+    deleted_python.require(BACKEND / "app/main.py")
     sys.path.insert(0, str(BACKEND))
     os.environ.setdefault(
         "DATABASE_URL", "sqlite:///" + tempfile.gettempdir() + "/cc-blockers.db"

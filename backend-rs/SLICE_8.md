@@ -99,8 +99,31 @@ web tier. After step 9 they cannot run. That is the cost of this slice
 and it is why it comes last.
 
 The harnesses stay in the tree rather than being deleted with the Python.
-They are the record of how equivalence was established, they still run
-against the commit before step 9, and the fixtures and checkers that do
-not need Python — `column_defaults.py`, the mutation specs, the corpora —
-keep working. What replaces them going forward is the Rust test suite:
-356 lib tests plus the database-gated integration tests.
+They are the record of how equivalence was established, and they still
+run against the commit before step 9.
+
+**The claim this paragraph used to make about which ones keep working was
+wrong**, and it named the wrong example. `column_defaults.py` parses
+`backend/app/models/models.py` — it is one of SEVEN static checkers whose
+source of truth is the Python, and every one of them dies after step 9.
+They were parsing both sides on purpose; that is what made them worth
+having, and it is why they cannot outlive one side. Each now refuses with
+`deleted_python.require(...)` — exit 2 and a sentence naming the commit
+and how to run it against the parent — rather than a
+`FileNotFoundError` traceback that reads like a broken script.
+
+What survives unchanged: `openapi_drift.py` and `agent_contract.py`
+(written for this world), the generated corpora, and the mutation specs
+whose harness does not need a Python tier.
+
+What replaces the rest is the Rust test suite — 386 lib tests, the
+database-gated integration tests, and `tests/routing.rs`, which pins the
+404/405/SPA answers the proxy used to give.
+
+And one harness came back. `csv_run.sh` serves the Python from a
+**worktree of `2baabe6~1`** against the same Postgres as the current Rust
+binary, which is how the three `?format=csv` exports — ported after the
+cut, and therefore the only slice written with no reference — were still
+verified byte for byte: 35/35 identical, 8 quoting probes present. The
+same trick is available to any later slice that needs it, which makes
+"the Python is gone" a cost rather than a wall.

@@ -40,6 +40,10 @@ HERE = pathlib.Path(__file__).resolve().parent
 BACKEND_RS = HERE.parent.parent
 MODELS = BACKEND_RS.parent / "backend/app/models/models.py"
 
+import deleted_python  # noqa: E402
+
+deleted_python.require(MODELS)
+
 
 def model_columns() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     """(table -> columns with `default=`, table -> columns with `onupdate=`).

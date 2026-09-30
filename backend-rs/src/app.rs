@@ -1,9 +1,10 @@
 //! Application state and the route table.
 //!
-//! The route table is the migration's progress bar. Anything registered
-//! here is served by Rust; anything not registered falls through to
-//! `proxy::forward` and is still Python. Slices move routes up out of the
-//! fallback one group at a time.
+//! The route table was the migration's progress bar: anything not
+//! registered here fell through to `proxy::forward` and was still
+//! Python. Nothing does now — the proxy is gone and this table is the
+//! whole public surface. An unregistered path under `/api` is a 404 from
+//! `spa::fallback`, which is what Python's router answered.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -13,22 +14,19 @@ use serde_json::json;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::config::Config;
-use crate::{api, proxy, spa};
+use crate::{api, spa};
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: sqlx::PgPool,
     pub config: Arc<Config>,
-    /// Shared client for the strangler proxy and outbound API calls.
-    /// Reused rather than built per request so connections to the Python
-    /// upstream stay pooled.
+    /// Shared client for outbound API calls — Clerk, Resend, the licence
+    /// and sync services. Reused rather than built per request so those
+    /// connections stay pooled.
     pub http: reqwest::Client,
     /// Resolved once at startup: which credential scheme this deployment
     /// runs, and the JWKS cache behind it.
     pub auth: Arc<crate::auth::Authenticator>,
-    /// Upstream client for the strangler proxy. Separate from `http`
-    /// because it must not normalise request paths — see `proxy.rs`.
-    pub proxy: proxy::ProxyClient,
     /// Per-tenant rate limiting for ported routes.
     pub limiter: Arc<crate::ratelimit::Limiter>,
     /// The live video caches. One process owns these: the moment Rust
@@ -302,7 +300,7 @@ pub fn build_router(state: AppState) -> Router {
         // silently captured three paths that still belong to Python and
         // answered them 404. FastAPI is saved from this by declaration
         // order; axum has no ordering between separately registered
-        // paths, so the statics are pinned to the proxy explicitly.
+        // paths, so every static sibling has to be named out loud.
         .route(
             "/api/nodes/validate",
             served(axum::routing::post(api::node_writes::validate_node)),
@@ -361,8 +359,7 @@ pub fn build_router(state: AppState) -> Router {
             served(axum::routing::post(api::gdpr::export_organization_data)),
         )
         // /counts must be declared here too: it is a static sibling of
-        // /{incident_id} and would otherwise be swallowed. It is ported
-        // rather than pinned, so it is a real route, not a proxy pin.
+        // /{incident_id} and would otherwise be swallowed by it.
         .route(
             "/api/incidents",
             served(
@@ -386,9 +383,9 @@ pub fn build_router(state: AppState) -> Router {
                     .post(api::keys::create_mcp_key),
             ),
         )
-        // Pinned before `/api/mcp/keys/{key_id}` would otherwise be a
-        // candidate for it — see `still_python` below for why a static
-        // sibling of a parameterised route needs saying out loud.
+        // Declared because `/api/mcp/keys/{key_id}` would otherwise be a
+        // candidate for it: axum matches a parameterised segment against
+        // a literal one, so a static sibling has to be registered too.
         .route("/api/mcp/tools", ported(api::keys::list_mcp_tools))
         .route(
             "/api/mcp/keys/{key_id}",
@@ -498,17 +495,32 @@ pub fn build_router(state: AppState) -> Router {
         // and caches it would otherwise break.
         //
         // GET is NOT claimed. Python's SPA middleware answers every GET
-        // under this path with the React page, `/mcp/` included, so
-        // both fall through to the proxy exactly as they did.
-        .route("/mcp", served(axum::routing::post(mcp_redirect)))
+        // under this path with the React page, `/mcp/` included — which
+        // is why these two use `served_spa`: their method fallback is the
+        // dashboard document, not a 405.
+        //
+        // Both carry `mcp::pre_auth::layer`, which is where the
+        // `Content-Length` requirement and the 2 MB cap now live. They
+        // used to sit in `spa::fallback` and applied because `/mcp` was
+        // forwarded through it; registering these routes moved the
+        // endpoint in front of that fallback and silently disabled them.
+        // A `route_layer` keeps them on the two paths that need them and
+        // off the CameraNode uploads, which are entitled to send a body
+        // without declaring its length.
+        .route(
+            "/mcp",
+            served_spa(axum::routing::post(mcp_redirect))
+                .route_layer(axum::middleware::from_fn(crate::mcp::pre_auth::layer)),
+        )
         .route(
             "/mcp/",
-            served(axum::routing::post_service(mcp_service(state.clone()))),
+            served_spa(axum::routing::post_service(mcp_service(state.clone())))
+                .route_layer(axum::middleware::from_fn(crate::mcp::pre_auth::layer)),
         )
 
         // ---- SPA --------------------------------------------------------
-        // Static assets are files on disk; serving them through the Python
-        // proxy would double the cost of every page load for no reason.
+        // Static assets are files on disk, served directly rather than
+        // through the fallback's path-walking.
         .nest_service("/assets", ServeDir::new(format!("{static_dir}/assets")))
         .route_service("/favicon.svg", ServeFile::new(format!("{static_dir}/favicon.svg")))
         ;
@@ -521,8 +533,8 @@ pub fn build_router(state: AppState) -> Router {
     if !local_auth {
         // The mirror image: main.py mounts the webhooks router only
         // under Clerk. A self-hosted install has no Clerk account to
-        // send webhooks and no secret to verify them, so the path does
-        // not exist there — Python answers 404, and so does the proxy.
+        // send webhooks and no secret to verify them, so the path must
+        // not exist there — 404, from the fallback, as Python answered.
         router = router
             .route(
                 "/api/webhooks/resend",
@@ -555,31 +567,26 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api-docs", served(axum::routing::get(api::docs::swagger_ui)))
         .route("/api-redoc", served(axum::routing::get(api::docs::redoc)))
 
-        // ---- the SPA, and then Python ----------------------------------
+        // ---- the SPA ---------------------------------------------------
         // Deliberately last. `spa::fallback` serves the React document
-        // and the files beside it, and forwards what it must not answer
-        // — the pass-through list, and `POST /mcp` after its pre-auth
-        // gates. When that forward is unreachable, the Python process
-        // and proxy.rs are deleted together.
+        // and the files beside it, and answers the router's 404 for the
+        // prefixes the SPA must not swallow.
         .fallback(spa::fallback)
-        // CORS for routes Rust answers itself. Applied to the whole
-        // router but a no-op on proxied responses, which already carry
-        // Python's headers — a second Access-Control-Allow-Origin makes
-        // the browser reject the response outright.
+        // FastAPI's envelope on the 405s axum's method fallback produces.
+        // Inside the header layers so those still see the final response.
+        .layer(axum::middleware::from_fn(method_not_allowed_body))
+        // CORS for routes Rust answers itself.
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::cors::layer,
         ))
         // Request id and the security header set. Outside the CORS layer
-        // so it sees the final response, and a no-op on proxied
-        // responses, which already carry Python's.
+        // so it sees the final response.
         .layer(axum::middleware::from_fn(crate::headers::layer))
         .with_state(state)
         .layer(tower_http::trace::TraceLayer::new_for_http())
-        // `index` is captured for the SPA fallback once client-side routes
-        // are served from Rust; until then unknown paths are Python's to
-        // answer, because it still owns the catch-all that returns
-        // index.html.
+        // `index` for the SPA fallback, which owns every client-side
+        // route.
         .layer(axum::Extension(IndexPath(index)))
 }
 
@@ -602,33 +609,75 @@ where
 
 /// Finish a method router for a path Rust serves.
 ///
-/// Every route goes through this, and it exists because forgetting
-/// either line is silent:
+/// Every route goes through this, and what it adds is the HEAD handler.
+/// axum answers HEAD from a GET handler automatically; FastAPI's
+/// `APIRoute` does not declare HEAD at all, so Starlette raises 405. A
+/// ported route without this line quietly starts accepting a method the
+/// service never accepted — which was fixed once in `ported()` alone, and
+/// the four routes registered by hand kept the bug for another commit.
 ///
-/// * `.head(proxy::forward)` — axum answers HEAD from a GET handler
-///   automatically and FastAPI returns 405, so a ported route quietly
-///   starts accepting a method Python refuses. This was fixed once in
-///   `ported()` alone, and the four routes registered by hand kept the
-///   bug for another commit.
-/// * `.fallback(proxy::forward)` — without it axum answers every
-///   unported method on the path with 405 instead of forwarding it, so
-///   porting `GET /api/cameras` would break `POST /api/cameras`.
+/// There is deliberately **no** method fallback any more. It used to
+/// forward unported verbs to Python; axum's own fallback is what should
+/// answer now, because it computes the `Allow` header from the methods
+/// actually registered. `method_not_allowed_body` gives that response
+/// FastAPI's body without taking the header away.
 fn served(router: axum::routing::MethodRouter<AppState>) -> axum::routing::MethodRouter<AppState> {
-    router.head(proxy::forward).fallback(proxy::forward)
+    router.head(head_not_allowed)
 }
 
-/// A path Rust must not answer, pinned so a parameterised sibling
-/// cannot swallow it.
+/// `served`, for the two paths whose other methods belong to the SPA.
 ///
-/// Needed because `/a/{id}` matches `/a/literal`. Without this, porting
-/// a `{id}` route quietly takes over every static path beside it.
-// Currently unused: every static sibling of a ported `{id}` route is
-// itself ported. Kept because the MCP slice reinstates the situation —
-// `/api/mcp/keys/{key_id}` lands beside `/api/mcp/tools` — and because
-// the reason it exists is not something to rediscover.
-#[allow(dead_code)]
-fn still_python() -> axum::routing::MethodRouter<AppState> {
-    axum::routing::any(proxy::forward)
+/// `/mcp` and `/mcp/` are POST-only routes sitting under a path the React
+/// app owns: Python's SPA middleware is outermost, so `GET /mcp` is the
+/// dashboard page and never reaches a router at all. A 405 there would
+/// break the MCP page in the dashboard.
+fn served_spa(
+    router: axum::routing::MethodRouter<AppState>,
+) -> axum::routing::MethodRouter<AppState> {
+    router.head(spa::method_fallback).fallback(spa::method_fallback)
+}
+
+/// HEAD on a route that declares only GET.
+///
+/// Returns a bare 405: `method_not_allowed_body` fills in the envelope on
+/// the way out, the same as it does for axum's own method fallback. The
+/// `Allow` header is missing here and present there, which is the one
+/// place this service does not reproduce Starlette exactly — see
+/// `expected_divergences.md`.
+async fn head_not_allowed() -> axum::http::StatusCode {
+    axum::http::StatusCode::METHOD_NOT_ALLOWED
+}
+
+/// Give a bodyless 405 the envelope FastAPI would have sent.
+///
+/// axum's method fallback answers `405` with an `Allow` header and no
+/// body; Starlette raises `HTTPException(405)` and FastAPI serialises it
+/// as `{"detail": "Method Not Allowed"}`. Rather than hand-write an
+/// `Allow` at each of ~110 routes — which axum already computes and
+/// which Python builds from a `set`, so its order is not even stable
+/// across processes — the body is filled in here.
+///
+/// The discriminator is the absence of a content type. Every response a
+/// handler produces sets one, and no handler in this service returns 405,
+/// so an untyped 405 is always the router's.
+async fn method_not_allowed_body(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let response = next.run(request).await;
+    if response.status() != axum::http::StatusCode::METHOD_NOT_ALLOWED
+        || response.headers().contains_key(axum::http::header::CONTENT_TYPE)
+    {
+        return response;
+    }
+    let (mut parts, _) = response.into_parts();
+    let body = serde_json::json!({ "detail": "Method Not Allowed" }).to_string();
+    parts.headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+    parts.headers.remove(axum::http::header::CONTENT_LENGTH);
+    axum::response::Response::from_parts(parts, axum::body::Body::from(body))
 }
 
 /// Path to the SPA entrypoint, carried so the eventual client-side-route

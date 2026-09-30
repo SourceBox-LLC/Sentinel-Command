@@ -32,6 +32,10 @@ HERE = Path(__file__).resolve().parent
 BACKEND_RS = HERE.parent.parent
 BACKEND = BACKEND_RS.parent / "backend"
 
+import deleted_python  # noqa: E402
+
+deleted_python.require(BACKEND / "app/main.py")
+
 sys.path.insert(0, str(BACKEND))
 
 # Importing app.main builds the SQLAlchemy engine at module scope, and

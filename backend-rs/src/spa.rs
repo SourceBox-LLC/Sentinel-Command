@@ -25,6 +25,14 @@
 //! index and break in a way nobody would notice from the response code.
 //! `/.well-known/` and `/security.txt` are the clearest: a security
 //! scanner greps for a file and gets an HTML document with a 200.
+//!
+//! **Since the proxy went, this file also answers what Python's router
+//! used to.** A request that reaches here on a pass-through path had a
+//! real route once and has none now, so it gets Starlette's own answer:
+//! `{"detail": "Not Found"}`, or `{"detail": "Method Not Allowed"}` when
+//! the path matched and the method did not. The distinction is the whole
+//! reason there are two entry points below rather than one — a `POST` to
+//! a GET-only route must not be told the route does not exist.
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
@@ -49,54 +57,64 @@ const PASS_THROUGH: [&str; 7] = [
     "/security.txt",
 ];
 
-/// The MCP pre-auth body cap, applied before the transport buffers.
-const MCP_MAX_BODY_BYTES: u64 = 2 * 1024 * 1024;
-
 /// Whether this path is one the SPA must not answer.
 pub fn passes_through(path: &str) -> bool {
     PASS_THROUGH.iter().any(|prefix| path.starts_with(prefix))
 }
 
-/// The SPA fallback.
+/// The router's fallback: no route matched this path at all.
 ///
-/// Reached only when no route matched, so the pass-through list is
-/// belt-and-braces for the paths Rust does not serve — but it has to be
-/// here, because those paths reach the proxy through this same fallback
-/// and the SPA would otherwise swallow them.
+/// The pass-through list is not belt-and-braces here. These prefixes are
+/// the service's own, so a path under one of them that matched nothing is
+/// a 404 from the router — not the React document, which would answer
+/// `200 text/html` to a CameraNode asking for an endpoint that no longer
+/// exists.
 pub async fn fallback(State(state): State<AppState>, request: Request) -> Response {
     let path = request.uri().path().to_string();
 
     if passes_through(&path) {
-        return crate::proxy::forward(State(state), request).await;
+        return detail(404, "Not Found");
     }
 
-    // `POST /mcp` is the protocol and must not be given the dashboard.
-    // The gates below run BEFORE the transport buffers anything, which
-    // is the whole point: this path is pre-auth, so an uncapped body is
-    // free memory burn on a 1 GiB machine.
+    // `POST /mcp…` is the protocol, not the dashboard. `/mcp` and `/mcp/`
+    // are real routes and never reach here; what does is a path *under*
+    // them, which in Python entered FastMCP's mount and got its 404. The
+    // pre-auth gates still run first, because the cost they bound —
+    // reading a body before anyone is authenticated — is the same
+    // whatever the path turns out to be.
     if path.starts_with("/mcp") && request.method() == axum::http::Method::POST {
-        // A header-only check is bypassable with `Transfer-Encoding:
-        // chunked` — no Content-Length at all — so the header is
-        // required outright. Every legitimate client sends one for a
-        // JSON-RPC body; only a crafted request omits it.
-        let Some(raw) = request.headers().get(axum::http::header::CONTENT_LENGTH) else {
-            return json_error(411, "Content-Length required.");
-        };
-        let Some(length) = raw.to_str().ok().and_then(|v| v.trim().parse::<u64>().ok()) else {
-            return json_error(400, "Invalid Content-Length.");
-        };
-        if length > MCP_MAX_BODY_BYTES {
-            return json_error(413, "Request body too large (max 2 MB).");
+        let peer = request
+            .extensions()
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .map(|ci| ci.0.ip().to_string());
+        if let Some(refusal) = crate::mcp::pre_auth::gate(request.headers(), peer.as_deref()) {
+            return refusal;
         }
-        return crate::proxy::forward(State(state), request).await;
+        return detail(404, "Not Found");
     }
 
-    // A real file under the static root, then the index. Both are served
-    // with the security headers stamped, which the layer would also do —
-    // but Python stamps them here explicitly and the two have to agree
-    // on a response that skips its own middleware stack.
+    document(&state, &path).await
+}
+
+/// A path Rust serves, reached with a method it does not serve.
+///
+/// Only the `/mcp` pair uses this. Python's SPA middleware is OUTERMOST,
+/// so for a path it owns it never consults the router's method table at
+/// all: `GET /mcp` is the dashboard page, and so is `PUT /mcp`. Every
+/// other route answers 405 through axum's own method fallback, which is
+/// left in place because it computes the `Allow` header.
+pub async fn method_fallback(State(state): State<AppState>, request: Request) -> Response {
+    document(&state, request.uri().path()).await
+}
+
+/// A real file under the static root, else the React document.
+///
+/// Both are served with the security headers stamped, which the layer
+/// would also do — but Python stamps them here explicitly and the two
+/// have to agree on a response that skips its own middleware stack.
+async fn document(state: &AppState, path: &str) -> Response {
     let root = std::path::Path::new(&state.config.static_dir);
-    if let Some(file) = safe_join(root, &path) {
+    if let Some(file) = safe_join(root, path) {
         if file.is_file() {
             return serve_file(&file).await;
         }
@@ -110,9 +128,24 @@ pub async fn fallback(State(state): State<AppState>, request: Request) -> Respon
         return serve_file(&index).await;
     }
 
-    // No build on disk. Python falls through to the app, which 404s;
-    // here the proxy is the equivalent fall-through.
-    crate::proxy::forward(State(state), request).await
+    // No build on disk — a dev run of the binary alone, or a broken
+    // image. Python registered its SPA middleware only when the static
+    // directory existed, so the request fell through to the router and
+    // 404ed; same answer, reached the same way.
+    detail(404, "Not Found")
+}
+
+/// `HTTPException(status, detail)` as FastAPI serialises it.
+///
+/// The router's 404 and 405 use this envelope, not the `{"error": …}`
+/// shape `json_error` writes — those two are different Python code paths
+/// and a client branching on the body sees the difference.
+pub fn detail(status: u16, message: &str) -> Response {
+    (
+        axum::http::StatusCode::from_u16(status).unwrap_or(axum::http::StatusCode::NOT_FOUND),
+        axum::Json(serde_json::json!({ "detail": message })),
+    )
+        .into_response()
 }
 
 /// Join a request path onto the static root without escaping it.
@@ -188,7 +221,7 @@ fn mime_for(path: &std::path::Path) -> &'static str {
 /// The shape `JSONResponse({"error": ...}, status_code=...)` produces —
 /// a bare `error` key, not the `ApiError` envelope. These three answers
 /// predate that envelope and a client parsing them would break on it.
-fn json_error(status: u16, message: &str) -> Response {
+pub fn json_error(status: u16, message: &str) -> Response {
     let mut response = (
         axum::http::StatusCode::from_u16(status).unwrap_or(axum::http::StatusCode::BAD_REQUEST),
         axum::Json(serde_json::json!({ "error": message })),

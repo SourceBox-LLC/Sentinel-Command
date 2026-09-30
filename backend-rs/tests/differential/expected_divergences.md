@@ -358,3 +358,29 @@ because a client reads both mechanically:
   every item is already a content block *before* serialising, and
   `all()` of nothing is true — so an empty list passes through as an
   empty block list rather than as the text `[]`.
+
+## `Allow` on a 405 answering HEAD
+
+Starlette raises `HTTPException(405, headers={"Allow": ", ".join(self.methods)})`
+for a path it matched and a method it did not, and FastAPI serialises
+that as `{"detail": "Method Not Allowed"}`. Both halves are reproduced —
+verified against the pre-cut Python by `csv_diff.py`, which scores
+`POST /api/audit-logs` identical on status, headers and body.
+
+One case is not: **HEAD**. FastAPI's `APIRoute` never declares HEAD, so
+every GET route answers HEAD with that same 405, and axum would instead
+have answered from the GET handler. `app.rs::served` therefore registers
+an explicit HEAD stub, and a stub cannot know which methods its siblings
+registered — so its 405 carries no `Allow` header, where every other
+405 gets axum's computed one.
+
+Left as a divergence rather than fixed, for two reasons. The value is
+not reproducible anyway: Python joins a `set`, so on a multi-method
+route the order varies between processes, and `Allow: GET, POST` and
+`Allow: POST, GET` are the same header only to a reader who does not
+compare strings. And the alternative is naming the method list at each
+of ~110 route registrations, which is a line to forget per route — the
+kind of silent omission `served()` exists to prevent.
+
+Nothing reads it. `Allow` on a HEAD refusal is diagnostic output for a
+human with curl.

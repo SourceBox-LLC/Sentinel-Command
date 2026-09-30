@@ -6,6 +6,7 @@
 //! without a protocol, a database or a network.
 pub mod activity;
 pub mod auth;
+pub mod pre_auth;
 pub mod scope;
 pub mod server;
 pub mod snapshot;

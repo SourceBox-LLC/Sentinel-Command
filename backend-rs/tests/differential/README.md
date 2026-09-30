@@ -1354,3 +1354,53 @@ succeed, which is what proves the member token works rather than
 failing everything indiscriminately.
 
 Removing the `require_admin` gate is caught on 11 of 124 cases.
+
+## After the cut
+
+`2baabe6` deleted the Python web tier, which is the reference half of
+everything in this directory. What that did to each kind of harness:
+
+| | after the cut | what holds the invariant now |
+| --- | --- | --- |
+| `*_run.sh` + `*_diff.py` (12 pairs) | cannot run — nothing on :8001 | the Rust test suite; `tests/routing.rs` for the router's 404/405 |
+| the seven static checkers¹ | refuse, exit 2 | the same suite, plus the code they were holding in step is now single-sourced |
+| `openapi_drift.py`, `agent_contract.py` | still run | themselves — both were written for this world |
+| the generated corpora | still used | the `py*` unit tests that consume them |
+| `csv_run.sh` | **runs**, against a worktree | itself, see below |
+
+¹ `route_capture.py`, `blockers.py`, `ratelimit_parity.py`,
+`auth_parity.py`, `notify_parity.py`, `column_defaults.py`,
+`mcp_parity.py`. Each calls `deleted_python.require(...)` first and exits
+2 with the commit that removed its source and the `git worktree` command
+that brings it back. Exit 2 and not 1: **1 means "ran and found a
+difference"**, and a runner that reads "could not run" as "no differences
+found" is the failure this whole directory exists to prevent.
+
+### Fetching the reference out of history
+
+`csv_run.sh` is the one harness written after the cut, and it does not
+accept that the reference is gone. It checks out `2baabe6~1` as a git
+worktree under `target/`, serves *that* Python on :8011, runs the
+**current** Rust binary on :8010, points both at the one Postgres, and
+diffs the three `?format=csv` exports byte for byte.
+
+    tests/differential/csv_run.sh [-v]
+
+Two constraints, both learned the hard way elsewhere in this directory:
+
+* **Nothing is built in the worktree.** It supplies Python source. A
+  `cargo build` there would put a `target/` in a throwaway checkout, and
+  the worktree's own Rust still *forwards* these routes — diffing it
+  against the Python it forwards to would pass while proving nothing.
+* **The interpreter must predate the dependency trim.** `pyproject.toml`
+  now installs the agent's 99 packages, not the web tier's 151; the
+  pre-existing `backend/.venv` has what the pre-cut `app.main` imports,
+  and `csv_run.sh` says so rather than failing on an ImportError.
+
+Result on the port: **35/35 identical**, including the download headers
+and the 405 bodies, with eight quoting/defanging probes asserted present
+in the compared bytes — because two identical exports prove nothing if
+neither contains a quote, a CRLF or a formula leader.
+
+This is the pattern for any slice that lands after its reference is
+gone. "The Python is deleted" is a cost, not a wall.

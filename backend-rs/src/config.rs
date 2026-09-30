@@ -10,11 +10,8 @@ use std::env;
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
-    /// Port this process listens on. Rust owns the public 8000.
+    /// Port this process listens on.
     pub port: u16,
-    /// Where the Python app now listens, on localhost. Everything this
-    /// service has not yet ported is proxied here — see `proxy.rs`.
-    pub upstream: String,
     /// Directory holding the built SPA (`frontend/dist` copied to
     /// `/app/static` by the Dockerfile).
     pub static_dir: String,
@@ -173,7 +170,6 @@ impl Config {
                 "postgresql://postgres:postgres@localhost:5432/sentinel",
             )),
             port: var_or("PORT", "8000").parse().unwrap_or(8000),
-            upstream: var_or("PYTHON_UPSTREAM", "http://127.0.0.1:8001"),
             static_dir: var_or("STATIC_DIR", "/app/static"),
             scripts_dir: var_or("SCRIPTS_DIR", "/app/scripts"),
             segment_cache_max_per_camera: var_or("SEGMENT_CACHE_MAX_PER_CAMERA", "60")
@@ -284,7 +280,6 @@ mod tests {
         Config {
             database_url: String::new(),
             port: 8000,
-            upstream: String::new(),
             static_dir: String::new(),
             scripts_dir: String::new(),
             segment_cache_max_per_camera: 60,

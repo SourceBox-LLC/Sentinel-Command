@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 
 use crate::app::AppState;
 use crate::auth::RequireAdmin;
+use crate::csv_export::Cell;
 use crate::error::ApiError;
 use crate::models::{iso_naive, python_window_start};
 use crate::pyint::PyInt;
@@ -73,25 +74,27 @@ pub async fn list_mcp_logs(
     q.finish()?;
     rate.check().await?;
 
-    if format == "csv" {
-        return Ok(crate::proxy::forward(State(state), request).await);
-    }
-
     let mut where_sql = String::from(" WHERE org_id = $1");
-    let mut n = 1;
-    if tool_name.is_some() {
-        n += 1;
-        where_sql.push_str(&format!(" AND tool_name = ${n}"));
+    let mut binds: Vec<String> = vec![user.org_id.clone()];
+    if let Some(ref t) = tool_name {
+        binds.push(t.clone());
+        where_sql.push_str(&format!(" AND tool_name = ${}", binds.len()));
     }
-    if key_name.is_some() {
-        n += 1;
+    if let Some(ref k) = key_name {
+        binds.push(format!("%{}%", super::audit::escape_like(k)));
         // Escaped here, unlike /api/audit/stream-logs: key names are
         // operator-chosen and routinely contain underscores.
-        where_sql.push_str(&format!(" AND key_name ILIKE ${n} ESCAPE '\\'"));
+        where_sql.push_str(&format!(" AND key_name ILIKE ${} ESCAPE '\\'", binds.len()));
     }
-    if status.is_some() {
-        n += 1;
-        where_sql.push_str(&format!(" AND status = ${n}"));
+    if let Some(ref s) = status {
+        binds.push(s.clone());
+        where_sql.push_str(&format!(" AND status = ${}", binds.len()));
+    }
+
+    // CSV bypasses `limit`/`offset` for a flat 50,000-row window, with
+    // the same filters applied.
+    if format == "csv" {
+        return csv_export(&state, &user.org_id, &where_sql, binds);
     }
 
     let count_sql = format!("SELECT COUNT(*) FROM mcp_activity_logs{where_sql}");
@@ -132,6 +135,52 @@ pub async fn list_mcp_logs(
         "logs": logs.iter().map(McpActivityLogRow::to_json).collect::<Vec<_>>(),
     }))
     .into_response())
+}
+
+/// The `?format=csv` window for MCP activity.
+///
+/// `duration_ms` is the one non-text column any of these three exports
+/// has, and it is why `Cell` distinguishes text from raw — see
+/// `crate::csv_export`.
+fn csv_export(
+    state: &AppState,
+    org_id: &str,
+    where_sql: &str,
+    binds: Vec<String>,
+) -> Result<Response, ApiError> {
+    let sql = format!(
+        "SELECT timestamp, tool_name, key_name, status, duration_ms, args_summary, error \
+           FROM mcp_activity_logs{where_sql} ORDER BY timestamp DESC LIMIT 50000"
+    );
+    let rows = crate::csv_export::stream_rows(state.pool.clone(), sql, binds, |row| {
+        use sqlx::Row;
+        Ok(vec![
+            Cell::Text(
+                row.try_get::<Option<NaiveDateTime>, _>("timestamp")?
+                    .map(iso_naive)
+                    .unwrap_or_default(),
+            ),
+            Cell::text(row.try_get("tool_name")?),
+            Cell::text(row.try_get("key_name")?),
+            Cell::text(row.try_get("status")?),
+            Cell::int(row.try_get("duration_ms")?),
+            Cell::text(row.try_get("args_summary")?),
+            Cell::text(row.try_get("error")?),
+        ])
+    });
+    crate::csv_export::stream_csv_response(
+        &crate::csv_export::filename_for("mcp-activity-log", Some(org_id)),
+        &[
+            "timestamp",
+            "tool_name",
+            "key_name",
+            "status",
+            "duration_ms",
+            "args_summary",
+            "error",
+        ],
+        rows,
+    )
 }
 
 /// `GET /api/mcp/activity/logs/stats`.

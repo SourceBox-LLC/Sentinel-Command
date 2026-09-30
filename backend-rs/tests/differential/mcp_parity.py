@@ -36,6 +36,10 @@ import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 BACKEND = HERE.parent.parent.parent / "backend"
+
+import deleted_python  # noqa: E402
+
+deleted_python.require(BACKEND / "app/mcp/server.py")
 RS = HERE.parent.parent / "src" / "mcp" / "scope.rs"
 
 

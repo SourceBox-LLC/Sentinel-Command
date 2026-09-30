@@ -42,6 +42,28 @@ RS="$REPO/backend-rs"
 LOGS="${TIER_LOGS:-$RS/target/tier-logs}"
 PYTHON="${PYTHON:-$REPO/backend/.venv/bin/python}"
 
+# The Python tier this script starts was deleted in 2baabe6. Every
+# harness that needs :8001 stops here rather than starting Rust, waiting
+# 20 seconds for a health check that cannot pass, and reporting a tail of
+# uvicorn's ModuleNotFoundError as though the tier had crashed.
+#
+# csv_run.sh is the way to get a Python tier back: it serves one from a
+# worktree of the commit before the cut. Anything here could be adapted
+# the same way; what it cannot do is start a tier from source that is not
+# in the tree.
+# `stop` and `status` still work: both are about processes that may be
+# running, not about starting one.
+case "${1:-status}" in stop|status) NEEDS_PYTHON=0 ;; *) NEEDS_PYTHON=1 ;; esac
+if [[ ! -f "$REPO/backend/app/main.py" && "$NEEDS_PYTHON" == 1 ]]; then
+    echo "REFUSING: the Python web tier was deleted in 2baabe6, so there is" >&2
+    echo "nothing for this script to start on :8001." >&2
+    echo >&2
+    echo "For a differential against the pre-cut Python:" >&2
+    echo "    tests/differential/csv_run.sh        # the worked example" >&2
+    echo "See tests/differential/README.md, 'After the cut'." >&2
+    exit 2
+fi
+
 export APP_SECRET_KEY="${APP_SECRET_KEY:-differential-test-secret-not-a-real-key}"
 export AUTH_PROVIDER=local
 export LOCAL_ORG_ID=self-host

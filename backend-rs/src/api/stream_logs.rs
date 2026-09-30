@@ -1,8 +1,8 @@
 //! `/api/audit/stream-logs` and its stats sibling.
 //!
-//! Ported from `backend/app/api/audit.py`. The `?format=csv` branch is a
-//! streaming export and still falls through to Python, as it does for
-//! `/api/audit-logs`.
+//! Ported from `backend/app/api/audit.py`, including the `?format=csv`
+//! streaming export — `crate::csv_export` holds the mechanics it shares
+//! with the two sibling log routes.
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 
 use crate::app::AppState;
 use crate::auth::RequireAdmin;
+use crate::csv_export::Cell;
 use crate::error::ApiError;
 use crate::models::{iso_naive, python_window_start};
 use crate::pyint::PyInt;
@@ -86,18 +87,15 @@ pub async fn list_stream_logs(
     rate.check().await?;
     require_admin_feature(&user)?;
 
-    if format == "csv" {
-        return Ok(crate::proxy::forward(State(state), request).await);
-    }
-
     let mut where_sql = String::from(" WHERE org_id = $1");
-    let mut n = 1;
-    if camera_id.is_some() {
-        n += 1;
-        where_sql.push_str(&format!(" AND camera_id = ${n}"));
+    let mut binds: Vec<String> = vec![user.org_id.clone()];
+    if let Some(ref c) = camera_id {
+        binds.push(c.clone());
+        where_sql.push_str(&format!(" AND camera_id = ${}", binds.len()));
     }
-    if user_filter.is_some() {
-        n += 1;
+    if let Some(ref u) = user_filter {
+        binds.push(format!("%{u}%"));
+        let n = binds.len();
         // Deliberately unescaped, and deliberately no ESCAPE clause:
         // this route matches `%{value}%` raw, so an underscore or a
         // percent the caller typed acts as a LIKE wildcard. Its two
@@ -105,6 +103,13 @@ pub async fn list_stream_logs(
         // escape both. Copying the inconsistency keeps the ported route
         // returning the same rows; it is not an endorsement.
         where_sql.push_str(&format!(" AND (user_email ILIKE ${n} OR user_id ILIKE ${n})"));
+    }
+
+    // CSV bypasses `limit`/`offset` for a flat 50,000-row window — an
+    // auditor wants a window, not a page — and both formats have already
+    // spent the same rate-limit budget and passed the same feature gate.
+    if format == "csv" {
+        return csv_export(&state, &user.org_id, &where_sql, binds);
     }
 
     let count_sql = format!("SELECT COUNT(*) FROM stream_access_logs{where_sql}");
@@ -139,6 +144,43 @@ pub async fn list_stream_logs(
         "logs": logs.iter().map(StreamAccessLogRow::to_json).collect::<Vec<_>>(),
     }))
     .into_response())
+}
+
+/// The `?format=csv` window for stream access.
+///
+/// The column order is the Python's and is not the JSON body's: the
+/// export leads with `accessed_at` because a spreadsheet sorted by its
+/// first column should be sorted by time.
+fn csv_export(
+    state: &AppState,
+    org_id: &str,
+    where_sql: &str,
+    binds: Vec<String>,
+) -> Result<Response, ApiError> {
+    let sql = format!(
+        "SELECT accessed_at, camera_id, node_id, user_email, user_id, ip_address \
+           FROM stream_access_logs{where_sql} ORDER BY accessed_at DESC LIMIT 50000"
+    );
+    let rows = crate::csv_export::stream_rows(state.pool.clone(), sql, binds, |row| {
+        use sqlx::Row;
+        Ok(vec![
+            Cell::Text(
+                row.try_get::<Option<NaiveDateTime>, _>("accessed_at")?
+                    .map(iso_naive)
+                    .unwrap_or_default(),
+            ),
+            Cell::text(row.try_get("camera_id")?),
+            Cell::text(row.try_get("node_id")?),
+            Cell::text(row.try_get("user_email")?),
+            Cell::text(row.try_get("user_id")?),
+            Cell::text(row.try_get("ip_address")?),
+        ])
+    });
+    crate::csv_export::stream_csv_response(
+        &crate::csv_export::filename_for("stream-access-log", Some(org_id)),
+        &["accessed_at", "camera_id", "node_id", "user_email", "user_id", "ip_address"],
+        rows,
+    )
 }
 
 /// `GET /api/audit/stream-logs/stats`.

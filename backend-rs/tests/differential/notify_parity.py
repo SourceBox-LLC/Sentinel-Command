@@ -26,6 +26,10 @@ BACKEND_RS = HERE.parent.parent
 BACKEND = BACKEND_RS.parent / "backend"
 
 PY_SOURCE = BACKEND / "app/api/notifications.py"
+
+import deleted_python  # noqa: E402
+
+deleted_python.require(PY_SOURCE)
 RS_SOURCE = BACKEND_RS / "src/notifications.rs"
 
 # (python dict name, rust const name)

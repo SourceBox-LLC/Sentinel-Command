@@ -17,6 +17,10 @@ HERE = pathlib.Path(__file__).resolve().parent
 BACKEND_RS = HERE.parent.parent
 BACKEND = BACKEND_RS.parent / "backend"
 
+import deleted_python  # noqa: E402
+
+deleted_python.require(BACKEND / "app/main.py")
+
 
 # WebSocket endpoints, which `@limiter.limit` cannot decorate: slowapi
 # works on a Request, and an upgrade is not one. `/ws/node` throttles

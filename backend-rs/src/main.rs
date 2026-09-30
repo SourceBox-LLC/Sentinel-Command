@@ -49,7 +49,6 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState {
         auth: Arc::new(Authenticator::from_config(&config, http.clone())),
-        proxy: sentinel_command::proxy::build_client(),
         cors: sentinel_command::cors::CorsConfig::from_env(
             &config.frontend_url,
             &config.cors_allowed_origins,
@@ -83,9 +82,8 @@ async fn main() -> anyhow::Result<()> {
     // lifespan does.
     sentinel_command::loops::spawn_loops(state.clone());
 
-    let upstream = state.config.upstream.clone();
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
-    tracing::info!(port, %upstream, version = VERSION, "command center (rust tier) listening");
+    tracing::info!(port, version = VERSION, "command center listening");
 
     // with_connect_info so the rate limiter can fall back to the peer
     // address when no proxy header identifies the client.

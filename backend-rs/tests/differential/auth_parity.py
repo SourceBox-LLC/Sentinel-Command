@@ -29,6 +29,10 @@ HERE = pathlib.Path(__file__).resolve().parent
 BACKEND_RS = HERE.parent.parent
 BACKEND = BACKEND_RS.parent / "backend"
 
+import deleted_python  # noqa: E402
+
+deleted_python.require(BACKEND / "app/main.py")
+
 # python dependency -> the Rust extractor that means the same thing
 EQUIVALENT = {
     "require_view": "RequireView",
