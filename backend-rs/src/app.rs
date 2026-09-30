@@ -546,6 +546,15 @@ pub fn build_router(state: AppState) -> Router {
     }
 
     router
+        // ---- the API documentation surface -----------------------------
+        // The last four routes Python answered. The schema is FastAPI's
+        // own, harvested and compiled in rather than rewritten — see
+        // api/docs.rs for why that is the honest option and what keeps
+        // the snapshot from going stale.
+        .route("/api/openapi.json", served(axum::routing::get(api::docs::openapi_json)))
+        .route("/api-docs", served(axum::routing::get(api::docs::swagger_ui)))
+        .route("/api-redoc", served(axum::routing::get(api::docs::redoc)))
+
         // ---- the SPA, and then Python ----------------------------------
         // Deliberately last. `spa::fallback` serves the React document
         // and the files beside it, and forwards what it must not answer

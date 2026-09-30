@@ -7,6 +7,7 @@
 pub mod audit;
 pub mod cameras;
 pub mod clerk_webhook;
+pub mod docs;
 pub mod gdpr;
 pub mod groups;
 pub mod health;
