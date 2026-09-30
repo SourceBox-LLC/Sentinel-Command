@@ -34,19 +34,37 @@ Command Center and the Sentinel AI agent ship from **one repo, one image, one de
 
 | | Command Center | Sentinel AI agent |
 | ------ | -------------- | ----------------- |
-| Code | `backend/app/` + `frontend/` | `backend/app/sentinel_agent/` |
+| Language | **Rust** (axum) | Python |
+| Code | `backend-rs/` + `frontend/` | `backend/app/sentinel_agent/` |
 | Process group | `app` | `agent` |
-| Command | `uvicorn app.main:app` | `python -m app.sentinel_agent` |
+| Command | `/usr/local/bin/sentinel-command` | `python -m app.sentinel_agent` |
 | Machine | 1 GB, always-on, owns the volume | 512 MB, always-on, no volume |
+
+**The two groups no longer share a language.** Command Center was
+FastAPI until the rewrite; it is a Rust binary now, and
+`backend/app/sentinel_agent/` is the only Python left in this
+repository. The image still carries a Python runtime for its sake alone.
+That asymmetry is deliberate: the agent owns the only LiteLLM import and
+was out of scope for the rewrite from the start.
+
+How the rewrite was verified, since the reference it was checked against
+no longer exists: `backend-rs/tests/differential/` drove both stacks
+against one database and compared responses AND table contents, slice by
+slice. The final run before the Python was deleted was 592/592 on reads
+and 729/729 on writes, with MCP 150/150, the seven background-loop bodies
+7/7, SSE 29/29, HLS 49/49, WebSocket 20/20 and plans 34/34. Those
+harnesses stay in the tree as the record; they run against the commit
+before the deletion. `backend-rs/README.md` says what replaces them.
 
 Both are the `sentinel-command` Fly app, built from the root `Dockerfile` and deployed by `.github/workflows/deploy.yml`. There is no separate agent app, agent image, agent workflow, or agent lockfile.
 
 Four rules follow, and breaking any of them breaks a deploy:
 
-1. **One dependency set.** Fly gives one image per app — process groups differ only by command — so `backend/pyproject.toml` covers both. This works because the agent's declared ranges all admit what Command Center resolves. Note `mcp`: the agent declares `>=1.6.0,<3` and the project resolves 1.28.1 via `fastmcp`; `app/sentinel_agent/mcp_client.py` imports the streamable-HTTP client under **both** the 1.x and 2.x symbol names, so the SDK rename is a non-issue. Verified against a live `/mcp` session — all 23 tools discovered on 1.28.1.
+1. **`backend/pyproject.toml` is the AGENT's dependency set now, not a shared one.** It used to cover both groups, which is why it carried `fastapi`, `sqlalchemy`, `psycopg`, `pyjwt`, `svix`, `clerk-backend-api`, `slowapi`, `redis`, `websockets` and `fastmcp`. All of those belonged to the web tier and went with it: 151 packages down to 99. What remains is what the agent's module tree actually imports, determined by importing it and reading the closure. `mcp` still uses a wide range (`>=1.6.0,<3`) on purpose — `app/sentinel_agent/mcp_client.py` imports the streamable-HTTP client under **both** the 1.x and 2.x symbol names, because they were renamed.
 2. **`[[mounts]]` must stay scoped to `processes = ["app"]`.** Unscoped, it applies to every group and the agent machine fails to boot fighting for the volume's single attachment slot.
-3. **`[processes]` overrides the Dockerfile `CMD`.** The `app` command in `fly.toml` must stay in sync with that `CMD`.
-4. **CI path filtering is asymmetric.** `push` is filtered (docs and Markdown only); `pull_request` is **never** filtered. `master` requires `Backend tests (sqlite)`, `Backend tests (postgres)` and `Frontend audit + build`, and GitHub reports *no status at all* for a workflow a path filter skipped — so a filtered PR trigger would hang every PR that missed it, presenting as a stuck check rather than a config error.
+3. **`[processes]` overrides the Dockerfile `CMD`.** The `app` command in `fly.toml` must stay in sync with that `CMD`. Both are now `/usr/local/bin/sentinel-command`, with no arguments — uvicorn's flags are gone, and `fly.toml` records why each one was not replaced rather than leaving that to be rediscovered.
+4. **The required checks are named, so renaming a CI job hangs every PR.** `master` requires `Backend tests (sqlite)`, `Backend tests (postgres)` and `Frontend audit + build` by exact name. The first two ran the Python suite that no longer exists; whoever changes them has to update branch protection in the same breath, because GitHub reports *no status at all* for a check that never runs and the PR waits forever on it. See the note in `deploy.yml`.
+5. **CI path filtering is asymmetric.** `push` is filtered (docs and Markdown only); `pull_request` is **never** filtered. `master` requires `Backend tests (sqlite)`, `Backend tests (postgres)` and `Frontend audit + build`, and GitHub reports *no status at all* for a workflow a path filter skipped — so a filtered PR trigger would hang every PR that missed it, presenting as a stuck check rather than a config error.
 
 The agent runs as a separate **process group** — its own machine, kept warm rather than scaled to zero. Both choices are deliberate and both have non-obvious reasons: memory contention with the segment cache, and a boot time that loses a race with Fly's proxy. Neither is restated here; see [docs/SENTINEL_AGENT.md](docs/SENTINEL_AGENT.md) for the agent's side and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#deployed-services-flyio) for how it compares to the services that *do* sleep.
 
@@ -54,36 +72,56 @@ Self-hosting still works the same way: `python -m app.sentinel_agent` runs stand
 
 ## Build & Run
 
-**Prerequisites:** Python ≥ 3.12 (enforced by `backend/pyproject.toml`), Node 18+, `uv` for Python dependency management.
+**Prerequisites:** Rust (the toolchain in `Dockerfile`'s builder stage — pinned, not `latest`), Node 18+. Python ≥ 3.12 and `uv` only if you are working on the Sentinel AI agent.
 
 ```bash
-# Backend
-cd backend
-uv sync
-uv run python start.py              # http://localhost:8000
+# Command Center
+cd backend-rs
+cargo run                            # http://localhost:8000
 
-# Tests
-cd backend
-uv run pytest
+# Tests — no database needed; the DB-gated ones skip themselves
+cargo test
+# With one, so they do not skip:
+TEST_DATABASE_URL=postgresql://cc:cc@127.0.0.1:15434/cc cargo test
+
+cargo clippy --all-targets           # kept at zero warnings
 
 # Frontend
 cd frontend
 npm install
 npm run dev                          # http://localhost:5173
-npm run build                        # Production build → backend/static/
+npm run build                        # Production build → frontend/dist/,
+                                     # copied to /app/static in the image
 ```
 
 **Self-hosted (no Clerk) instead:**
 
 ```bash
-cd backend
-uv run python scripts/hash_local_admin_password.py   # prints LOCAL_ADMIN_PASSWORD_HASH
-# Set in backend/.env: AUTH_PROVIDER=local, APP_SECRET_KEY=<random 32+ bytes>,
+cd backend-rs
+cargo run --bin sentinel-hash-password    # prints LOCAL_ADMIN_PASSWORD_HASH
+# or, non-interactively: echo -n 'secret' | … --stdin
+# Set in the environment: AUTH_PROVIDER=local, APP_SECRET_KEY=<random 32+ bytes>,
 # LOCAL_ADMIN_USERNAME, LOCAL_ADMIN_PASSWORD_HASH (from above), LOCAL_ADMIN_EMAIL
-uv run python start.py
+cargo run
 
 # Set in frontend/.env: VITE_AUTH_PROVIDER=local (VITE_CLERK_PUBLISHABLE_KEY not needed)
 cd frontend && npm run dev
+```
+
+On a deployed machine both operator tools are on `PATH`:
+
+```bash
+fly ssh console -a sentinel-command -C sentinel-hash-password
+fly ssh console -a sentinel-command -C "sentinel-restore-from-cloud --list"
+```
+
+**The agent, which is still Python:**
+
+```bash
+cd backend
+uv sync
+uv run pytest                        # 16 tests; the web tier's 55 files went with it
+LLM_API_KEY=… uv run python -m app.sentinel_agent
 ```
 
 See Authentication → "Local auth (self-hosted)" below for what this mode does and doesn't enable.
@@ -143,134 +181,73 @@ Frontend config: `VITE_AUTH_PROVIDER` (`clerk` default or `local`), `VITE_CLERK_
 ## Project Structure
 
 ```
-backend/
-├── app/
-│   ├── main.py                   # FastAPI app, CORS, SPA middleware, rate limiting,
-│   │                             # lifespan startup (8 background loops: log-cleanup,
-│   │                             # offline-sweep, viewer-usage flush, release-cache
-│   │                             # refresh, email-worker, disk-check, motion-digest,
-│   │                             # sentinel-reaper), MCP mount, disk-check + motion-
-│   │                             # digest loop bodies
-│   ├── templates/emails/         # 46 Jinja2 email templates — _layout.html.j2 +
-│   │                             # 15 kinds (camera offline/online, node offline/
-│   │                             # online, incident_created, mcp_key_created/revoked,
-│   │                             # cameranode_disk_low, member_added/role_changed/
-│   │                             # removed/promotion_requested, motion, motion_digest,
-│   │                             # welcome) × 3 files (subject.txt + body.txt + body.html)
-│   ├── api/
-│   │   ├── cameras.py            # Cameras, groups, settings, audit logs, danger zone
-│   │   ├── nodes.py              # CameraNode register/heartbeat/CRUD, plan info,
-│   │   │                         # cameranode_disk_low alert helper (per-node debounce
-│   │   │                         # via Setting key colon-suffix pattern)
-│   │   ├── hls.py                # HLS playlist + segment memory cache + push-segment
-│   │   │                         # + HTTP motion fallback + global byte-cap eviction
-│   │   ├── audit.py              # Stream access logs + stats
-│   │   ├── incidents.py          # AI-generated incident reports (CRUD + evidence blobs)
-│   │   ├── mcp_keys.py           # MCP API key management + tool catalog + audit
-│   │   │                         # notifications (mcp_key_created/revoked)
-│   │   ├── mcp_activity.py       # MCP activity logs, stats, SSE stream
-│   │   ├── integration.py        # Home Assistant REST API (osi_ keys): key mgmt +
-│   │   │                         # camera discovery, snapshot, recording, status, motion SSE
-│   │   ├── motion.py             # Motion event queries, stats, SSE stream
-│   │   ├── notifications.py      # Notification inbox, unread count, SSE, broadcaster,
-│   │   │                         # email kind map, email cooldown gate (motion v1.1),
-│   │   │                         # email prefs endpoints, signed unsubscribe
-│   │   ├── install.py            # CameraNode + MCP setup script endpoints
-│   │   ├── ws.py                 # CameraNode WebSocket channel
-│   │   └── webhooks.py           # Clerk subscription + organizationMembership +
-│   │                             # Resend bounce/complaint webhook handlers
+backend-rs/                       # Command Center. 41 modules + 28 route files.
+├── src/
+│   ├── main.rs                   # entrypoint: pool, migrations, loops, serve
+│   ├── app.rs                    # the route table, the SPA fallback, the MCP
+│   │                             # mount and its 307. READ THIS FIRST — every
+│   │                             # route the service answers is named here.
+│   ├── api/                      # one file per router, mirroring the old
+│   │   │                         # app/api/ split so the two can be compared
+│   │   ├── cameras.rs  groups.rs  nodes.rs  node_register.rs
+│   │   ├── hls.rs                # playlist + segment cache + push-segment
+│   │   ├── incidents.rs  motion.rs  notifications.rs  sentinel.rs
+│   │   ├── integration.rs        # Home Assistant, `osi_` keys
+│   │   ├── keys.rs  mcp_activity.rs  audit.rs  stream_logs.rs
+│   │   ├── install.rs            # serves scripts/ from SCRIPTS_DIR
+│   │   ├── clerk_webhook.rs  resend_webhook.rs  local_auth.rs
+│   │   ├── gdpr.rs  health.rs  sentinel_config.rs  well_known.rs
+│   │   └── docs.rs               # /api-docs, /api-redoc, the harvested schema
 │   ├── mcp/
-│   │   └── server.py             # FastMCP server + 23 tools + ScopeMiddleware
-│   ├── core/
-│   │   ├── audit.py              # Audit-log writer (error-swallowing pattern)
-│   │   ├── auth.py               # Clerk JWT validation (V1 + V2 permissions), dependencies
-│   │   ├── config.py             # Environment loading (Config class)
-│   │   ├── clerk.py              # Clerk SDK init
-│   │   ├── database.py           # SQLAlchemy engine + session factory + Base
-│   │   ├── email.py              # Resend SDK touchpoint (single send entry; honors
-│   │   │                         # EMAIL_ENABLED kill-switch + suppression list)
-│   │   ├── email_templates.py    # Jinja2 renderer (per-template autoescape selection;
-│   │   │                         # .html.j2 escapes, .txt.j2 doesn't)
-│   │   ├── email_unsubscribe.py  # Signed JWT for one-click footer unsubscribe links
-│   │   ├── email_worker.py       # EmailOutbox drain loop + retry + reclaim-stuck-sending
-│   │   ├── errors.py             # ApiError class — structured 4xx/5xx envelope
-│   │   ├── limiter.py            # slowapi Limiter instance (tenant-aware key)
-│   │   ├── migrations.py         # sync_schema (column adder), drop_orphan_tables,
-│   │   │                         # sanitize_existing_codecs — stand-in for Alembic
-│   │   ├── plans.py              # PLAN_LIMITS, effective_plan_for_caps, grace period
-│   │   ├── recipients.py         # Clerk org member lookup + 5-min TTL cache + audience
-│   │   │                         # filter (admin / all) + suppression-list exclusion
-│   │   ├── release_cache.py      # GitHub /releases/latest cache for CameraNode
-│   │   │                         # update_available signal
-│   │   └── sentry.py             # Sentry SDK init (no-op when SENTRY_DSN unset)
-│   ├── models/models.py          # 18 ORM models (see Data Models below)
-│   └── schemas/schemas.py        # Pydantic request/response schemas incl. McpKeyCreate
-├── scripts/
-│   ├── install.sh                # CameraNode installer for Linux/macOS (served by install.py).
-│   │                               # Windows installs via the MSI from the latest CameraNode
-│   │                               # GitHub release, not a script — see CameraNodeSetup docs.
-│   ├── mcp-setup.sh / .ps1       # MCP client config helpers (Claude Code / Desktop / Cursor / Windsurf)
-│   └── restore_from_cloud.py     # Self-host recovery: pulls this install's data back down from
-│                                   # Sentinel-Sync-Service (the read half of core/sync_client.py).
-│                                   # Non-destructive by default; --list / --dry-run / --overwrite.
-│                                   # Procedure + what it can't restore (node API keys, evidence
-│                                   # blobs): docs/runbooks/DISASTER_RECOVERY.md
-├── tests/                        # pytest — security, MCP scoping, motion, notifications, offline sweep,
-│                                 # billing/grace, ApiError envelope, drop_orphan_tables migration
-├── start.py                      # Uvicorn entrypoint (0.0.0.0:8000, reload=True)
-├── pyproject.toml                # Includes [tool.uv] constraint-dependencies pinning
-│                                 # python-multipart and authlib past Dependabot moderates
-└── .env.example
+│   │   ├── server.rs             # rmcp ServerHandler — replaces fastmcp
+│   │   ├── tools.rs              # all 23 tools
+│   │   ├── scope.rs              # the scope gate, rate limits, tool catalog
+│   │   ├── auth.rs  activity.rs  snapshot.rs
+│   ├── loops.rs                  # the background sweeps and their bodies:
+│   │                             # offline sweep, log cleanup, reaper, motion
+│   │                             # digest, disk check, plan reconcile
+│   ├── sync.rs                   # the one-way mirror to Sentinel-Sync-Service
+│   ├── license.rs                # the self-host licence gate + check-in
+│   ├── plans.rs                  # PLAN_LIMITS, caps, grace, viewer hours
+│   ├── notifications.rs          # the inbox, the broadcaster, email fan-out
+│   ├── email*.rs                 # send, templates, worker, unsubscribe
+│   ├── spa.rs                    # the React document and its pass-through list
+│   ├── hls.rs                    # the in-memory segment cache (one owner)
+│   ├── auth.rs / auth/           # Clerk JWT (V1 + V2) and the local-auth path
+│   ├── proxy.rs                  # the strangler proxy. Unreachable now; see
+│   │                             # backend-rs/README.md before deleting it.
+│   └── py*.rs                    # CPython semantics the port has to match
+│                                 # exactly: json.dumps spacing, round()
+│                                 # half-to-even, float() underscores,
+│                                 # fromisoformat, int() coercion, str().
+│                                 # Each one exists because a differential
+│                                 # case failed on it.
+│   ├── bin/
+│   │   ├── hash_password.rs      # sentinel-hash-password
+│   │   └── restore_from_cloud.rs # sentinel-restore-from-cloud
+├── assets/openapi.json           # FastAPI's own document, harvested at port
+│                                 # time and compiled in. See api/docs.rs.
+├── migrations/                   # embedded by sqlx::migrate! at compile time
+├── examples/                     # probe pairs for code with no HTTP surface
+└── tests/
+    ├── differential/             # how the port was verified. Needs the Python,
+    │                             # so it runs against the commit before the
+    │                             # deletion — plus the checkers that do not:
+    │                             # column_defaults, openapi_drift,
+    │                             # agent_contract, ratelimit/auth parity.
+    └── *_db.rs                   # integration tests, gated on TEST_DATABASE_URL
 
-docs/                             # Supplementary docs that don't belong in README/AGENTS
-├── README.md                     # Index of runbooks + ADRs
-└── adr/
-    ├── 0001-sync-schema-vs-alembic.md
-    └── 0002-viewer-hour-billing.md
+backend/                          # the Sentinel AI agent, and nothing else
+├── app/sentinel_agent/           # out of scope for the rewrite by decision
+├── tests/                        # 16 tests; the web tier's 55 files went
+└── pyproject.toml                # the agent's dependency set (99 packages)
 
-frontend/
-├── tests/                        # vitest + @testing-library/react + happy-dom
-│   ├── setup.js                  # jest-dom matchers + cleanup
-│   ├── sanity.test.js            # runner + DOM + matcher wiring smoke
-│   ├── auth/local.test.jsx       # self-hosted login + background token refresh
-│   ├── services/api.test.js      # fetchWithAuth shape contract (4 wire shapes)
-│   ├── components/               # IncidentReportModal, UpgradeModal, OrgAuditLogPanel,
-│   │                             # InstallCameraNodeCard, CameraRecordingControls, HelpTooltip
-│   └── pages/                    # IncidentsPage, SettingsPage (camera groups), SignInPage (local)
-└── src/
-    ├── pages/
-    │   ├── DashboardPage.jsx        # Camera grid with status cards + controls
-    │   ├── SettingsPage.jsx         # Nodes, groups, recording, notifications, danger zone
-    │   ├── McpPage.jsx              # MCP keys (scope picker) + activity (live SSE), AND the
-    │   │                            #   Sentinel agent surface: config, run history, manual
-    │   │                            #   "Run now", per-org `osa_` agent keys
-    │   ├── IncidentsPage.jsx        # AI- and human-filed incident reports + create flow
-    │   ├── AdminPage.jsx            # Stream logs, org audit, MCP activity, motion history
-    │   ├── IntegrationsPage.jsx     # Home Assistant integration keys
-    │   ├── PricingPage.jsx          # Plan tiers + upgrade
-    │   ├── SignInPage.jsx / SignUpPage.jsx
-    │   └── TestHlsPage.jsx          # Admin-only HLS debug view
-    ├── components/                  # 27 files; the ones worth knowing:
-    │   ├── HlsPlayer.jsx            # hls.js player with Clerk JWT xhrSetup
-    │   ├── CameraCard.jsx           # Live thumbnail + status + actions
-    │   ├── AppSidebar.jsx           # Nav + plan badge + viewer-hours usage panel
-    │   ├── MotionEventsPanel.jsx    # Motion history (Admin → Motion tab)
-    │   ├── OrgAuditLogPanel.jsx     # Org audit trail (Admin → Organization Audit)
-    │   ├── IncidentReportModal.jsx  # Markdown + evidence viewer
-    │   ├── NotificationBell.jsx     # Unread badge + inbox popover (SSE-fed)
-    │   ├── AddNodeModal.jsx         # Node creation flow (shows one-time API key)
-    │   ├── KeyRotationModal.jsx     # Rotate node API key
-    │   ├── UpgradeModal.jsx         # Paywall prompt (plan gating)
-    │   ├── HeartbeatBanner.jsx      # "Waiting for first heartbeat" after node creation
-    │   └── WelcomeHero.jsx          # Dashboard empty-state hero (admin + member variants)
-    ├── auth/                        # Clerk / local-auth provider switch (VITE_AUTH_PROVIDER)
-    ├── hooks/
-    │   ├── useNotifications.jsx     # SSE inbox + unread count
-    │   ├── useMotionAlerts.jsx      # Motion SSE + toast fan-out
-    │   ├── usePlanInfo.jsx          # Plan info + node quotas
-    │   ├── useSharedToken.jsx       # Shared token provider (HLS + fetch)
-    │   └── useToasts.jsx
-    └── services/api.js              # Typed client for every backend endpoint
+scripts/                          # served from SCRIPTS_DIR, or run by an operator
+├── install.sh  mcp-setup.sh  mcp-setup.ps1
+└── backup_db.sh  restore_db.sh   # need pg_dump; hence postgresql-client-18
+
+docs/                             # runbooks + ADRs, unchanged by the rewrite
+frontend/                         # React 19, unchanged by the rewrite
 ```
 
 ## Architecture
@@ -339,7 +316,7 @@ and the plan-enforcement engine work unmodified regardless of provider.
 
 - **Login**: `POST /api/auth/local/login` (username/password against
   `LOCAL_ADMIN_USERNAME`/`LOCAL_ADMIN_PASSWORD_HASH`, an argon2 hash generated by
-  `backend/scripts/hash_local_admin_password.py`) issues a 30-day HS256 JWT
+  the `sentinel-hash-password` binary) issues a 30-day HS256 JWT
   signed with `APP_SECRET_KEY`. `POST /api/auth/local/refresh` re-signs a
   still-valid token with a renewed expiry — the frontend calls this
   opportunistically so an open tab never actually hits the 30-day wall (this is
@@ -811,7 +788,7 @@ Every SSE broadcaster (`MotionBroadcaster`, `NotificationBroadcaster`, `McpActiv
 
 ## Setup Scripts
 
-`backend/scripts/mcp-setup.sh` + `mcp-setup.ps1` are served verbatim from `install.py`. They:
+`scripts/mcp-setup.sh` + `mcp-setup.ps1` are served verbatim by `api/install.rs` from `SCRIPTS_DIR` (`/app/scripts` in the image). They:
 1. Accept `<api_key> <server_url>` (positional)
 2. Detect installed MCP clients (Claude Code, Claude Desktop, Cursor, Windsurf)
 3. Prompt the user for which ones to configure
@@ -827,19 +804,26 @@ Every SSE broadcaster (`MotionBroadcaster`, `NotificationBroadcaster`, `McpActiv
 
 ## Key Dependencies
 
-- `fastapi` / `uvicorn` — Web framework and ASGI server
-- `fastmcp` — Model Context Protocol server (streamable HTTP)
-- `sqlalchemy` — ORM (SQLite both dev + prod; production runs on a Fly volume)
-- `pydantic` — Request/response validation
-- `clerk-backend-api` — Clerk authentication
-- `pyjwt` — JWT token handling (V2 permission decoding + signed unsubscribe tokens)
-- `jinja2` — Email template rendering (`backend/app/templates/emails/`)
-- `resend` — Resend SDK for transactional email
-- `slowapi` — Rate limiting (Redis-backed via `REDIS_URL` in production; in-memory fallback)
-- `httpx` — HTTP client
-- `svix` — Webhook signature verification (Clerk + Resend share the library)
-- `sentry-sdk` — Error tracking (no-op when `SENTRY_DSN` is unset)
-- `python-dotenv` — Environment variable loading
+- `axum` / `tokio` / `hyper` — the web framework and runtime
+- `sqlx` — Postgres and SQLite, with the migrations embedded at compile time
+- `rmcp` — the Model Context Protocol server. Replaced `fastmcp`; pinned to
+  `3.5` because `"0.9"` resolves to a much older crate of the same name.
+- `serde` / `serde_json` — with the `preserve_order` feature, which is
+  load-bearing: key order is on the wire and Python's dicts are ordered.
+  Note `Map::remove` is a SWAP-remove under it; use `shift_remove`.
+- `jsonwebtoken` — Clerk JWT verification (V1 and V2 claim shapes) and the
+  signed unsubscribe tokens. No Clerk SDK: auth is local RS256 + JWKS.
+- `argon2` — the local-admin password path. Parameters are set explicitly
+  to python-argon2's, NOT the crate's weaker default; see
+  `bin/hash_password.rs`.
+- `reqwest` — outbound HTTP, rustls only (no OpenSSL in the image)
+- `minijinja` — email templates, with per-template autoescape
+- `tower-http` — static files, tracing, the security-header layer
+- `libc` — `statvfs` for the disk probe, and `termios` for the password
+  tool's echo suppression, which is why no terminal crate is needed
+
+The agent's Python set is separate and much smaller than it was; see
+`backend/pyproject.toml`.
 
 ## Development Notes
 

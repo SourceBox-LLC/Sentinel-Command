@@ -5,80 +5,39 @@ description = "Sentinel Command Center Backend - FastAPI with Clerk Auth"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.141.1",
-    "uvicorn>=0.52.1",
-    "sqlalchemy>=2.0.51",
-    # Postgres driver for the hosted deployment. A runtime dependency,
-    # not a dev one: hosted Command Center runs on Postgres. Self-hosted
-    # installs still use SQLite via the stdlib driver and never open a
-    # Postgres connection, so this is dead weight there — a few MB of
-    # wheel, which is cheaper than maintaining two dependency sets.
-    "psycopg[binary]>=3.2.0",
-    "pydantic>=2.13.4",
-    "python-dotenv>=1.0.0",
-    # Pinned >=0.0.31 for CVE-2026-53538/53539/53540 — three DoS
-    # advisories against 0.0.27 (Content-Length confusion, multipart
-    # boundary collision, multipart injection). Supersedes the earlier
-    # 0.0.27 pin for CVE-2026-42561. Dependabot / pip-audit will start
-    # failing the strict scan if this slides back below 0.0.31.
-    "python-multipart>=0.0.31",
-    # Pinned >=2.13.0 for PYSEC-2026-175/177/178/179 — four advisories
-    # against 2.12.1 (all fixed in 2.13.0) that landed after the last green
-    # deploy and turned pip-audit --strict red even though no code changed.
-    "pyjwt>=2.13.0",
+    # ── The Sentinel AI agent is the only Python left in this repo ─────
+    #
+    # Everything the web tier needed went with it: fastapi, uvicorn's
+    # role as the web server, sqlalchemy, psycopg, pyjwt, svix,
+    # clerk-backend-api, slowapi, redis, websockets, fastmcp and
+    # sentry-sdk[fastapi]. What is here is what `app/sentinel_agent/`
+    # actually imports, determined by importing its module tree and
+    # reading the closure rather than by pruning the old list and hoping.
+    #
+    # The agent's CODE is untouched. This is deployment configuration.
     "httpx>=0.27.0",
-    "svix>=1.99.1",
-    "clerk-backend-api>=5.0.6",
-    "slowapi>=0.1.10",
-    "redis>=5.0.0",
-    "websockets>=16.1.1",
-    "fastmcp>=3.4.7",
-    "sentry-sdk[fastapi]>=2.68.0",
-    # ── Sentinel AI agent (app/sentinel_agent/) ──────────────────────
-    # The agent runs from this same image as the `agent` process group
-    # (see [processes] in fly.toml), so it resolves against this one
-    # dependency set rather than its own.
-    #
-    # Everything else the agent needs — mcp, starlette, pydantic-settings,
-    # httpx, uvicorn, sentry-sdk — is already here, directly or via
-    # fastapi/fastmcp, and the agent's declared ranges all admit the
-    # versions this project resolves.
-    #
-    # Notably `mcp`: the agent used to lock 2.2.0 while this project
-    # resolves 1.28.1 via fastmcp. That is not a conflict — the agent
-    # declares >=1.6.0,<3, and app/sentinel_agent/mcp_client.py imports
-    # the streamable-http client under BOTH the 1.x and 2.x symbol names
-    # (they were renamed), so it works either way.
-    #
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.0.0",
+    "python-dotenv>=1.0.0",
+    # Its own HTTP surface: the /wakeup webhook Command Center fires.
+    # Starlette and uvicorn, not FastAPI — the agent never used FastAPI.
+    "starlette>=0.40.0",
+    "uvicorn>=0.52.1",
+    # The MCP client. `mcp_client.py` imports the streamable-HTTP client
+    # under BOTH the 1.x and 2.x symbol names because they were renamed,
+    # so the range is deliberately wide.
+    "mcp>=1.6.0,<3",
     # LiteLLM is what makes the model a config string rather than a
-    # hardcoded client — it replaced the `ollama` SDK outright, since it
-    # speaks Ollama natively via `ollama_chat/<model>`. It is heavy
-    # (+24 packages, boto3 and tokenizers included, both hard
-    # requirements) and the web process group carries that weight too,
-    # because Fly gives one image per app. Accepted deliberately: the
-    # alternative is two images, which is the separate-app arrangement
-    # this repo just finished removing.
-    # IANA timezone database for Python's stdlib `zoneinfo`.
-    # Required on Windows (where the OS doesn't ship the database) and
-    # on slim Linux containers (alpine + python:slim) where /usr/share/
-    # zoneinfo isn't included.  No-op overhead on systems that already
-    # have the database.  Used by the heartbeat handler's per-camera
-    # scheduled-recording check to interpret HH:MM in the org's tz.
-    "tzdata>=2026.3",
-    # Resend transactional email SDK.  Used for operator-critical
-    # notifications (camera offline, node offline, disk critical, new
-    # incident).  Free tier covers ~100 active orgs at v1 event scope;
-    # we flip to Pro the same week motion-event emails ship.  Worker
-    # pattern + EmailOutbox table in models.py decouple sends from
-    # request handlers — see app/core/email_worker.py.
-    "resend>=2.36.0",
-    # Jinja2 for email templates (subject + body.txt + body.html per
-    # event kind, sharing _layout.html.j2).  FastAPI vendors a copy
-    # for Jinja2Templates but we depend on it directly so the email
-    # path doesn't break if FastAPI ever drops the optional dep.
-    "jinja2>=3.1.0",
-    "argon2-cffi>=25.1.0",
-    "litellm>=1.60.0",
+    # hardcoded client. Imported LAZILY (`_get_litellm()`), so it does
+    # not cost import time on a process that never runs a completion —
+    # but it is a hard runtime requirement and it is heavy (+24 packages,
+    # boto3 and tokenizers included).
+    #
+    # It used to be argued that the web process group carried this weight
+    # too, because Fly gives one image per app. That is still true of the
+    # IMAGE, but the web tier is a Rust binary now and does not import
+    # any of it.
+    "litellm>=1.50.0",
 ]
 
 [project.optional-dependencies]
