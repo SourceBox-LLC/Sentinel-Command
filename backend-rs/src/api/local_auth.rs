@@ -160,6 +160,28 @@ mod tests {
     const HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHRzb21lc2FsdA$\
                         Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm8";
 
+    /// A hash from `sentinel-hash-password` authenticates here.
+    ///
+    /// The tool exists to feed this function, so its parameters are held
+    /// to it: python-argon2's `m=65536,t=3,p=4`, not the Rust crate's
+    /// weaker `m=19456,t=2,p=1` default. Verification reads the
+    /// parameters out of the stored string either way, which is exactly
+    /// why a weaker tool default would never have failed a test — it
+    /// would just have issued weaker credentials than the installs
+    /// before it.
+    #[test]
+    fn a_hash_with_the_pythons_parameters_verifies() {
+        use argon2::password_hash::{PasswordHasher, SaltString};
+        let params = argon2::Params::new(65_536, 3, 4, None).unwrap();
+        let hasher =
+            argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+        let salt = SaltString::from_b64("c29tZXNhbHRzb21lc2FsdA").unwrap();
+        let hash = hasher.hash_password(b"correct horse battery staple", &salt).unwrap().to_string();
+        assert!(hash.contains("m=65536,t=3,p=4"), "{hash}");
+        assert!(verify_argon2(&hash, "correct horse battery staple"));
+        assert!(!verify_argon2(&hash, "wrong"));
+    }
+
     #[test]
     fn a_malformed_stored_hash_rejects_rather_than_accepts() {
         for stored in ["", "not-a-phc-string", "$argon2id$", "plaintext"] {

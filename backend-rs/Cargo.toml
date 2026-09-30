@@ -119,3 +119,17 @@ strip = "debuginfo"
 [[example]]
 name = "plan_probe"
 path = "examples/plan_probe.rs"
+
+# The main service binary, named explicitly because the [[bin]] blocks
+# below would otherwise suppress the implicit src/main.rs target.
+[[bin]]
+name = "sentinel-command"
+path = "src/main.rs"
+
+# Operator tools that replace the Python scripts deleted with the rest of
+# `backend/`. Both are referenced by documentation — AGENTS.md for the
+# password hash, DISASTER_RECOVERY.md for the restore — so neither could
+# simply go.
+[[bin]]
+name = "sentinel-hash-password"
+path = "src/bin/hash_password.rs"
