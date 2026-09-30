@@ -427,6 +427,45 @@ Three fixes, and the first two are both needed:
 3. Separately, one unserialisable row should not discard a whole batch
    of good ones.
 
+### Measured through the restore tool
+
+Demonstrated end to end rather than argued, once
+`sentinel-restore-from-cloud` existed to ask the mirror what it holds:
+
+```
+$ sentinel-restore-from-cloud --list
+table                        rows  deleted
+incident_evidence              16        0
+incidents                       4        0
+motion_events                 108        0
+notifications                 143        0
+sentinel_config                 1        0
+sentinel_runs                  16        0
+```
+
+No `cameras`. No `camera_groups`. No `camera_nodes`. Asking it to restore
+them answers `No mirrored data for table "camera_nodes"` — **the
+documented disaster-recovery path cannot bring back a single camera or
+node**, because the mirror was never sent one.
+
+Filling the NULLs by hand and re-syncing makes all eight appear, which
+pins the mechanism to the NULLs and nothing else:
+
+```
+$ UPDATE cameras SET updated_at = now() WHERE updated_at IS NULL;   -- 22 rows
+$ UPDATE camera_nodes SET updated_at = now() WHERE updated_at IS NULL;  -- 6
+$ UPDATE camera_groups SET updated_at = now() WHERE updated_at IS NULL; -- 4
+$ sentinel-restore-from-cloud --list
+camera_groups                   4        0
+camera_nodes                    6        0
+cameras                        30        0
+…
+```
+
+That one-off UPDATE is also the immediate mitigation for any install
+already running: it does not fix the bug, but it unblocks the tables
+until fix (1) or (2) lands.
+
 **Reproduced in the port**, deliberately and loudly: `src/sync.rs`
 rejects the batch before the push, with a comment pointing here. The two
 stacks have to agree while both are serving, and this is the single most
