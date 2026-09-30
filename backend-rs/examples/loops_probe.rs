@@ -215,6 +215,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         "license" => {
             let mut out = serde_json::Map::new();
+            let mut seen_install_id: Option<String> = None;
             for scenario in LICENSE_SCENARIOS {
                 // Selected by URL prefix so the fake stays stateless;
                 // see fake_license.py. `unreachable` points at a port
@@ -237,7 +238,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Some(&license_key),
                 )
                 .await;
-                out.insert(scenario.to_string(), read_license_settings(&pool, &org).await?);
+                let mut row = read_license_settings(&pool, &org).await?;
+                // STABILITY, not presence. `has_install_id` was true
+                // whether the id was reused or re-minted, so the reuse —
+                // which is the behaviour, since the licence service
+                // counts installs and a per-boot id reads as an install
+                // per boot — was invisible and the mutation for it
+                // scored zero.
+                let current = install_id(&pool, &org).await?;
+                let stable = match &seen_install_id {
+                    None => serde_json::Value::Null,
+                    Some(previous) => json!(previous == &current),
+                };
+                if let Some(map) = row.as_object_mut() {
+                    map.insert("install_id_stable".into(), stable);
+                }
+                seen_install_id = Some(current);
+                out.insert(scenario.to_string(), row);
             }
             println!(
                 "{}",
@@ -334,6 +351,16 @@ async fn summarise_pushes(
         }));
     }
     Ok(json!(out))
+}
+
+async fn install_id(pool: &sqlx::PgPool, org: &str) -> Result<String, sqlx::Error> {
+    let got: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM settings WHERE org_id = $1 AND key = 'sentinel_install_id'",
+    )
+    .bind(org)
+    .fetch_optional(pool)
+    .await?;
+    Ok(got.map(|(v,)| v).unwrap_or_default())
 }
 
 /// Cursor presence, not value: the values are fixture timestamps.

@@ -290,19 +290,43 @@ def run_license_checkin(args) -> dict:
     settings = config_mod.settings
     settings.SENTINEL_LICENSE_KEY = args.license_key
     out = {}
+    seen_install_id = None
     for scenario in LICENSE_SCENARIOS:
         settings.SENTINEL_LICENSE_SERVICE_URL = scenario_url(args, scenario)
         db = SessionLocal()
         try:
             # Wipe the cached verdict between scenarios: what is being
             # compared is what THIS check-in wrote, not what survived
-            # from the previous one.
+            # from the previous one. The install id is deliberately NOT
+            # wiped — it is supposed to outlive a check-in.
             clear_license_settings(db, settings.LOCAL_ORG_ID)
             asyncio.run(check_in_with_license_service(db))
-            out[scenario] = read_license_settings(db, settings.LOCAL_ORG_ID)
+            row = read_license_settings(db, settings.LOCAL_ORG_ID)
+            # STABILITY, not presence. `has_install_id` was true whether
+            # the id was reused or re-minted, so the reuse — which is
+            # the whole behaviour, since the licence service counts
+            # installs and a per-boot id reads as an install per boot —
+            # was invisible and a mutation removing the reuse check
+            # scored zero.
+            current = install_id(db, settings.LOCAL_ORG_ID)
+            row["install_id_stable"] = (
+                None if seen_install_id is None else current == seen_install_id
+            )
+            seen_install_id = current
+            out[scenario] = row
         finally:
             db.close()
     return out
+
+
+def install_id(db, org_id: str) -> str:
+    from sqlalchemy import text  # noqa: PLC0415
+
+    got = db.execute(
+        text("SELECT value FROM settings WHERE org_id = :o AND key = 'sentinel_install_id'"),
+        {"o": org_id},
+    ).first()
+    return got[0] if got else ""
 
 
 # Every answer the check-in has to tell apart. `unreachable` points at a

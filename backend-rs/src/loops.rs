@@ -1086,6 +1086,69 @@ const LOG_CLEANUP_INTERVAL_HOURS: u64 = 24;
 mod tests {
     use super::*;
 
+    /// The disk check's four decisions, with the reading and the clock
+    /// as arguments.
+    ///
+    /// These exist because a mutation to the debounce scored a MISS
+    /// against a `_unit_only` note of mine that claimed they already
+    /// did. They did not. Second time I made that exact claim without
+    /// checking it in this slice.
+    #[test]
+    fn a_disk_below_the_threshold_says_nothing_and_clears_the_debounce() {
+        let mut debounce = DiskDebounce::default();
+        // 95% is the threshold, so 94 is quiet.
+        assert_eq!(check_disk_critical(&mut debounce, "/data", 100, 6, 94, 0.0), None);
+        assert_eq!(debounce.last_emit_seconds, None);
+
+        // Crossing alerts, and stamps.
+        assert!(check_disk_critical(&mut debounce, "/data", 100, 4, 96, 10.0).is_some());
+        assert_eq!(debounce.last_emit_seconds, Some(10.0));
+
+        // Recovering CLEARS the stamp, so the next crossing alerts
+        // immediately rather than waiting out a cooldown from an
+        // incident that is already over. This is the one the mutation
+        // targeted.
+        assert_eq!(check_disk_critical(&mut debounce, "/data", 100, 6, 94, 20.0), None);
+        assert_eq!(debounce.last_emit_seconds, None, "a recovery must clear the debounce");
+        assert!(
+            check_disk_critical(&mut debounce, "/data", 100, 4, 96, 21.0).is_some(),
+            "the next crossing alerts without waiting six hours"
+        );
+    }
+
+    /// Six hours between alerts for the same ongoing condition.
+    #[test]
+    fn a_still_full_disk_is_quiet_until_the_cooldown_clears() {
+        let mut debounce = DiskDebounce::default();
+        assert!(check_disk_critical(&mut debounce, "/data", 100, 4, 96, 0.0).is_some());
+        // Still full, five hours later: nothing.
+        assert_eq!(check_disk_critical(&mut debounce, "/data", 100, 4, 96, 5.0 * 3600.0), None);
+        // Six hours and a second: alerts again.
+        assert!(check_disk_critical(&mut debounce, "/data", 100, 4, 96, 6.0 * 3600.0 + 1.0)
+            .is_some());
+    }
+
+    /// A zero total is a reading that failed, not a full disk. Dividing
+    /// by it would be NaN, and NaN compares false against the
+    /// threshold — so it would go quiet by accident rather than by
+    /// decision.
+    #[test]
+    fn a_zero_total_is_not_a_full_disk() {
+        let mut debounce = DiskDebounce::default();
+        assert_eq!(check_disk_critical(&mut debounce, "/data", 0, 0, 0, 0.0), None);
+    }
+
+    /// The alert's numbers are what an operator reads. `round(pct, 1)`,
+    /// and the free bytes verbatim.
+    #[test]
+    fn the_alert_reports_the_rounded_percentage() {
+        let mut debounce = DiskDebounce::default();
+        let alert = check_disk_critical(&mut debounce, "/data", 1000, 45, 955, 0.0).unwrap();
+        assert_eq!(alert.percent_used, 95.5);
+        assert_eq!(alert.bytes_free, 45);
+        assert_eq!(alert.path, "/data");
+    }
+
     /// The summary's arithmetic, which is what the log line reports and
     /// the one number an operator reads. Easy to get wrong by leaving a
     /// table out of the sum — which would under-report a sweep that

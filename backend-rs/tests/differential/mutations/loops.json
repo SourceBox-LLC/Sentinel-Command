@@ -99,14 +99,14 @@
   {
    "name": "an org with only email activity is skipped",
    "file": "src/loops.rs",
-   "_why": "`email_log` is in the UNION so an org whose only rows are emails still has its retention applied. Without it that org's log grows forever, and it is the least likely to be noticed because nothing else about the org looks active.",
+   "_why": "`email_log` is in the UNION so an org whose only rows are emails still has its retention applied. Without it that org's log grows forever, and it is the least likely to be noticed because nothing else about the org looks active. Scored zero until the fixture gained `loops-email`, an org with rows in email_log and nowhere else: every other org here has rows in all six tables, so dropping that UNION arm changed the org set not at all.",
    "old": "         UNION SELECT org_id FROM email_log\",",
    "new": "\","
   },
   {
    "name": "an empty org_id is swept as an org",
    "file": "src/loops.rs",
-   "_why": "Python filters on `if row[0]`, which is false for an empty string as well as NULL. An empty org_id is a corrupt row; resolving a plan for it means a Clerk lookup for an org that does not exist, and counting it inflates orgs_processed.",
+   "_why": "Python filters on `if row[0]`, which is false for an empty string as well as NULL. An empty org_id is a corrupt row; resolving a plan for it means a Clerk lookup for an org that does not exist, and counting it inflates orgs_processed. Scored zero until the fixture gained an audit_log row with an EMPTY org_id — there was nothing for the filter to filter.",
    "old": "    for (org_id,) in org_ids.iter().filter(|(id,)| !id.is_empty()) {",
    "new": "    for (org_id,) in org_ids.iter() {"
   },
@@ -288,7 +288,7 @@
   {
    "name": "the install id is minted fresh each time",
    "file": "src/license.rs",
-   "_why": "Persisted so it survives a restart: the licence service counts installs, and an id that changed every boot would read as an install per restart — which for a per-install licence means it stops validating.",
+   "_why": "Persisted so it survives a restart: the licence service counts installs, and an id that changed every boot would read as an install per restart — which for a per-install licence means it stops validating. Scored zero because the probe recorded only whether an id EXISTED, which is true either way. It records stability across scenarios now — the same id as the previous check-in — which is the actual behaviour: minted once, then reused.",
    "old": "    if let Ok(Some(existing)) = crate::settings::get(pool, org_id, INSTALL_ID, Some(\"\")).await {\n        if !existing.is_empty() {\n            return existing;\n        }\n    }",
    "new": "",
    "env": {
@@ -405,7 +405,7 @@
    "env": {
     "DIFF_ONLY": "nothing-reaches-this"
    },
-   "_unit_only": "The disk check writes nothing and has no route; `check_disk_critical`'s own tests are what hold this."
+   "_unit_only": "The disk check writes nothing and has no route. An earlier version of this note claimed `check_disk_critical`'s own tests already held it; they did not exist, and the mutation scored zero. Second time I made that claim without checking it in this slice. Four tests written: the recovery clearing the debounce, the six-hour cooldown, a zero total not reading as a full disk, and the rounded percentage."
   }
  ]
 }

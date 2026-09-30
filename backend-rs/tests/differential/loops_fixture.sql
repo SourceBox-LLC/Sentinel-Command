@@ -146,6 +146,26 @@ SELECT o.org_id, 'a@example.com', 'motion', 'sent',
   FROM (VALUES ('loops-free'), ('loops-pro'), ('loops-plus')) AS o(org_id),
        (VALUES (1), (45), (200), (400)) AS ages(d);
 
+-- Two orgs that exist ONLY in one log table each, and both are here
+-- because a mutation scored zero without them:
+--
+--   loops-email  rows in email_log and NOWHERE else. `email_log` is in
+--                the org UNION so an org whose only activity is email
+--                still gets its retention applied — and every other
+--                org here has rows in all six tables, so dropping that
+--                UNION arm changed nothing and the mutation passed.
+--   ''           an EMPTY org_id, which Python's `if row[0]` treats as
+--                falsy and skips. A corrupt row; resolving a plan for it
+--                means a Clerk lookup for an org that does not exist,
+--                and counting it inflates orgs_processed.
+INSERT INTO email_log (org_id, recipient_email, kind, status, timestamp)
+SELECT 'loops-email', 'only@example.com', 'motion', 'sent',
+       now()::timestamp - make_interval(days => d)
+  FROM (VALUES (1), (400)) AS ages(d);
+
+INSERT INTO audit_log (org_id, event, user_id, timestamp)
+VALUES ('', 'probe', 'u1', now()::timestamp - make_interval(days => 400));
+
 -- ---- the outbox, which is NOT tiered --------------------------------
 --
 -- Fixed 7-day window and terminal states only. `pending` and `sending`

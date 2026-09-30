@@ -1,0 +1,106 @@
+# Slice 8: cutting the proxy
+
+The plan says "delete `backend/`, drop the second process". Both halves
+of that sentence turn out to be wrong, and the real scope is larger. This
+file is the working list, written before the irreversible part starts.
+
+## `backend/` cannot be deleted wholesale
+
+`fly.toml` runs **two process groups from one image**:
+
+```
+app   = uvicorn app.main:app          -> becomes the Rust binary
+agent = python -m app.sentinel_agent  -> stays Python, out of scope by plan
+```
+
+The plan says both "delete `backend/`" (slice 8) and "`sentinel_agent/`
+… stays Python and deploys independently" (out of scope). Those
+contradict. The agent wins: it owns the only LiteLLM import and was never
+part of this rewrite.
+
+Checked rather than assumed — the agent imports nothing from the rest of
+the application:
+
+```
+$ grep -rhoE "^(from|import) app\.[a-z_.]+" app/sentinel_agent/*.py | sort -u
+from app.sentinel_agent.agent
+from app.sentinel_agent.config
+from app.sentinel_agent.llm
+from app.sentinel_agent.mcp_client
+from app.sentinel_agent.processor
+from app.sentinel_agent.prompts
+from app.sentinel_agent.sentinel_client
+```
+
+So `backend/app/sentinel_agent/` and a dependency set for it survive;
+everything else in `backend/app/` goes.
+
+## Four routes still answer from Python
+
+`/api-docs`, `/api-redoc`, `/api/openapi.json`, `/docs/oauth2-redirect`.
+FastAPI generates the schema from its own route table and Pydantic
+models, so there is nothing to port faithfully — a Rust document would
+never match byte for byte.
+
+Decision: **harvest Python's own document while it still exists**, bake
+it in, and serve the two UI shells and the OAuth redirect page around it.
+That gives the same schema rather than one I invented, and a checker
+compares its paths against `app.rs`'s route table so the snapshot cannot
+drift unnoticed. `AGENTS.md` lists `/api/openapi.json` as an API surface,
+which rules out quietly dropping it.
+
+## Two operator tools go with the Python, and both are documented
+
+| tool | referenced by | why it cannot just go |
+| --- | --- | --- |
+| `scripts/restore_from_cloud.py` | `docs/runbooks/DISASTER_RECOVERY.md` (3 invocations), `README.md`, `docs/README.md` | it IS the documented recovery path for a self-hosted install |
+| `scripts/hash_local_admin_password.py` | `AGENTS.md` self-host setup | without it there is no way to produce `LOCAL_ADMIN_PASSWORD_HASH` |
+
+Both get ported to Rust binaries. `backup_db.sh` and `restore_db.sh` are
+shell and only need relocating.
+
+A detail on the password tool: Rust's `Argon2::default()` is **not**
+python-argon2's default. The crate defaults to `m=19456, t=2, p=1`;
+python-argon2's `PasswordHasher()` uses `m=65536, t=3, p=4`, which is
+what every existing `LOCAL_ADMIN_PASSWORD_HASH` was written with.
+Verification is unaffected (the PHC string carries its own parameters)
+but the new tool must emit the stronger set, or self-hosters would
+silently get weaker hashes than the installs before them.
+
+## A production bug the differential cannot see
+
+`app.rs::mcp_redirect` builds its absolute `Location` from
+`request.uri().scheme_str()`, which is `None` for an origin-form request
+and falls back to `http`. Behind Fly's edge that emits
+`http://…/mcp/` on an HTTPS request — a downgrade strict MCP clients
+refuse. It is exactly what uvicorn's `--forwarded-allow-ips=*` exists to
+prevent on the Python side, and the harness cannot catch it because the
+harness is plain HTTP. Must honour `X-Forwarded-Proto`.
+
+## Order
+
+1. ~~mutation run for the loops~~ (verification of already-committed code)
+2. `X-Forwarded-Proto` in `mcp_redirect`
+3. harvest the OpenAPI document, port the four docs routes + a drift checker
+4. `hash-password` binary
+5. `restore-from-cloud` binary
+6. relocate `scripts/`
+7. Dockerfile: Rust for `app`, Python for `agent`
+8. `fly.toml` `[processes]`
+9. delete `backend/app/` except `sentinel_agent/`, trim `pyproject.toml`
+10. delete `proxy.rs` and the fallback's forward
+11. update `AGENTS.md`, `README.md`, `docs/`
+12. re-verify what still can be
+
+## What step 12 can and cannot cover
+
+Every harness in `tests/differential/` diffs against the running Python
+web tier. After step 9 they cannot run. That is the cost of this slice
+and it is why it comes last.
+
+The harnesses stay in the tree rather than being deleted with the Python.
+They are the record of how equivalence was established, they still run
+against the commit before step 9, and the fixtures and checkers that do
+not need Python — `column_defaults.py`, the mutation specs, the corpora —
+keep working. What replaces them going forward is the Rust test suite:
+356 lib tests plus the database-gated integration tests.

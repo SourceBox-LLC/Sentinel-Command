@@ -17,6 +17,9 @@ DELETE FROM mcp_activity_logs  WHERE org_id LIKE 'loops-%';
 DELETE FROM audit_log          WHERE org_id LIKE 'loops-%';
 DELETE FROM motion_events      WHERE org_id LIKE 'loops-%';
 DELETE FROM email_log          WHERE org_id LIKE 'loops-%';
+-- The two single-table orgs the retention mutations need, one of which
+-- has an EMPTY org_id and so matches no LIKE pattern.
+DELETE FROM audit_log          WHERE org_id = '';
 DELETE FROM email_outbox       WHERE org_id LIKE 'loops-%';
 DELETE FROM sentinel_runs      WHERE org_id LIKE 'loops-%';
 DELETE FROM cameras            WHERE org_id LIKE 'loops-%' OR org_id LIKE 'rec-%';
