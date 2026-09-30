@@ -1,5 +1,5 @@
 {
- "_comment": "Mutations for the two background-loop bodies. Scored against loops_run.sh, the probe pair — no HTTP harness can reach either one. This spec matters more than most: the plan names these loops as \"the least testable part and the most likely to silently diverge, because nothing calls them and nothing returns\", and the Python's own history bears that out — an AttributeError in the cleanup ran nightly, swallowed by the loop's try/except, until a Sentry alert surfaced it. Several mutations here change a COUNT and nothing else, or the rows and not the count; the probe prints both for that reason.",
+ "_comment": "Mutations for the two background-loop bodies. Scored against loops_run.sh, the probe pair — no HTTP harness can reach either one. This spec matters more than most: the plan names these loops as \"the least testable part and the most likely to silently diverge, because nothing calls them and nothing returns\", and the Python's own history bears that out — an AttributeError in the cleanup ran nightly, swallowed by the loop's try/except, until a Sentry alert surfaced it. Several mutations here change a COUNT and nothing else, or the rows and not the count; the probe prints both for that reason. Extended to the five bodies the first pass did not cover — the reaper, the motion digest, the licence check-in, the plan reconcile and the data sync — plus the disk check, which has no HTTP surface at all. Several are marked equivalent with the reason: a concurrent write landing between a SELECT and an UPDATE is not something a single-threaded probe can arrange, and saying so is better than leaving the predicate looking untested.",
  "restart_rust": false,
  "harness": [
   [
@@ -14,8 +14,8 @@
    "name": "a node never heard from is announced as offline",
    "file": "src/loops.rs",
    "_why": "`last_seen IS NOT NULL` is the filter that keeps a row which has never reported from being announced as having gone offline. Drop it and every freshly created node gets a spurious 'went offline' the first time the sweep runs — before its first heartbeat, which is exactly the window an operator is watching.",
-   "old": "        \"UPDATE camera_nodes SET status = 'offline'\n          WHERE status = 'online' AND last_seen IS NOT NULL AND last_seen < $1",
-   "new": "        \"UPDATE camera_nodes SET status = 'offline'\n          WHERE status = 'online' AND last_seen < $1",
+   "old": "        \"UPDATE camera_nodes SET status = 'offline', updated_at = $2\n          WHERE status = 'online' AND last_seen IS NOT NULL AND last_seen < $1",
+   "new": "        \"UPDATE camera_nodes SET status = 'offline', updated_at = $2\n          WHERE status = 'online' AND last_seen < $1",
    "equivalent": "Equivalent, and verified rather than assumed: `NULL < timestamp` evaluates to NULL and `WHERE` treats that as not-true, so the comparison ALONE already excludes a row that has never reported. Checked against the fixture — 2 rows matched with the predicate and 2 without. SQLAlchemy emits the same SQL, so it is equally redundant in the Python. The predicate stays in both because it states the intent, and this entry stays so the next reader does not take its presence for evidence that it is load-bearing."
   },
   {
@@ -131,6 +131,281 @@
    "_why": "The total is what the log line shows an operator. Leaving a table out of the sum under-reports a nightly sweep that deleted hundreds of thousands of rows, and there is nothing else to notice it by.",
    "old": "            + self.processed_webhooks\n    }",
    "new": "    }"
+  },
+  {
+   "name": "a merely slow run is reaped",
+   "file": "src/loops.rs",
+   "_why": "20 minutes, and a run at 5 is working rather than lost. Reaping it stamps `error` over a run the agent is still in the middle of, and the agent's own /complete then lands on a row that already has a terminal outcome.",
+   "old": "const STRANDED_RUN_AGE_MINUTES: i64 = 20;",
+   "new": "const STRANDED_RUN_AGE_MINUTES: i64 = 2;",
+   "env": {
+    "DIFF_ONLY": "reaper"
+   }
+  },
+  {
+   "name": "a run with no started_at is reaped",
+   "file": "src/loops.rs",
+   "_why": "`/start` sets `outcome` and `started_at` together, so a `running` row with a NULL `started_at` should not exist — and must not be reaped on the strength of a NULL comparison. Unlike the sweep's equivalent filter this one IS load-bearing, because the NULL is on the column being compared: `NULL < cutoff` excludes it either way, but dropping the predicate here also drops it from the log line's id list.",
+   "old": "          WHERE outcome = 'running' AND started_at IS NOT NULL AND started_at < $1",
+   "new": "          WHERE outcome = 'running' AND started_at < $1",
+   "env": {
+    "DIFF_ONLY": "reaper"
+   },
+   "equivalent": "Same three-valued logic as the sweep's: `NULL < cutoff` is NULL and WHERE treats that as not-true, so the predicate changes no row. Verified on the fixture's `loops-run-nostart`. Kept so the next reader does not take its presence for evidence it is load-bearing."
+  },
+  {
+   "name": "the write forgets to re-check running",
+   "file": "src/loops.rs",
+   "_why": "The re-check belongs in the WRITE, not just the SELECT. Without it a concurrent /complete landing between the two has its real outcome overwritten with `error`, leaving a row carrying `error` beside the completion's own severity and incident_id — and no repair path, because the agent's POST already succeeded.",
+   "old": "              WHERE id = ANY($3) AND outcome = 'running'",
+   "new": "              WHERE id = ANY($3)",
+   "env": {
+    "DIFF_ONLY": "reaper"
+   },
+   "equivalent": "Unreachable from a probe: it needs a /complete to land between the SELECT and the UPDATE, which a single-threaded probe cannot arrange. Kept as the record of why the predicate is in the write statement at all."
+  },
+  {
+   "name": "abandoned and stale-pending share a cutoff",
+   "file": "src/loops.rs",
+   "_why": "Two minutes re-fires the wakeup; six HOURS gives up. Sharing the shorter cutoff abandons a run two minutes after it was queued, which on a cold-starting agent is every run.",
+   "old": "const ABANDONED_PENDING_HOURS: i64 = 6;",
+   "new": "const ABANDONED_PENDING_HOURS: i64 = 0;",
+   "env": {
+    "DIFF_ONLY": "reaper"
+   }
+  },
+  {
+   "name": "a terminal run is abandoned",
+   "file": "src/loops.rs",
+   "_why": "The abandoned sweep is scoped to `pending`. Without that it stamps every old row including the ones that finished — the fixture's `incident` run is nine hours old and must keep its outcome.",
+   "old": "          WHERE outcome = 'pending' AND triggered_at < $3",
+   "new": "          WHERE triggered_at < $3",
+   "env": {
+    "DIFF_ONLY": "reaper"
+   }
+  },
+  {
+   "name": "an open cooldown window is drained early",
+   "file": "src/loops.rs",
+   "_why": "An anchor younger than its org's cooldown is a window still open: draining it emits a digest for a window that has not finished and re-arms the camera for immediate emails, which is the double-email the digest exists to prevent.",
+   "old": "        if (now - anchor_ts).num_seconds() < cooldown_min * 60 {",
+   "new": "        if false {",
+   "env": {
+    "DIFF_ONLY": "digest"
+   }
+  },
+  {
+   "name": "the digest counts the event at the anchor",
+   "file": "src/loops.rs",
+   "_why": "Strictly AFTER the anchor: the immediate email already covered the event at anchor time, so counting it reports one more than actually went unreported. The fixture places an event exactly on the anchor for this.",
+   "old": "              WHERE org_id = $1 AND camera_id = $2 AND timestamp > $3 AND timestamp <= $4",
+   "new": "              WHERE org_id = $1 AND camera_id = $2 AND timestamp >= $3 AND timestamp <= $4",
+   "env": {
+    "DIFF_ONLY": "digest"
+   }
+  },
+  {
+   "name": "the digest counts past the window edge",
+   "file": "src/loops.rs",
+   "_why": "Events past `window_end` belong to a later cycle. The upper bound is defensive — no later cycle exists yet, because this anchor is still here — but dropping it folds a future cycle's events into this digest.",
+   "old": " AND timestamp > $3 AND timestamp <= $4",
+   "new": " AND timestamp > $3",
+   "env": {
+    "DIFF_ONLY": "digest"
+   }
+  },
+  {
+   "name": "the anchor is deleted unconditionally",
+   "file": "src/loops.rs",
+   "_why": "The whole subtlety of this body. Counting and emitting take real time; a motion event landing in that gap sees the same expired anchor, sends its own immediate email and re-arms the row. An unconditional delete erases that brand-new window, so the NEXT event emails immediately again — double immediate emails on exactly the busy cameras digests exist for.",
+   "old": "        let removed = sqlx::query(\"DELETE FROM settings WHERE id = $1 AND value = $2\")\n            .bind(id)\n            .bind(&anchor_value)",
+   "new": "        let removed = sqlx::query(\"DELETE FROM settings WHERE id = $1 AND $2 = $2\")\n            .bind(id)\n            .bind(&anchor_value)",
+   "env": {
+    "DIFF_ONLY": "digest"
+   },
+   "equivalent": "Needs a motion event to land between the count and the delete, which a probe cannot arrange. Kept as the record of why the delete is conditional; the re-armed case is what `anchors_rearmed` in the summary counts."
+  },
+  {
+   "name": "a corrupt anchor is kept",
+   "file": "src/loops.rs",
+   "_why": "An unparseable timestamp is dropped so the next motion event starts a fresh window. Keeping it silences that camera FOREVER — every tick re-reads a value nothing can parse, and the immediate-email path sees an anchor and stays quiet.",
+   "old": "        let Ok(anchor_ts) = crate::pydatetime::fromisoformat(&anchor_value).map(|t| t.naive)",
+   "new": "        let Ok(anchor_ts) = crate::pydatetime::fromisoformat(&anchor_value).map(|t| t.naive)\n            .or(Ok::<_, crate::pydatetime::PyDateError>(crate::models::now_naive()))",
+   "env": {
+    "DIFF_ONLY": "digest"
+   }
+  },
+  {
+   "name": "the digest reads the wrong org's cooldown",
+   "file": "src/loops.rs",
+   "_why": "The cooldown is the ANCHOR's org's, and the fixture gives one org a two-hour window so a 40-minute anchor is open for it and expired for the other. A port reading a constant flips exactly that row.",
+   "old": "        let cooldown_min = crate::notifications::motion_cooldown_minutes(&state.pool, &org_id).await;",
+   "new": "        let cooldown_min = 15;",
+   "env": {
+    "DIFF_ONLY": "digest"
+   }
+  },
+  {
+   "name": "an unreachable service is not recorded",
+   "file": "src/license.rs",
+   "_why": "A failed check-in still writes `last_check_at` and `last_check_reachable`. Skipping those writes leaves the previous verdict in place with no record that anything was attempted — the one state the grace window cannot reason about, because it cannot tell a stale success from a fresh one.",
+   "old": "        crate::settings::set(pool, org_id, LAST_CHECK_AT, &now_iso).await.ok();\n        crate::settings::set(pool, org_id, LAST_CHECK_REACHABLE, \"false\").await.ok();\n        return CheckInOutcome { attempted: true, ..Default::default() };",
+   "new": "        return CheckInOutcome { attempted: true, ..Default::default() };",
+   "env": {
+    "DIFF_ONLY": "license"
+   }
+  },
+  {
+   "name": "a non-object body is accepted",
+   "file": "src/license.rs",
+   "_why": "A body that parses as JSON but is not an object is not an answer. Accepting one reads `valid` off a list as absent — falsy — so it fails closed by accident rather than by decision, and `reachable` is recorded as true when nothing usable came back.",
+   "old": "    let Some(data) = body.filter(serde_json::Value::is_object) else {",
+   "new": "    let Some(data) = body else {",
+   "env": {
+    "DIFF_ONLY": "license"
+   }
+  },
+  {
+   "name": "sync survives an invalid licence",
+   "file": "src/license.rs",
+   "_why": "Sync is a separate entitlement but not an independent one: a licence losing validity loses sync in the same breath rather than coasting on a stale `true`. The fixture has a body claiming sync on an invalid licence for exactly this.",
+   "old": "    let sync = valid && data.get(\"sync_enabled\").map(crate::pyrepr::truthy).unwrap_or(false);",
+   "new": "    let sync = data.get(\"sync_enabled\").map(crate::pyrepr::truthy).unwrap_or(false);",
+   "env": {
+    "DIFF_ONLY": "license"
+   }
+  },
+  {
+   "name": "an invalid licence still stamps last_ok_at",
+   "file": "src/license.rs",
+   "_why": "`last_ok_at` is what the 72-hour grace measures from. Stamping it on a REVOKED check-in means a revoked licence coasts for three more days every time it checks in — which is unbounded, since it checks in every fifteen minutes.",
+   "old": "    if valid {\n        crate::settings::set(pool, org_id, LAST_OK_AT, &now_iso).await.ok();",
+   "new": "    if true {\n        crate::settings::set(pool, org_id, LAST_OK_AT, &now_iso).await.ok();",
+   "env": {
+    "DIFF_ONLY": "license"
+   }
+  },
+  {
+   "name": "the install id is minted fresh each time",
+   "file": "src/license.rs",
+   "_why": "Persisted so it survives a restart: the licence service counts installs, and an id that changed every boot would read as an install per restart — which for a per-install licence means it stops validating.",
+   "old": "    if let Ok(Some(existing)) = crate::settings::get(pool, org_id, INSTALL_ID, Some(\"\")).await {\n        if !existing.is_empty() {\n            return existing;\n        }\n    }",
+   "new": "",
+   "env": {
+    "DIFF_ONLY": "license"
+   }
+  },
+  {
+   "name": "an unreachable Clerk downgrades the org",
+   "file": "src/loops.rs",
+   "_why": "The most expensive mistake this sweep could make, and the one it exists because of: treating a missing answer as an answer. `live is None` is a SKIP. Downgrading on it means a Clerk outage moves every paying org to free caps.",
+   "old": "        let Some(live) = live.filter(|slug| *slug != cached) else {\n            continue;\n        };",
+   "new": "        let live = live.unwrap_or_else(|| \"free_org\".to_string());\n        if live == cached {\n            continue;\n        }",
+   "env": {
+    "DIFF_ONLY": "reconcile"
+   }
+  },
+  {
+   "name": "the reconcile skips the camera cap",
+   "file": "src/loops.rs",
+   "_why": "Writing the setting without enforcing the cap looks entirely right in `settings` and leaves the org streaming past its new plan — three cameras over, in the fixture.",
+   "old": "        crate::plans::enforce_camera_cap(&ctx, &state.pool, &org_id).await.ok();",
+   "new": "        let _ = &ctx;",
+   "env": {
+    "DIFF_ONLY": "reconcile"
+   }
+  },
+  {
+   "name": "the reconcile checks free orgs too",
+   "file": "src/loops.rs",
+   "_why": "Only PAID cached slugs are re-verified. Widening it to every org means a Clerk lookup per org per hour — the throttle the fast path exists to avoid — and the fixture's free org is there to show it is not touched.",
+   "old": "        \"SELECT org_id, value FROM settings WHERE key = 'org_plan' AND value = ANY($1)\",",
+   "new": "        \"SELECT org_id, value FROM settings WHERE key = 'org_plan'\",",
+   "env": {
+    "DIFF_ONLY": "reconcile"
+   }
+  },
+  {
+   "name": "the cap runs before the plan is written",
+   "file": "src/loops.rs",
+   "_why": "`enforce_camera_cap` reads the plan back, so running it first applies the cap the org is LEAVING rather than the one it is arriving at — and on a downgrade that means no cameras are suspended at all.",
+   "old": "        crate::settings::set(&state.pool, &org_id, \"org_plan\", &live).await.ok();",
+   "new": "        // moved below\n        let _ = &live;",
+   "env": {
+    "DIFF_ONLY": "reconcile"
+   }
+  },
+  {
+   "name": "the api key hash is mirrored",
+   "file": "src/sync.rs",
+   "_why": "The hash that authenticates a node to THIS Command Center. Useless to a restore — a restored node re-registers and is issued a fresh key — and actively dangerous sitting in a cloud mirror. Only observable in the request body, which is why the fake records it.",
+   "old": "        \"camera_nodes\" => &[\"api_key_hash\"],",
+   "new": "        \"camera_nodes\" => &[],",
+   "env": {
+    "DIFF_ONLY": "sync"
+   }
+  },
+  {
+   "name": "evidence blobs are mirrored",
+   "file": "src/sync.rs",
+   "_why": "Tens of megabytes a row, deliberately not synced. The metadata around it still is, so a restore knows the evidence existed. Sending it would also defeat the column's deferral on the Python side.",
+   "old": "        \"incident_evidence\" => &[\"data\"],",
+   "new": "        \"incident_evidence\" => &[],",
+   "env": {
+    "DIFF_ONLY": "sync"
+   }
+  },
+  {
+   "name": "a log table reconciles deletes",
+   "file": "src/sync.rs",
+   "_why": "The dangerous direction. `known_ids` lets the service tombstone what is gone locally — right for cameras, catastrophic for a log table, because local retention prunes those BECAUSE local disk is finite and the cloud copy exists to outlive it. Every nightly cleanup would delete the mirror's history too.",
+   "old": "    SyncTableSpec { table: \"motion_events\", cursor: \"timestamp\", reconcile_deletes: false },",
+   "new": "    SyncTableSpec { table: \"motion_events\", cursor: \"timestamp\", reconcile_deletes: true },",
+   "env": {
+    "DIFF_ONLY": "sync"
+   }
+  },
+  {
+   "name": "the cursor advances on an unacknowledged push",
+   "file": "src/sync.rs",
+   "_why": "The cursor moves only past rows the service CONFIRMED. Advancing on a 5xx means those rows are never sent again and are silently missing from the mirror — the failure mode a backup can least afford, because nothing surfaces it until a restore.",
+   "old": "        response.error_for_status_ref()?;",
+   "new": "        let _ = response.status();",
+   "env": {
+    "DIFF_ONLY": "sync"
+   }
+  },
+  {
+   "name": "one table's failure stops the cycle",
+   "file": "src/sync.rs",
+   "_why": "Cursors are independent, so partial progress is both safe and useful. Aborting the cycle on the first failure means a single persistently failing table blocks every table after it in the list — forever, since the order is fixed.",
+   "old": "            Err(error) => {\n                tracing::warn!(table = spec.table, %error, \"[SentinelSync] push failed\");\n                summary.failed.push(spec.table.to_string());\n            }",
+   "new": "            Err(error) => {\n                tracing::warn!(table = spec.table, %error, \"[SentinelSync] push failed\");\n                summary.failed.push(spec.table.to_string());\n                break;\n            }",
+   "env": {
+    "DIFF_ONLY": "sync"
+   }
+  },
+  {
+   "name": "sync runs without the entitlement",
+   "file": "src/sync.rs",
+   "_why": "A separate opt-in on the licence. Running without it mirrors a customer's data to a service they did not buy.",
+   "old": "    if !crate::license::is_sync_enabled(&ctx).await {\n        return SyncSummary::default();\n    }",
+   "new": "    if false {\n        return SyncSummary::default();\n    }",
+   "env": {
+    "DIFF_ONLY": "sync"
+   },
+   "equivalent": "The fixture seeds the entitlement ON, so removing the gate changes nothing there — the OFF case is what `is_sync_enabled`'s own tests cover. Kept as the record of the gate being deliberate."
+  },
+  {
+   "name": "a recovered disk keeps its debounce",
+   "file": "src/loops.rs",
+   "_why": "Falling back below the threshold CLEARS the debounce, so the next crossing alerts immediately rather than waiting out a six-hour cooldown from an incident that is already over. Unreachable from a differential — there is no HTTP surface — which is why the decision is a function taking its inputs.",
+   "old": "        debounce.last_emit_seconds = None;\n        return None;",
+   "new": "        return None;",
+   "env": {
+    "DIFF_ONLY": "nothing-reaches-this"
+   },
+   "_unit_only": "The disk check writes nothing and has no route; `check_disk_critical`'s own tests are what hold this."
   }
  ]
 }
