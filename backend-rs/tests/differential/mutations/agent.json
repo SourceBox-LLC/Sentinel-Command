@@ -1,0 +1,144 @@
+{
+  "_comment": "Mutations for the Rust Sentinel AI agent, scored against agent_run.sh — both agents against one Command Center and one scripted model, on all three wires. `restart_rust` is false because agent_run.sh builds and restarts its own processes. The harness has four named divergences (frame order, the OpenAI 5xx retry, the replay of malformed arguments, list order); none of the mutations below should be able to hide behind one.",
+  "restart_rust": false,
+  "harness": [
+    [
+      "tests/differential/agent_run.sh"
+    ]
+  ],
+  "mutations": [
+    {
+      "name": "trace result cut at 900, not 800",
+      "file": "src/agent/run.rs",
+      "_why": "The trace is stored on the run row and has a budget; the cut is on the wire to Command Center.",
+      "old": "\"result\": result.text.chars().take(800)",
+      "new": "\"result\": result.text.chars().take(900)"
+    },
+    {
+      "name": "a filed run with no severity defaults to medium",
+      "file": "src/agent/run.rs",
+      "_why": "Only reachable when the model files without a valid severity.",
+      "old": "severity: filed.then(|| severity.unwrap_or_else(|| \"low\".to_string())),",
+      "new": "severity: filed.then(|| severity.unwrap_or_else(|| \"medium\".to_string())),"
+    },
+    {
+      "name": "a filed incident is reported as no_action",
+      "file": "src/agent/run.rs",
+      "_why": "The dashboard's run history and the monthly counters key on this.",
+      "old": "outcome: if filed { \"incident\" } else { \"no_action\" }.to_string(),",
+      "new": "outcome: \"no_action\".to_string(),"
+    },
+    {
+      "name": "an empty answer has an empty summary",
+      "file": "src/agent/run.rs",
+      "_why": "The placeholder is what the operator reads.",
+      "old": "summary: if summary.is_empty() {\n                    \"(agent returned no summary)\".to_string()",
+      "new": "summary: if summary.is_empty() {\n                    String::new()"
+    },
+    {
+      "name": "finalize_incident no longer carries the incident id",
+      "file": "src/agent/run.rs",
+      "_why": "Most-recent-write-wins across two tools; dropping one changes which incident a run points at only when finalize is the last word.",
+      "old": "[\"create_incident\", \"finalize_incident\"];",
+      "new": "[\"create_incident\", \"create_incident\"];"
+    },
+    {
+      "name": "stale frames are never pruned",
+      "file": "src/agent/run.rs",
+      "_why": "Every frame ever captured would ride along on every later request — context and cost, invisible in the outcome.",
+      "old": "            if has_images(stale) {\n                prune_images(stale);",
+      "new": "            if false {\n                prune_images(stale);"
+    },
+    {
+      "name": "a cutoff after filing loses its suffix",
+      "file": "src/agent/run.rs",
+      "_why": "",
+      "old": "summary: format!(\"{summary} An incident was filed before the cutoff.\"),",
+      "new": "summary: summary.clone(),"
+    },
+    {
+      "name": "an invalid severity is accepted",
+      "file": "src/agent/run.rs",
+      "_why": "Command Center validates severity on /complete; an unvalidated one turns a finished run into a 422.",
+      "old": "if SEVERITIES.contains(&chosen.as_str()) {",
+      "new": "if !chosen.is_empty() {"
+    },
+    {
+      "name": "one iteration too many",
+      "file": "src/agent/run.rs",
+      "_why": "The budget is the cost ceiling.",
+      "old": "for iteration in 0..max_iterations {",
+      "new": "for iteration in 0..max_iterations + 1 {"
+    },
+    {
+      "name": "long string arguments are cut at 100",
+      "file": "src/agent/run.rs",
+      "_why": "",
+      "old": "json!(format!(\"{}…\", s.chars().take(200).collect::<String>()))",
+      "new": "json!(format!(\"{}…\", s.chars().take(100).collect::<String>()))"
+    },
+    {
+      "name": "the org override header is not sent",
+      "file": "src/agent/mcp_client.rs",
+      "_why": "The first-party key is multi-tenant: without the header the tools have no org, or the wrong one.",
+      "old": "            .custom_headers(headers);",
+      "new": "            .custom_headers(HashMap::new());"
+    },
+    {
+      "name": "a pruned message carries no notice",
+      "file": "src/agent/llm.rs",
+      "_why": "The notice is what tells the model the frames were there.",
+      "old": "format!(\"{joined} {PRUNED_NOTE}\").trim().to_string()",
+      "new": "joined.to_string()"
+    },
+    {
+      "name": "max_tokens is not sent",
+      "file": "src/agent/llm.rs",
+      "_why": "A missing cap is a provider default, which is a different bill.",
+      "old": "        request.max_tokens = Some(self.max_tokens);\n",
+      "new": ""
+    },
+    {
+      "name": "malformed arguments are not repaired",
+      "file": "src/agent/llm.rs",
+      "_why": "Without the repair one bad tool call ends the run as a provider error.",
+      "old": "if raw.trim().is_empty() || serde_json::from_str::<Value>(raw).is_ok() {",
+      "new": "if true {"
+    },
+    {
+      "name": "an empty model turn is a failure",
+      "file": "src/agent/llm.rs",
+      "_why": "",
+      "old": "if text.contains(EMPTY_RESPONSE_ERROR) {",
+      "new": "if text.is_empty() {"
+    },
+    {
+      "name": "every trigger gets the manual brief",
+      "file": "src/agent/prompts.rs",
+      "_why": "",
+      "old": "        \"motion\" => MOTION,\n",
+      "new": "        \"motion\" => MANUAL,\n"
+    },
+    {
+      "name": "the operator prompt is dropped",
+      "file": "src/agent/prompts.rs",
+      "_why": "",
+      "old": "parts.push(format!(\"Operator prompt: {prompt}\"));",
+      "new": "parts.push(String::new());"
+    },
+    {
+      "name": "the summary is cut at 4000",
+      "file": "src/agent/queue.rs",
+      "_why": "",
+      "old": "completion.summary.chars().take(8000)",
+      "new": "completion.summary.chars().take(4000)"
+    },
+    {
+      "name": "a null severity is sent rather than omitted",
+      "file": "src/agent/queue.rs",
+      "_why": "",
+      "old": "    if let Some(severity) = &completion.severity {\n        body.insert(\"severity\".into(), json!(severity));\n    }",
+      "new": "    body.insert(\"severity\".into(), json!(completion.severity));"
+    }
+  ]
+}
