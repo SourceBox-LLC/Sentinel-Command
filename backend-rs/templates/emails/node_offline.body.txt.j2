@@ -1,0 +1,19 @@
+{{ notification.title }}
+
+{{ notification.body }}
+
+A CameraNode going offline means EVERY camera attached to it has
+also gone dark. Cameras will appear offline in the dashboard
+until the node reconnects.
+
+What this might mean:
+  - The host machine crashed, lost power, or was rebooted.
+  - The systemd service / Windows Service stopped (check the host).
+  - The host lost internet connectivity entirely.
+
+Open the admin panel: {{ dashboard_url }}/admin
+
+——
+This alert went only to organization admins.
+Manage email alerts: {{ dashboard_url }}/settings#settings-notifications
+Unsubscribe from node-offline alerts: {{ unsubscribe_url }}

@@ -1,0 +1,25 @@
+{{ notification.title }}
+
+{{ notification.body }}
+
+{% if notification.meta.percent_used -%}
+Disk usage: {{ notification.meta.percent_used }}%
+{% endif -%}
+
+This is YOUR hardware (the host machine running CameraNode), not
+the Command Center's cloud disk.  When it fills, the CameraNode
+will stop writing new local recordings — live streaming continues,
+but recorded segments stop persisting.
+
+What to do:
+  - Free up space on the host (delete old recordings off the
+    /var/lib/sourcebox-sentry-cameranode/ directory, or whichever
+    path your install uses).
+  - Or: lower the recording retention cap in the per-camera
+    recording policy so the node prunes more aggressively.
+  - Or: expand the host's storage (mount a larger drive, swap
+    the SD card on a Pi, etc.).
+
+You'll get a follow-up email if the disk stays low after 6 hours.
+Manage email alerts: {{ dashboard_url }}/settings#settings-notifications
+Unsubscribe from CameraNode disk alerts: {{ unsubscribe_url }}

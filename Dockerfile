@@ -103,6 +103,13 @@ RUN mkdir -p src/bin \
 COPY backend-rs/src ./src
 COPY backend-rs/migrations ./migrations
 COPY backend-rs/assets ./assets
+# The 46 email templates are `include_str!`d by src/email_templates.rs, so
+# they are a build input like the two above. They used to live under
+# backend/app/ and be read from disk at runtime, which is how the image
+# came to ship without them at all for one commit: no COPY, no error, and
+# every notification email failing at render time in production. Embedding
+# them makes a missing file a compile error instead.
+COPY backend-rs/templates ./templates
 COPY backend-rs/tests ./tests
 COPY backend-rs/examples ./examples
 # Touched so cargo does not trust the fake sources' timestamps.

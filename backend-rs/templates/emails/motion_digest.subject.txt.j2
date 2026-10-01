@@ -1,0 +1,1 @@
+[Sentinel] {{ notification.meta.event_count or '?' }} more motion event{% if (notification.meta.event_count or 0) != 1 %}s{% endif %} on {{ notification.title.split(' on ', 1)[-1] }}

@@ -128,7 +128,7 @@ See Authentication → "Local auth (self-hosted)" below for what this mode does 
 
 ## Configuration
 
-Backend config is loaded from environment variables (see `backend/.env.example`).
+Backend config is loaded from environment variables (see `backend-rs/.env.example`; it moved there with the rewrite, because `backend/` is the agent now).
 
 **Required (`AUTH_PROVIDER=clerk`, the default):**
 - `CLERK_SECRET_KEY` / `CLERK_PUBLISHABLE_KEY` — Clerk auth
@@ -204,6 +204,11 @@ Backend config is loaded from environment variables (see `backend/.env.example`)
 - `RESEND_WEBHOOK_SECRET` — Svix signing secret for the `/api/webhooks/resend` bounce/complaint handler
 - `EMAIL_FROM_ADDRESS` — default `notifications@sentinel-command.com` (must be on a Resend-verified sending domain; sentinel-command.com is verified — DKIM + SPF/Return-Path on `send.sentinel-command.com` — sourceboxsentry.com is not). No-reply by design: no Reply-To is set — support is a separate proactive channel (`support@sentinel-command.com`).
 - `EMAIL_FROM_NAME` — default `Sentinel by SourceBox`
+- `EMAIL_TEMPLATES_DIR` — overrides the compiled-in templates with a
+  directory. Unset in production, which is the point: the 46 templates are
+  `include_str!`d from `backend-rs/templates/emails/`, so a missing or
+  renamed one is a compile error rather than a render failure on the first
+  send. Set it only to preview a template edit without rebuilding.
 - `EMAIL_WORKER_INTERVAL_SECONDS` — outbox-drain tick interval (default 5)
 - `EMAIL_WORKER_BATCH_SIZE` — max rows drained per tick (default 20)
 - `EMAIL_MAX_ATTEMPTS` — retries before a row is permanently failed (default 3)
@@ -260,6 +265,12 @@ backend-rs/                       # Command Center. 41 modules + 28 route files.
 │   │   └── restore_from_cloud.rs # sentinel-restore-from-cloud
 ├── assets/openapi.json           # FastAPI's own document, harvested at port
 │                                 # time and compiled in. See api/docs.rs.
+├── templates/emails/             # the 46 Jinja templates — _layout.html.j2
+│                                 # plus 15 kinds x (subject + txt + html).
+│                                 # COMPILED IN, like the two above: they
+│                                 # were read from disk under backend/app/
+│                                 # and the deletion shipped an image with
+│                                 # none of them, silently, for one commit.
 ├── migrations/                   # embedded by sqlx::migrate! at compile time
 ├── examples/                     # probe pairs for code with no HTTP surface
 └── tests/

@@ -83,7 +83,7 @@ AI-agent incidents, MCP key audit, CameraNode disk, member audit);
 mechanism for volume control. Transport is Resend; integration lives
 in `app/core/email.py`, `app/core/email_worker.py`, `app/core/recipients.py`,
 `app/core/email_templates.py`, `app/core/email_unsubscribe.py`. 22
-Jinja2 templates in `app/templates/emails/`. Webhook-driven bounce/
+Jinja2 templates in `backend-rs/templates/emails/`, compiled into the binary. Webhook-driven bounce/
 complaint handling at `/api/webhooks/resend` writes to `EmailSuppression`.
 Sub-processor disclosure already in `SUB_PROCESSORS.md` + `DPA.md`.
 Marketing copy already swept across SecurityPage / PricingPage / FAQ /

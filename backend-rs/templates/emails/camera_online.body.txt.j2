@@ -1,0 +1,19 @@
+{{ notification.title }}
+
+{{ notification.body }}
+
+{% if notification.camera_id -%}
+Camera ID: {{ notification.camera_id }}
+{% endif -%}
+
+The camera is reporting segments again — live streaming and motion
+detection are back.  No action needed; this is just the all-clear
+follow-up to the earlier offline alert.
+
+View this camera: {{ dashboard_url }}{{ notification.link or '/dashboard' }}
+
+——
+This is the recovery notice paired with the earlier offline alert.
+You'll continue to get both kinds of email until you turn the toggle off.
+Manage email alerts: {{ dashboard_url }}/settings#settings-notifications
+Unsubscribe from camera offline/recovered alerts: {{ unsubscribe_url }}

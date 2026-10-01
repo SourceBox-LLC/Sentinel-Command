@@ -1,0 +1,21 @@
+{{ notification.title }}
+
+{{ notification.body }}
+
+A new MCP API key grants full programmatic access to your
+organization's cameras, nodes, and incident data.  Anyone holding
+this key can list cameras, view live frames via view_camera, and
+file incidents on the org's behalf.
+
+If YOU created this key intentionally — no action needed.
+
+If you DIDN'T create this key, treat it as a security incident:
+  1. Sign in to {{ dashboard_url }}/mcp
+  2. Find the new key in the list
+  3. Click "Revoke" on it immediately
+  4. Audit recent MCP activity at {{ dashboard_url }}/admin/mcp
+
+——
+This alert went only to organization admins.
+Manage email alerts: {{ dashboard_url }}/settings#settings-notifications
+Unsubscribe from MCP key audit alerts: {{ unsubscribe_url }}

@@ -1,0 +1,53 @@
+<h2 style="margin:0 0 16px;font-size:20px;font-weight:600;color:#111;line-height:1.3;">
+  {{ notification.title | e }}
+</h2>
+
+<p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#374151;">
+  {{ notification.body | e }}
+</p>
+
+{% if notification.meta.role %}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;background:#f9fafb;border-radius:6px;width:100%;">
+  <tr>
+    <td style="padding:12px 14px;font-size:13px;color:#6b7280;">
+      Assigned role
+    </td>
+    <td style="padding:12px 14px;font-size:13px;color:#111;font-family:ui-monospace,Menlo,Consolas,monospace;text-align:right;">
+      {{ notification.meta.role | e }}
+    </td>
+  </tr>
+</table>
+{% endif %}
+
+<p style="margin:0 0 8px;font-size:14px;color:#6b7280;font-weight:600;">
+  If YOU expected this addition
+</p>
+<p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#374151;">
+  No action needed.  This is the audit-trail companion to the
+  invite acceptance.
+</p>
+
+<p style="margin:0 0 8px;font-size:14px;color:#6b7280;font-weight:600;">
+  If you DIDN'T expect this addition
+</p>
+<ol style="margin:0 0 24px;padding-left:20px;font-size:14px;line-height:1.7;color:#374151;">
+  <li>Open the settings page (link below)</li>
+  <li>Find your org's member list</li>
+  <li>Remove any unexpected accounts immediately</li>
+  <li>Audit recent invitations and Clerk dashboard activity</li>
+</ol>
+
+<table role="presentation" cellpadding="0" cellspacing="0" border="0">
+  <tr>
+    <td style="background:#22c55e;border-radius:6px;">
+      <a href="{{ dashboard_url }}/settings"
+         style="display:inline-block;padding:10px 18px;font-size:14px;font-weight:600;color:#0a0a0f;text-decoration:none;">
+        Open settings →
+      </a>
+    </td>
+  </tr>
+</table>
+
+<p style="margin:24px 0 0;font-size:13px;color:#9ca3af;line-height:1.5;">
+  This alert went only to organization admins.
+</p>

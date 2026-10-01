@@ -1,0 +1,20 @@
+{{ notification.title }}
+
+{{ notification.body }}
+
+The key can no longer authenticate against the MCP endpoint.
+Any AI client (Claude Code, Cursor, custom agent) currently using
+this key will start receiving 401 errors on its next request.
+The client will need to be reconfigured with a new key to resume
+working.
+
+If YOU revoked this key intentionally — no action needed.
+
+If you DIDN'T revoke this key, an admin in your org did, or
+someone gained admin access.  Audit recent admin activity at
+{{ dashboard_url }}/admin/audit-log
+
+——
+This alert went only to organization admins.
+Manage email alerts: {{ dashboard_url }}/settings#settings-notifications
+Unsubscribe from MCP key audit alerts: {{ unsubscribe_url }}

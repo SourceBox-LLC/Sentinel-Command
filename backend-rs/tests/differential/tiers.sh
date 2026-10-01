@@ -168,7 +168,11 @@ export FRONTEND_URL="${FRONTEND_URL:-http://localhost:5173}"
 # Where the Rust tier loads the shared .j2 templates from. Python finds
 # them relative to its own package; there is one copy, and this points
 # at it.
-export EMAIL_TEMPLATES_DIR="${EMAIL_TEMPLATES_DIR:-$REPO/backend/app/templates/emails}"
+# One copy of each template, pointed at by both tiers. It moved to
+# backend-rs/templates/emails when the Python tree was deleted — and the
+# Rust tier now compiles them in, so this override exists for the Python
+# half and for anyone diffing a template edit without a rebuild.
+export EMAIL_TEMPLATES_DIR="${EMAIL_TEMPLATES_DIR:-$RS/templates/emails}"
 
 # The same Svix secret for both tiers, so write_diff can sign one
 # webhook delivery with the svix library and send it to each.

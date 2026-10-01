@@ -1,0 +1,24 @@
+{{ notification.title }}
+
+{{ notification.body }}
+
+{% if notification.camera_id -%}
+Camera ID: {{ notification.camera_id }}
+{% endif -%}
+{% if notification.meta.score -%}
+Intensity: {{ notification.meta.score }}%
+{% endif -%}
+
+This is the FIRST motion email for this camera in the current
+cooldown window.  If more motion fires in the next ~15 minutes,
+you'll get ONE summary email with the count — not a stream of
+per-event emails.  Designed to alert you without spamming you.
+
+View the camera live: {{ dashboard_url }}{{ notification.link or '/dashboard' }}
+
+——
+You're receiving this because your organization has enabled
+motion-detection emails.  Motion email is opt-in (default OFF)
+and can be turned off again any time.
+Manage email alerts: {{ dashboard_url }}/settings#settings-notifications
+Unsubscribe from motion alerts: {{ unsubscribe_url }}

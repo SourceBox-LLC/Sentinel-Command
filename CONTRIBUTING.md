@@ -51,7 +51,8 @@ used to be under `backend/app/`, its counterpart is named in
 ### Command Center
 
 ```bash
-# Backend — needs PostgreSQL (SQLite is not supported; see AGENTS.md)
+# Backend — needs PostgreSQL (SQLite is not supported; see AGENTS.md).
+# `cp backend-rs/.env.example backend-rs/.env` for the full variable list.
 docker run -d --name sentinel-pg -p 5432:5432 \
     -e POSTGRES_USER=sentinel -e POSTGRES_PASSWORD=sentinel \
     -e POSTGRES_DB=sentinel postgres:16-alpine

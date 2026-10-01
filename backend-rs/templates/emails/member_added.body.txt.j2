@@ -1,0 +1,20 @@
+{{ notification.title }}
+
+{{ notification.body }}
+
+{% if notification.meta.role -%}
+Assigned role: {{ notification.meta.role }}
+{% endif -%}
+
+If YOU sent this invite or expected this user — no action needed.
+
+If you DIDN'T expect this addition:
+  1. Sign in to {{ dashboard_url }}/settings
+  2. Open your org's member list
+  3. Remove any unexpected accounts immediately
+  4. Audit your recent invitations and Clerk dashboard activity
+
+——
+This alert went only to organization admins.
+Manage email alerts: {{ dashboard_url }}/settings#settings-notifications
+Unsubscribe from member-audit alerts: {{ unsubscribe_url }}

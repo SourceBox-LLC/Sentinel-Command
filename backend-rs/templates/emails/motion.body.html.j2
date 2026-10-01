@@ -1,0 +1,55 @@
+<h2 style="margin:0 0 16px;font-size:20px;font-weight:600;color:#111;line-height:1.3;">
+  {{ notification.title | e }}
+</h2>
+
+<p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#374151;">
+  {{ notification.body | e }}
+</p>
+
+{% if notification.camera_id or notification.meta.score %}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;background:#f9fafb;border-radius:6px;width:100%;">
+  {% if notification.camera_id %}
+  <tr>
+    <td style="padding:12px 14px;font-size:13px;color:#6b7280;">
+      Camera ID
+    </td>
+    <td style="padding:12px 14px;font-size:13px;color:#111;font-family:ui-monospace,Menlo,Consolas,monospace;text-align:right;">
+      {{ notification.camera_id | e }}
+    </td>
+  </tr>
+  {% endif %}
+  {% if notification.meta.score %}
+  <tr>
+    <td style="padding:12px 14px;font-size:13px;color:#6b7280;border-top:1px solid #e5e5e9;">
+      Intensity
+    </td>
+    <td style="padding:12px 14px;font-size:13px;color:#111;font-family:ui-monospace,Menlo,Consolas,monospace;text-align:right;border-top:1px solid #e5e5e9;">
+      {{ notification.meta.score | e }}%
+    </td>
+  </tr>
+  {% endif %}
+</table>
+{% endif %}
+
+<p style="margin:0 0 24px;padding:14px;background:#dcfce7;border-left:3px solid #22c55e;font-size:14px;color:#14532d;line-height:1.5;">
+  <strong>Cooldown active.</strong> This is the FIRST motion email
+  for this camera in the current window.  If more motion fires in
+  the next ~15 minutes, you'll get one summary email with the
+  count — not a stream of per-event emails.
+</p>
+
+<table role="presentation" cellpadding="0" cellspacing="0" border="0">
+  <tr>
+    <td style="background:#22c55e;border-radius:6px;">
+      <a href="{{ dashboard_url }}{{ notification.link or '/dashboard' }}"
+         style="display:inline-block;padding:10px 18px;font-size:14px;font-weight:600;color:#0a0a0f;text-decoration:none;">
+        View camera live →
+      </a>
+    </td>
+  </tr>
+</table>
+
+<p style="margin:24px 0 0;font-size:13px;color:#9ca3af;line-height:1.5;">
+  Motion email is opt-in (default OFF) and can be turned off again
+  any time from the notification settings page.
+</p>

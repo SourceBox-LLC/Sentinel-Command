@@ -1,0 +1,24 @@
+{{ notification.title }}
+
+{{ notification.body }}
+
+{% if notification.meta.event_count -%}
+Additional events: {{ notification.meta.event_count }}
+{% endif -%}
+{% if notification.meta.window_start and notification.meta.window_end -%}
+Window: {{ notification.meta.window_start }} → {{ notification.meta.window_end }}
+{% endif -%}
+
+This is the SUMMARY email — the FIRST motion in this window
+already triggered an immediate email.  Open the dashboard to
+review what happened during the window.
+
+If the camera goes quiet, you won't get more emails.  If motion
+fires again after the cooldown closes, you'll get a fresh
+"first motion" email and a new {{ notification.meta.cooldown_minutes or 15 }}-minute window starts.
+
+View activity: {{ dashboard_url }}{{ notification.link or '/dashboard' }}
+
+——
+Manage email alerts: {{ dashboard_url }}/settings#settings-notifications
+Unsubscribe from motion alerts: {{ unsubscribe_url }}

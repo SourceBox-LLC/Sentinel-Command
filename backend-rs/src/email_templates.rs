@@ -98,19 +98,103 @@ fn option_value(value: &Option<String>) -> Value {
     }
 }
 
-/// The environment, built once over the templates directory.
+/// Every template, compiled in.
 ///
-/// Templates are read from disk at startup rather than embedded so the
-/// two stacks cannot drift: there is one copy of each file, and the
-/// Python renders the same one.
+/// **They are embedded because shipping without them is otherwise
+/// silent.** These 46 files lived in `backend/app/templates/emails/` and
+/// were loaded from disk at runtime — faithful to the Python, which read
+/// the same directory. The web tier's deletion took the directory with
+/// it: the default path pointed at `/app/app/templates/emails`, the
+/// Dockerfile had no COPY for it, and nothing failed until a send. Every
+/// one of the fifteen notification kinds would have raised at render
+/// time, in production, with `EMAIL_ENABLED=true`.
+///
+/// Two tests covered this and both *skipped*, because each began "if the
+/// directory does not exist, return" — a guard written for a checkout
+/// without the Python tree, which quietly became "the templates are gone
+/// and 200+ comparison cases do not run". They fail now instead.
+///
+/// `include_str!` means a missing or renamed file is a compile error,
+/// which is the same reason `migrations/` and `assets/openapi.json` are
+/// embedded rather than copied.
+const TEMPLATES: &[(&str, &str)] = &[
+    ("_layout.html.j2", include_str!("../templates/emails/_layout.html.j2")),
+    ("camera_offline.body.html.j2", include_str!("../templates/emails/camera_offline.body.html.j2")),
+    ("camera_offline.body.txt.j2", include_str!("../templates/emails/camera_offline.body.txt.j2")),
+    ("camera_offline.subject.txt.j2", include_str!("../templates/emails/camera_offline.subject.txt.j2")),
+    ("camera_online.body.html.j2", include_str!("../templates/emails/camera_online.body.html.j2")),
+    ("camera_online.body.txt.j2", include_str!("../templates/emails/camera_online.body.txt.j2")),
+    ("camera_online.subject.txt.j2", include_str!("../templates/emails/camera_online.subject.txt.j2")),
+    ("cameranode_disk_low.body.html.j2", include_str!("../templates/emails/cameranode_disk_low.body.html.j2")),
+    ("cameranode_disk_low.body.txt.j2", include_str!("../templates/emails/cameranode_disk_low.body.txt.j2")),
+    ("cameranode_disk_low.subject.txt.j2", include_str!("../templates/emails/cameranode_disk_low.subject.txt.j2")),
+    ("incident_created.body.html.j2", include_str!("../templates/emails/incident_created.body.html.j2")),
+    ("incident_created.body.txt.j2", include_str!("../templates/emails/incident_created.body.txt.j2")),
+    ("incident_created.subject.txt.j2", include_str!("../templates/emails/incident_created.subject.txt.j2")),
+    ("mcp_key_created.body.html.j2", include_str!("../templates/emails/mcp_key_created.body.html.j2")),
+    ("mcp_key_created.body.txt.j2", include_str!("../templates/emails/mcp_key_created.body.txt.j2")),
+    ("mcp_key_created.subject.txt.j2", include_str!("../templates/emails/mcp_key_created.subject.txt.j2")),
+    ("mcp_key_revoked.body.html.j2", include_str!("../templates/emails/mcp_key_revoked.body.html.j2")),
+    ("mcp_key_revoked.body.txt.j2", include_str!("../templates/emails/mcp_key_revoked.body.txt.j2")),
+    ("mcp_key_revoked.subject.txt.j2", include_str!("../templates/emails/mcp_key_revoked.subject.txt.j2")),
+    ("member_added.body.html.j2", include_str!("../templates/emails/member_added.body.html.j2")),
+    ("member_added.body.txt.j2", include_str!("../templates/emails/member_added.body.txt.j2")),
+    ("member_added.subject.txt.j2", include_str!("../templates/emails/member_added.subject.txt.j2")),
+    ("member_promotion_requested.body.html.j2", include_str!("../templates/emails/member_promotion_requested.body.html.j2")),
+    ("member_promotion_requested.body.txt.j2", include_str!("../templates/emails/member_promotion_requested.body.txt.j2")),
+    ("member_promotion_requested.subject.txt.j2", include_str!("../templates/emails/member_promotion_requested.subject.txt.j2")),
+    ("member_removed.body.html.j2", include_str!("../templates/emails/member_removed.body.html.j2")),
+    ("member_removed.body.txt.j2", include_str!("../templates/emails/member_removed.body.txt.j2")),
+    ("member_removed.subject.txt.j2", include_str!("../templates/emails/member_removed.subject.txt.j2")),
+    ("member_role_changed.body.html.j2", include_str!("../templates/emails/member_role_changed.body.html.j2")),
+    ("member_role_changed.body.txt.j2", include_str!("../templates/emails/member_role_changed.body.txt.j2")),
+    ("member_role_changed.subject.txt.j2", include_str!("../templates/emails/member_role_changed.subject.txt.j2")),
+    ("motion.body.html.j2", include_str!("../templates/emails/motion.body.html.j2")),
+    ("motion.body.txt.j2", include_str!("../templates/emails/motion.body.txt.j2")),
+    ("motion.subject.txt.j2", include_str!("../templates/emails/motion.subject.txt.j2")),
+    ("motion_digest.body.html.j2", include_str!("../templates/emails/motion_digest.body.html.j2")),
+    ("motion_digest.body.txt.j2", include_str!("../templates/emails/motion_digest.body.txt.j2")),
+    ("motion_digest.subject.txt.j2", include_str!("../templates/emails/motion_digest.subject.txt.j2")),
+    ("node_offline.body.html.j2", include_str!("../templates/emails/node_offline.body.html.j2")),
+    ("node_offline.body.txt.j2", include_str!("../templates/emails/node_offline.body.txt.j2")),
+    ("node_offline.subject.txt.j2", include_str!("../templates/emails/node_offline.subject.txt.j2")),
+    ("node_online.body.html.j2", include_str!("../templates/emails/node_online.body.html.j2")),
+    ("node_online.body.txt.j2", include_str!("../templates/emails/node_online.body.txt.j2")),
+    ("node_online.subject.txt.j2", include_str!("../templates/emails/node_online.subject.txt.j2")),
+    ("welcome.body.html.j2", include_str!("../templates/emails/welcome.body.html.j2")),
+    ("welcome.body.txt.j2", include_str!("../templates/emails/welcome.body.txt.j2")),
+    ("welcome.subject.txt.j2", include_str!("../templates/emails/welcome.subject.txt.j2")),
+];
+
+/// The environment, built once.
+///
+/// `EMAIL_TEMPLATES_DIR` still overrides the embedded set with a
+/// directory, which is what the differential harness used to point both
+/// stacks at one copy of each file. Unset — production — the compiled-in
+/// templates are used and there is nothing to forget to ship.
 fn environment() -> &'static Environment<'static> {
     static ENV: OnceLock<Environment<'static>> = OnceLock::new();
     ENV.get_or_init(|| {
-        let dir = std::env::var("EMAIL_TEMPLATES_DIR")
-            .unwrap_or_else(|_| "/app/app/templates/emails".to_string());
         let mut env = Environment::new();
-        env.set_loader(minijinja::path_loader(dir));
+        // `configure` FIRST, and the order is not cosmetic: minijinja
+        // compiles a template when it is added, so `trim_blocks` and
+        // `lstrip_blocks` have to be set before `add_template` or they do
+        // not apply to it. The path loader hid this by compiling lazily,
+        // on first render, by which time configuration had happened — so
+        // adding the templates eagerly in the wrong order produced a
+        // layout with a blank line after every `{# comment #}` and
+        // nothing else wrong. The render corpus caught it on the first
+        // run after it stopped skipping itself.
         configure(&mut env);
+        match std::env::var("EMAIL_TEMPLATES_DIR") {
+            Ok(dir) if !dir.is_empty() => env.set_loader(minijinja::path_loader(dir)),
+            _ => {
+                for (name, source) in TEMPLATES {
+                    env.add_template(name, source)
+                        .expect("a compiled-in template must parse");
+                }
+            }
+        }
         env
     })
 }
@@ -448,18 +532,18 @@ mod tests {
     /// own renderer.
     #[test]
     fn matches_the_jinja_renders() {
-        // The templates live in the backend tree; a checkout without it
-        // cannot run this.
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("backend/app/templates/emails");
-        if !dir.exists() {
-            return;
-        }
+        // Rendered from the COMPILED-IN templates, not from a
+        // directory. The directory version of this test skipped itself
+        // when the path was missing, and that is exactly what happened
+        // when the Python tree was deleted: 200+ cases stopped running
+        // and the suite stayed green. There is nothing left to skip on.
+        //
+        // `EMAIL_TEMPLATES_DIR` is cleared for the same reason — a stray
+        // value in the environment would silently redirect this at
+        // someone else's copy.
         // Safety: tests run in one process and this is set before the
         // environment is first built.
-        unsafe { std::env::set_var("EMAIL_TEMPLATES_DIR", &dir) };
+        unsafe { std::env::remove_var("EMAIL_TEMPLATES_DIR") };
 
         let raw = include_str!("../tests/fixtures/email_corpus.json");
         let corpus: Vec<Value> = serde_json::from_str(raw).unwrap();
@@ -511,22 +595,14 @@ mod tests {
     /// rendered by nothing and compared to nothing. Every subject
     /// template on disk has to appear in it.
     #[test]
-    fn the_corpus_covers_every_kind_on_disk() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("backend/app/templates/emails");
-        if !dir.exists() {
-            return;
-        }
+    fn the_corpus_covers_every_compiled_in_kind() {
         let raw = include_str!("../tests/fixtures/email_corpus.json");
         let corpus: Vec<Value> = serde_json::from_str(raw).unwrap();
         let covered: std::collections::HashSet<&str> =
             corpus.iter().filter_map(|case| case["kind"].as_str()).collect();
 
         let mut missing = Vec::new();
-        for entry in std::fs::read_dir(&dir).unwrap() {
-            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+        for (name, _) in TEMPLATES {
             if let Some(kind) = name.strip_suffix(".subject.txt.j2") {
                 if !covered.contains(kind) {
                     missing.push(kind.to_string());
@@ -538,6 +614,74 @@ mod tests {
             missing.is_empty(),
             "kinds with templates but no corpus entry: {missing:?} — \
              regenerate with tests/differential/gen_email_corpus.py"
+        );
+    }
+
+    /// The set itself: fifteen kinds, three files each, plus the shared
+    /// layout. A template dropped from `TEMPLATES` — or a file deleted
+    /// from `templates/emails/` — is a compile error, but a file *added*
+    /// to the directory and not listed would simply never be used, and
+    /// this is what says so.
+    #[test]
+    fn every_kind_has_its_three_files_and_nothing_is_unlisted() {
+        const KINDS: [&str; 15] = [
+            "camera_offline",
+            "camera_online",
+            "cameranode_disk_low",
+            "incident_created",
+            "mcp_key_created",
+            "mcp_key_revoked",
+            "member_added",
+            "member_promotion_requested",
+            "member_removed",
+            "member_role_changed",
+            "motion",
+            "motion_digest",
+            "node_offline",
+            "node_online",
+            "welcome",
+        ];
+        let listed: std::collections::HashSet<&str> =
+            TEMPLATES.iter().map(|(name, _)| *name).collect();
+        for kind in KINDS {
+            for suffix in ["subject.txt.j2", "body.txt.j2", "body.html.j2"] {
+                let name = format!("{kind}.{suffix}");
+                assert!(listed.contains(name.as_str()), "{name} is not compiled in");
+            }
+        }
+        assert!(listed.contains("_layout.html.j2"));
+        assert_eq!(
+            TEMPLATES.len(),
+            KINDS.len() * 3 + 1,
+            "the embedded set is {} files, not 15 kinds x 3 + the layout",
+            TEMPLATES.len()
+        );
+
+        // And every embedded template parses. `add_template` already
+        // panics on a syntax error when the environment is built, but
+        // only for the one that fails — this reaches all 46 whether or
+        // not a render happens to use them.
+        let mut env = Environment::new();
+        // configure() before add_template(), for the reason in
+        // `environment()`: the syntax settings apply at compile time.
+        configure(&mut env);
+        for (name, source) in TEMPLATES {
+            env.add_template(name, source)
+                .unwrap_or_else(|err| panic!("{name} does not parse: {err}"));
+        }
+
+        // The directory on disk and the compiled-in list must agree, or
+        // an operator editing a template edits a file nothing reads.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates/emails");
+        let on_disk: std::collections::HashSet<String> = std::fs::read_dir(&dir)
+            .expect("templates/emails must exist — it is a build input")
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        let listed_owned: std::collections::HashSet<String> =
+            listed.iter().map(|s| (*s).to_string()).collect();
+        assert_eq!(
+            on_disk, listed_owned,
+            "templates/emails and TEMPLATES disagree"
         );
     }
 }

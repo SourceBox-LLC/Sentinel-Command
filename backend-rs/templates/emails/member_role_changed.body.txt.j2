@@ -1,0 +1,25 @@
+{{ notification.title }}
+
+{{ notification.body }}
+
+{% if notification.meta.new_role -%}
+New role: {{ notification.meta.new_role }}
+{% endif -%}
+
+Role changes — especially promotions to admin — are
+security-relevant.  An admin can:
+  - Generate MCP API keys (full programmatic access to cameras)
+  - Add or remove other members
+  - Change recording policy and notification settings
+  - Wipe all logs and reset the organization
+
+If YOU made this change — no action needed.
+
+If you DIDN'T:
+  - Audit the org's member list at {{ dashboard_url }}/settings
+  - Check recent admin actions in the audit log
+
+——
+This alert went only to organization admins.
+Manage email alerts: {{ dashboard_url }}/settings#settings-notifications
+Unsubscribe from member-audit alerts: {{ unsubscribe_url }}

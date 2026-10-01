@@ -13,8 +13,11 @@ primary_region = "sjc"
   # now, which makes it a credential, so it lives in `fly secrets` —
   # `fly.toml` is committed to a public repository.
   #
-  # Self-hosted installs are unaffected: they get the SQLite default from
-  # app/core/config.py and the data layer branches on the URL scheme.
+  # Self-hosted installs set it themselves, and it has to be Postgres:
+  # the Rust tier has no SQLite driver and refuses any other scheme at
+  # startup (`config::unsupported_database_url`). The Python tier
+  # defaulted to `sqlite:///./sentinel.db`; that is the one behaviour the
+  # rewrite did not carry over.
   #
   # Segment-cache ceiling MUST stay well under [[vm]].memory_mb below —
   # above physical RAM, the kernel OOM-killer fires (killing every

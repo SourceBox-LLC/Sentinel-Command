@@ -1,0 +1,19 @@
+{{ notification.title }}
+
+{{ notification.body }}
+
+{% if notification.camera_id -%}
+Related camera: {{ notification.camera_id }}
+{% endif -%}
+
+An AI agent connected to your Command Center created this incident
+report after observing something noteworthy. Review the report,
+attached evidence (snapshots/clips), and the agent's reasoning.
+
+Open the incident: {{ dashboard_url }}{{ notification.link or '/incidents' }}
+
+——
+You can disable AI-incident emails (or any other email type) in
+your notification settings.
+Manage email alerts: {{ dashboard_url }}/settings#settings-notifications
+Unsubscribe from incident-created alerts: {{ unsubscribe_url }}

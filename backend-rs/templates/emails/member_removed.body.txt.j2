@@ -1,0 +1,18 @@
+{{ notification.title }}
+
+{{ notification.body }}
+
+The user no longer has any access to your organization's
+cameras, nodes, recordings, or MCP keys.  Any active session
+they had will become invalid on its next API call.
+
+If YOU removed this member — no action needed.
+
+If you DIDN'T:
+  - Audit recent admin actions at {{ dashboard_url }}/admin/audit-log
+  - Check whether anyone gained admin access who shouldn't have
+
+——
+This alert went only to organization admins.
+Manage email alerts: {{ dashboard_url }}/settings#settings-notifications
+Unsubscribe from member-audit alerts: {{ unsubscribe_url }}

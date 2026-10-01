@@ -2,7 +2,7 @@
 """Regenerate tests/fixtures/email_corpus.json.
 
 Every notification that goes out by email is rendered from the Jinja2
-templates in `backend/app/templates/emails/` — fifteen kinds, three
+templates in `backend-rs/templates/emails/` — fifteen kinds, three
 files each, wrapped in a shared layout. The rendered strings are not a
 detail of the mail transport: they are written into `email_outbox` rows,
 which the write differential compares column by column. So the port has
