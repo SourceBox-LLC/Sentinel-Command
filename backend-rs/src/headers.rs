@@ -88,7 +88,32 @@ pub async fn layer(request: Request, next: Next) -> Response<axum::body::Body> {
         .is_some_and(|s| s.eq_ignore_ascii_case("https"))
         || std::env::var("FLY_APP_NAME").is_ok();
 
-    let mut response = next.run(request).await;
+    // Every log line this request produces carries `req` and, once the
+    // caller is known, `org`.
+    //
+    // This is `logging_setup.py`'s `ContextFilter`, which stamped both
+    // onto every record from a contextvar — a launch-checklist item whose
+    // stated purpose was "when a customer says I got a 500 at 3:14pm" and
+    // "a single grep on the org_id surfaces the full request flow". The
+    // `X-Request-Id` header was ported and this half was not, which left
+    // the header pointing at an id that appeared in no log line.
+    //
+    // A span rather than a task-local: `tracing`'s fmt layer prints the
+    // enclosing spans' fields on every event inside them, so this needs
+    // no filter and no plumbing through call sites. `org` is declared
+    // Empty and recorded by `auth::authenticate` once a token verifies —
+    // background loops run outside any request span and simply have
+    // neither field, which is what the Python's "-" rendered.
+    let span = tracing::info_span!(
+        "request",
+        req = %request_id,
+        org = tracing::field::Empty,
+    );
+
+    let mut response = {
+        use tracing::Instrument;
+        next.run(request).instrument(span).await
+    };
     stamp(response.headers_mut(), &request_id, is_https);
     response
 }

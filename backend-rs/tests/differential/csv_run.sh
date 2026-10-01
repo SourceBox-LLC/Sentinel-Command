@@ -13,8 +13,9 @@
 # Usage: tests/differential/csv_run.sh [-v]
 #
 # Env: PRE_CUT (worktree path; created here if absent), PG_CONTAINER,
-#      PYTHON (an interpreter with the pre-cut dependencies — the
-#      backend/.venv that predates the trim has them).
+#      PYTHON (an interpreter that can import the pre-cut web tier; if it
+#      cannot, a venv is synced inside the worktree from the pre-cut
+#      pyproject and used instead).
 #
 # Two things about the worktree are deliberate:
 #
@@ -77,12 +78,32 @@ if [[ ! -f "$PRE_CUT/backend/app/main.py" ]]; then
     echo "FAILED: $PRE_CUT has no app/main.py — wrong commit checked out?" >&2
     exit 2
 fi
-if [[ ! -x "$PYTHON" ]]; then
-    echo "FAILED: no interpreter at $PYTHON." >&2
-    echo "The pre-cut web tier needs fastapi/fastmcp/psycopg, which the" >&2
-    echo "trimmed agent-only pyproject.toml no longer installs. Point PYTHON" >&2
-    echo "at a venv that predates the trim, or sync one in the worktree." >&2
-    exit 2
+# The interpreter has to be able to IMPORT the pre-cut web tier, not just
+# exist. `backend/.venv` used to satisfy that by accident — it still held
+# the pre-trim 151 packages — and the first `uv sync` after the
+# dependency set was trimmed to the agent's 99 removed fastapi from it,
+# which turned this harness into a ModuleNotFoundError traceback. The
+# check now asks the question it means.
+#
+# The fallback is a venv inside the worktree, built from the PRE-CUT
+# `pyproject.toml` and `uv.lock`, which is the only place those 151
+# packages are still described. It costs a couple of minutes once and
+# then nothing, and it cannot be invalidated by work in the main
+# checkout.
+if ! "$PYTHON" -c "import fastapi" >/dev/null 2>&1; then
+    WORKTREE_PY="$PRE_CUT/backend/.venv/bin/python"
+    if ! "$WORKTREE_PY" -c "import fastapi" >/dev/null 2>&1; then
+        echo "$PYTHON cannot import fastapi — syncing the pre-cut venv in the worktree..."
+        if ! ( cd "$PRE_CUT/backend" && uv sync --quiet ); then
+            echo "FAILED: could not create a venv with the pre-cut dependencies." >&2
+            echo "The pre-cut web tier needs fastapi/fastmcp/psycopg, which the" >&2
+            echo "trimmed agent-only pyproject.toml no longer installs. Point" >&2
+            echo "PYTHON at an interpreter that has them." >&2
+            exit 2
+        fi
+    fi
+    PYTHON="$WORKTREE_PY"
+    echo "using the worktree's own venv: $PYTHON"
 fi
 
 mkdir -p "$LOGS"

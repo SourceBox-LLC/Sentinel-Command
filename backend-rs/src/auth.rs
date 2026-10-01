@@ -128,6 +128,17 @@ impl Authenticator {
         let resolved = self.authenticate_inner(parts).await;
         if let Ok(ref user) = resolved {
             crate::sentry::set_user_context(&user.user_id, &user.org_id, &user.plan);
+            // Fills the `org` field `headers::layer` left Empty, so every
+            // log line for the rest of this request carries it — the
+            // other half of what `logging_setup.py`'s ContextFilter did.
+            // A no-op outside a request span (a tool call resolving a key
+            // on a background path), which is the same shape as the
+            // Python's contextvar default.
+            // `display`, not the raw &str: recording a string records it
+            // as Debug, which renders `org="self-host"` where `req` is
+            // bare — and `grep org=self-host` would then match neither
+            // reliably. Both fields print the same way now.
+            tracing::Span::current().record("org", tracing::field::display(&user.org_id));
         }
         resolved
     }

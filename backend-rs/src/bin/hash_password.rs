@@ -30,8 +30,38 @@ const MEMORY_KIB: u32 = 65_536;
 const ITERATIONS: u32 = 3;
 const PARALLELISM: u32 = 4;
 
+/// Printed by `--help`.
+///
+/// It exists because the argument loop ignores anything it does not
+/// recognise, so `--help` would otherwise sit at a password prompt with no
+/// output — the one response worse than an error.
+const USAGE: &str = "\
+usage: sentinel-hash-password [--stdin]
+
+Print a LOCAL_ADMIN_PASSWORD_HASH for a self-hosted install
+(AUTH_PROVIDER=local). Argon2id with python-argon2's parameters, so a hash
+written by the tool this replaces still verifies.
+
+  --stdin     Read the password from stdin instead of prompting, for a
+              provisioning script:  echo -n 'secret' | sentinel-hash-password --stdin
+  --help, -h  This text.
+
+With no flag it prompts twice with echo off. Nothing is written anywhere:
+copy the printed line into the environment yourself.
+";
+
 fn main() -> std::process::ExitCode {
-    let from_stdin = std::env::args().any(|a| a == "--stdin");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print!("{USAGE}");
+        return std::process::ExitCode::SUCCESS;
+    }
+    if let Some(unknown) = args.iter().find(|a| *a != "--stdin") {
+        eprintln!("unknown argument: {unknown}\n");
+        eprint!("{USAGE}");
+        return std::process::ExitCode::from(2);
+    }
+    let from_stdin = args.iter().any(|a| a == "--stdin");
 
     let password = match read_password(from_stdin) {
         Ok(password) => password,

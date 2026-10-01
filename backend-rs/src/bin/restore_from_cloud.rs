@@ -71,6 +71,36 @@ async fn main() -> std::process::ExitCode {
     }
 }
 
+/// Printed by `--help`, and on a bad argument.
+///
+/// Spelled out rather than listing flags, because each one's effect on a
+/// database during a recovery is the thing the operator needs to know and
+/// `[--overwrite]` does not say it.
+const USAGE: &str = "\
+usage: sentinel-restore-from-cloud [--list] [--dry-run] [--table NAME] [--overwrite]
+
+Pull this install's rows back down from Sentinel-Sync-Service, the one-way
+cloud mirror, into the local database. Non-destructive by default.
+
+  --list        Show what the mirror holds, per table, and exit. Also the
+                quickest way to confirm sync is working — run it BEFORE
+                you need it.
+  --dry-run     Report what would be written without writing anything.
+  --table NAME  Restore one table instead of all of them.
+  --overwrite   Replace rows whose primary key already exists. Without
+                this, existing rows are skipped and counted, so a run
+                against a database that still has data is safe.
+  --help, -h    This text.
+
+Reads DATABASE_URL, SENTINEL_SYNC_SERVICE_URL and SENTINEL_LICENSE_KEY
+from the environment, the same as the service does.
+
+It cannot bring back node API keys (re-register each node), incident
+evidence blobs, or recordings (those never left the camera). Exits 2 on a
+partial restore, after naming every row it could not write.
+See docs/runbooks/DISASTER_RECOVERY.md.
+";
+
 fn parse_args() -> Args {
     let mut args = Args { list: false, dry_run: false, overwrite: false, table: None };
     let raw: Vec<String> = std::env::args().skip(1).collect();
@@ -84,10 +114,18 @@ fn parse_args() -> Args {
                 args.table = Some(raw[i + 1].clone());
                 i += 1;
             }
+            // `--help` is the first thing an operator reaching for a
+            // recovery tool types, and the Python this replaces had it for
+            // free from argparse. Without it the answer was "unknown
+            // argument: --help" above a usage line — which is information
+            // delivered as a rebuke, during an incident.
+            "--help" | "-h" => {
+                print!("{USAGE}");
+                std::process::exit(0);
+            }
             other => {
-                eprintln!("unknown argument: {other}");
-                eprintln!("usage: sentinel-restore-from-cloud [--list] [--dry-run] \\");
-                eprintln!("                                   [--table NAME] [--overwrite]");
+                eprintln!("unknown argument: {other}\n");
+                eprint!("{USAGE}");
                 std::process::exit(2);
             }
         }
