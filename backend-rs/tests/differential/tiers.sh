@@ -69,7 +69,15 @@ export AUTH_PROVIDER=local
 export LOCAL_ORG_ID=self-host
 export LOCAL_ADMIN_USERNAME=admin
 export LOCAL_ADMIN_EMAIL=admin@example.com
-# Argon2 hash of "differential-password". Single-quoted on purpose: the
+# Argon2 hash of "correct horse battery staple" — which is what
+# write_diff.py's login cases actually send. This comment said
+# "differential-password" for as long as it existed and was simply wrong:
+# nothing caught it because the cases compare the two tiers' ANSWERS, and
+# two stacks rejecting the same bad password agree perfectly. Verified by
+# posting both strings at a tier configured with this hash: the first is a
+# 401, the second returns a token.
+#
+# Single-quoted on purpose: the
 # PHC string starts with `$argon2id`, which a double-quoted assignment
 # expands to the empty string — both tiers then report "not configured"
 # and agree with each other about nothing.

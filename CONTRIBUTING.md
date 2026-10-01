@@ -50,6 +50,10 @@ used to be under `backend/app/`, its counterpart is named in
 
 ### Command Center
 
+To just *run* it, rather than develop on it, use the repo's
+`docker-compose.yml` — see [AGENTS.md › Build & Run](AGENTS.md#build--run).
+For development, with the frontend on its own dev server:
+
 ```bash
 # Backend — needs PostgreSQL (SQLite is not supported; see AGENTS.md).
 # `cp backend-rs/.env.example backend-rs/.env` for the full variable list.

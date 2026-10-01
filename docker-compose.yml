@@ -1,0 +1,113 @@
+# Self-hosted Sentinel Command Center: the dashboard and its database.
+#
+# This exists because the Rust tier is PostgreSQL-only. The Python it
+# replaced defaulted to a SQLite file, so self-hosting used to be "run the
+# binary"; porting that would mean a dialect layer over 266 query sites,
+# which is a project rather than a flag (see AGENTS.md › Configuration).
+# Making Postgres a non-event is the cheaper half of the same goal, and
+# this file is it: one command, one volume per concern, nothing to tune.
+#
+# Quick start:
+#
+#   cp backend-rs/.env.example .env
+#   # fill in LOCAL_ADMIN_USERNAME / LOCAL_ADMIN_EMAIL, then:
+#   openssl rand -hex 32                        # → APP_SECRET_KEY
+#   docker compose run --rm --no-deps app sentinel-hash-password
+#                                               # → LOCAL_ADMIN_PASSWORD_HASH
+#   docker compose up -d
+#   # http://localhost:8000
+#
+# ⚠️ PUT THE HASH IN SINGLE QUOTES IN `.env`:
+#
+#     LOCAL_ADMIN_PASSWORD_HASH='$argon2id$v=19$m=65536,t=3,p=4$...'
+#
+# An argon2 PHC string is full of `$`, and Compose interpolates `.env`
+# values — unquoted, `$argon2id$v=19$m=65536` becomes `=19=65536` with a
+# warning you will not read, and the login then fails for a reason
+# nothing explains. Verified: single quotes pass it through intact, as
+# does doubling every `$`. Same trap as the shell's, where a
+# double-quoted assignment eats the whole string.
+#
+# The hash step runs the image's own tool, so there is no Python, no
+# toolchain and no checkout-local build needed to produce the one
+# credential this mode cannot start without. `--no-deps` keeps it from
+# starting Postgres just to print a hash.
+#
+# Upgrading: `docker compose pull || docker compose build`, then
+# `docker compose up -d`. The schema is applied on startup by the binary
+# itself, so there is no migration step to remember.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-sentinel}"
+      POSTGRES_DB: sentinel
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    # The app waits on this rather than on the container starting:
+    # Postgres accepts connections a second or two after the process
+    # exists, and without the gate the first boot races it and the
+    # migration fails on a connection refused.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel -d sentinel"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Not published. Nothing outside this compose project needs the
+    # database, and a Postgres on a published port with a default password
+    # is how a self-hosted install becomes someone else's.
+    expose:
+      - "5432"
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Self-hosted mode: one admin, one org, no Clerk, no billing. Every
+      # feature is unlocked except Sentinel AI, which is licensed
+      # separately because it has a real per-run LLM cost.
+      AUTH_PROVIDER: local
+      DATABASE_URL: "postgresql://sentinel:${POSTGRES_PASSWORD:-sentinel}@db:5432/sentinel"
+      # From .env — see the quick start above. No defaults on purpose:
+      # a dashboard that ships with a known password is worse than one
+      # that refuses to start.
+      APP_SECRET_KEY: "${APP_SECRET_KEY:?set APP_SECRET_KEY in .env, e.g. openssl rand -hex 32}"
+      LOCAL_ADMIN_USERNAME: "${LOCAL_ADMIN_USERNAME:?set LOCAL_ADMIN_USERNAME in .env}"
+      LOCAL_ADMIN_PASSWORD_HASH: "${LOCAL_ADMIN_PASSWORD_HASH:?see the quick start — docker compose run --rm --no-deps app sentinel-hash-password}"
+      LOCAL_ADMIN_EMAIL: "${LOCAL_ADMIN_EMAIL:?set LOCAL_ADMIN_EMAIL in .env}"
+      # The browser talks to the API at the same origin by default; set
+      # this if you serve the dashboard from another host or port, because
+      # it is also the CORS origin and the base of every email link.
+      FRONTEND_URL: "${FRONTEND_URL:-http://localhost:8000}"
+      # Optional, all off unless set: Sentinel AI + the cloud mirror
+      # (one licence key, two entitlements), email, error tracking.
+      SENTINEL_LICENSE_KEY: "${SENTINEL_LICENSE_KEY:-}"
+      EMAIL_ENABLED: "${EMAIL_ENABLED:-false}"
+      RESEND_API_KEY: "${RESEND_API_KEY:-}"
+      SENTRY_DSN: "${SENTRY_DSN:-}"
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      # `/data` is where the disk-usage probe looks and where the backup
+      # scripts write. Live video never lands on disk — segments are
+      # served from memory — so this stays small; recordings live on the
+      # CameraNode, which is the only place they ever are.
+      - app-data:/data
+    # Same check Fly runs, for the same reason: the container is not
+    # "up" until the schema is applied and the port answers.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+volumes:
+  db-data:
+  app-data:

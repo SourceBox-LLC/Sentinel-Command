@@ -94,14 +94,37 @@ npm run build                        # Production build → frontend/dist/,
                                      # copied to /app/static in the image
 ```
 
-**Self-hosted (no Clerk) instead:**
+**Self-hosted (no Clerk) instead — `docker-compose.yml` at the repo root:**
+
+```bash
+cp backend-rs/.env.example .env     # fill in LOCAL_ADMIN_USERNAME / _EMAIL
+openssl rand -hex 32                                   # → APP_SECRET_KEY
+docker compose run --rm --no-deps app sentinel-hash-password
+                                           # → LOCAL_ADMIN_PASSWORD_HASH
+docker compose up -d                                   # localhost:8000
+```
+
+**Put the hash in SINGLE QUOTES in `.env`.** An argon2 PHC string is full
+of `$` and Compose interpolates `.env` values, so unquoted
+`$argon2id$v=19$m=65536` arrives as `=19=65536` — a login that fails for a
+reason nothing explains. Verified both ways; the compose file says so at
+the top.
+
+That file exists because the Rust tier needs Postgres (see Configuration),
+so "run the binary" is no longer the whole story for a self-hoster. It
+brings up Postgres with a healthcheck the app waits on, a volume for each,
+and the dashboard — and the hash step runs the image's own tool, so the one
+credential this mode cannot start without needs no toolchain to produce.
+
+Without Docker, the same thing by hand:
 
 ```bash
 cd backend-rs
 cargo run --bin sentinel-hash-password    # prints LOCAL_ADMIN_PASSWORD_HASH
 # or, non-interactively: echo -n 'secret' | … --stdin
 # Set in the environment: AUTH_PROVIDER=local, APP_SECRET_KEY=<random 32+ bytes>,
-# LOCAL_ADMIN_USERNAME, LOCAL_ADMIN_PASSWORD_HASH (from above), LOCAL_ADMIN_EMAIL
+# LOCAL_ADMIN_USERNAME, LOCAL_ADMIN_PASSWORD_HASH (from above),
+# LOCAL_ADMIN_EMAIL, and DATABASE_URL for a Postgres you run yourself
 cargo run
 
 # Set in frontend/.env: VITE_AUTH_PROVIDER=local (VITE_CLERK_PUBLISHABLE_KEY not needed)
