@@ -1,0 +1,17 @@
+TRIGGER: motion detected on a camera.
+
+Your task:
+  1. Use view_camera (or watch_camera if you need motion/behavior context)
+     to see what the camera is reporting.
+  2. Identify what or who is in the frame. Categorize: person, vehicle,
+     animal, environmental (wind, lighting, false-positive), or unknown.
+  3. Decide outcome:
+     - If clearly benign (cat, leaves, light flicker) and there's nothing
+       interesting to log → no_action.
+     - If routine but worth logging (delivery, mail, lawn service) →
+       create a low-severity incident with attach_snapshot, finalize.
+     - If suspicious or threatening → create a medium-or-higher incident
+       with attach_snapshot AND attach_clip if motion is ongoing,
+       add_observation describing what you saw, then finalize_incident
+       with a markdown report.
+  4. Be concise. The operator's time is the constraint, not yours.

@@ -511,3 +511,76 @@ twenty first-requests at once; it fails without the conflict clause.
 **Fix on master, if the Python is ever served again:** the same —
 `INSERT … ON CONFLICT DO NOTHING` (`on_conflict_do_nothing()` on the
 Postgres dialect), or catch `IntegrityError`, roll back and re-query.
+
+## 18. The Python agent cannot make a tool call under the locked `mcp` 2.x
+
+`backend/uv.lock` resolves `mcp` to **2.2.0** — on this branch and on
+`master`, since the Dependabot bump of `fastmcp` to 4.0.3 (`c958b4c`).
+`app/sentinel_agent/mcp_client.py` handles one of the 2.x renames, the
+import, and misses two others:
+
+```python
+from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
+...
+streamablehttp_client(url=url, headers=headers)   # 2.x takes no `headers`
+...
+"parameters": tool.inputSchema                    # renamed in 2.x
+```
+
+Under 2.x the client takes `http_client=create_mcp_http_client(headers=…)`
+and yields a 2-tuple, not the 3-tuple the `async with` unpacks. Every run
+fails at connect, before the model is asked anything, and is reported as
+`Agent harness failure: …`.
+
+**What that means in production:** `mcp_client.py` is identical on
+`master`, and so is the lock. If the deployed image was built after that
+bump, Sentinel AI has not completed a run since. I could not confirm
+which lock the running machine was built from — worth checking the run
+history for a wall of `error` outcomes starting 2026-09-11.
+
+**How it was found:** building the reference side of the agent
+differential. The Python agent would not run a single scenario from the
+repository's own lock; the reference venv had to pin `mcp==1.28.1`
+(`tests/differential/agent_run.sh`) before there was anything to compare
+against. The 16 agent tests pass throughout, because none of them opens
+an MCP connection.
+
+**Not reproduced in the port** — there is no Python SDK in it. The Rust
+agent uses `rmcp`'s client.
+
+**Fix on master:** either pin `mcp<2` in `backend/pyproject.toml` (the
+range is `>=1.6.0,<3` on purpose, and that purpose is not met), or build
+the headers into an `http_client`, unpack two values, and read
+`tool.input_schema` with a fallback.
+
+## 19. Frames are appended between two tool results of the same turn
+
+`agent.py` appends a tool's result, then — if the tool returned images —
+a `user` message carrying them, inside the loop over the turn's tool
+calls. A turn with two calls where the first returns frames therefore
+produces:
+
+```
+assistant(tool_calls=[A, B])
+tool(A)
+user(images from A)
+tool(B)
+```
+
+The OpenAI and Anthropic APIs both require every tool result for an
+assistant turn to follow it before any other message. LiteLLM reorders
+this for Anthropic and passes it through unchanged for OpenAI (seen at
+the fake provider; the rejection itself was not tested against the live
+API).
+Ollama accepts anything, which is why it never surfaced: Ollama is the
+production wire.
+
+**How it was found:** the agent differential's frames scenario, which
+makes two calls in one turn on all three wires.
+
+**Not reproduced in the port.** `agent/run.rs` appends every tool result
+for the batch and then the frames. `agent_diff.py::tools_before_frames`
+removes exactly that reordering from the comparison and nothing else.
+
+**Fix on master:** collect the image messages and extend `messages` with
+them after the `for tool_call in …` loop.

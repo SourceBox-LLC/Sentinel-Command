@@ -150,8 +150,12 @@ fn int_or(args: &Map<String, Value>, key: &str, default: i64) -> i64 {
 // ---------------------------------------------------------------------
 
 pub async fn list_cameras(state: &AppState, org_id: &str) -> ToolResult {
+    // Ordered, which the Python was not: two outer joins leave the row
+    // order to the planner, and it moved between two calls a second apart
+    // in the agent differential. A model re-reading a shuffled list is
+    // being told something changed when nothing did.
     let rows: Vec<crate::models::CameraRow> = sqlx::query_as(&format!(
-        "{} WHERE c.org_id = $1",
+        "{} WHERE c.org_id = $1 ORDER BY c.id",
         crate::models::CAMERA_SELECT
     ))
     .bind(org_id)

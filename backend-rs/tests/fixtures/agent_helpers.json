@@ -1,0 +1,315 @@
+{
+ "parse_id": [
+  [
+   "",
+   null
+  ],
+  [
+   "{\"id\": 42}",
+   42
+  ],
+  [
+   "{\"id\":42,\"title\":\"t\"}",
+   42
+  ],
+  [
+   "{\"error\": \"boom\"}",
+   null
+  ],
+  [
+   "{\"error\": \"x\", \"id\": 5}",
+   5
+  ],
+  [
+   "{\"id\": \"7\"}",
+   null
+  ],
+  [
+   "{\"id\": true}",
+   null
+  ],
+  [
+   "{\"id\": false}",
+   null
+  ],
+  [
+   "{\"id\": 1.0}",
+   null
+  ],
+  [
+   "{\"id\": null}",
+   null
+  ],
+  [
+   "[1,2]",
+   null
+  ],
+  [
+   "\"id\"",
+   null
+  ],
+  [
+   "not json",
+   null
+  ],
+  [
+   "{\"id\": -3}",
+   -3
+  ],
+  [
+   "{\"id\": 0}",
+   0
+  ],
+  [
+   "  {\"id\": 8}  ",
+   8
+  ],
+  [
+   "{\"ID\": 8}",
+   null
+  ],
+  [
+   "{\"id\": 12345678901}",
+   12345678901
+  ]
+ ],
+ "sanitize": [
+  [
+   {},
+   {}
+  ],
+  [
+   {
+    "camera_id": "cam-1",
+    "n": 3,
+    "flag": true,
+    "none": null
+   },
+   {
+    "camera_id": "cam-1",
+    "n": 3,
+    "flag": true,
+    "none": null
+   }
+  ],
+  [
+   {
+    "long": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "edge": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+   },
+   {
+    "long": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…",
+    "edge": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+   }
+  ],
+  [
+   {
+    "uni": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+   },
+   {
+    "uni": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé…"
+   }
+  ],
+  [
+   {
+    "small_list": [
+     1,
+     2,
+     3
+    ],
+    "small_dict": {
+     "a": 1
+    }
+   },
+   {
+    "small_list": [
+     1,
+     2,
+     3
+    ],
+    "small_dict": {
+     "a": 1
+    }
+   }
+  ],
+  [
+   {
+    "big_list": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18,
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25,
+     26,
+     27,
+     28,
+     29,
+     30,
+     31,
+     32,
+     33,
+     34,
+     35,
+     36,
+     37,
+     38,
+     39,
+     40,
+     41,
+     42,
+     43,
+     44,
+     45,
+     46,
+     47,
+     48,
+     49,
+     50,
+     51,
+     52,
+     53,
+     54,
+     55,
+     56,
+     57,
+     58,
+     59,
+     60,
+     61,
+     62,
+     63,
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "big_dict": {
+     "0": "vvvvvvvvvv",
+     "1": "vvvvvvvvvv",
+     "2": "vvvvvvvvvv",
+     "3": "vvvvvvvvvv",
+     "4": "vvvvvvvvvv",
+     "5": "vvvvvvvvvv",
+     "6": "vvvvvvvvvv",
+     "7": "vvvvvvvvvv",
+     "8": "vvvvvvvvvv",
+     "9": "vvvvvvvvvv",
+     "10": "vvvvvvvvvv",
+     "11": "vvvvvvvvvv",
+     "12": "vvvvvvvvvv",
+     "13": "vvvvvvvvvv",
+     "14": "vvvvvvvvvv",
+     "15": "vvvvvvvvvv",
+     "16": "vvvvvvvvvv",
+     "17": "vvvvvvvvvv",
+     "18": "vvvvvvvvvv",
+     "19": "vvvvvvvvvv"
+    }
+   },
+   {
+    "big_list": "<truncated>",
+    "big_dict": "<truncated>"
+   }
+  ],
+  [
+   {
+    "escaped": [
+     "éé",
+     "éé",
+     "éé",
+     "éé",
+     "éé",
+     "éé",
+     "éé",
+     "éé",
+     "éé",
+     "éé",
+     "éé",
+     "éé",
+     "éé",
+     "éé"
+    ],
+    "ascii_same_len": [
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee"
+    ]
+   },
+   {
+    "escaped": "<truncated>",
+    "ascii_same_len": [
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee",
+     "ee"
+    ]
+   }
+  ],
+  [
+   {
+    "nested_exact": {
+     "k": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv"
+    }
+   },
+   {
+    "nested_exact": {
+     "k": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv"
+    }
+   }
+  ]
+ ]
+}

@@ -65,6 +65,14 @@ const REDACTED_HEADERS: [&str; 5] = [
 /// stated reason: nothing about a monitoring tool should be able to take
 /// the app down.
 pub fn init() -> Option<Guard> {
+    init_with_default_environment(None)
+}
+
+/// [`init`], with the environment to report when `SENTRY_ENVIRONMENT` is
+/// unset. The web tier infers it from `FLY_APP_NAME`; the agent's config
+/// always defaulted to `production`, and a self-hosted agent with a DSN
+/// should not start filing its errors under `development`.
+pub fn init_with_default_environment(default_environment: Option<&str>) -> Option<Guard> {
     let dsn = std::env::var("SENTRY_DSN")
         .unwrap_or_default()
         .trim()
@@ -85,6 +93,7 @@ pub fn init() -> Option<Guard> {
     let environment = std::env::var("SENTRY_ENVIRONMENT")
         .ok()
         .filter(|v| !v.is_empty());
+    let environment = environment.or_else(|| default_environment.map(str::to_string));
     let environment = environment.unwrap_or_else(|| {
         if std::env::var("FLY_APP_NAME").is_ok_and(|v| !v.is_empty()) {
             "production".to_string()

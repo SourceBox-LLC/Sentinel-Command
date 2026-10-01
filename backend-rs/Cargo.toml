@@ -58,7 +58,29 @@ rmcp = { version = "3.5", default-features = false, features = [
     # the port free of per-process session state, which is the thing
     # that forces a producer and its consumers to move together.
     "transport-streamable-http-server-session",
+    # The CLIENT half, for the Sentinel agent binary: it reaches this
+    # same server's tools over streamable HTTP, with the org override
+    # header. `reqwest` selects rustls, like everything else here.
+    "client",
+    "transport-streamable-http-client-reqwest",
+    "reqwest",
 ] }
+
+# The agent's one LLM call. Replaces LiteLLM, which the Python used for
+# exactly `acompletion`. rig models the three provider shapes the old
+# `llm.py` documented by hand — Ollama's raw-base64 `images` list and
+# dict arguments, OpenAI's `tool_call_id` and JSON-string arguments,
+# Anthropic's tool_use blocks — and was probed against a capture server
+# before being adopted, so those are observed rather than assumed.
+#
+# Licence: MIT, as is every one of the 229 crates in its tree bar
+# `r-efi`, which is MIT-OR-Apache-OR-LGPL. Checked because an earlier
+# note recorded it as "MIT and maybe GPL-3.0" against this project's
+# AGPL-3.0. Pre-1.0 and it does break between minors, so the version is
+# pinned to the minor and the wire shapes are pinned by tests.
+rig-core = { version = "0.43", default-features = false, features = ["reqwest", "rustls"] }
+# Only for `shared()`: the transport `agent::llm::RepairingHttp` wraps.
+rig-reqwest = "0.43"
 
 # The strangler proxy, and outbound calls to Clerk / Resend.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
@@ -140,3 +162,9 @@ path = "src/bin/hash_password.rs"
 [[bin]]
 name = "sentinel-restore-from-cloud"
 path = "src/bin/restore_from_cloud.rs"
+
+# The Sentinel AI agent — the `agent` Fly process group, and what a
+# self-hoster runs. Replaces `python -m app.sentinel_agent`.
+[[bin]]
+name = "sentinel-agent"
+path = "src/bin/agent.rs"

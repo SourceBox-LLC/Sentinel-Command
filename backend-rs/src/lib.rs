@@ -9,6 +9,7 @@
 //! serves. A test that re-declares its own routes tests a copy, and the
 //! copy drifts.
 
+pub mod agent;
 pub mod api;
 pub mod app;
 pub mod audit;
