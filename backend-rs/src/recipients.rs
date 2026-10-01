@@ -81,15 +81,19 @@ pub async fn recipient_emails(lookup: &Lookup<'_>, org_id: &str, audience: &str)
     let audience = if audience == "admin" { "admin" } else { "all" };
 
     if let Some(admin) = lookup.local_admin_email {
-        return if admin.is_empty() { Vec::new() } else { vec![admin.to_string()] };
+        return if admin.is_empty() {
+            Vec::new()
+        } else {
+            vec![admin.to_string()]
+        };
     }
 
     let key = (org_id.to_string(), audience.to_string());
     let now = Instant::now();
     let cached = with_cache(|cache| {
-        cache.get(&key).and_then(|(expires_at, addrs)| {
-            (*expires_at > now).then(|| addrs.clone())
-        })
+        cache
+            .get(&key)
+            .and_then(|(expires_at, addrs)| (*expires_at > now).then(|| addrs.clone()))
     });
     if let Some(addrs) = cached {
         return addrs;
@@ -247,7 +251,9 @@ mod tests {
                     continue;
                 }
             }
-            let Some(addr) = extract_email(member) else { continue };
+            let Some(addr) = extract_email(member) else {
+                continue;
+            };
             if seen.insert(addr.to_lowercase()) {
                 addrs.push(addr.to_string());
             }
@@ -259,7 +265,10 @@ mod tests {
     fn the_admin_audience_keeps_only_admin_roles() {
         // Both spellings of the role count, and the first casing wins.
         assert_eq!(filter("admin"), vec!["Admin@Example.com"]);
-        assert_eq!(filter("all"), vec!["Admin@Example.com", "member@example.com"]);
+        assert_eq!(
+            filter("all"),
+            vec!["Admin@Example.com", "member@example.com"]
+        );
     }
 
     #[test]
@@ -295,8 +304,13 @@ mod tests {
         }
 
         // An unset address is no recipient, not an empty one.
-        let lookup = Lookup { local_admin_email: Some(""), ..lookup };
-        assert!(recipient_emails(&lookup, "self-host", "all").await.is_empty());
+        let lookup = Lookup {
+            local_admin_email: Some(""),
+            ..lookup
+        };
+        assert!(recipient_emails(&lookup, "self-host", "all")
+            .await
+            .is_empty());
     }
 
     #[tokio::test]

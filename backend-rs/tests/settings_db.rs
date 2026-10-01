@@ -19,7 +19,11 @@ use sqlx::PgPool;
 
 async fn pool() -> Option<PgPool> {
     let url = std::env::var("TEST_DATABASE_URL").ok()?;
-    PgPoolOptions::new().max_connections(2).connect(&url).await.ok()
+    PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .ok()
 }
 
 /// Every test shares one table, so each uses its own org_id prefix and
@@ -30,12 +34,14 @@ async fn seed(pool: &PgPool, org: &str, value: Option<&str>) {
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query(r#"INSERT INTO settings (org_id, "key", value) VALUES ($1, 'payment_past_due', $2)"#)
-        .bind(org)
-        .bind(value)
-        .execute(pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        r#"INSERT INTO settings (org_id, "key", value) VALUES ($1, 'payment_past_due', $2)"#,
+    )
+    .bind(org)
+    .bind(value)
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 macro_rules! require_db {
@@ -57,13 +63,16 @@ async fn an_absent_setting_returns_the_default() {
         .execute(&pool)
         .await
         .unwrap();
-    let got = sentinel_command::settings::get(&pool, "sdb_missing", "payment_past_due", Some("false"))
-        .await
-        .unwrap();
+    let got =
+        sentinel_command::settings::get(&pool, "sdb_missing", "payment_past_due", Some("false"))
+            .await
+            .unwrap();
     assert_eq!(got.as_deref(), Some("false"));
-    assert!(!sentinel_command::settings::payment_past_due(&pool, "sdb_missing")
-        .await
-        .unwrap());
+    assert!(
+        !sentinel_command::settings::payment_past_due(&pool, "sdb_missing")
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]
@@ -125,9 +134,11 @@ async fn a_duplicated_pair_still_resolves() {
     .await
     .unwrap();
 
-    assert!(sentinel_command::settings::payment_past_due(&pool, "sdb_dup")
-        .await
-        .unwrap());
+    assert!(
+        sentinel_command::settings::payment_past_due(&pool, "sdb_dup")
+            .await
+            .unwrap()
+    );
 
     sqlx::query("DELETE FROM settings WHERE org_id = 'sdb_dup'")
         .execute(&pool)
@@ -144,9 +155,11 @@ async fn one_org_cannot_read_another_orgs_setting() {
         .await
         .unwrap();
 
-    assert!(sentinel_command::settings::payment_past_due(&pool, "sdb_tenant_a")
-        .await
-        .unwrap());
+    assert!(
+        sentinel_command::settings::payment_past_due(&pool, "sdb_tenant_a")
+            .await
+            .unwrap()
+    );
     assert!(
         !sentinel_command::settings::payment_past_due(&pool, "sdb_tenant_b")
             .await

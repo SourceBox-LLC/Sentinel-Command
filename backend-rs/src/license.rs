@@ -201,7 +201,9 @@ pub async fn check_in(
     // `+00:00` suffix. The read side parses both shapes, but writing the
     // naive one here would be a different string in the row from the
     // one Python writes, and the row is compared.
-    let now_iso = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.6f+00:00").to_string();
+    let now_iso = chrono::Utc::now()
+        .format("%Y-%m-%dT%H:%M:%S%.6f+00:00")
+        .to_string();
     let install_id = get_or_create_install_id(pool, org_id).await;
 
     let response = client
@@ -231,25 +233,49 @@ pub async fn check_in(
             "[SentinelLicense] check-in failed (network/5xx/malformed response) — \
              treating as unreachable, grace window (if any) applies"
         );
-        crate::settings::set(pool, org_id, LAST_CHECK_AT, &now_iso).await.ok();
-        crate::settings::set(pool, org_id, LAST_CHECK_REACHABLE, "false").await.ok();
-        return CheckInOutcome { attempted: true, ..Default::default() };
+        crate::settings::set(pool, org_id, LAST_CHECK_AT, &now_iso)
+            .await
+            .ok();
+        crate::settings::set(pool, org_id, LAST_CHECK_REACHABLE, "false")
+            .await
+            .ok();
+        return CheckInOutcome {
+            attempted: true,
+            ..Default::default()
+        };
     };
 
     // `bool(data.get("valid"))` — Python's truthiness, so a non-boolean
     // is not an error. `pyrepr::truthy` is the same rule.
-    let valid = data.get("valid").map(crate::pyrepr::truthy).unwrap_or(false);
+    let valid = data
+        .get("valid")
+        .map(crate::pyrepr::truthy)
+        .unwrap_or(false);
     // False whenever the licence itself is invalid, regardless of what
     // the body says about sync: a licence losing validity loses sync
     // access in the same breath rather than coasting on a stale `true`.
-    let sync = valid && data.get("sync_enabled").map(crate::pyrepr::truthy).unwrap_or(false);
+    let sync = valid
+        && data
+            .get("sync_enabled")
+            .map(crate::pyrepr::truthy)
+            .unwrap_or(false);
 
-    crate::settings::set(pool, org_id, LAST_CHECK_AT, &now_iso).await.ok();
-    crate::settings::set(pool, org_id, LAST_CHECK_REACHABLE, "true").await.ok();
-    crate::settings::set(pool, org_id, LICENSE_VALID, bool_str(valid)).await.ok();
-    crate::settings::set(pool, org_id, SYNC_ENABLED, bool_str(sync)).await.ok();
+    crate::settings::set(pool, org_id, LAST_CHECK_AT, &now_iso)
+        .await
+        .ok();
+    crate::settings::set(pool, org_id, LAST_CHECK_REACHABLE, "true")
+        .await
+        .ok();
+    crate::settings::set(pool, org_id, LICENSE_VALID, bool_str(valid))
+        .await
+        .ok();
+    crate::settings::set(pool, org_id, SYNC_ENABLED, bool_str(sync))
+        .await
+        .ok();
     if valid {
-        crate::settings::set(pool, org_id, LAST_OK_AT, &now_iso).await.ok();
+        crate::settings::set(pool, org_id, LAST_OK_AT, &now_iso)
+            .await
+            .ok();
     } else {
         tracing::info!(
             reason = ?data.get("reason"),
@@ -257,7 +283,12 @@ pub async fn check_in(
         );
     }
 
-    CheckInOutcome { attempted: true, reachable: true, valid, sync_enabled: sync }
+    CheckInOutcome {
+        attempted: true,
+        reachable: true,
+        valid,
+        sync_enabled: sync,
+    }
 }
 
 /// `"true"` / `"false"` — the strings the Setting rows hold, which the
@@ -282,7 +313,9 @@ pub async fn get_or_create_install_id(pool: &sqlx::PgPool, org_id: &str) -> Stri
         }
     }
     let minted = crate::crypto::token_hex(16);
-    crate::settings::set(pool, org_id, INSTALL_ID, &minted).await.ok();
+    crate::settings::set(pool, org_id, INSTALL_ID, &minted)
+        .await
+        .ok();
     minted
 }
 

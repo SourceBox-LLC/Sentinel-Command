@@ -44,15 +44,51 @@ pub struct SyncTableSpec {
 /// The nine tables, in Python's order. The order matters only for which
 /// partial progress a failing cycle makes, but it is compared.
 pub const SYNC_TABLES: [SyncTableSpec; 9] = [
-    SyncTableSpec { table: "cameras", cursor: "updated_at", reconcile_deletes: true },
-    SyncTableSpec { table: "camera_groups", cursor: "updated_at", reconcile_deletes: true },
-    SyncTableSpec { table: "camera_nodes", cursor: "updated_at", reconcile_deletes: true },
-    SyncTableSpec { table: "incidents", cursor: "updated_at", reconcile_deletes: false },
-    SyncTableSpec { table: "incident_evidence", cursor: "timestamp", reconcile_deletes: false },
-    SyncTableSpec { table: "motion_events", cursor: "timestamp", reconcile_deletes: false },
-    SyncTableSpec { table: "sentinel_config", cursor: "updated_at", reconcile_deletes: false },
-    SyncTableSpec { table: "sentinel_runs", cursor: "updated_at", reconcile_deletes: false },
-    SyncTableSpec { table: "notifications", cursor: "created_at", reconcile_deletes: false },
+    SyncTableSpec {
+        table: "cameras",
+        cursor: "updated_at",
+        reconcile_deletes: true,
+    },
+    SyncTableSpec {
+        table: "camera_groups",
+        cursor: "updated_at",
+        reconcile_deletes: true,
+    },
+    SyncTableSpec {
+        table: "camera_nodes",
+        cursor: "updated_at",
+        reconcile_deletes: true,
+    },
+    SyncTableSpec {
+        table: "incidents",
+        cursor: "updated_at",
+        reconcile_deletes: false,
+    },
+    SyncTableSpec {
+        table: "incident_evidence",
+        cursor: "timestamp",
+        reconcile_deletes: false,
+    },
+    SyncTableSpec {
+        table: "motion_events",
+        cursor: "timestamp",
+        reconcile_deletes: false,
+    },
+    SyncTableSpec {
+        table: "sentinel_config",
+        cursor: "updated_at",
+        reconcile_deletes: false,
+    },
+    SyncTableSpec {
+        table: "sentinel_runs",
+        cursor: "updated_at",
+        reconcile_deletes: false,
+    },
+    SyncTableSpec {
+        table: "notifications",
+        cursor: "created_at",
+        reconcile_deletes: false,
+    },
 ];
 
 /// Columns that must never leave this install.
@@ -121,7 +157,10 @@ pub async fn push_pending_changes(state: &AppState) -> SyncSummary {
         return SyncSummary::default();
     }
 
-    let mut summary = SyncSummary { enabled: true, ..Default::default() };
+    let mut summary = SyncSummary {
+        enabled: true,
+        ..Default::default()
+    };
     for spec in &SYNC_TABLES {
         match push_table(state, spec).await {
             Ok((rows, batches)) => summary.pushed.push((spec.table.to_string(), rows, batches)),
@@ -181,8 +220,15 @@ async fn push_table(
             cursor = spec.cursor,
             table = spec.table,
         );
-        let rows: Vec<(String, Option<String>, Option<chrono::NaiveDateTime>, serde_json::Value)> =
-            sqlx::query_as(&sql).bind(cursor).fetch_all(&state.pool).await?;
+        let rows: Vec<(
+            String,
+            Option<String>,
+            Option<chrono::NaiveDateTime>,
+            serde_json::Value,
+        )> = sqlx::query_as(&sql)
+            .bind(cursor)
+            .fetch_all(&state.pool)
+            .await?;
         if rows.is_empty() {
             break;
         }
@@ -235,7 +281,13 @@ async fn push_table(
                 "{}/v1/sync/push",
                 state.config.sentinel_sync_service_url.trim_end_matches('/')
             ))
-            .bearer_auth(state.config.sentinel_license_key.clone().unwrap_or_default())
+            .bearer_auth(
+                state
+                    .config
+                    .sentinel_license_key
+                    .clone()
+                    .unwrap_or_default(),
+            )
             .timeout(std::time::Duration::from_secs(PUSH_TIMEOUT_SECONDS))
             .json(&payload)
             .send()
@@ -258,7 +310,9 @@ async fn push_table(
             break;
         };
         cursor = rows.last().and_then(|(_, _, raw, _)| *raw);
-        crate::settings::set(&state.pool, org, &cursor_key, &last_iso).await.ok();
+        crate::settings::set(&state.pool, org, &cursor_key, &last_iso)
+            .await
+            .ok();
 
         if count < BATCH_SIZE {
             break;
@@ -320,7 +374,10 @@ mod tests {
                 spec.cursor
             );
         }
-        let notifications = SYNC_TABLES.iter().find(|s| s.table == "notifications").unwrap();
+        let notifications = SYNC_TABLES
+            .iter()
+            .find(|s| s.table == "notifications")
+            .unwrap();
         // The one that is neither: `notifications` has no `updated_at`.
         assert_eq!(notifications.cursor, "created_at");
     }
@@ -334,6 +391,9 @@ mod tests {
 
     #[test]
     fn a_cursor_key_names_its_table() {
-        assert_eq!(cursor_setting_key("cameras"), "sentinel_sync_cursor_cameras");
+        assert_eq!(
+            cursor_setting_key("cameras"),
+            "sentinel_sync_cursor_cameras"
+        );
     }
 }

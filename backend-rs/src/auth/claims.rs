@@ -135,9 +135,7 @@ fn validate_claim_types(claims: &Value) -> Result<(), ClaimError> {
             if v.is_null() {
                 continue;
             }
-            let ok = v
-                .as_array()
-                .is_some_and(|a| a.iter().all(Value::is_string));
+            let ok = v.as_array().is_some_and(|a| a.iter().all(Value::is_string));
             if !ok {
                 return Err(ClaimError::Malformed(key));
             }
@@ -452,7 +450,11 @@ mod tests {
         });
         assert_eq!(
             decode_v2_permissions(&c),
-            vec!["org:cameras:read", "org:cameras:write", "org:cameras:delete"]
+            vec![
+                "org:cameras:read",
+                "org:cameras:write",
+                "org:cameras:delete"
+            ]
         );
     }
 
@@ -461,13 +463,16 @@ mod tests {
         // A permission that cannot be proven is one the caller does not
         // have — every one of these must fail closed.
         for c in [
-            json!({"sub": "u", "o": {"id": "o"}, "fea": "o:cameras"}),          // no per
-            json!({"sub": "u", "o": {"id": "o", "per": "read"}}),               // no fea
-            json!({"sub": "u", "fea": "o:cameras"}),                            // no o
+            json!({"sub": "u", "o": {"id": "o"}, "fea": "o:cameras"}), // no per
+            json!({"sub": "u", "o": {"id": "o", "per": "read"}}),      // no fea
+            json!({"sub": "u", "fea": "o:cameras"}),                   // no o
             json!({"sub": "u", "o": {"per": "read", "fpm": "nope"}, "fea": "o:c"}), // bad fpm
-            json!({"sub": "u", "o": {"per": "read"}, "fea": "o:c"}),            // no fpm
+            json!({"sub": "u", "o": {"per": "read"}, "fea": "o:c"}),   // no fpm
         ] {
-            assert!(decode_v2_permissions(&c).is_empty(), "should be empty for {c}");
+            assert!(
+                decode_v2_permissions(&c).is_empty(),
+                "should be empty for {c}"
+            );
         }
     }
 
@@ -493,7 +498,10 @@ mod tests {
         for (claims, expected) in [
             (json!({"sub": 12345, "org_id": "o"}), "sub"),
             (json!({"sub": "u", "org_id": 999}), "org_id"),
-            (json!({"sub": "u", "org_id": "o", "org_role": 7}), "org_role"),
+            (
+                json!({"sub": "u", "org_id": "o", "org_role": 7}),
+                "org_role",
+            ),
             (json!({"sub": "u", "org_id": "o", "email": 5}), "email"),
             (json!({"sub": "u", "org_id": "o", "pla": 42}), "pla"),
             (json!({"sub": "u", "org_id": "o", "fea": 42}), "fea"),
@@ -502,7 +510,10 @@ mod tests {
             (json!({"sub": "u", "o": null}), "o"),
             (json!({"sub": "u", "o": {"id": 5}}), "o"),
             (json!({"sub": "u", "o": {"id": "o", "per": ["read"]}}), "o"),
-            (json!({"sub": "u", "org_id": "o", "org_permissions": [1]}), "org_permissions"),
+            (
+                json!({"sub": "u", "org_id": "o", "org_permissions": [1]}),
+                "org_permissions",
+            ),
         ] {
             assert_eq!(
                 auth_user_from_claims(&claims),

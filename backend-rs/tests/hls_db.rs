@@ -18,7 +18,11 @@ use sqlx::PgPool;
 
 async fn pool() -> Option<PgPool> {
     let url = std::env::var("TEST_DATABASE_URL").ok()?;
-    PgPoolOptions::new().max_connections(2).connect(&url).await.ok()
+    PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .ok()
 }
 
 fn year_month() -> String {
@@ -34,12 +38,14 @@ async fn cleanup(pool: &PgPool, org: &str) {
 }
 
 async fn stored(pool: &PgPool, org: &str) -> Option<i32> {
-    sqlx::query_scalar("SELECT viewer_seconds FROM org_monthly_usage WHERE org_id = $1 AND year_month = $2")
-        .bind(org)
-        .bind(year_month())
-        .fetch_optional(pool)
-        .await
-        .unwrap()
+    sqlx::query_scalar(
+        "SELECT viewer_seconds FROM org_monthly_usage WHERE org_id = $1 AND year_month = $2",
+    )
+    .bind(org)
+    .bind(year_month())
+    .fetch_optional(pool)
+    .await
+    .unwrap()
 }
 
 #[tokio::test]

@@ -65,7 +65,10 @@ const REDACTED_HEADERS: [&str; 5] = [
 /// stated reason: nothing about a monitoring tool should be able to take
 /// the app down.
 pub fn init() -> Option<Guard> {
-    let dsn = std::env::var("SENTRY_DSN").unwrap_or_default().trim().to_string();
+    let dsn = std::env::var("SENTRY_DSN")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     if dsn.is_empty() {
         tracing::info!("[Sentry] SENTRY_DSN not set — error tracking disabled");
         return None;
@@ -79,7 +82,9 @@ pub fn init() -> Option<Guard> {
     // Fly injects FLY_APP_NAME and FLY_MACHINE_VERSION when deployed.
     // Falling back to "development" locally is what keeps a dev run from
     // being grouped with production on the dashboard.
-    let environment = std::env::var("SENTRY_ENVIRONMENT").ok().filter(|v| !v.is_empty());
+    let environment = std::env::var("SENTRY_ENVIRONMENT")
+        .ok()
+        .filter(|v| !v.is_empty());
     let environment = environment.unwrap_or_else(|| {
         if std::env::var("FLY_APP_NAME").is_ok_and(|v| !v.is_empty()) {
             "production".to_string()
@@ -90,7 +95,11 @@ pub fn init() -> Option<Guard> {
     let release = std::env::var("SENTRY_RELEASE")
         .ok()
         .filter(|v| !v.is_empty())
-        .or_else(|| std::env::var("FLY_MACHINE_VERSION").ok().filter(|v| !v.is_empty()));
+        .or_else(|| {
+            std::env::var("FLY_MACHINE_VERSION")
+                .ok()
+                .filter(|v| !v.is_empty())
+        });
 
     // `ClientOptions` is `#[non_exhaustive]`, so it is built by mutating
     // the default rather than by a struct literal.
@@ -228,7 +237,11 @@ mod tests {
     #[test]
     fn the_query_string_and_the_secret_headers_do_not_leave() {
         let mut request = sentry::protocol::Request {
-            url: Some("https://sentinel-command.com/ws/node?api_key=secret&node_id=n1".parse().unwrap()),
+            url: Some(
+                "https://sentinel-command.com/ws/node?api_key=secret&node_id=n1"
+                    .parse()
+                    .unwrap(),
+            ),
             query_string: Some("api_key=secret&node_id=n1".to_string()),
             ..Default::default()
         };
@@ -240,7 +253,9 @@ mod tests {
             "X-Agent-Org-Override",
             "User-Agent",
         ] {
-            request.headers.insert(name.to_string(), "secret-value".to_string());
+            request
+                .headers
+                .insert(name.to_string(), "secret-value".to_string());
         }
         let event = sentry::protocol::Event {
             request: Some(request),

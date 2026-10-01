@@ -102,7 +102,9 @@ pub async fn list_stream_logs(
         // sibling log routes (/api/audit-logs, /api/mcp/activity/logs)
         // escape both. Copying the inconsistency keeps the ported route
         // returning the same rows; it is not an endorsement.
-        where_sql.push_str(&format!(" AND (user_email ILIKE ${n} OR user_id ILIKE ${n})"));
+        where_sql.push_str(&format!(
+            " AND (user_email ILIKE ${n} OR user_id ILIKE ${n})"
+        ));
     }
 
     // CSV bypasses `limit`/`offset` for a flat 50,000-row window — an
@@ -178,7 +180,14 @@ fn csv_export(
     });
     crate::csv_export::stream_csv_response(
         &crate::csv_export::filename_for("stream-access-log", Some(org_id)),
-        &["accessed_at", "camera_id", "node_id", "user_email", "user_id", "ip_address"],
+        &[
+            "accessed_at",
+            "camera_id",
+            "node_id",
+            "user_email",
+            "user_id",
+            "ip_address",
+        ],
         rows,
     )
 }

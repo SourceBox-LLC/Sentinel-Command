@@ -181,30 +181,42 @@ impl Config {
             )
             .parse()
             .unwrap_or(384 * 1024 * 1024),
-            segment_push_max_bytes: var_or("SEGMENT_PUSH_MAX_BYTES", &(2 * 1024 * 1024).to_string())
-                .parse()
-                .unwrap_or(2 * 1024 * 1024),
+            segment_push_max_bytes: var_or(
+                "SEGMENT_PUSH_MAX_BYTES",
+                &(2 * 1024 * 1024).to_string(),
+            )
+            .parse()
+            .unwrap_or(2 * 1024 * 1024),
             playlist_push_max_bytes: var_or("PLAYLIST_PUSH_MAX_BYTES", &(64 * 1024).to_string())
                 .parse()
                 .unwrap_or(64 * 1024),
             cleanup_interval: var_or("CLEANUP_INTERVAL", "20").parse().unwrap_or(20),
             min_supported_node_version: var_or("MIN_SUPPORTED_NODE_VERSION", "0.1.0"),
             latest_node_version: var_or("LATEST_NODE_VERSION", "0.1.77"),
-            sentinel_agent_key: std::env::var("SENTINEL_AGENT_KEY").ok().filter(|v| !v.is_empty()),
+            sentinel_agent_key: std::env::var("SENTINEL_AGENT_KEY")
+                .ok()
+                .filter(|v| !v.is_empty()),
             sentinel_agent_mcp_key: std::env::var("SENTINEL_AGENT_MCP_KEY")
                 .ok()
                 .filter(|v| !v.is_empty()),
-            sentinel_license_key: std::env::var("SENTINEL_LICENSE_KEY").ok().filter(|v| !v.is_empty()),
+            sentinel_license_key: std::env::var("SENTINEL_LICENSE_KEY")
+                .ok()
+                .filter(|v| !v.is_empty()),
             sentinel_license_service_url: var_or("SENTINEL_LICENSE_SERVICE_URL", ""),
             sentinel_sync_service_url: var_or("SENTINEL_SYNC_SERVICE_URL", ""),
             // Python reads this as `.lower() == "true"`, so anything
             // else — including "1" — is false.
-            sentinel_dispatch_enabled: var_or("SENTINEL_DISPATCH_ENABLED", "true").to_lowercase() == "true",
+            sentinel_dispatch_enabled: var_or("SENTINEL_DISPATCH_ENABLED", "true").to_lowercase()
+                == "true",
             sentinel_global_monthly_run_cap: var_or("SENTINEL_GLOBAL_MONTHLY_RUN_CAP", "0")
                 .parse()
                 .unwrap_or(0),
-            resend_webhook_secret: std::env::var("RESEND_WEBHOOK_SECRET").ok().filter(|v| !v.is_empty()),
-            clerk_webhook_secret: std::env::var("CLERK_WEBHOOK_SECRET").ok().filter(|v| !v.is_empty()),
+            resend_webhook_secret: std::env::var("RESEND_WEBHOOK_SECRET")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            clerk_webhook_secret: std::env::var("CLERK_WEBHOOK_SECRET")
+                .ok()
+                .filter(|v| !v.is_empty()),
             sentinel_agent_webhook_url: std::env::var("SENTINEL_AGENT_WEBHOOK_URL")
                 .ok()
                 .filter(|v| !v.is_empty()),

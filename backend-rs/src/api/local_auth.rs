@@ -176,7 +176,10 @@ mod tests {
         let hasher =
             argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
         let salt = SaltString::from_b64("c29tZXNhbHRzb21lc2FsdA").unwrap();
-        let hash = hasher.hash_password(b"correct horse battery staple", &salt).unwrap().to_string();
+        let hash = hasher
+            .hash_password(b"correct horse battery staple", &salt)
+            .unwrap()
+            .to_string();
         assert!(hash.contains("m=65536,t=3,p=4"), "{hash}");
         assert!(verify_argon2(&hash, "correct horse battery staple"));
         assert!(!verify_argon2(&hash, "wrong"));
@@ -199,7 +202,12 @@ mod tests {
 
     #[test]
     fn a_wrong_username_still_fails_even_with_a_valid_hash_format() {
-        assert!(!verify_credentials("admin", HASH, "not-admin", "correct horse"));
+        assert!(!verify_credentials(
+            "admin",
+            HASH,
+            "not-admin",
+            "correct horse"
+        ));
     }
 
     #[test]
@@ -215,7 +223,12 @@ mod tests {
         // the differential at 102/102 and fails this test.
         let real = real_hash();
         let t0 = std::time::Instant::now();
-        assert!(!verify_credentials("admin", &real, "wrong-user", "wrong-pw"));
+        assert!(!verify_credentials(
+            "admin",
+            &real,
+            "wrong-user",
+            "wrong-pw"
+        ));
         let wrong_username = t0.elapsed();
 
         let t1 = std::time::Instant::now();

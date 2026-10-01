@@ -101,7 +101,14 @@ pub async fn send_email(
     client: &reqwest::Client,
     email: &OutgoingEmail<'_>,
 ) -> EmailSendResult {
-    let OutgoingEmail { to, subject, body_text, body_html, kind, idempotency_key } = *email;
+    let OutgoingEmail {
+        to,
+        subject,
+        body_text,
+        body_html,
+        kind,
+        idempotency_key,
+    } = *email;
     // Defence in depth: a row can reach the outbox while the switch is
     // off, and the transport refuses it rather than trusting the
     // producer to have checked.
@@ -112,7 +119,11 @@ pub async fn send_email(
             subject = %subject.chars().take(80).collect::<String>(),
             "EMAIL_ENABLED=false — would have sent"
         );
-        return EmailSendResult { ok: true, skipped: true, ..Default::default() };
+        return EmailSendResult {
+            ok: true,
+            skipped: true,
+            ..Default::default()
+        };
     }
 
     if !config.is_email_configured() {
@@ -216,7 +227,11 @@ pub async fn send_email(
     // `statusCode` is consulted, because Resend has answered 200 with an
     // error document.
     let body_status = data.get("statusCode").and_then(Value::as_i64);
-    let effective = if status >= 400 { Some(status) } else { body_status };
+    let effective = if status >= 400 {
+        Some(status)
+    } else {
+        body_status
+    };
     if let Some(code) = effective.filter(|c| *c != 200) {
         let message = data
             .get("message")
@@ -276,21 +291,45 @@ mod tests {
     /// real thing; these are the exact strings it produced.
     #[test]
     fn the_error_class_matches_the_sdk_table() {
-        assert_eq!(sdk_error(422, "validation_error", "bad address"),
-                   "ValidationError: bad address");
-        assert_eq!(sdk_error(500, "application_error", "boom"), "ApplicationError: boom");
-        assert_eq!(sdk_error(429, "rate_limit_exceeded", "slow down"),
-                   "RateLimitError: slow down");
-        assert_eq!(sdk_error(429, "monthly_quota_exceeded", "x"), "RateLimitError: x");
-        assert_eq!(sdk_error(400, "validation_error", "x"), "ValidationError: x");
-        assert_eq!(sdk_error(422, "missing_required_field", "x"),
-                   "MissingRequiredFieldsError: x");
-        assert_eq!(sdk_error(401, "missing_api_key", "x"), "MissingApiKeyError: x");
-        assert_eq!(sdk_error(403, "invalid_api_key", "x"), "InvalidApiKeyError: x");
+        assert_eq!(
+            sdk_error(422, "validation_error", "bad address"),
+            "ValidationError: bad address"
+        );
+        assert_eq!(
+            sdk_error(500, "application_error", "boom"),
+            "ApplicationError: boom"
+        );
+        assert_eq!(
+            sdk_error(429, "rate_limit_exceeded", "slow down"),
+            "RateLimitError: slow down"
+        );
+        assert_eq!(
+            sdk_error(429, "monthly_quota_exceeded", "x"),
+            "RateLimitError: x"
+        );
+        assert_eq!(
+            sdk_error(400, "validation_error", "x"),
+            "ValidationError: x"
+        );
+        assert_eq!(
+            sdk_error(422, "missing_required_field", "x"),
+            "MissingRequiredFieldsError: x"
+        );
+        assert_eq!(
+            sdk_error(401, "missing_api_key", "x"),
+            "MissingApiKeyError: x"
+        );
+        assert_eq!(
+            sdk_error(403, "invalid_api_key", "x"),
+            "InvalidApiKeyError: x"
+        );
         // 401 with invalid_api_key is NOT in the table — it is mapped
         // under 403 — so it falls through to the bare class. Confirmed
         // against the SDK rather than assumed.
-        assert_eq!(sdk_error(401, "invalid_api_key", "nope"), "ResendError: nope");
+        assert_eq!(
+            sdk_error(401, "invalid_api_key", "nope"),
+            "ResendError: nope"
+        );
         // An unknown status, and a known one with an unmapped type.
         assert_eq!(sdk_error(502, "application_error", "x"), "ResendError: x");
         assert_eq!(sdk_error(500, "something_else", "x"), "ResendError: x");

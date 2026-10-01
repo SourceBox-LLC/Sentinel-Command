@@ -14,8 +14,8 @@ use serde_json::Value;
 use crate::app::AppState;
 use crate::auth::RequireView;
 use crate::error::ApiError;
-use crate::query::path_segment;
 use crate::models::{CameraGroupRow, CameraRow, CAMERA_SELECT};
+use crate::query::path_segment;
 
 /// `GET /api/cameras` — every camera in the caller's organisation.
 ///
@@ -44,12 +44,13 @@ pub async fn get_camera(
     Path(camera_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let camera_id = path_segment(&camera_id)?;
-    let row: Option<CameraRow> =
-        sqlx::query_as(&format!("{CAMERA_SELECT} WHERE c.camera_id = $1 AND c.org_id = $2"))
-            .bind(camera_id)
-            .bind(&user.org_id)
-            .fetch_optional(&state.pool)
-            .await?;
+    let row: Option<CameraRow> = sqlx::query_as(&format!(
+        "{CAMERA_SELECT} WHERE c.camera_id = $1 AND c.org_id = $2"
+    ))
+    .bind(camera_id)
+    .bind(&user.org_id)
+    .fetch_optional(&state.pool)
+    .await?;
 
     // 404 whether the camera does not exist or belongs to someone else —
     // distinguishing them would confirm the existence of another
@@ -120,11 +121,10 @@ pub async fn take_snapshot(
         return Err(ApiError::bad_request("Camera has no assigned node"));
     };
 
-    let node: Option<(String,)> =
-        sqlx::query_as("SELECT node_id FROM camera_nodes WHERE id = $1")
-            .bind(node_pk)
-            .fetch_optional(&state.pool)
-            .await?;
+    let node: Option<(String,)> = sqlx::query_as("SELECT node_id FROM camera_nodes WHERE id = $1")
+        .bind(node_pk)
+        .fetch_optional(&state.pool)
+        .await?;
     let Some((node_id,)) = node else {
         return Err(ApiError::bad_request("Camera node not found"));
     };

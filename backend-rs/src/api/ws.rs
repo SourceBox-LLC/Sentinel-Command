@@ -28,7 +28,10 @@ use crate::pyint::{python_int_of_json, PyInt};
 pub async fn handle_motion_event(state: &AppState, node_id: &str, org_id: &str, payload: &Value) {
     // `if not camera_id or score is None` — the empty string is as
     // absent as a missing key.
-    let camera_id = payload.get("camera_id").and_then(Value::as_str).unwrap_or("");
+    let camera_id = payload
+        .get("camera_id")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let score = payload.get("score").filter(|value| !value.is_null());
     let (Some(score), false) = (score, camera_id.is_empty()) else {
         tracing::warn!(node_id, "Motion event missing camera_id or score");
@@ -102,7 +105,9 @@ pub async fn handle_motion_event(state: &AppState, node_id: &str, org_id: &str, 
         Ok(Some((name,))) => name,
         Ok(None) => {
             tracing::warn!(
-                node_id, camera_id, org_id,
+                node_id,
+                camera_id,
+                org_id,
                 "Motion event rejected: camera not owned by node"
             );
             return;
@@ -198,7 +203,10 @@ pub async fn handle_heartbeat(
     org_id: &str,
     payload: &Value,
 ) -> HeartbeatAck {
-    let mut ack = HeartbeatAck { update_available: Value::Null, unsupported: false };
+    let mut ack = HeartbeatAck {
+        update_available: Value::Null,
+        unsupported: false,
+    };
     let mut transitions: Vec<Transition> = Vec::new();
 
     let node: Option<(String, Option<String>)> =
@@ -316,7 +324,10 @@ pub async fn handle_heartbeat(
             };
 
             // `cam_data.get("status", "online")` — absent means online.
-            let new_status = camera.get("status").and_then(Value::as_str).unwrap_or("online");
+            let new_status = camera
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("online");
             // A healthy state wipes the reason, so a stale error does
             // not linger once the supervisor recovers.
             let last_error = if matches!(new_status, "restarting" | "failed" | "error") {
@@ -414,8 +425,12 @@ pub async fn node_websocket(
     // Headers win; the query string is the fallback. `auth_path` only
     // drives the deprecation log below.
     let from_header = header_key.is_some();
-    let api_key = header_key.map(str::to_string).or_else(|| query.last("api_key").map(str::to_string));
-    let node_id = header_node.map(str::to_string).or_else(|| query.last("node_id").map(str::to_string));
+    let api_key = header_key
+        .map(str::to_string)
+        .or_else(|| query.last("api_key").map(str::to_string));
+    let node_id = header_node
+        .map(str::to_string)
+        .or_else(|| query.last("node_id").map(str::to_string));
 
     let (Some(api_key), Some(node_id)) = (api_key, node_id) else {
         // 4001 is also what a wrong key gets, deliberately: a client
@@ -485,7 +500,10 @@ fn refuse_handshake(_code: u16, _reason: &'static str) -> axum::response::Respon
     use axum::response::IntoResponse;
     (
         axum::http::StatusCode::FORBIDDEN,
-        [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
         "",
     )
         .into_response()
@@ -659,9 +677,15 @@ mod tests {
     #[test]
     fn a_timestamps_offset_is_discarded_rather_than_converted() {
         let parsed = crate::pydatetime::fromisoformat("2026-09-21T10:00:00+05:00").unwrap();
-        assert_eq!(crate::models::iso_naive(parsed.naive), "2026-09-21T10:00:00");
+        assert_eq!(
+            crate::models::iso_naive(parsed.naive),
+            "2026-09-21T10:00:00"
+        );
         // Had it converted, this would read 05:00:00.
-        assert_ne!(crate::models::iso_naive(parsed.naive), "2026-09-21T05:00:00");
+        assert_ne!(
+            crate::models::iso_naive(parsed.naive),
+            "2026-09-21T05:00:00"
+        );
 
         // A naive stamp passes through unchanged.
         let naive = crate::pydatetime::fromisoformat("2026-09-21T10:00:00").unwrap();

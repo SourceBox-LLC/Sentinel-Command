@@ -44,7 +44,10 @@ fn format_error(bytes: &[u8], start: usize, end: usize, reason: &str) -> String 
             bytes[start]
         )
     } else {
-        format!("'utf-8' codec can't decode bytes in position {start}-{}: {reason}", end - 1)
+        format!(
+            "'utf-8' codec can't decode bytes in position {start}-{}: {reason}",
+            end - 1
+        )
     }
 }
 
@@ -131,7 +134,12 @@ mod tests {
             "{} of {} disagree with CPython:\n{}",
             failures.len(),
             corpus.len(),
-            failures.iter().take(20).cloned().collect::<Vec<_>>().join("\n")
+            failures
+                .iter()
+                .take(20)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 

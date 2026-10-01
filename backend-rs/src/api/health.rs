@@ -101,17 +101,20 @@ pub async fn health_ready(
 
     let entry = {
         let guard = READY_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        guard
-            .as_ref()
-            .map(|cached| (cached.cached_at.elapsed(), cached.body.clone(), cached.status))
+        guard.as_ref().map(|cached| {
+            (
+                cached.cached_at.elapsed(),
+                cached.body.clone(),
+                cached.status,
+            )
+        })
     };
     if let Some((body, status)) = serve_from_cache(nocache, entry) {
         return Ok((status, Json(body)).into_response());
     }
 
     let uptime = state.started_at.elapsed().as_secs_f64();
-    let report =
-        run_readiness_probes(&state.config, &state.pool, &state.http, uptime).await;
+    let report = run_readiness_probes(&state.config, &state.pool, &state.http, uptime).await;
 
     let mut body = report.to_json();
     body["version"] = json!(VERSION);
@@ -226,17 +229,18 @@ pub async fn health_detailed(State(state): State<AppState>) -> Json<Value> {
     };
     // A count query must not fail the health endpoint; -1 says "we do
     // not know" rather than pretending the queue is empty.
-    let queue_depth: i64 =
-        match sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM email_outbox WHERE status = 'pending'")
-            .fetch_one(&state.pool)
-            .await
-        {
-            Ok((count,)) => count,
-            Err(err) => {
-                tracing::warn!(error = %err, "[Health] EmailOutbox count query failed");
-                UNKNOWN_QUEUE_DEPTH
-            }
-        };
+    let queue_depth: i64 = match sqlx::query_as::<_, (i64,)>(
+        "SELECT COUNT(*) FROM email_outbox WHERE status = 'pending'",
+    )
+    .fetch_one(&state.pool)
+    .await
+    {
+        Ok((count,)) => count,
+        Err(err) => {
+            tracing::warn!(error = %err, "[Health] EmailOutbox count query failed");
+            UNKNOWN_QUEUE_DEPTH
+        }
+    };
     let resend = json!({ "status": resend_status, "queue_depth": queue_depth });
 
     let critical = [&database, &clerk, &disk, &email_worker];
@@ -293,7 +297,11 @@ mod tests {
     fn the_viewer_backlog_warns_only_past_its_threshold() {
         assert_eq!(viewer_usage_status(0), "ok");
         assert_eq!(viewer_usage_status(99_999), "ok");
-        assert_eq!(viewer_usage_status(100_000), "ok", "the threshold itself is not past it");
+        assert_eq!(
+            viewer_usage_status(100_000),
+            "ok",
+            "the threshold itself is not past it"
+        );
         assert_eq!(viewer_usage_status(100_001), "warn");
         // A negative backlog is not a thing, but it must not warn.
         assert_eq!(viewer_usage_status(-1), "ok");
@@ -327,8 +335,14 @@ mod tests {
                 StatusCode::OK,
             ))
         };
-        assert!(serve_from_cache(false, fresh()).is_some(), "a fresh entry is served");
-        assert!(serve_from_cache(true, fresh()).is_none(), "nocache bypasses it");
+        assert!(
+            serve_from_cache(false, fresh()).is_some(),
+            "a fresh entry is served"
+        );
+        assert!(
+            serve_from_cache(true, fresh()).is_none(),
+            "nocache bypasses it"
+        );
         // Nothing cached yet.
         assert!(serve_from_cache(false, None).is_none());
         // Stale.

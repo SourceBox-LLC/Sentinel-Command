@@ -182,7 +182,11 @@ fn bearer_token(parts: &Parts) -> Option<&str> {
 }
 
 fn session_cookie(parts: &Parts) -> Option<String> {
-    let header = parts.headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
+    let header = parts
+        .headers
+        .get(axum::http::header::COOKIE)?
+        .to_str()
+        .ok()?;
     for pair in header.split(';') {
         let (name, value) = pair.split_once('=')?;
         if name.trim() == CLERK_SESSION_COOKIE {
@@ -565,7 +569,10 @@ mod tests {
         };
         let token = local::issue_token("s3cret", "self-host").unwrap();
         let user = auth
-            .authenticate(&parts_with(&[("authorization", &format!("Bearer {token}"))]))
+            .authenticate(&parts_with(&[(
+                "authorization",
+                &format!("Bearer {token}"),
+            )]))
             .await
             .unwrap();
         assert_eq!(user.org_id, "self-host");

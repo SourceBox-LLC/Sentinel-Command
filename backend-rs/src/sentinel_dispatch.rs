@@ -119,7 +119,10 @@ pub fn is_camera_in_scope(scope: &Value, camera_id: Option<&str>) -> bool {
 /// rather than raising, because this runs on the motion path.
 pub fn parse_hhmm_to_minutes(value: &str, default: i64) -> i64 {
     let mut parts = value.split(':');
-    let Some(hours) = parts.next().and_then(crate::api::sentinel_config::python_int) else {
+    let Some(hours) = parts
+        .next()
+        .and_then(crate::api::sentinel_config::python_int)
+    else {
         return default;
     };
     // Only the second field is read; `22:30:45` is 22:30, as Python's
@@ -393,7 +396,10 @@ pub async fn maybe_dispatch_for_notification(
     }
 
     if is_agent_authored(kind, meta) {
-        tracing::debug!(org_id, "sentinel: dispatch skipped — agent-authored incident");
+        tracing::debug!(
+            org_id,
+            "sentinel: dispatch skipped — agent-authored incident"
+        );
         return None;
     }
 
@@ -415,7 +421,12 @@ pub async fn maybe_dispatch_for_notification(
         // failed is not, and is the one case an operator would want to
         // see without turning the level up.
         if refusal == Refusal::LookupFailed {
-            tracing::error!(org_id, kind, camera_id, "sentinel: dispatch failed silently");
+            tracing::error!(
+                org_id,
+                kind,
+                camera_id,
+                "sentinel: dispatch failed silently"
+            );
         } else {
             tracing::debug!(
                 org_id, kind, camera_id, reason = %refusal.as_str(),
@@ -448,7 +459,10 @@ pub async fn maybe_dispatch_for_notification(
     }
 
     tracing::info!(
-        run_id, org_id, trigger_type, camera_id,
+        run_id,
+        org_id,
+        trigger_type,
+        camera_id,
         "sentinel: dispatched pending run"
     );
     fire_wakeup_webhook(state);
@@ -573,12 +587,19 @@ mod tests {
     #[test]
     fn the_trigger_labels_are_the_ones_the_dashboard_colours() {
         assert_eq!(trigger_type_for("motion_enabled"), "motion");
-        assert_eq!(trigger_type_for("incident_opened_enabled"), "incident_opened");
+        assert_eq!(
+            trigger_type_for("incident_opened_enabled"),
+            "incident_opened"
+        );
         // The kind and the trigger name differ on purpose: the UI says
         // `incident_opened` where the notification kind is
         // `incident_created`.
         assert_eq!(
-            KIND_TO_TRIGGER_FIELD.iter().find(|(k, _)| *k == "incident_created").unwrap().1,
+            KIND_TO_TRIGGER_FIELD
+                .iter()
+                .find(|(k, _)| *k == "incident_created")
+                .unwrap()
+                .1,
             "incident_opened_enabled"
         );
     }
@@ -601,11 +622,17 @@ mod tests {
             );
         }
         // The guard is scoped to the one kind that can loop.
-        assert!(!is_agent_authored("motion", Some(&json!({"created_by": "mcp:x"}))));
+        assert!(!is_agent_authored(
+            "motion",
+            Some(&json!({"created_by": "mcp:x"}))
+        ));
         assert!(!is_agent_authored("incident_created", None));
         assert!(!is_agent_authored("incident_created", Some(&json!({}))));
         // A non-string value is stringified, not skipped.
-        assert!(!is_agent_authored("incident_created", Some(&json!({"created_by": 12}))));
+        assert!(!is_agent_authored(
+            "incident_created",
+            Some(&json!({"created_by": 12}))
+        ));
     }
 
     #[test]
@@ -615,7 +642,10 @@ mod tests {
             (Refusal::PlanNotEligible, "plan_not_eligible"),
             (Refusal::LicenseRequired, "license_required"),
             (Refusal::KindNotATrigger, "kind_not_a_sentinel_trigger"),
-            (Refusal::TriggerOff("motion_enabled"), "trigger_motion_enabled_off"),
+            (
+                Refusal::TriggerOff("motion_enabled"),
+                "trigger_motion_enabled_off",
+            ),
             (Refusal::CameraOutOfScope, "camera_out_of_scope"),
             (Refusal::OutsideScheduleWindow, "outside_schedule_window"),
             (Refusal::MotionCooldownActive, "motion_cooldown_active"),

@@ -289,7 +289,10 @@ pub async fn recent_activity(
 
     let events = crate::mcp::activity::TRACKER.recent_events(&user.org_id, limit as usize);
     Ok(axum::Json(
-        events.iter().map(crate::mcp::activity::McpEvent::to_json).collect::<Vec<_>>(),
+        events
+            .iter()
+            .map(crate::mcp::activity::McpEvent::to_json)
+            .collect::<Vec<_>>(),
     )
     .into_response())
 }
@@ -314,11 +317,15 @@ pub async fn stream_activity(
     RequireAdmin(user): RequireAdmin,
 ) -> Result<Response, ApiError> {
     rate.check().await?;
-    let cap = crate::plans::get_plan_limits(&user.plan).max_sse_subscribers.max(0) as usize;
+    let cap = crate::plans::get_plan_limits(&user.plan)
+        .max_sse_subscribers
+        .max(0) as usize;
     // `true` for the audience: this route is admin-only already, so
     // every event on the org's channel is for this subscriber.
     let Some(subscription) =
-        crate::mcp::activity::TRACKER.broadcaster.subscribe(&user.org_id, true, cap)
+        crate::mcp::activity::TRACKER
+            .broadcaster
+            .subscribe(&user.org_id, true, cap)
     else {
         return Err(ApiError::new(
             axum::http::StatusCode::TOO_MANY_REQUESTS,

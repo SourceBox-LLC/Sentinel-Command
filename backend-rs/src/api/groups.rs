@@ -16,7 +16,9 @@ use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::now_naive;
 use crate::pyint::PyInt;
-use crate::query::{int4, parse_handler_json, path_int, BodyErrors, ModelBody, Query, path_segment};
+use crate::query::{
+    int4, parse_handler_json, path_int, path_segment, BodyErrors, ModelBody, Query,
+};
 use crate::ratelimit::PerMinute;
 use crate::settings;
 
@@ -181,10 +183,11 @@ pub async fn assign_camera_group(
     // Same dirty-check rule as the incident patch: SQLAlchemy emits no
     // UPDATE when the value is unchanged, so `updated_at` must not move
     // for a no-op reassignment.
-    let current: (Option<i32>,) = sqlx::query_as("SELECT group_id FROM cameras WHERE camera_id = $1")
-        .bind(camera_id)
-        .fetch_one(&state.pool)
-        .await?;
+    let current: (Option<i32>,) =
+        sqlx::query_as("SELECT group_id FROM cameras WHERE camera_id = $1")
+            .bind(camera_id)
+            .fetch_one(&state.pool)
+            .await?;
     if current.0 != assign {
         sqlx::query("UPDATE cameras SET group_id = $1, updated_at = $2 WHERE camera_id = $3 AND org_id = $4")
             .bind(assign)

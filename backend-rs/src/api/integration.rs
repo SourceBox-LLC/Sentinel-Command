@@ -138,7 +138,8 @@ impl NodeRow {
     }
 }
 
-const NODE_COLUMNS: &str = "id, node_id, name, status, last_seen, local_ip, http_port, node_version,
+const NODE_COLUMNS: &str =
+    "id, node_id, name, status, last_seen, local_ip, http_port, node_version,
      storage_used_bytes, storage_max_bytes, storage_disk_free_bytes, storage_disk_total_bytes";
 
 /// `GET /api/integration/cameras` — the one call Home Assistant polls
@@ -180,14 +181,16 @@ pub async fn list_cameras(
             // advertising an address: HA on the same network pulls
             // video straight from it, uncapped on every tier.
             // `node.local_ip` is a truthiness test: an empty string builds nothing.
-            let local_url = n.filter(|n| n.local_ip.as_deref().is_some_and(|ip| !ip.is_empty()) && n.online()).map(|n| {
-                format!(
-                    "http://{}:{}/hls/{}/stream.m3u8",
-                    n.local_ip.as_deref().unwrap_or_default(),
-                    n.http_port.filter(|p| *p != 0).unwrap_or(8080),
-                    cam.camera_id
-                )
-            });
+            let local_url = n
+                .filter(|n| n.local_ip.as_deref().is_some_and(|ip| !ip.is_empty()) && n.online())
+                .map(|n| {
+                    format!(
+                        "http://{}:{}/hls/{}/stream.m3u8",
+                        n.local_ip.as_deref().unwrap_or_default(),
+                        n.http_port.filter(|p| *p != 0).unwrap_or(8080),
+                        cam.camera_id
+                    )
+                });
             json!({
                 "id": cam.camera_id,
                 "name": cam.name,
@@ -265,7 +268,9 @@ pub async fn set_recording(
     )
     .await;
 
-    Ok(Json(json!({ "camera_id": camera_id, "recording": recording })))
+    Ok(Json(
+        json!({ "camera_id": camera_id, "recording": recording }),
+    ))
 }
 
 /// `GET /api/integration/status` — the org rollup HA sensors read, and
@@ -299,7 +304,9 @@ pub async fn status(
 
     let cameras_online = cameras
         .iter()
-        .filter(|(s, seen)| camera_effective_status(s.as_deref(), *seen).as_deref() != Some("offline"))
+        .filter(|(s, seen)| {
+            camera_effective_status(s.as_deref(), *seen).as_deref() != Some("offline")
+        })
         .count();
     let items: Vec<Value> = nodes
         .iter()
@@ -396,17 +403,16 @@ pub async fn snapshot(
         return Err(ApiError::not_found("Camera not found"));
     }
 
-    let jpeg = match crate::mcp::snapshot::capture_bytes(&state.pool, &user.org_id, &camera_id)
-        .await
-    {
-        Ok((jpeg, _node_id)) => jpeg,
-        Err(err) => {
-            return Err(ApiError::new(
-                axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                serde_json::Value::String(err.0),
-            ))
-        }
-    };
+    let jpeg =
+        match crate::mcp::snapshot::capture_bytes(&state.pool, &user.org_id, &camera_id).await {
+            Ok((jpeg, _node_id)) => jpeg,
+            Err(err) => {
+                return Err(ApiError::new(
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    serde_json::Value::String(err.0),
+                ))
+            }
+        };
 
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(
@@ -423,7 +429,6 @@ pub async fn snapshot(
     use axum::response::IntoResponse;
     Ok((headers, jpeg).into_response())
 }
-
 
 #[cfg(test)]
 mod tests {

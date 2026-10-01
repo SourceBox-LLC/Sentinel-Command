@@ -304,8 +304,17 @@ mod tests {
             mime_for(std::path::Path::new("/x/index.html")),
             "text/html; charset=utf-8"
         );
-        assert_eq!(mime_for(std::path::Path::new("/x/app.css")), "text/css; charset=utf-8");
-        assert_eq!(mime_for(std::path::Path::new("/x/logo.svg")), "image/svg+xml");
-        assert_eq!(mime_for(std::path::Path::new("/x/blob")), "application/octet-stream");
+        assert_eq!(
+            mime_for(std::path::Path::new("/x/app.css")),
+            "text/css; charset=utf-8"
+        );
+        assert_eq!(
+            mime_for(std::path::Path::new("/x/logo.svg")),
+            "image/svg+xml"
+        );
+        assert_eq!(
+            mime_for(std::path::Path::new("/x/blob")),
+            "application/octet-stream"
+        );
     }
 }

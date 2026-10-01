@@ -27,7 +27,9 @@ pub enum PyInt {
     Small(i64),
     /// Outside i64. Positive values exceed every upper bound, negative
     /// ones fall below every lower bound.
-    Big { negative: bool },
+    Big {
+        negative: bool,
+    },
 }
 
 impl PyInt {
@@ -321,7 +323,9 @@ pub fn python_int_of_json(value: &serde_json::Value) -> Option<PyInt> {
             if truncated >= i64::MIN as f64 && truncated <= i64::MAX as f64 {
                 Some(PyInt::Small(truncated as i64))
             } else {
-                Some(PyInt::Big { negative: truncated < 0.0 })
+                Some(PyInt::Big {
+                    negative: truncated < 0.0,
+                })
             }
         }
         serde_json::Value::String(s) => python_int(s),
@@ -358,8 +362,14 @@ mod tests {
             assert_eq!(python_int(bad), None, "{bad:?}");
         }
         // Past i64 keeps only its sign, which is all a caller can use.
-        assert_eq!(python_int(&"9".repeat(30)), Some(PyInt::Big { negative: false }));
-        assert_eq!(python_int(&format!("-{}", "9".repeat(30))), Some(PyInt::Big { negative: true }));
+        assert_eq!(
+            python_int(&"9".repeat(30)),
+            Some(PyInt::Big { negative: false })
+        );
+        assert_eq!(
+            python_int(&format!("-{}", "9".repeat(30))),
+            Some(PyInt::Big { negative: true })
+        );
 
         // And over a JSON value, where the type decides.
         assert_eq!(python_int_of_json(&json!(50)), small(50));
@@ -372,7 +382,13 @@ mod tests {
         assert_eq!(python_int_of_json(&json!("50")), small(50));
         // TypeError and ValueError alike come back as None, because the
         // one caller catches both and does the same thing.
-        for bad in [json!(null), json!([]), json!({}), json!("3.9"), json!("abc")] {
+        for bad in [
+            json!(null),
+            json!([]),
+            json!({}),
+            json!("3.9"),
+            json!("abc"),
+        ] {
             assert_eq!(python_int_of_json(&bad), None, "{bad}");
         }
     }
@@ -391,7 +407,9 @@ mod tests {
             let input = case["in"].as_str().unwrap();
             let got = match str_as_int(input) {
                 Ok(PyInt::Small(v)) => serde_json::json!({ "int": v.to_string() }),
-                Ok(PyInt::Big { negative }) => serde_json::json!({ "big": if negative { "-" } else { "+" } }),
+                Ok(PyInt::Big { negative }) => {
+                    serde_json::json!({ "big": if negative { "-" } else { "+" } })
+                }
                 Err(StrIntError::Parsing) => serde_json::json!({ "error": "int_parsing" }),
                 Err(StrIntError::ParsingSize) => serde_json::json!({ "error": "int_parsing_size" }),
             };
@@ -399,7 +417,10 @@ mod tests {
             want.remove("in");
             if got != Value::Object(want.clone()) {
                 let shown: String = input.chars().take(40).collect();
-                failures.push(format!("{shown:?} (len {}): want {want:?} got {got}", input.len()));
+                failures.push(format!(
+                    "{shown:?} (len {}): want {want:?} got {got}",
+                    input.len()
+                ));
             }
         }
         assert!(
@@ -407,7 +428,12 @@ mod tests {
             "{} of {} disagree with pydantic:\n{}",
             failures.len(),
             corpus.len(),
-            failures.iter().take(40).cloned().collect::<Vec<_>>().join("\n")
+            failures
+                .iter()
+                .take(40)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 

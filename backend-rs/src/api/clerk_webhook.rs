@@ -86,7 +86,9 @@ fn payer_org(data: &Map<String, Value>) -> Option<String> {
 fn active_plan_slug(items: &[Value], now: chrono::DateTime<chrono::Utc>) -> String {
     let mut entitled_canceled: Option<String> = None;
     for item in items {
-        let Some(item) = item.as_object() else { continue };
+        let Some(item) = item.as_object() else {
+            continue;
+        };
         let slug = item
             .get("plan")
             .and_then(Value::as_object)
@@ -94,7 +96,10 @@ fn active_plan_slug(items: &[Value], now: chrono::DateTime<chrono::Utc>) -> Stri
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty());
         let Some(slug) = slug else { continue };
-        let status = item.get("status").and_then(Value::as_str).unwrap_or_default();
+        let status = item
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         if status == "active" {
             return slug.to_string();
         }
@@ -114,7 +119,9 @@ fn active_plan_slug(items: &[Value], now: chrono::DateTime<chrono::Utc>) -> Stri
 /// real (re-)subscription, and only it clears a pending cancellation.
 fn has_active_item(items: &[Value]) -> bool {
     items.iter().any(|item| {
-        let Some(item) = item.as_object() else { return false };
+        let Some(item) = item.as_object() else {
+            return false;
+        };
         item.get("status").and_then(Value::as_str) == Some("active")
             && item
                 .get("plan")
@@ -188,7 +195,8 @@ async fn reenforce(state: &AppState, org_id: &str, what: &str) -> Result<(), Api
     let outcome = plans::enforce_camera_cap(&ctx, &state.pool, org_id).await?;
     if outcome.changed {
         tracing::info!(
-            org_id, what,
+            org_id,
+            what,
             disabled = outcome.disabled.len(),
             enabled = outcome.enabled.len(),
             "plan change moved cameras"
@@ -249,7 +257,11 @@ pub async fn clerk_webhook(
         .fetch_optional(&state.pool)
         .await?;
         if let Some((previous,)) = seen {
-            tracing::info!(msg_id, previous, "clerk webhook already processed — skipping");
+            tracing::info!(
+                msg_id,
+                previous,
+                "clerk webhook already processed — skipping"
+            );
             return Ok(Json(json!({ "status": "duplicate", "svix_id": msg_id })));
         }
     }
@@ -375,7 +387,11 @@ async fn dispatch(
                 // true with no anchor beside it — an org past due with
                 // no grace clock. Found by a case carrying a timestamp
                 // big enough to raise OverflowError.
-                let stamp = if already { None } else { Some(past_due_stamp(&data)?) };
+                let stamp = if already {
+                    None
+                } else {
+                    Some(past_due_stamp(&data)?)
+                };
 
                 set_setting(state, &org_id, "payment_past_due", "true").await;
                 plans::invalidate_effective_plan_cache(Some(&org_id));
@@ -389,7 +405,10 @@ async fn dispatch(
         "paymentAttempt.updated" => {
             let data = data_object()?;
             let org_id = payer_org(&data);
-            let status = data.get("status").and_then(Value::as_str).unwrap_or_default();
+            let status = data
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if let Some(org_id) = org_id {
                 if status == "paid" {
                     // The timestamp is cleared too, so a future
@@ -416,7 +435,10 @@ async fn dispatch(
             let data = data_object()?;
             if let Some(org_id) = payer_org(&data) {
                 set_setting(state, &org_id, "plan_cancel_pending", "true").await;
-                tracing::info!(org_id, "cancellation scheduled — plan retained until period end");
+                tracing::info!(
+                    org_id,
+                    "cancellation scheduled — plan retained until period end"
+                );
             }
         }
 
@@ -704,7 +726,11 @@ async fn membership_notification(state: &AppState, event_type: &str, data: &Map<
         .and_then(Value::as_str)
         .unwrap_or_default()
         .replace("org:", "");
-    let role = if role.is_empty() { "member".to_string() } else { role };
+    let role = if role.is_empty() {
+        "member".to_string()
+    } else {
+        role
+    };
     let user_id = user.get("user_id").cloned().unwrap_or(Value::Null);
     // A promotion to admin is always worth a warning; a demotion or a
     // member-tier change is informational.

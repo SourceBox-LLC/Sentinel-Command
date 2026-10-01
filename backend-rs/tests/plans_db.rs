@@ -33,7 +33,11 @@ static DB: Mutex<()> = Mutex::const_new(());
 
 async fn pool() -> Option<PgPool> {
     let url = std::env::var("TEST_DATABASE_URL").ok()?;
-    PgPoolOptions::new().max_connections(2).connect(&url).await.ok()
+    PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .ok()
 }
 
 /// Walk each id sequence past the largest id actually present.
@@ -93,11 +97,13 @@ async fn set_plan(pool: &PgPool, org: &str, slug: &str) {
 }
 
 async fn flags(pool: &PgPool, org: &str) -> Vec<(String, bool)> {
-    sqlx::query_as("SELECT camera_id, disabled_by_plan FROM cameras WHERE org_id = $1 ORDER BY camera_id")
-        .bind(org)
-        .fetch_all(pool)
-        .await
-        .unwrap()
+    sqlx::query_as(
+        "SELECT camera_id, disabled_by_plan FROM cameras WHERE org_id = $1 ORDER BY camera_id",
+    )
+    .bind(org)
+    .fetch_all(pool)
+    .await
+    .unwrap()
 }
 
 fn context(pool: &PgPool, client: &reqwest::Client) -> PlanContext<'static> {
@@ -149,7 +155,10 @@ async fn the_oldest_cameras_are_the_ones_kept() {
     assert!(outcome.changed);
     assert_eq!(outcome.plan, "free");
     assert_eq!(outcome.max_cameras, 5);
-    assert_eq!(outcome.enabled, vec!["keep-1", "keep-2", "keep-3", "keep-4", "keep-5"]);
+    assert_eq!(
+        outcome.enabled,
+        vec!["keep-1", "keep-2", "keep-3", "keep-4", "keep-5"]
+    );
     assert_eq!(outcome.disabled, vec!["keep-6", "keep-7", "keep-8"]);
     assert_eq!(
         flags(&pool, org).await,
@@ -221,7 +230,10 @@ async fn raising_the_cap_lights_the_same_rows_back_up() {
     assert!(outcome.changed);
     assert_eq!(outcome.plan, "pro");
     assert!(outcome.disabled.is_empty());
-    assert!(flags(&pool, org).await.iter().all(|(_, disabled)| !disabled));
+    assert!(flags(&pool, org)
+        .await
+        .iter()
+        .all(|(_, disabled)| !disabled));
 
     cleanup(&pool, org).await;
 }
@@ -250,11 +262,13 @@ async fn a_camera_with_no_creation_time_sorts_last() {
         add_camera(&pool, org, id, age, false).await;
     }
     add_camera(&pool, org, "null-new", 10, false).await;
-    sqlx::query("UPDATE cameras SET created_at = NULL WHERE camera_id = 'null-new' AND org_id = $1")
-        .bind(org)
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE cameras SET created_at = NULL WHERE camera_id = 'null-new' AND org_id = $1",
+    )
+    .bind(org)
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let ctx = context(&pool, &client);
     let outcome = enforce_camera_cap(&ctx, &pool, org).await.unwrap();

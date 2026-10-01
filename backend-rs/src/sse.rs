@@ -56,7 +56,10 @@ struct Inner {
 
 impl Broadcaster {
     pub const fn new(name: &'static str) -> Self {
-        Self { name, inner: Mutex::new(None) }
+        Self {
+            name,
+            inner: Mutex::new(None),
+        }
     }
 
     /// The map is built on first use because `HashMap::new` is not a
@@ -83,16 +86,33 @@ impl Broadcaster {
             let existing = inner.subscribers.entry(org_id.to_string()).or_default();
             if existing.len() >= cap {
                 let count = existing.len();
-                tracing::warn!(broadcaster = name, org_id, count, cap, "SSE cap hit — rejecting");
+                tracing::warn!(
+                    broadcaster = name,
+                    org_id,
+                    count,
+                    cap,
+                    "SSE cap hit — rejecting"
+                );
                 return None;
             }
             let (tx, rx) = mpsc::channel(QUEUE_DEPTH);
             inner.next_id += 1;
             let id = inner.next_id;
             let existing = inner.subscribers.entry(org_id.to_string()).or_default();
-            existing.push(Subscriber { id, tx: tx.clone(), is_admin });
+            existing.push(Subscriber {
+                id,
+                tx: tx.clone(),
+                is_admin,
+            });
             let count = existing.len();
-            tracing::info!(broadcaster = name, org_id, is_admin, count, cap, "SSE subscriber added");
+            tracing::info!(
+                broadcaster = name,
+                org_id,
+                is_admin,
+                count,
+                cap,
+                "SSE subscriber added"
+            );
             Some((rx, id, tx))
         })
         .map(|(rx, id, keepalive)| Subscription {
@@ -321,12 +341,18 @@ mod tests {
         // slow subscriber its place.
         for i in 0..=QUEUE_DEPTH {
             b.notify("org_a", "all", &format!(r#"{{"n":{i}}}"#));
-            assert!(next(&mut keeping_up).await.is_some(), "event {i} was not delivered");
+            assert!(
+                next(&mut keeping_up).await.is_some(),
+                "event {i} was not delivered"
+            );
         }
         assert_eq!(b.counts(), (1, 1));
         // And the one that kept up is still being fed.
         b.notify("org_a", "all", r#"{"n":"after"}"#);
-        assert_eq!(next(&mut keeping_up).await.as_deref(), Some(r#"{"n":"after"}"#));
+        assert_eq!(
+            next(&mut keeping_up).await.as_deref(),
+            Some(r#"{"n":"after"}"#)
+        );
     }
 
     #[tokio::test]
@@ -339,7 +365,11 @@ mod tests {
         for i in 0..=QUEUE_DEPTH {
             b.notify("org_a", "all", &format!(r#"{{"n":{i}}}"#));
         }
-        assert_eq!(b.counts(), (0, 0), "the slow subscriber should have been dropped");
+        assert_eq!(
+            b.counts(),
+            (0, 0),
+            "the slow subscriber should have been dropped"
+        );
 
         // Everything that was queued before the drop is still readable.
         for _ in 0..QUEUE_DEPTH {

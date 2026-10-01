@@ -118,52 +118,190 @@ fn option_value(value: &Option<String>) -> Value {
 /// which is the same reason `migrations/` and `assets/openapi.json` are
 /// embedded rather than copied.
 const TEMPLATES: &[(&str, &str)] = &[
-    ("_layout.html.j2", include_str!("../templates/emails/_layout.html.j2")),
-    ("camera_offline.body.html.j2", include_str!("../templates/emails/camera_offline.body.html.j2")),
-    ("camera_offline.body.txt.j2", include_str!("../templates/emails/camera_offline.body.txt.j2")),
-    ("camera_offline.subject.txt.j2", include_str!("../templates/emails/camera_offline.subject.txt.j2")),
-    ("camera_online.body.html.j2", include_str!("../templates/emails/camera_online.body.html.j2")),
-    ("camera_online.body.txt.j2", include_str!("../templates/emails/camera_online.body.txt.j2")),
-    ("camera_online.subject.txt.j2", include_str!("../templates/emails/camera_online.subject.txt.j2")),
-    ("cameranode_disk_low.body.html.j2", include_str!("../templates/emails/cameranode_disk_low.body.html.j2")),
-    ("cameranode_disk_low.body.txt.j2", include_str!("../templates/emails/cameranode_disk_low.body.txt.j2")),
-    ("cameranode_disk_low.subject.txt.j2", include_str!("../templates/emails/cameranode_disk_low.subject.txt.j2")),
-    ("incident_created.body.html.j2", include_str!("../templates/emails/incident_created.body.html.j2")),
-    ("incident_created.body.txt.j2", include_str!("../templates/emails/incident_created.body.txt.j2")),
-    ("incident_created.subject.txt.j2", include_str!("../templates/emails/incident_created.subject.txt.j2")),
-    ("mcp_key_created.body.html.j2", include_str!("../templates/emails/mcp_key_created.body.html.j2")),
-    ("mcp_key_created.body.txt.j2", include_str!("../templates/emails/mcp_key_created.body.txt.j2")),
-    ("mcp_key_created.subject.txt.j2", include_str!("../templates/emails/mcp_key_created.subject.txt.j2")),
-    ("mcp_key_revoked.body.html.j2", include_str!("../templates/emails/mcp_key_revoked.body.html.j2")),
-    ("mcp_key_revoked.body.txt.j2", include_str!("../templates/emails/mcp_key_revoked.body.txt.j2")),
-    ("mcp_key_revoked.subject.txt.j2", include_str!("../templates/emails/mcp_key_revoked.subject.txt.j2")),
-    ("member_added.body.html.j2", include_str!("../templates/emails/member_added.body.html.j2")),
-    ("member_added.body.txt.j2", include_str!("../templates/emails/member_added.body.txt.j2")),
-    ("member_added.subject.txt.j2", include_str!("../templates/emails/member_added.subject.txt.j2")),
-    ("member_promotion_requested.body.html.j2", include_str!("../templates/emails/member_promotion_requested.body.html.j2")),
-    ("member_promotion_requested.body.txt.j2", include_str!("../templates/emails/member_promotion_requested.body.txt.j2")),
-    ("member_promotion_requested.subject.txt.j2", include_str!("../templates/emails/member_promotion_requested.subject.txt.j2")),
-    ("member_removed.body.html.j2", include_str!("../templates/emails/member_removed.body.html.j2")),
-    ("member_removed.body.txt.j2", include_str!("../templates/emails/member_removed.body.txt.j2")),
-    ("member_removed.subject.txt.j2", include_str!("../templates/emails/member_removed.subject.txt.j2")),
-    ("member_role_changed.body.html.j2", include_str!("../templates/emails/member_role_changed.body.html.j2")),
-    ("member_role_changed.body.txt.j2", include_str!("../templates/emails/member_role_changed.body.txt.j2")),
-    ("member_role_changed.subject.txt.j2", include_str!("../templates/emails/member_role_changed.subject.txt.j2")),
-    ("motion.body.html.j2", include_str!("../templates/emails/motion.body.html.j2")),
-    ("motion.body.txt.j2", include_str!("../templates/emails/motion.body.txt.j2")),
-    ("motion.subject.txt.j2", include_str!("../templates/emails/motion.subject.txt.j2")),
-    ("motion_digest.body.html.j2", include_str!("../templates/emails/motion_digest.body.html.j2")),
-    ("motion_digest.body.txt.j2", include_str!("../templates/emails/motion_digest.body.txt.j2")),
-    ("motion_digest.subject.txt.j2", include_str!("../templates/emails/motion_digest.subject.txt.j2")),
-    ("node_offline.body.html.j2", include_str!("../templates/emails/node_offline.body.html.j2")),
-    ("node_offline.body.txt.j2", include_str!("../templates/emails/node_offline.body.txt.j2")),
-    ("node_offline.subject.txt.j2", include_str!("../templates/emails/node_offline.subject.txt.j2")),
-    ("node_online.body.html.j2", include_str!("../templates/emails/node_online.body.html.j2")),
-    ("node_online.body.txt.j2", include_str!("../templates/emails/node_online.body.txt.j2")),
-    ("node_online.subject.txt.j2", include_str!("../templates/emails/node_online.subject.txt.j2")),
-    ("welcome.body.html.j2", include_str!("../templates/emails/welcome.body.html.j2")),
-    ("welcome.body.txt.j2", include_str!("../templates/emails/welcome.body.txt.j2")),
-    ("welcome.subject.txt.j2", include_str!("../templates/emails/welcome.subject.txt.j2")),
+    (
+        "_layout.html.j2",
+        include_str!("../templates/emails/_layout.html.j2"),
+    ),
+    (
+        "camera_offline.body.html.j2",
+        include_str!("../templates/emails/camera_offline.body.html.j2"),
+    ),
+    (
+        "camera_offline.body.txt.j2",
+        include_str!("../templates/emails/camera_offline.body.txt.j2"),
+    ),
+    (
+        "camera_offline.subject.txt.j2",
+        include_str!("../templates/emails/camera_offline.subject.txt.j2"),
+    ),
+    (
+        "camera_online.body.html.j2",
+        include_str!("../templates/emails/camera_online.body.html.j2"),
+    ),
+    (
+        "camera_online.body.txt.j2",
+        include_str!("../templates/emails/camera_online.body.txt.j2"),
+    ),
+    (
+        "camera_online.subject.txt.j2",
+        include_str!("../templates/emails/camera_online.subject.txt.j2"),
+    ),
+    (
+        "cameranode_disk_low.body.html.j2",
+        include_str!("../templates/emails/cameranode_disk_low.body.html.j2"),
+    ),
+    (
+        "cameranode_disk_low.body.txt.j2",
+        include_str!("../templates/emails/cameranode_disk_low.body.txt.j2"),
+    ),
+    (
+        "cameranode_disk_low.subject.txt.j2",
+        include_str!("../templates/emails/cameranode_disk_low.subject.txt.j2"),
+    ),
+    (
+        "incident_created.body.html.j2",
+        include_str!("../templates/emails/incident_created.body.html.j2"),
+    ),
+    (
+        "incident_created.body.txt.j2",
+        include_str!("../templates/emails/incident_created.body.txt.j2"),
+    ),
+    (
+        "incident_created.subject.txt.j2",
+        include_str!("../templates/emails/incident_created.subject.txt.j2"),
+    ),
+    (
+        "mcp_key_created.body.html.j2",
+        include_str!("../templates/emails/mcp_key_created.body.html.j2"),
+    ),
+    (
+        "mcp_key_created.body.txt.j2",
+        include_str!("../templates/emails/mcp_key_created.body.txt.j2"),
+    ),
+    (
+        "mcp_key_created.subject.txt.j2",
+        include_str!("../templates/emails/mcp_key_created.subject.txt.j2"),
+    ),
+    (
+        "mcp_key_revoked.body.html.j2",
+        include_str!("../templates/emails/mcp_key_revoked.body.html.j2"),
+    ),
+    (
+        "mcp_key_revoked.body.txt.j2",
+        include_str!("../templates/emails/mcp_key_revoked.body.txt.j2"),
+    ),
+    (
+        "mcp_key_revoked.subject.txt.j2",
+        include_str!("../templates/emails/mcp_key_revoked.subject.txt.j2"),
+    ),
+    (
+        "member_added.body.html.j2",
+        include_str!("../templates/emails/member_added.body.html.j2"),
+    ),
+    (
+        "member_added.body.txt.j2",
+        include_str!("../templates/emails/member_added.body.txt.j2"),
+    ),
+    (
+        "member_added.subject.txt.j2",
+        include_str!("../templates/emails/member_added.subject.txt.j2"),
+    ),
+    (
+        "member_promotion_requested.body.html.j2",
+        include_str!("../templates/emails/member_promotion_requested.body.html.j2"),
+    ),
+    (
+        "member_promotion_requested.body.txt.j2",
+        include_str!("../templates/emails/member_promotion_requested.body.txt.j2"),
+    ),
+    (
+        "member_promotion_requested.subject.txt.j2",
+        include_str!("../templates/emails/member_promotion_requested.subject.txt.j2"),
+    ),
+    (
+        "member_removed.body.html.j2",
+        include_str!("../templates/emails/member_removed.body.html.j2"),
+    ),
+    (
+        "member_removed.body.txt.j2",
+        include_str!("../templates/emails/member_removed.body.txt.j2"),
+    ),
+    (
+        "member_removed.subject.txt.j2",
+        include_str!("../templates/emails/member_removed.subject.txt.j2"),
+    ),
+    (
+        "member_role_changed.body.html.j2",
+        include_str!("../templates/emails/member_role_changed.body.html.j2"),
+    ),
+    (
+        "member_role_changed.body.txt.j2",
+        include_str!("../templates/emails/member_role_changed.body.txt.j2"),
+    ),
+    (
+        "member_role_changed.subject.txt.j2",
+        include_str!("../templates/emails/member_role_changed.subject.txt.j2"),
+    ),
+    (
+        "motion.body.html.j2",
+        include_str!("../templates/emails/motion.body.html.j2"),
+    ),
+    (
+        "motion.body.txt.j2",
+        include_str!("../templates/emails/motion.body.txt.j2"),
+    ),
+    (
+        "motion.subject.txt.j2",
+        include_str!("../templates/emails/motion.subject.txt.j2"),
+    ),
+    (
+        "motion_digest.body.html.j2",
+        include_str!("../templates/emails/motion_digest.body.html.j2"),
+    ),
+    (
+        "motion_digest.body.txt.j2",
+        include_str!("../templates/emails/motion_digest.body.txt.j2"),
+    ),
+    (
+        "motion_digest.subject.txt.j2",
+        include_str!("../templates/emails/motion_digest.subject.txt.j2"),
+    ),
+    (
+        "node_offline.body.html.j2",
+        include_str!("../templates/emails/node_offline.body.html.j2"),
+    ),
+    (
+        "node_offline.body.txt.j2",
+        include_str!("../templates/emails/node_offline.body.txt.j2"),
+    ),
+    (
+        "node_offline.subject.txt.j2",
+        include_str!("../templates/emails/node_offline.subject.txt.j2"),
+    ),
+    (
+        "node_online.body.html.j2",
+        include_str!("../templates/emails/node_online.body.html.j2"),
+    ),
+    (
+        "node_online.body.txt.j2",
+        include_str!("../templates/emails/node_online.body.txt.j2"),
+    ),
+    (
+        "node_online.subject.txt.j2",
+        include_str!("../templates/emails/node_online.subject.txt.j2"),
+    ),
+    (
+        "welcome.body.html.j2",
+        include_str!("../templates/emails/welcome.body.html.j2"),
+    ),
+    (
+        "welcome.body.txt.j2",
+        include_str!("../templates/emails/welcome.body.txt.j2"),
+    ),
+    (
+        "welcome.subject.txt.j2",
+        include_str!("../templates/emails/welcome.subject.txt.j2"),
+    ),
 ];
 
 /// The environment, built once.
@@ -311,9 +449,10 @@ fn python_str_method(
                 return Err(Error::new(ErrorKind::InvalidOperation, "empty separator"));
             }
             let parts: Vec<JValue> = match maxsplit {
-                Some(max) if max >= 0 => {
-                    text.splitn(max as usize + 1, sep).map(JValue::from).collect()
-                }
+                Some(max) if max >= 0 => text
+                    .splitn(max as usize + 1, sep)
+                    .map(JValue::from)
+                    .collect(),
                 _ => text.split(sep).map(JValue::from).collect(),
             };
             Ok(JValue::from(parts))
@@ -339,11 +478,9 @@ pub fn render(
         severity_color => severity_color(&notification.severity),
     };
 
-    let subject = render_or(
-        &format!("{kind}.subject.txt.j2"),
-        ctx.clone(),
-        || format!("[Sentinel] {}", notification.title),
-    );
+    let subject = render_or(&format!("{kind}.subject.txt.j2"), ctx.clone(), || {
+        format!("[Sentinel] {}", notification.title)
+    });
     // `.strip()` and then the CR/LF scrub: a title flows from camera
     // names and agent-written incident titles, and an embedded
     // `\r\nBcc:` would be a header injection the day a provider swap
@@ -372,11 +509,7 @@ pub fn render(
 
 /// Render, or fall back. A missing template must not silence an alert,
 /// and a broken one must not take down the worker mid-batch.
-fn render_or(
-    name: &str,
-    ctx: minijinja::Value,
-    fallback: impl FnOnce() -> String,
-) -> String {
+fn render_or(name: &str, ctx: minijinja::Value, fallback: impl FnOnce() -> String) -> String {
     match environment().get_template(name) {
         Ok(template) => match template.render(ctx) {
             Ok(rendered) => rendered,
@@ -386,14 +519,21 @@ fn render_or(
             }
         },
         Err(_) => {
-            tracing::warn!(template = name, "[EmailTemplates] template not found — using fallback");
+            tracing::warn!(
+                template = name,
+                "[EmailTemplates] template not found — using fallback"
+            );
             fallback()
         }
     }
 }
 
 /// `_generic_body_text`.
-fn generic_body_text(notif: &NotificationView, dashboard_url: &str, unsubscribe_url: &str) -> String {
+fn generic_body_text(
+    notif: &NotificationView,
+    dashboard_url: &str,
+    unsubscribe_url: &str,
+) -> String {
     let mut parts = vec![notif.title.clone(), String::new(), notif.body.clone()];
     if let Some(link) = notif.link.as_deref().filter(|link| !link.is_empty()) {
         parts.push(String::new());
@@ -451,7 +591,10 @@ mod tests {
         // `.html.` so the autoescape callback selects HTML, which is
         // what the bodies render under.
         env.add_template("t.body.html.j2", source).unwrap();
-        env.get_template("t.body.html.j2").unwrap().render(ctx).unwrap()
+        env.get_template("t.body.html.j2")
+            .unwrap()
+            .render(ctx)
+            .unwrap()
     }
 
     /// Each of these was rendered by Jinja2 first; the strings on the
@@ -470,8 +613,14 @@ mod tests {
         }
         // `| safe` passes through, and escaping an already-escaped
         // value does not double it.
-        assert_eq!(render_snippet("{{ s|safe }}", context! { s => "<b>&</b>" }), "<b>&</b>");
-        assert_eq!(render_snippet("{{ s|e|e }}", context! { s => "&" }), "&amp;");
+        assert_eq!(
+            render_snippet("{{ s|safe }}", context! { s => "<b>&</b>" }),
+            "<b>&</b>"
+        );
+        assert_eq!(
+            render_snippet("{{ s|e|e }}", context! { s => "&" }),
+            "&amp;"
+        );
         // Python renders `None` with a capital N, and an undefined
         // name as nothing at all.
         assert_eq!(
@@ -487,9 +636,16 @@ mod tests {
             ("{{ s.replace('a','X',2) }}", "bXnXna"),
             ("{{ s.replace('a','X',0) }}", "banana"),
         ] {
-            assert_eq!(render_snippet(source, context! { s => "banana" }), want, "{source}");
+            assert_eq!(
+                render_snippet(source, context! { s => "banana" }),
+                want,
+                "{source}"
+            );
         }
-        assert_eq!(render_snippet("{{ s.replace('','-') }}", context! { s => "ab" }), "-a-b-");
+        assert_eq!(
+            render_snippet("{{ s.replace('','-') }}", context! { s => "ab" }),
+            "-a-b-"
+        );
 
         for (source, want) in [
             ("{{ s.split(':')|join('|') }}", "a|b|c"),
@@ -497,17 +653,30 @@ mod tests {
             // A cap of zero splits nothing, leaving one field.
             ("{{ s.split(':',0)|join('|') }}", "a:b:c"),
         ] {
-            assert_eq!(render_snippet(source, context! { s => "a:b:c" }), want, "{source}");
+            assert_eq!(
+                render_snippet(source, context! { s => "a:b:c" }),
+                want,
+                "{source}"
+            );
         }
         // Empty fields are kept, which is what makes `[-1]` on a
         // separator-less string give the string back rather than
         // nothing — the subject lines depend on that.
-        assert_eq!(render_snippet("{{ s.split(':')|join('|') }}", context! { s => ":a:" }), "|a|");
         assert_eq!(
-            render_snippet("{{ s.split(': ',1)[-1] }}", context! { s => "no separator here" }),
+            render_snippet("{{ s.split(':')|join('|') }}", context! { s => ":a:" }),
+            "|a|"
+        );
+        assert_eq!(
+            render_snippet(
+                "{{ s.split(': ',1)[-1] }}",
+                context! { s => "no separator here" }
+            ),
             "no separator here"
         );
-        assert_eq!(render_snippet("{{ s.split(':')|length }}", context! { s => "" }), "1");
+        assert_eq!(
+            render_snippet("{{ s.split(':')|length }}", context! { s => "" }),
+            "1"
+        );
     }
 
     /// A method neither Python nor minijinja would answer is an error,
@@ -517,7 +686,8 @@ mod tests {
     fn an_unsupported_method_is_an_error() {
         let mut env = Environment::new();
         configure(&mut env);
-        env.add_template("t.body.txt.j2", "{{ s.upper() }}").unwrap();
+        env.add_template("t.body.txt.j2", "{{ s.upper() }}")
+            .unwrap();
         let err = env
             .get_template("t.body.txt.j2")
             .unwrap()
@@ -586,7 +756,12 @@ mod tests {
             "{} of {} renders differ:\n{}",
             failures.len(),
             corpus.len() * 3,
-            failures.iter().take(3).cloned().collect::<Vec<_>>().join("\n")
+            failures
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 
@@ -598,8 +773,10 @@ mod tests {
     fn the_corpus_covers_every_compiled_in_kind() {
         let raw = include_str!("../tests/fixtures/email_corpus.json");
         let corpus: Vec<Value> = serde_json::from_str(raw).unwrap();
-        let covered: std::collections::HashSet<&str> =
-            corpus.iter().filter_map(|case| case["kind"].as_str()).collect();
+        let covered: std::collections::HashSet<&str> = corpus
+            .iter()
+            .filter_map(|case| case["kind"].as_str())
+            .collect();
 
         let mut missing = Vec::new();
         for (name, _) in TEMPLATES {

@@ -152,10 +152,17 @@ pub async fn probe_clerk(config: &Config, client: &reqwest::Client) -> ProbeResu
 /// volume is mounted, the working directory otherwise, so the endpoint
 /// stays informative in development.
 pub fn probe_disk() -> ProbeResult {
-    let path = if std::path::Path::new("/data").is_dir() { "/data" } else { "." };
+    let path = if std::path::Path::new("/data").is_dir() {
+        "/data"
+    } else {
+        "."
+    };
     let Some((total, free, used)) = statvfs_usage(path) else {
         tracing::warn!(path, "[Health] disk_usage failed");
-        return ProbeResult::new("critical", json!({ "path": path, "error_class": "OSError" }));
+        return ProbeResult::new(
+            "critical",
+            json!({ "path": path, "error_class": "OSError" }),
+        );
     };
     disk_result(path, total, free, used)
 }
@@ -320,7 +327,11 @@ pub async fn probe_sentinel_license(
     // unreachable service, and an explicit denial from a reachable one,
     // both read as warn — different causes, same "do not treat this as
     // healthy".
-    let status = if licensed && reachable == "true" { "ok" } else { "warn" };
+    let status = if licensed && reachable == "true" {
+        "ok"
+    } else {
+        "warn"
+    };
     ProbeResult::new(status, data)
 }
 
@@ -383,10 +394,7 @@ pub async fn run_readiness_probes_with(
     disk_override: Option<ProbeResult>,
     tick_age: Option<Option<f64>>,
 ) -> ReadinessReport {
-    let (database, clerk) = tokio::join!(
-        probe_database(pool),
-        probe_clerk(config, client),
-    );
+    let (database, clerk) = tokio::join!(probe_database(pool), probe_clerk(config, client),);
     let disk = disk_override.unwrap_or_else(probe_disk);
     let email_worker = match tick_age {
         Some(age) => probe_email_worker_with(config, uptime_seconds, age),
@@ -410,7 +418,10 @@ mod tests {
     #[test]
     fn a_probe_flattens_its_data_beside_the_status() {
         let probe = ProbeResult::new("ok", json!({ "latency_ms": 1.25 }));
-        assert_eq!(probe.to_json(), json!({ "status": "ok", "latency_ms": 1.25 }));
+        assert_eq!(
+            probe.to_json(),
+            json!({ "status": "ok", "latency_ms": 1.25 })
+        );
         // An empty payload is just the status.
         assert_eq!(
             ProbeResult::new("disabled", json!({})).to_json(),

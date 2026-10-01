@@ -91,7 +91,11 @@ pub const WRAP_RESULT_TOOLS: [&str; 4] = [
 ];
 
 pub fn all_tools() -> BTreeSet<&'static str> {
-    MCP_READ_TOOLS.iter().chain(MCP_WRITE_TOOLS.iter()).copied().collect()
+    MCP_READ_TOOLS
+        .iter()
+        .chain(MCP_WRITE_TOOLS.iter())
+        .copied()
+        .collect()
 }
 
 pub fn read_tools() -> BTreeSet<&'static str> {
@@ -241,7 +245,9 @@ impl RateLimiter {
     /// prune clock starts at zero, which means the first call sweeps;
     /// on an empty map that is free.
     pub const fn new_static() -> Self {
-        Self { inner: std::sync::Mutex::new(None) }
+        Self {
+            inner: std::sync::Mutex::new(None),
+        }
     }
 
     /// The same, with the prune clock started at a supplied instant.
@@ -268,7 +274,12 @@ impl RateLimiter {
     }
 
     /// `(allowed, remaining_minute, breach)`.
-    pub fn check(&self, key_hash: &str, minute_limit: usize, daily_limit: usize) -> (bool, usize, Breach) {
+    pub fn check(
+        &self,
+        key_hash: &str,
+        minute_limit: usize,
+        daily_limit: usize,
+    ) -> (bool, usize, Breach) {
         self.check_at(key_hash, minute_limit, daily_limit, now_seconds())
     }
 
@@ -282,43 +293,43 @@ impl RateLimiter {
         now: f64,
     ) -> (bool, usize, Breach) {
         self.with(|windows| {
-        // Opportunistic and time-gated: one comparison on the hot path,
-        // an O(keys) walk at most hourly.
-        if now - windows.last_prune >= PRUNE_INTERVAL {
-            prune(windows, now);
-            windows.last_prune = now;
-        }
+            // Opportunistic and time-gated: one comparison on the hot path,
+            // an O(keys) walk at most hourly.
+            if now - windows.last_prune >= PRUNE_INTERVAL {
+                prune(windows, now);
+                windows.last_prune = now;
+            }
 
-        let minute_cutoff = now - 60.0;
-        let daily_cutoff = now - 86_400.0;
-        let minute = windows.minute.entry(key_hash.to_string()).or_default();
-        while minute.front().is_some_and(|t| *t < minute_cutoff) {
-            minute.pop_front();
-        }
-        let minute_len = minute.len();
+            let minute_cutoff = now - 60.0;
+            let daily_cutoff = now - 86_400.0;
+            let minute = windows.minute.entry(key_hash.to_string()).or_default();
+            while minute.front().is_some_and(|t| *t < minute_cutoff) {
+                minute.pop_front();
+            }
+            let minute_len = minute.len();
 
-        let daily = windows.daily.entry(key_hash.to_string()).or_default();
-        while daily.front().is_some_and(|t| *t < daily_cutoff) {
-            daily.pop_front();
-        }
-        let daily_len = daily.len();
+            let daily = windows.daily.entry(key_hash.to_string()).or_default();
+            while daily.front().is_some_and(|t| *t < daily_cutoff) {
+                daily.pop_front();
+            }
+            let daily_len = daily.len();
 
-        // The tightest window first, so the caller gets the most
-        // actionable hint.
-        if minute_len >= minute_limit {
-            return (false, 0, Breach::Minute);
-        }
-        if daily_len >= daily_limit {
-            return (false, 0, Breach::Daily);
-        }
+            // The tightest window first, so the caller gets the most
+            // actionable hint.
+            if minute_len >= minute_limit {
+                return (false, 0, Breach::Minute);
+            }
+            if daily_len >= daily_limit {
+                return (false, 0, Breach::Daily);
+            }
 
-        daily.push_back(now);
-        windows
-            .minute
-            .get_mut(key_hash)
-            .expect("just inserted")
-            .push_back(now);
-        (true, minute_limit - (minute_len + 1), Breach::None)
+            daily.push_back(now);
+            windows
+                .minute
+                .get_mut(key_hash)
+                .expect("just inserted")
+                .push_back(now);
+            (true, minute_limit - (minute_len + 1), Breach::None)
         })
     }
 
@@ -400,7 +411,10 @@ pub const TOOL_DESCRIPTIONS: [(&str, &str); 23] = [
     ("create_incident", DESC_CREATE_INCIDENT),
     ("finalize_incident", DESC_FINALIZE_INCIDENT),
     ("get_camera", DESC_GET_CAMERA),
-    ("get_camera_recording_policy", DESC_GET_CAMERA_RECORDING_POLICY),
+    (
+        "get_camera_recording_policy",
+        DESC_GET_CAMERA_RECORDING_POLICY,
+    ),
     ("get_incident", DESC_GET_INCIDENT),
     ("get_incident_clip", DESC_GET_INCIDENT_CLIP),
     ("get_incident_snapshot", DESC_GET_INCIDENT_SNAPSHOT),
@@ -413,7 +427,10 @@ pub const TOOL_DESCRIPTIONS: [(&str, &str); 23] = [
     ("list_cameras", DESC_LIST_CAMERAS),
     ("list_incidents", DESC_LIST_INCIDENTS),
     ("list_nodes", DESC_LIST_NODES),
-    ("set_camera_recording_policy", DESC_SET_CAMERA_RECORDING_POLICY),
+    (
+        "set_camera_recording_policy",
+        DESC_SET_CAMERA_RECORDING_POLICY,
+    ),
     ("update_incident", DESC_UPDATE_INCIDENT),
     ("view_camera", DESC_VIEW_CAMERA),
     ("watch_camera", DESC_WATCH_CAMERA),
@@ -567,7 +584,9 @@ mod tests {
         let allowed = compute_allowed_tools(Some("custom"), Some(&picked));
         assert_eq!(
             allowed,
-            ["list_cameras", "get_camera"].into_iter().collect::<BTreeSet<_>>()
+            ["list_cameras", "get_camera"]
+                .into_iter()
+                .collect::<BTreeSet<_>>()
         );
     }
 

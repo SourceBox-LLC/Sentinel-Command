@@ -396,7 +396,11 @@ fn non_empty_or_free(cached: String) -> String {
 /// immediately on past-due with no grace, because issuing fresh
 /// credentials to a failing card is a different risk from letting
 /// existing cameras keep streaming for a week.
-pub async fn effective_plan_for_caps(ctx: &PlanContext<'_>, org_id: &str, use_cache: bool) -> String {
+pub async fn effective_plan_for_caps(
+    ctx: &PlanContext<'_>,
+    org_id: &str,
+    use_cache: bool,
+) -> String {
     if use_cache {
         let now = Instant::now();
         let hit = with_caches(|c| {
@@ -454,7 +458,10 @@ pub async fn effective_plan_for_caps(ctx: &PlanContext<'_>, org_id: &str, use_ca
 
     let age = Utc::now() - dt;
     if age > chrono::Duration::days(PAYMENT_GRACE_DAYS) {
-        tracing::info!(org_id, "past due beyond grace — tightening caps to free tier");
+        tracing::info!(
+            org_id,
+            "past due beyond grace — tightening caps to free tier"
+        );
         return cache_effective(org_id, "free_org".to_string());
     }
     cache_effective(org_id, nominal)
@@ -475,8 +482,10 @@ fn parse_past_due_at(raw: &str) -> Option<DateTime<Utc>> {
 
 fn cache_effective(org_id: &str, slug: String) -> String {
     with_caches(|c| {
-        c.effective
-            .insert(org_id.to_string(), (Instant::now() + EFFECTIVE_TTL, slug.clone()));
+        c.effective.insert(
+            org_id.to_string(),
+            (Instant::now() + EFFECTIVE_TTL, slug.clone()),
+        );
         // Opportunistic bound: prune expired entries once the map grows
         // past a sane fleet size.
         if c.effective.len() > 10_000 {
@@ -647,7 +656,10 @@ mod tests {
         // fall back, the slug does not. An org on a bespoke Clerk plan
         // is reported as itself and capped conservatively, rather than
         // silently renamed to free_org.
-        assert_eq!(get_plan_limits("enterprise_custom"), get_plan_limits("free_org"));
+        assert_eq!(
+            get_plan_limits("enterprise_custom"),
+            get_plan_limits("free_org")
+        );
         assert_eq!(get_plan_display_name("enterprise_custom"), "Free");
         assert_eq!(get_plan_display_name("pro_plus"), "Pro Plus");
         assert_eq!(get_plan_display_name("self_host"), "Self-Hosted");
@@ -749,13 +761,19 @@ mod tests {
         let now = Instant::now();
         with_caches(|c| {
             c.last_resolve_at.insert("fresh".into(), now);
-            c.last_resolve_at
-                .insert("stale".into(), now - RESOLVE_THROTTLE - Duration::from_secs(1));
+            c.last_resolve_at.insert(
+                "stale".into(),
+                now - RESOLVE_THROTTLE - Duration::from_secs(1),
+            );
             // Not yet due: the sweep is time-gated so the common path
             // is a single comparison.
             c.last_prune_at = Some(now);
             prune_resolve_cache(c, now);
-            assert_eq!(c.last_resolve_at.len(), 2, "the sweep ran before it was due");
+            assert_eq!(
+                c.last_resolve_at.len(),
+                2,
+                "the sweep ran before it was due"
+            );
 
             c.last_prune_at = Some(now - RESOLVE_PRUNE_INTERVAL - Duration::from_secs(1));
             prune_resolve_cache(c, now);

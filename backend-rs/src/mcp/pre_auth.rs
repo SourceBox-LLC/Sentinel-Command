@@ -61,7 +61,10 @@ struct Buckets {
 }
 
 static BUCKETS: LazyLock<Mutex<Buckets>> = LazyLock::new(|| {
-    Mutex::new(Buckets { per_tenant: HashMap::new(), last_sweep: 0.0 })
+    Mutex::new(Buckets {
+        per_tenant: HashMap::new(),
+        last_sweep: 0.0,
+    })
 });
 
 /// Process start, so the clock below is monotonic like `time.monotonic`.
@@ -141,9 +144,10 @@ pub fn gate(headers: &HeaderMap, peer: Option<&str>) -> Option<Response> {
         return Some(crate::spa::json_error(400, "Invalid Content-Length."));
     };
     match text.trim().parse::<u64>() {
-        Ok(length) if length > MAX_BODY_BYTES => {
-            Some(crate::spa::json_error(413, "Request body too large (max 2 MB)."))
-        }
+        Ok(length) if length > MAX_BODY_BYTES => Some(crate::spa::json_error(
+            413,
+            "Request body too large (max 2 MB).",
+        )),
         Ok(_) => None,
         Err(_) => Some(crate::spa::json_error(400, "Invalid Content-Length.")),
     }
@@ -186,7 +190,10 @@ mod tests {
     }
 
     fn fresh() -> Mutex<Buckets> {
-        Mutex::new(Buckets { per_tenant: HashMap::new(), last_sweep: 0.0 })
+        Mutex::new(Buckets {
+            per_tenant: HashMap::new(),
+            last_sweep: 0.0,
+        })
     }
 
     /// The window admits exactly the cap and refuses the next one.
@@ -194,7 +201,10 @@ mod tests {
     fn the_cap_is_inclusive_and_then_refuses() {
         let buckets = fresh();
         for i in 0..LIMIT_PER_MINUTE {
-            assert!(check_rate_in(&buckets, "ip:1.2.3.4", 100.0), "refused at {i}");
+            assert!(
+                check_rate_in(&buckets, "ip:1.2.3.4", 100.0),
+                "refused at {i}"
+            );
         }
         assert!(!check_rate_in(&buckets, "ip:1.2.3.4", 100.0));
         // A different tenant is unaffected — this is per-tenant, not
@@ -253,7 +263,10 @@ mod tests {
         assert_eq!(response.status(), 413);
 
         let response = gate(
-            &headers(&[("fly-client-ip", "10.0.0.3"), ("content-length", "not-a-number")]),
+            &headers(&[
+                ("fly-client-ip", "10.0.0.3"),
+                ("content-length", "not-a-number"),
+            ]),
             None,
         )
         .unwrap();

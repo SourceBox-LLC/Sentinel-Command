@@ -30,7 +30,8 @@ use chrono::NaiveDateTime;
 use jiff::tz::{AmbiguousOffset, Offset, TimeZone};
 
 /// CPython's compiled-in TZPATH, which `PYTHONTZPATH` replaces.
-const DEFAULT_TZPATH: &str = "/usr/share/zoneinfo:/usr/lib/zoneinfo:/usr/share/lib/zoneinfo:/etc/zoneinfo";
+const DEFAULT_TZPATH: &str =
+    "/usr/share/zoneinfo:/usr/lib/zoneinfo:/usr/share/lib/zoneinfo:/etc/zoneinfo";
 
 /// `zoneinfo.TZPATH`, fixed when the module is first used, as Python
 /// fixes it at import.
@@ -48,7 +49,10 @@ fn parse_tzpath(raw: &str) -> Vec<PathBuf> {
     if raw.is_empty() {
         return Vec::new();
     }
-    raw.split(':').filter(|p| p.starts_with('/')).map(PathBuf::from).collect()
+    raw.split(':')
+        .filter(|p| p.starts_with('/'))
+        .map(PathBuf::from)
+        .collect()
 }
 
 /// `posixpath.normpath`.
@@ -68,7 +72,8 @@ fn normpath(path: &str) -> String {
         if comp.is_empty() || comp == "." {
             continue;
         }
-        if comp != ".." || (initial_slashes == 0 && comps.is_empty()) || comps.last() == Some(&"..") {
+        if comp != ".." || (initial_slashes == 0 && comps.is_empty()) || comps.last() == Some(&"..")
+        {
             comps.push(comp);
         } else if !comps.is_empty() {
             comps.pop();
@@ -100,7 +105,9 @@ fn valid_key(key: &str) -> bool {
 /// `os.path.isfile`: follows symlinks, and is simply false for a path
 /// the OS refuses (an embedded NUL included).
 fn is_file(path: &Path) -> bool {
-    std::fs::metadata(path).map(|m| m.is_file()).unwrap_or(false)
+    std::fs::metadata(path)
+        .map(|m| m.is_file())
+        .unwrap_or(false)
 }
 
 /// The TZif magic, as both `available_timezones` and `load_data` test.
@@ -213,7 +220,10 @@ fn walk_reaches(root: &Path, key: &str) -> bool {
         return false;
     }
     let comps: Vec<&str> = key.split('/').collect();
-    if comps.iter().any(|c| c.is_empty() || *c == "." || *c == "..") {
+    if comps
+        .iter()
+        .any(|c| c.is_empty() || *c == "." || *c == "..")
+    {
         return false;
     }
     if comps.len() > 1 && (comps[0] == "right" || comps[0] == "posix") {
@@ -310,7 +320,17 @@ mod tests {
         for ok in ["UTC", "America/New_York", "a..b", "localtime", "right/UTC"] {
             assert!(valid_key(ok), "{ok:?}");
         }
-        for bad in ["", ".", "..", "/etc/passwd", "../etc/passwd", "a/../b", "a/", "a//b", "a/./b"] {
+        for bad in [
+            "",
+            ".",
+            "..",
+            "/etc/passwd",
+            "../etc/passwd",
+            "a/../b",
+            "a/",
+            "a//b",
+            "a/./b",
+        ] {
             assert!(!valid_key(bad), "{bad:?}");
         }
     }
@@ -327,7 +347,10 @@ mod tests {
     #[test]
     fn a_directory_key_is_the_uncaught_error() {
         assert_eq!(load("America").unwrap_err(), LoadError::IsADirectory);
-        assert_eq!(load("America/Argentina").unwrap_err(), LoadError::IsADirectory);
+        assert_eq!(
+            load("America/Argentina").unwrap_err(),
+            LoadError::IsADirectory
+        );
         assert_eq!(load("Mars/Olympus").unwrap_err(), LoadError::NotFound);
         assert_eq!(load("UTC ").unwrap_err(), LoadError::NotFound);
         assert_eq!(load("../etc/passwd").unwrap_err(), LoadError::NotFound);
@@ -347,8 +370,15 @@ mod tests {
 
         // A real, loadable zone file — by absolute path, and by a
         // relative one that climbs out of every TZPATH root.
-        assert_eq!(load(outside.to_str().unwrap()).unwrap_err(), LoadError::NotFound);
-        let climb = format!("{}{}", "../".repeat(12), outside.strip_prefix("/").unwrap().display());
+        assert_eq!(
+            load(outside.to_str().unwrap()).unwrap_err(),
+            LoadError::NotFound
+        );
+        let climb = format!(
+            "{}{}",
+            "../".repeat(12),
+            outside.strip_prefix("/").unwrap().display()
+        );
         assert_eq!(load(&climb).unwrap_err(), LoadError::NotFound);
 
         std::fs::remove_file(&outside).unwrap();
@@ -368,7 +398,10 @@ mod tests {
     fn bundled_tzdb_is_the_packages_release() {
         assert_eq!(jiff_tzdb::VERSION, Some(crate::tz_names::TZDATA_VERSION));
         let db = jiff::tz::TimeZoneDatabase::bundled();
-        let missing: Vec<_> = crate::tz_names::NAMES.iter().filter(|n| db.get(n).is_err()).collect();
+        let missing: Vec<_> = crate::tz_names::NAMES
+            .iter()
+            .filter(|n| db.get(n).is_err())
+            .collect();
         assert!(missing.is_empty(), "bundled tzdb lacks {missing:?}");
     }
 
@@ -422,15 +455,15 @@ mod tests {
 
         for (key, want) in [
             ("Etc/UTC", true),
-            ("localtime", true),         // a symlink to a file is a file
-            ("right/UTC", false),        // pruned at the top
+            ("localtime", true),  // a symlink to a file is a file
+            ("right/UTC", false), // pruned at the top
             ("posix/UTC", false),
             ("Linked/Real/Zone", true),
-            ("Via/Zone", false),         // os.walk does not follow a linked dir
-            ("dangling", false),         // listed, then fails the TZif check
+            ("Via/Zone", false), // os.walk does not follow a linked dir
+            ("dangling", false), // listed, then fails the TZif check
             ("zone.tab", false),
-            ("Etc", false),              // a directory is never a key
-            ("Etc/../Etc/UTC", false),   // relpath never yields `..`
+            ("Etc", false),            // a directory is never a key
+            ("Etc/../Etc/UTC", false), // relpath never yields `..`
             ("Etc//UTC", false),
         ] {
             assert_eq!(walk_reaches(&root, key), want, "{key:?}");
@@ -456,19 +489,51 @@ mod tests {
     fn midnight_follows_pep_495() {
         for (zone, now, want) in [
             ("UTC", "2026-05-07T15:00:00Z", "2026-05-07 00:00:00"),
-            ("America/Los_Angeles", "2026-05-07T15:00:00Z", "2026-05-07 07:00:00"),
-            ("America/Los_Angeles", "2026-05-07T06:00:00Z", "2026-05-06 07:00:00"),
-            ("Asia/Kolkata", "2026-05-07T20:00:00Z", "2026-05-07 18:30:00"),
-            ("Pacific/Kiritimati", "2026-05-07T11:00:00Z", "2026-05-07 10:00:00"),
+            (
+                "America/Los_Angeles",
+                "2026-05-07T15:00:00Z",
+                "2026-05-07 07:00:00",
+            ),
+            (
+                "America/Los_Angeles",
+                "2026-05-07T06:00:00Z",
+                "2026-05-06 07:00:00",
+            ),
+            (
+                "Asia/Kolkata",
+                "2026-05-07T20:00:00Z",
+                "2026-05-07 18:30:00",
+            ),
+            (
+                "Pacific/Kiritimati",
+                "2026-05-07T11:00:00Z",
+                "2026-05-07 10:00:00",
+            ),
             // Santiago springs forward at midnight: 00:00 does not exist,
             // and fold=0 takes the offset from before the gap.
-            ("America/Santiago", "2026-09-06T12:00:00Z", "2026-09-06 04:00:00"),
+            (
+                "America/Santiago",
+                "2026-09-06T12:00:00Z",
+                "2026-09-06 04:00:00",
+            ),
             // Havana falls back 01:00 -> 00:00, repeating midnight. Now in
             // the first pass: the first midnight. In the second: fold=1
             // carries over and midnight is the second one.
-            ("America/Havana", "2026-11-01T04:30:00Z", "2026-11-01 04:00:00"),
-            ("America/Havana", "2026-11-01T05:30:00Z", "2026-11-01 05:00:00"),
-            ("America/Havana", "2026-11-01T12:00:00Z", "2026-11-01 04:00:00"),
+            (
+                "America/Havana",
+                "2026-11-01T04:30:00Z",
+                "2026-11-01 04:00:00",
+            ),
+            (
+                "America/Havana",
+                "2026-11-01T05:30:00Z",
+                "2026-11-01 05:00:00",
+            ),
+            (
+                "America/Havana",
+                "2026-11-01T12:00:00Z",
+                "2026-11-01 04:00:00",
+            ),
         ] {
             let got = local_midnight_utc(&bundled(zone), at(now));
             assert_eq!(got, naive(want), "{zone} at {now}");

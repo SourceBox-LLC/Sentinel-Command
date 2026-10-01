@@ -213,7 +213,9 @@ pub async fn create_incident(
     // Pydantic passes anything of the right type; the enum is the
     // handler's own check, and it runs before the emptiness checks.
     if !SEVERITIES.contains(&severity.as_str()) {
-        return Err(ApiError::bad_request(format!("Invalid severity: {severity}")));
+        return Err(ApiError::bad_request(format!(
+            "Invalid severity: {severity}"
+        )));
     }
 
     let title = title.trim().to_string();
@@ -231,13 +233,12 @@ pub async fn create_incident(
     // here instead wrote NULL where Python writes '', in the incident
     // row, in the notification beside it and in the response.
     if let Some(camera_id) = camera_id.as_deref().filter(|id| !id.is_empty()) {
-        let known: Option<(String,)> = sqlx::query_as(
-            "SELECT camera_id FROM cameras WHERE org_id = $1 AND camera_id = $2",
-        )
-        .bind(&user.org_id)
-        .bind(camera_id)
-        .fetch_optional(&state.pool)
-        .await?;
+        let known: Option<(String,)> =
+            sqlx::query_as("SELECT camera_id FROM cameras WHERE org_id = $1 AND camera_id = $2")
+                .bind(&user.org_id)
+                .bind(camera_id)
+                .fetch_optional(&state.pool)
+                .await?;
         if known.is_none() {
             return Err(ApiError::bad_request(format!(
                 "Camera '{camera_id}' not found"
@@ -627,7 +628,6 @@ fn target_duration(duration: f64) -> Option<i64> {
     Some((truncated as i64).saturating_add(1).max(1))
 }
 
-
 #[derive(Debug, Deserialize, Default)]
 pub struct IncidentPatch {
     status: Option<String>,
@@ -643,8 +643,7 @@ pub async fn update_incident(
     Path(incident_id): Path<String>,
     ModelBody(RequireAdmin(user), body): ModelBody<RequireAdmin>,
 ) -> Result<Json<Value>, ApiError> {
-    let patch: IncidentPatch = serde_json::from_value(body)
-        .unwrap_or_default();
+    let patch: IncidentPatch = serde_json::from_value(body).unwrap_or_default();
     let incident_id = path_int("incident_id", &incident_id)?;
     rate.check().await?;
     let incident_id = int4(incident_id)?;
@@ -656,7 +655,9 @@ pub async fn update_incident(
 
     if let Some(ref new_status) = patch.status {
         if !STATUSES.contains(&new_status.as_str()) {
-            return Err(ApiError::bad_request(format!("Invalid status: {new_status}")));
+            return Err(ApiError::bad_request(format!(
+                "Invalid status: {new_status}"
+            )));
         }
         let terminal = matches!(new_status.as_str(), "resolved" | "dismissed");
         let was_terminal = matches!(incident.status.as_str(), "resolved" | "dismissed");
@@ -684,7 +685,10 @@ pub async fn update_incident(
         severity = new_severity.clone();
     }
 
-    let summary = patch.summary.clone().unwrap_or_else(|| incident.summary.clone());
+    let summary = patch
+        .summary
+        .clone()
+        .unwrap_or_else(|| incident.summary.clone());
     let report = match patch.report {
         Some(ref r) => Some(r.clone()),
         None => incident.report.clone(),
@@ -830,7 +834,10 @@ mod evidence_tests {
         // prefix: "TEXT/plain" goes out unchanged.
         assert_eq!(starlette_content_type("image/jpeg"), "image/jpeg");
         assert_eq!(starlette_content_type("video/mp2t"), "video/mp2t");
-        assert_eq!(starlette_content_type("text/plain"), "text/plain; charset=utf-8");
+        assert_eq!(
+            starlette_content_type("text/plain"),
+            "text/plain; charset=utf-8"
+        );
         assert_eq!(starlette_content_type("TEXT/plain"), "TEXT/plain");
         assert_eq!(
             starlette_content_type("text/html; charset=iso-8859-1"),

@@ -142,18 +142,27 @@ pub async fn run_one_tick(ctx: &EmailContext<'_>) -> Result<TickSummary, sqlx::E
 
     let now = now_naive();
     let ids: Vec<i32> = pending.iter().map(|row| row.id).collect();
-    sqlx::query("UPDATE email_outbox SET status = 'sending', last_attempt_at = $1 WHERE id = ANY($2)")
-        .bind(now)
-        .bind(&ids)
-        .execute(ctx.pool)
-        .await?;
+    sqlx::query(
+        "UPDATE email_outbox SET status = 'sending', last_attempt_at = $1 WHERE id = ANY($2)",
+    )
+    .bind(now)
+    .bind(&ids)
+    .execute(ctx.pool)
+    .await?;
 
     for row in &pending {
         let (status, message_id, error) = process_row(ctx, row).await;
-        let terminal = finalize_row(ctx, row, &status, message_id.as_deref(), error.as_deref())
-            .await?;
-        write_log(ctx, row, &status, message_id.as_deref(), error.as_deref(), &terminal)
-            .await;
+        let terminal =
+            finalize_row(ctx, row, &status, message_id.as_deref(), error.as_deref()).await?;
+        write_log(
+            ctx,
+            row,
+            &status,
+            message_id.as_deref(),
+            error.as_deref(),
+            &terminal,
+        )
+        .await;
         match terminal.as_str() {
             "sent" => summary.sent += 1,
             "failed" => summary.failed += 1,
@@ -271,13 +280,15 @@ async fn finalize_row(
             if give_up {
                 tracing::warn!(id = row.id, attempts, error, "giving up on outbox row");
             }
-            sqlx::query("UPDATE email_outbox SET attempts = $1, status = $2, error = $3 WHERE id = $4")
-                .bind(attempts)
-                .bind(next)
-                .bind(error)
-                .bind(row.id)
-                .execute(ctx.pool)
-                .await?;
+            sqlx::query(
+                "UPDATE email_outbox SET attempts = $1, status = $2, error = $3 WHERE id = $4",
+            )
+            .bind(attempts)
+            .bind(next)
+            .bind(error)
+            .bind(row.id)
+            .execute(ctx.pool)
+            .await?;
             next
         }
     };

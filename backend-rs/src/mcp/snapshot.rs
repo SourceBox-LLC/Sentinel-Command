@@ -53,14 +53,22 @@ pub fn extract_image_b64(result: &Value, camera_id: &str) -> Result<String, Snap
             )));
         }
         if lower.contains("ffmpeg") {
-            let detail = if err.is_empty() { "no detail provided" } else { &err };
+            let detail = if err.is_empty() {
+                "no detail provided"
+            } else {
+                &err
+            };
             return Err(SnapshotError(format!(
                 "Camera '{camera_id}' snapshot failed inside FFmpeg on the \
                  CameraNode: {detail}. The video pipeline may need to be \
                  restarted on the node."
             )));
         }
-        let detail = if err.is_empty() { "unspecified failure" } else { &err };
+        let detail = if err.is_empty() {
+            "unspecified failure"
+        } else {
+            &err
+        };
         return Err(SnapshotError(format!(
             "Snapshot failed on the CameraNode: {detail}"
         )));

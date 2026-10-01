@@ -9,8 +9,8 @@
 
 use axum::extract::State;
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
-use serde_json::Value;
 use axum::response::{IntoResponse, Response};
+use serde_json::Value;
 
 use crate::app::AppState;
 use crate::error::ApiError;
@@ -173,11 +173,7 @@ pub async fn download_binary(
 
     // Starlette's RedirectResponse quotes the location, leaving the
     // characters a URL is allowed to keep.
-    Ok((
-        StatusCode::FOUND,
-        [(header::LOCATION, url.as_str())],
-    )
-        .into_response())
+    Ok((StatusCode::FOUND, [(header::LOCATION, url.as_str())]).into_response())
 }
 
 /// `f"{sorted(the_set)}"` — a repr'd Python list, and *sorted*: the
@@ -186,7 +182,10 @@ pub async fn download_binary(
 fn python_list(items: &[&str]) -> String {
     let mut sorted: Vec<&str> = items.to_vec();
     sorted.sort_unstable();
-    let inner: Vec<String> = sorted.iter().map(|item| crate::pyrepr::repr_str(item)).collect();
+    let inner: Vec<String> = sorted
+        .iter()
+        .map(|item| crate::pyrepr::repr_str(item))
+        .collect();
     format!("[{}]", inner.join(", "))
 }
 
@@ -246,7 +245,12 @@ fn pick_asset(release: &Value, os_name: &str, arch: &str) -> Option<String> {
 
     // `list.sort` is stable, so equal ranks keep the release's own order.
     candidates.sort_by_key(|asset| {
-        rank(asset.get("name").and_then(|v| v.as_str()).unwrap_or_default())
+        rank(
+            asset
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
+        )
     });
     candidates[0]
         .get("browser_download_url")
@@ -289,10 +293,7 @@ mod tests {
 
     #[test]
     fn elsewhere_an_archive_beats_a_raw_binary() {
-        let rel = release(&[
-            "cameranode-linux-x86_64",
-            "cameranode-linux-x86_64.tar.gz",
-        ]);
+        let rel = release(&["cameranode-linux-x86_64", "cameranode-linux-x86_64.tar.gz"]);
         assert_eq!(
             pick_asset(&rel, "linux", "x86_64").unwrap(),
             "https://example.invalid/cameranode-linux-x86_64.tar.gz"

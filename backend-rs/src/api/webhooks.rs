@@ -84,7 +84,6 @@ pub fn verify_svix(secret: &str, headers: &HeaderMap, body: &[u8], now: i64) -> 
     })
 }
 
-
 /// `POST /api/webhooks/resend` — delivery events.
 pub async fn resend_webhook(
     rate: PerMinute<600>,
@@ -141,13 +140,18 @@ pub async fn resend_webhook(
         .unwrap_or("")
         .to_string();
     if !msg_id.is_empty() {
-        let seen: Option<(String,)> =
-            sqlx::query_as("SELECT COALESCE(event_type, '') FROM processed_webhooks WHERE svix_msg_id = $1")
-                .bind(&msg_id)
-                .fetch_optional(&state.pool)
-                .await?;
+        let seen: Option<(String,)> = sqlx::query_as(
+            "SELECT COALESCE(event_type, '') FROM processed_webhooks WHERE svix_msg_id = $1",
+        )
+        .bind(&msg_id)
+        .fetch_optional(&state.pool)
+        .await?;
         if let Some((previous,)) = seen {
-            tracing::info!(msg_id, previous, "resend webhook already processed — skipping");
+            tracing::info!(
+                msg_id,
+                previous,
+                "resend webhook already processed — skipping"
+            );
             return Ok(Json(json!({ "status": "duplicate", "svix_id": msg_id })));
         }
     }
@@ -156,7 +160,9 @@ pub async fn resend_webhook(
     // list or object is unhashable: TypeError, a 500 — after the dedup
     // check above, so a retried delivery with such a type still answers
     // "duplicate".
-    if matches!(type_value, Value::Array(_) | Value::Object(_)) && crate::pyrepr::truthy(&type_value) {
+    if matches!(type_value, Value::Array(_) | Value::Object(_))
+        && crate::pyrepr::truthy(&type_value)
+    {
         return Err(ApiError::internal("resend event type is unhashable"));
     }
     let event_type_text = event_type.clone().unwrap_or_default();
@@ -317,7 +323,12 @@ mod tests {
             ("svix-signature", SIG),
         ]);
         // A changed body, id, or key.
-        assert!(!verify_svix(SECRET, &h, br#"{"type":"email.delivered"}"#, 1_700_000_000));
+        assert!(!verify_svix(
+            SECRET,
+            &h,
+            br#"{"type":"email.delivered"}"#,
+            1_700_000_000
+        ));
         assert!(!verify_svix("whsec_b3RoZXI=", &h, BODY, 1_700_000_000));
         let wrong_id = headers(&[
             ("svix-id", "msg_other"),
@@ -369,7 +380,10 @@ mod tests {
             extract_addresses(&map(json!({"to": ["a@b.com", "nope", 5]}))),
             vec!["a@b.com"]
         );
-        assert_eq!(extract_addresses(&map(json!({"to": "a@b.com"}))), vec!["a@b.com"]);
+        assert_eq!(
+            extract_addresses(&map(json!({"to": "a@b.com"}))),
+            vec!["a@b.com"]
+        );
         assert!(extract_addresses(&map(json!({"to": "nope"}))).is_empty());
         assert!(extract_addresses(&map(json!({}))).is_empty());
         assert!(extract_addresses(&map(json!({"to": 5}))).is_empty());

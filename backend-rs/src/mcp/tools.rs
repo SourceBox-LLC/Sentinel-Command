@@ -52,7 +52,11 @@ type ClipMetadata = (
 /// writes, so a human reading an incident can tell which credential
 /// authored it.
 pub fn agent_label(key_name: &str) -> String {
-    let name = if key_name.is_empty() { "unknown" } else { key_name };
+    let name = if key_name.is_empty() {
+        "unknown"
+    } else {
+        key_name
+    };
     format!("mcp:{name}")
 }
 
@@ -132,7 +136,9 @@ fn req_str(args: &Map<String, Value>, key: &str) -> String {
 }
 
 fn opt_i64(args: &Map<String, Value>, key: &str) -> Option<i64> {
-    args.get(key).filter(|v| !v.is_null()).and_then(Value::as_i64)
+    args.get(key)
+        .filter(|v| !v.is_null())
+        .and_then(Value::as_i64)
 }
 
 fn int_or(args: &Map<String, Value>, key: &str, default: i64) -> i64 {
@@ -144,12 +150,14 @@ fn int_or(args: &Map<String, Value>, key: &str, default: i64) -> i64 {
 // ---------------------------------------------------------------------
 
 pub async fn list_cameras(state: &AppState, org_id: &str) -> ToolResult {
-    let rows: Vec<crate::models::CameraRow> =
-        sqlx::query_as(&format!("{} WHERE c.org_id = $1", crate::models::CAMERA_SELECT))
-            .bind(org_id)
-            .fetch_all(&state.pool)
-            .await
-            .map_err(db_error)?;
+    let rows: Vec<crate::models::CameraRow> = sqlx::query_as(&format!(
+        "{} WHERE c.org_id = $1",
+        crate::models::CAMERA_SELECT
+    ))
+    .bind(org_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(db_error)?;
     Ok(Value::Array(rows.iter().map(|row| row.to_json()).collect()))
 }
 
@@ -192,12 +200,14 @@ pub async fn list_camera_groups(state: &AppState, org_id: &str) -> ToolResult {
 }
 
 pub async fn list_nodes(state: &AppState, org_id: &str) -> ToolResult {
-    let rows: Vec<crate::api::nodes::CameraNodeRow> =
-        sqlx::query_as(&format!("{} WHERE n.org_id = $1", crate::api::nodes::NODE_SELECT))
-            .bind(org_id)
-            .fetch_all(&state.pool)
-            .await
-            .map_err(db_error)?;
+    let rows: Vec<crate::api::nodes::CameraNodeRow> = sqlx::query_as(&format!(
+        "{} WHERE n.org_id = $1",
+        crate::api::nodes::NODE_SELECT
+    ))
+    .bind(org_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(db_error)?;
     Ok(Value::Array(rows.iter().map(|row| row.to_json()).collect()))
 }
 
@@ -230,11 +240,11 @@ pub async fn get_camera_recording_policy(
         "SELECT continuous_24_7, scheduled_recording, scheduled_start, scheduled_end
            FROM cameras WHERE camera_id = $1 AND org_id = $2 LIMIT 1",
     )
-        .bind(&camera_id)
-        .bind(org_id)
-        .fetch_optional(&state.pool)
-        .await
-        .map_err(db_error)?;
+    .bind(&camera_id)
+    .bind(org_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(db_error)?;
     let Some((continuous, scheduled, start, end)) = row else {
         return Ok(json!({ "error": "camera_not_found", "camera_id": camera_id }));
     };
@@ -253,7 +263,10 @@ pub async fn set_camera_recording_policy(
     args: &Map<String, Value>,
 ) -> ToolResult {
     let camera_id = req_str(args, "camera_id");
-    let continuous = args.get("continuous_24_7").filter(|v| !v.is_null()).and_then(Value::as_bool);
+    let continuous = args
+        .get("continuous_24_7")
+        .filter(|v| !v.is_null())
+        .and_then(Value::as_bool);
     let scheduled = args
         .get("scheduled_recording")
         .filter(|v| !v.is_null())
@@ -306,7 +319,7 @@ pub async fn set_camera_recording_policy(
         return Ok(json!({
             "error": "modes_conflict",
             "message": "continuous_24_7 and scheduled_recording can't both \
-be true. Pass one as false in the same call to switch.",
+        be true. Pass one as false in the same call to switch.",
         }));
     }
 
@@ -362,7 +375,11 @@ be true. Pass one as false in the same call to switch.",
 
 /// `""` clears the window; anything else is stored as given.
 fn empty_to_null(value: &str) -> Option<&str> {
-    if value.is_empty() { None } else { Some(value) }
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 fn is_hhmm(value: &str) -> bool {
@@ -466,18 +483,22 @@ pub async fn get_stream_stats(
 }
 
 pub async fn get_system_status(state: &AppState, org_id: &str) -> ToolResult {
-    let cameras: Vec<crate::models::CameraRow> =
-        sqlx::query_as(&format!("{} WHERE c.org_id = $1", crate::models::CAMERA_SELECT))
-            .bind(org_id)
-            .fetch_all(&state.pool)
-            .await
-            .map_err(db_error)?;
-    let nodes: Vec<crate::api::nodes::CameraNodeRow> =
-        sqlx::query_as(&format!("{} WHERE n.org_id = $1", crate::api::nodes::NODE_SELECT))
-            .bind(org_id)
-            .fetch_all(&state.pool)
-            .await
-            .map_err(db_error)?;
+    let cameras: Vec<crate::models::CameraRow> = sqlx::query_as(&format!(
+        "{} WHERE c.org_id = $1",
+        crate::models::CAMERA_SELECT
+    ))
+    .bind(org_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(db_error)?;
+    let nodes: Vec<crate::api::nodes::CameraNodeRow> = sqlx::query_as(&format!(
+        "{} WHERE n.org_id = $1",
+        crate::api::nodes::NODE_SELECT
+    ))
+    .bind(org_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(db_error)?;
 
     // `effective_status`, not the stored column: a camera whose last
     // heartbeat is 90 seconds old reads offline whatever the row says.
@@ -488,7 +509,10 @@ pub async fn get_system_status(state: &AppState, org_id: &str) -> ToolResult {
     let online_nodes = nodes
         .iter()
         .filter(|row| {
-            !matches!(row.to_json()["status"].as_str(), Some("offline") | Some("pending"))
+            !matches!(
+                row.to_json()["status"].as_str(),
+                Some("offline") | Some("pending")
+            )
         })
         .count() as i64;
 
@@ -575,16 +599,14 @@ pub async fn list_incidents(
           AND ($2::text IS NULL OR i.status = $2)
           AND ($3::text IS NULL OR i.severity = $3)
           AND ($4::text IS NULL OR i.camera_id = $4)";
-    let (total,): (i64,) = sqlx::query_as(&format!(
-        "SELECT COUNT(*) FROM incidents i {filters}"
-    ))
-    .bind(org_id)
-    .bind(&status)
-    .bind(&severity)
-    .bind(&camera_id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(db_error)?;
+    let (total,): (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM incidents i {filters}"))
+        .bind(org_id)
+        .bind(&status)
+        .bind(&severity)
+        .bind(&camera_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(db_error)?;
 
     let rows: Vec<crate::api::incidents::IncidentRow> = sqlx::query_as(&format!(
         "{} {filters} ORDER BY i.created_at DESC OFFSET $5 LIMIT $6",
@@ -631,11 +653,7 @@ pub async fn list_incidents(
     }))
 }
 
-pub async fn get_incident(
-    state: &AppState,
-    org_id: &str,
-    args: &Map<String, Value>,
-) -> ToolResult {
+pub async fn get_incident(state: &AppState, org_id: &str, args: &Map<String, Value>) -> ToolResult {
     let incident_id = int_or(args, "incident_id", 0);
     let row = owned_incident(state, org_id, incident_id).await?;
     let mut value = row.to_json();
@@ -682,14 +700,13 @@ pub async fn create_incident(
         .date()
         .and_hms_opt(0, 0, 0)
         .unwrap_or_else(crate::models::now_naive);
-    let (created_today,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM incidents WHERE org_id = $1 AND created_at >= $2",
-    )
-    .bind(org_id)
-    .bind(day_start)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(db_error)?;
+    let (created_today,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM incidents WHERE org_id = $1 AND created_at >= $2")
+            .bind(org_id)
+            .bind(day_start)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(db_error)?;
     if let Some(refusal) = daily_cap_refusal(created_today, MAX_INCIDENTS_PER_ORG_PER_DAY) {
         return Err(refusal);
     }
@@ -861,7 +878,10 @@ pub async fn update_incident(
     }
 
     let existing = owned_incident(state, org_id, incident_id).await?;
-    let existing_status = existing.to_json()["status"].as_str().unwrap_or("").to_string();
+    let existing_status = existing.to_json()["status"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
 
     let now = crate::models::now_naive();
     if let Some(status) = &status {
@@ -970,8 +990,7 @@ pub async fn finalize_incident(
     // The contract is "the FIRST report write". A silent overwrite here
     // destroys a body the agent would have to hold in context to
     // reproduce, which is exactly what update_incident requires.
-    if existing
-        .to_json()["report"]
+    if existing.to_json()["report"]
         .as_str()
         .is_some_and(|text| !text.is_empty())
     {
@@ -1145,10 +1164,7 @@ pub async fn watch_camera(
                     ))),
                 }
             }
-            Err(err) => frames.push(Frame::Text(format!(
-                "[Frame {}] Failed: {err}",
-                index + 1
-            ))),
+            Err(err) => frames.push(Frame::Text(format!("[Frame {}] Failed: {err}", index + 1))),
         }
     }
 
@@ -1201,11 +1217,7 @@ pub async fn attach_snapshot(
     Ok(row.to_json())
 }
 
-pub async fn attach_clip(
-    state: &AppState,
-    org_id: &str,
-    args: &Map<String, Value>,
-) -> ToolResult {
+pub async fn attach_clip(state: &AppState, org_id: &str, args: &Map<String, Value>) -> ToolResult {
     let incident_id = int_or(args, "incident_id", 0);
     let camera_id = req_str(args, "camera_id");
     let duration = int_or(args, "duration_seconds", 15);
@@ -1236,8 +1248,7 @@ pub async fn attach_clip(
     };
 
     let (blob, segment_count, truncated) = trim_to_cap(chunks, MAX_CLIP_BYTES);
-    let approx_duration =
-        crate::pyrepr::round_to(segment_count as f64 * APPROX_SEGMENT_SECONDS, 1);
+    let approx_duration = crate::pyrepr::round_to(segment_count as f64 * APPROX_SEGMENT_SECONDS, 1);
 
     let now = crate::models::now_naive();
     // The duration rides along as a MIME parameter so the playback
@@ -1324,7 +1335,9 @@ pub async fn get_incident_snapshot(
     // The stored mime maps onto the format FastMCP's Image takes;
     // anything unrecognised falls back to jpeg, because the bytes
     // most likely still decode.
-    let mime = mime.unwrap_or_else(|| "image/jpeg".to_string()).to_lowercase();
+    let mime = mime
+        .unwrap_or_else(|| "image/jpeg".to_string())
+        .to_lowercase();
     let format = match mime.as_str() {
         "image/png" => "image/png",
         "image/webp" => "image/webp",
@@ -1349,11 +1362,11 @@ pub async fn get_incident_clip(
         "SELECT kind, data_mime, length(data), text, camera_id, timestamp
            FROM incident_evidence WHERE id = $1 AND incident_id = $2 LIMIT 1",
     )
-        .bind(evidence_id as i32)
-        .bind(incident_id as i32)
-        .fetch_optional(&state.pool)
-        .await
-        .map_err(db_error)?;
+    .bind(evidence_id as i32)
+    .bind(incident_id as i32)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(db_error)?;
     let Some((kind, mime, byte_len, text, camera_id, timestamp)) = row else {
         return Err(format!(
             "Evidence {evidence_id} not found on incident {incident_id}"

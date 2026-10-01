@@ -84,7 +84,11 @@ async fn mcp_redirect(request: axum::extract::Request) -> axum::response::Respon
         .get(axum::http::header::HOST)
         .and_then(|value| value.to_str().ok())
         .unwrap_or("");
-    let query = request.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
+    let query = request
+        .uri()
+        .query()
+        .map(|q| format!("?{q}"))
+        .unwrap_or_default();
     let location = format!("{scheme}://{host}/mcp/{query}");
     (
         axum::http::StatusCode::TEMPORARY_REDIRECT,
@@ -115,7 +119,11 @@ fn mcp_service(
     // would break on an event-stream frame.
     config.json_response = true;
     StreamableHttpService::new(
-        move || Ok(crate::mcp::server::SentinelMcp { state: state.clone() }),
+        move || {
+            Ok(crate::mcp::server::SentinelMcp {
+                state: state.clone(),
+            })
+        },
         Arc::new(LocalSessionManager::default()),
         config,
     )
@@ -141,7 +149,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/health/detailed", ported(api::health::health_detailed))
         // RFC 9116 requires the .well-known path; the root alias is kept
         // because some older scanners only probe there.
-        .route("/.well-known/security.txt", ported(api::well_known::security_txt))
+        .route(
+            "/.well-known/security.txt",
+            ported(api::well_known::security_txt),
+        )
         .route("/security.txt", ported(api::well_known::security_txt))
         .route("/install.sh", ported(api::install::install_sh))
         .route("/mcp-setup.sh", ported(api::install::mcp_setup_sh))
@@ -166,8 +177,14 @@ pub fn build_router(state: AppState) -> Router {
         // declaration order and would otherwise read "pending" as a run
         // id; axum prefers the static segment either way, but the order
         // here keeps the two files reading the same.
-        .route("/api/sentinel/runs/pending", ported(api::sentinel::list_pending_runs))
-        .route("/api/sentinel/runs/{run_id}", ported(api::sentinel::get_run))
+        .route(
+            "/api/sentinel/runs/pending",
+            ported(api::sentinel::list_pending_runs),
+        )
+        .route(
+            "/api/sentinel/runs/{run_id}",
+            ported(api::sentinel::get_run),
+        )
         .route(
             "/api/sentinel/runs/{run_id}/start",
             served(axum::routing::post(api::sentinel::post_run_start)),
@@ -178,10 +195,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/sentinel/agent-keys",
-            served(
-                get(api::sentinel::list_agent_keys)
-                    .post(api::sentinel::create_agent_key),
-            ),
+            served(get(api::sentinel::list_agent_keys).post(api::sentinel::create_agent_key)),
         )
         .route(
             "/api/sentinel/agent-keys/{key_id}",
@@ -200,7 +214,10 @@ pub fn build_router(state: AppState) -> Router {
         )
         // Registered after the two literal paths above, as in the
         // Python, so `/runs/manual` and `/runs/pending` keep winning.
-        .route("/api/sentinel/runs", ported(api::sentinel_config::list_runs))
+        .route(
+            "/api/sentinel/runs",
+            ported(api::sentinel_config::list_runs),
+        )
         // Read-only camera routes (slice 2). Writes on these same paths
         // are slice 4 and must still reach Python — hence `ported`
         // rather than a bare `get`.
@@ -208,9 +225,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/cameras/{camera_id}", ported(api::cameras::get_camera))
         .route(
             "/api/camera-groups",
-            served(
-                get(api::cameras::list_camera_groups).post(api::groups::create_camera_group),
-            ),
+            served(get(api::cameras::list_camera_groups).post(api::groups::create_camera_group)),
         )
         .route(
             "/api/camera-groups/{group_id}",
@@ -249,7 +264,9 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/cameras/{camera_id}/recording-settings",
-            served(axum::routing::patch(api::recording::update_recording_policy)),
+            served(axum::routing::patch(
+                api::recording::update_recording_policy,
+            )),
         )
         .route(
             "/api/cameras/{camera_id}/snapshot",
@@ -278,8 +295,7 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/settings/motion-ingestion",
             served(
-                get(api::settings::get_motion_ingestion)
-                    .post(api::groups::update_motion_ingestion),
+                get(api::settings::get_motion_ingestion).post(api::groups::update_motion_ingestion),
             ),
         )
         .route("/api/audit-logs", ported(api::audit::list_audit_logs))
@@ -326,10 +342,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/ws/node", served(get(api::ws::node_websocket)))
         .route(
             "/api/nodes/{node_id}",
-            served(
-                get(api::nodes::get_node)
-                    .delete(api::node_writes::delete_node),
-            ),
+            served(get(api::nodes::get_node).delete(api::node_writes::delete_node)),
         )
         .route(
             "/api/nodes/{node_id}/rotate-key",
@@ -337,9 +350,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/nodes",
-            served(
-                get(api::nodes::list_nodes).post(api::node_writes::create_node),
-            ),
+            served(get(api::nodes::list_nodes).post(api::node_writes::create_node)),
         )
         .route(
             "/api/settings/danger/wipe-logs",
@@ -362,12 +373,12 @@ pub fn build_router(state: AppState) -> Router {
         // /{incident_id} and would otherwise be swallowed by it.
         .route(
             "/api/incidents",
-            served(
-                get(api::incidents::list_incidents)
-                    .post(api::incidents::create_incident),
-            ),
+            served(get(api::incidents::list_incidents).post(api::incidents::create_incident)),
         )
-        .route("/api/incidents/counts", ported(api::incidents::incident_counts))
+        .route(
+            "/api/incidents/counts",
+            ported(api::incidents::incident_counts),
+        )
         .route(
             "/api/incidents/{incident_id}",
             served(
@@ -378,10 +389,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/mcp/keys",
-            served(
-                axum::routing::get(api::keys::list_mcp_keys)
-                    .post(api::keys::create_mcp_key),
-            ),
+            served(axum::routing::get(api::keys::list_mcp_keys).post(api::keys::create_mcp_key)),
         )
         // Declared because `/api/mcp/keys/{key_id}` would otherwise be a
         // candidate for it: axum matches a parameterised segment against
@@ -397,12 +405,12 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/integration/keys",
-            served(
-                get(api::keys::list_integration_keys)
-                    .post(api::keys::create_integration_key),
-            ),
+            served(get(api::keys::list_integration_keys).post(api::keys::create_integration_key)),
         )
-        .route("/api/integration/cameras", ported(api::integration::list_cameras))
+        .route(
+            "/api/integration/cameras",
+            ported(api::integration::list_cameras),
+        )
         .route(
             "/api/integration/cameras/{camera_id}/recording",
             served(axum::routing::post(api::integration::set_recording)),
@@ -412,12 +420,14 @@ pub fn build_router(state: AppState) -> Router {
             ported(api::integration::snapshot),
         )
         .route("/api/integration/status", ported(api::integration::status))
-
         .route(
             "/api/integration/keys/{key_id}",
             served(axum::routing::delete(api::keys::revoke_integration_key)),
         )
-        .route("/api/notifications", ported(api::notifications::list_notifications))
+        .route(
+            "/api/notifications",
+            ported(api::notifications::list_notifications),
+        )
         .route(
             "/api/notifications/unread-count",
             ported(api::notifications::unread_count),
@@ -436,7 +446,9 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/notifications/request-admin-promotion",
-            served(axum::routing::post(api::notifications::request_admin_promotion)),
+            served(axum::routing::post(
+                api::notifications::request_admin_promotion,
+            )),
         )
         .route(
             "/api/notifications/email/unsubscribe",
@@ -449,7 +461,10 @@ pub fn build_router(state: AppState) -> Router {
                     .post(api::notifications::update_email_preferences),
             ),
         )
-        .route("/api/motion/events", ported(api::motion::list_motion_events))
+        .route(
+            "/api/motion/events",
+            ported(api::motion::list_motion_events),
+        )
         .route(
             "/api/motion/events/stream",
             ported(api::motion::stream_motion_events),
@@ -517,13 +532,14 @@ pub fn build_router(state: AppState) -> Router {
             served_spa(axum::routing::post_service(mcp_service(state.clone())))
                 .route_layer(axum::middleware::from_fn(crate::mcp::pre_auth::layer)),
         )
-
         // ---- SPA --------------------------------------------------------
         // Static assets are files on disk, served directly rather than
         // through the fallback's path-walking.
         .nest_service("/assets", ServeDir::new(format!("{static_dir}/assets")))
-        .route_service("/favicon.svg", ServeFile::new(format!("{static_dir}/favicon.svg")))
-        ;
+        .route_service(
+            "/favicon.svg",
+            ServeFile::new(format!("{static_dir}/favicon.svg")),
+        );
 
     // Registered only in local mode, matching main.py: the Python
     // mounts this router in the `else` branch of is_clerk_auth(), so
@@ -563,10 +579,15 @@ pub fn build_router(state: AppState) -> Router {
         // own, harvested and compiled in rather than rewritten — see
         // api/docs.rs for why that is the honest option and what keeps
         // the snapshot from going stale.
-        .route("/api/openapi.json", served(axum::routing::get(api::docs::openapi_json)))
-        .route("/api-docs", served(axum::routing::get(api::docs::swagger_ui)))
+        .route(
+            "/api/openapi.json",
+            served(axum::routing::get(api::docs::openapi_json)),
+        )
+        .route(
+            "/api-docs",
+            served(axum::routing::get(api::docs::swagger_ui)),
+        )
         .route("/api-redoc", served(axum::routing::get(api::docs::redoc)))
-
         // ---- the SPA ---------------------------------------------------
         // Deliberately last. `spa::fallback` serves the React document
         // and the files beside it, and answers the router's 404 for the
@@ -653,7 +674,9 @@ fn served(router: axum::routing::MethodRouter<AppState>) -> axum::routing::Metho
 fn served_spa(
     router: axum::routing::MethodRouter<AppState>,
 ) -> axum::routing::MethodRouter<AppState> {
-    router.head(spa::method_fallback).fallback(spa::method_fallback)
+    router
+        .head(spa::method_fallback)
+        .fallback(spa::method_fallback)
 }
 
 /// HEAD on a route that declares only GET.
@@ -685,7 +708,9 @@ async fn method_not_allowed_body(
 ) -> axum::response::Response {
     let response = next.run(request).await;
     if response.status() != axum::http::StatusCode::METHOD_NOT_ALLOWED
-        || response.headers().contains_key(axum::http::header::CONTENT_TYPE)
+        || response
+            .headers()
+            .contains_key(axum::http::header::CONTENT_TYPE)
     {
         return response;
     }
@@ -737,7 +762,11 @@ mod tests {
         }
 
         assert_eq!(
-            location(&[("host", "sentinel-command.com"), ("x-forwarded-proto", "https")]).await,
+            location(&[
+                ("host", "sentinel-command.com"),
+                ("x-forwarded-proto", "https")
+            ])
+            .await,
             "https://sentinel-command.com/mcp/"
         );
         // A proxy chain sends a list; the first entry is the
@@ -756,6 +785,9 @@ mod tests {
             "http://127.0.0.1:8000/mcp/"
         );
         // An empty header is not an answer.
-        assert_eq!(location(&[("host", "h"), ("x-forwarded-proto", "")]).await, "http://h/mcp/");
+        assert_eq!(
+            location(&[("host", "h"), ("x-forwarded-proto", "")]).await,
+            "http://h/mcp/"
+        );
     }
 }

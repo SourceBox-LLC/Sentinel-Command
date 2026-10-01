@@ -178,7 +178,10 @@ pub async fn register_node(
         &latest,
     );
     let parsed = check["parsed"].as_str().unwrap_or_default().to_string();
-    let min_supported = check["min_supported"].as_str().unwrap_or_default().to_string();
+    let min_supported = check["min_supported"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     let latest_str = check["latest"].as_str().unwrap_or_default().to_string();
     // `version_check["parsed"] if data.node_version else None` — an
     // absent version clears the column rather than storing "0.0.0".
@@ -226,7 +229,10 @@ pub async fn register_node(
     } else {
         local_ip.filter(|ip| !ip.is_empty()).or(node.local_ip)
     };
-    let http_port = http_port.filter(|p| *p != 0).map(|p| p as i32).or(node.http_port);
+    let http_port = http_port
+        .filter(|p| *p != 0)
+        .map(|p| p as i32)
+        .or(node.http_port);
 
     sqlx::query(
         "UPDATE camera_nodes
@@ -480,8 +486,10 @@ async fn emit_plan_limit_notification(
         more
     );
 
-    let mut notification =
-        NewNotification::new("plan_limit_reached", format!("Camera limit reached on {plan_name}"));
+    let mut notification = NewNotification::new(
+        "plan_limit_reached",
+        format!("Camera limit reached on {plan_name}"),
+    );
     notification.body = body;
     notification.severity = "warning".to_string();
     notification.audience = "admin".to_string();
@@ -589,7 +597,9 @@ pub async fn node_heartbeat(
     let local_ip = if lan_streaming == Some(false) {
         None
     } else {
-        local_ip.filter(|ip| !ip.is_empty()).or(node.local_ip.clone())
+        local_ip
+            .filter(|ip| !ip.is_empty())
+            .or(node.local_ip.clone())
     };
     sqlx::query(
         "UPDATE camera_nodes SET status = 'online', last_seen = $1, local_ip = $2, updated_at = $1
@@ -669,11 +679,12 @@ pub async fn node_heartbeat(
     // The time-based past-due transition has no webhook behind it, so
     // the heartbeat is where "in grace" becomes "past grace". Gated on
     // the flag, so the happy path pays nothing.
-    let past_due = crate::settings::get(&state.pool, &node.org_id, "payment_past_due", Some("false"))
-        .await
-        .unwrap_or_default()
-        .unwrap_or_default()
-        == "true";
+    let past_due =
+        crate::settings::get(&state.pool, &node.org_id, "payment_past_due", Some("false"))
+            .await
+            .unwrap_or_default()
+            .unwrap_or_default()
+            == "true";
     if past_due {
         let ctx = plan_ctx(&state);
         if let Err(err) = plans::enforce_camera_cap(&ctx, &state.pool, &node.org_id).await {
@@ -768,11 +779,13 @@ fn parse_camera_statuses(errors: &mut BodyErrors, body: &Value) -> Vec<CameraSta
             errors.model_attributes_type_at(&[json!("cameras"), json!(i)], item);
             continue;
         }
-        out.push(errors.within(&[json!("cameras"), json!(i)], |e| CameraStatusReport {
-            camera_id: e.required_string(item, "camera_id", 150),
-            status: e.required_string(item, "status", 20),
-            last_error: e.optional_string(item, "last_error", 500),
-        }));
+        out.push(
+            errors.within(&[json!("cameras"), json!(i)], |e| CameraStatusReport {
+                camera_id: e.required_string(item, "camera_id", 150),
+                status: e.required_string(item, "status", 20),
+                last_error: e.optional_string(item, "last_error", 500),
+            }),
+        );
     }
     out
 }
@@ -978,18 +991,48 @@ mod tests {
     fn continuous_beats_everything_and_off_means_off() {
         assert!(camera_should_record_now(true, false, None, None, 0));
         // Even against a window that excludes the current minute.
-        assert!(camera_should_record_now(true, true, Some("01:00"), Some("02:00"), 600));
-        assert!(!camera_should_record_now(false, false, Some("00:00"), Some("23:59"), 600));
+        assert!(camera_should_record_now(
+            true,
+            true,
+            Some("01:00"),
+            Some("02:00"),
+            600
+        ));
+        assert!(!camera_should_record_now(
+            false,
+            false,
+            Some("00:00"),
+            Some("23:59"),
+            600
+        ));
     }
 
     /// A schedule with nothing configured is off, not always-on.
     #[test]
     fn a_schedule_without_times_records_nothing() {
         assert!(!camera_should_record_now(false, true, None, None, 600));
-        assert!(!camera_should_record_now(false, true, Some("08:00"), None, 600));
-        assert!(!camera_should_record_now(false, true, None, Some("17:00"), 600));
+        assert!(!camera_should_record_now(
+            false,
+            true,
+            Some("08:00"),
+            None,
+            600
+        ));
+        assert!(!camera_should_record_now(
+            false,
+            true,
+            None,
+            Some("17:00"),
+            600
+        ));
         // The empty string is what clearing a window stores.
-        assert!(!camera_should_record_now(false, true, Some(""), Some("17:00"), 600));
+        assert!(!camera_should_record_now(
+            false,
+            true,
+            Some(""),
+            Some("17:00"),
+            600
+        ));
     }
 
     #[test]

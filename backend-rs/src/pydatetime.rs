@@ -264,7 +264,11 @@ fn parse_isoformat_time(s: &CStr, start: usize, dtlen: usize) -> Result<(i32, Ti
     }
 
     if s.at(tzinfo_pos) == b'Z' {
-        return if s.at(tzinfo_pos + 1) != 0 { Err(-5) } else { Ok((1, out)) };
+        return if s.at(tzinfo_pos + 1) != 0 {
+            Err(-5)
+        } else {
+            Ok((1, out))
+        };
     }
 
     let tzsign = if s.at(tzinfo_pos) == b'-' { -1 } else { 1 };
@@ -381,11 +385,20 @@ pub fn fromisoformat(input: &str) -> Result<IsoDateTime, PyDateError> {
         .and_then(|(m, d)| NaiveDate::from_ymd_opt(year, m, d))
         .ok_or(PyDateError::Value)?;
     let in_range = |v: i32, max: i32| (0..=max).contains(&v);
-    if !(in_range(hour, 23) && in_range(minute, 59) && in_range(second, 59) && in_range(microsecond, 999_999)) {
+    if !(in_range(hour, 23)
+        && in_range(minute, 59)
+        && in_range(second, 59)
+        && in_range(microsecond, 999_999))
+    {
         return Err(PyDateError::Value);
     }
     let naive = date
-        .and_hms_micro_opt(hour as u32, minute as u32, second as u32, microsecond as u32)
+        .and_hms_micro_opt(
+            hour as u32,
+            minute as u32,
+            second as u32,
+            microsecond as u32,
+        )
         .ok_or(PyDateError::Value)?;
 
     Ok(IsoDateTime { naive, offset_us })
@@ -451,15 +464,22 @@ mod tests {
                 Err(e) => serde_json::json!({ "error": error_name(e) }),
             };
             if got_iso != case["iso"] {
-                failures.push(format!("iso   {input:?}: want {} got {got_iso}", case["iso"]));
+                failures.push(format!(
+                    "iso   {input:?}: want {} got {got_iso}",
+                    case["iso"]
+                ));
             }
 
-            let got_since = match fromisoformat(&input.replace('Z', "+00:00")).and_then(to_naive_utc) {
-                Ok(dt) => serde_json::json!({ "utc": fmt(dt) }),
-                Err(e) => serde_json::json!({ "error": error_name(e) }),
-            };
+            let got_since =
+                match fromisoformat(&input.replace('Z', "+00:00")).and_then(to_naive_utc) {
+                    Ok(dt) => serde_json::json!({ "utc": fmt(dt) }),
+                    Err(e) => serde_json::json!({ "error": error_name(e) }),
+                };
             if got_since != case["since"] {
-                failures.push(format!("since {input:?}: want {} got {got_since}", case["since"]));
+                failures.push(format!(
+                    "since {input:?}: want {} got {got_since}",
+                    case["since"]
+                ));
             }
         }
         assert!(
@@ -467,7 +487,12 @@ mod tests {
             "{} of {} disagree with CPython:\n{}",
             failures.len(),
             corpus.len() * 2,
-            failures.iter().take(40).cloned().collect::<Vec<_>>().join("\n")
+            failures
+                .iter()
+                .take(40)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 }

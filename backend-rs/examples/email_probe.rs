@@ -80,9 +80,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--resend" => { resend = args[i + 1].clone(); i += 2; }
-            "--db" => { db = args[i + 1].clone(); i += 2; }
-            "--cases" => { cases = args[i + 1].clone(); i += 2; }
+            "--resend" => {
+                resend = args[i + 1].clone();
+                i += 2;
+            }
+            "--db" => {
+                db = args[i + 1].clone();
+                i += 2;
+            }
+            "--cases" => {
+                cases = args[i + 1].clone();
+                i += 2;
+            }
             _ => i += 1,
         }
     }
@@ -123,7 +132,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.email_worker_batch_size = scenario.batch_size.unwrap_or(20);
         config.email_max_attempts = base.email_max_attempts;
 
-        let ctx = EmailContext { pool: &pool, config: &config, client: &client };
+        let ctx = EmailContext {
+            pool: &pool,
+            config: &config,
+            client: &client,
+        };
         // Reset per scenario: "did this tick stamp" must be a question
         // about this tick and not about an earlier one in the process.
         reset_tick_for_tests();
@@ -150,7 +163,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn reset(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
     for table in ["email_log", "email_outbox", "email_suppression"] {
-        sqlx::query(&format!("DELETE FROM {table}")).execute(pool).await?;
+        sqlx::query(&format!("DELETE FROM {table}"))
+            .execute(pool)
+            .await?;
     }
     Ok(())
 }
@@ -184,16 +199,31 @@ async fn seed(pool: &sqlx::PgPool, scenario: &Scenario) -> Result<(), sqlx::Erro
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(row.id)
-        .bind(row.org_id.clone().unwrap_or_else(|| "self-host".to_string()))
+        .bind(
+            row.org_id
+                .clone()
+                .unwrap_or_else(|| "self-host".to_string()),
+        )
         .bind(&row.recipient)
         .bind(row.subject.clone().unwrap_or_else(|| "Subject".to_string()))
-        .bind(row.body_text.clone().unwrap_or_else(|| "text body".to_string()))
-        .bind(row.body_html.clone().unwrap_or_else(|| "<p>html body</p>".to_string()))
+        .bind(
+            row.body_text
+                .clone()
+                .unwrap_or_else(|| "text body".to_string()),
+        )
+        .bind(
+            row.body_html
+                .clone()
+                .unwrap_or_else(|| "<p>html body</p>".to_string()),
+        )
         .bind(&row.kind)
         .bind(&row.status)
         .bind(row.attempts)
         .bind(now - chrono::Duration::seconds(row.created_offset.unwrap_or(0)))
-        .bind(row.last_attempt_offset.map(|o| now - chrono::Duration::seconds(o)))
+        .bind(
+            row.last_attempt_offset
+                .map(|o| now - chrono::Duration::seconds(o)),
+        )
         .execute(pool)
         .await?;
     }
@@ -214,17 +244,30 @@ async fn dump_outbox(pool: &sqlx::PgPool) -> Result<Vec<BTreeMap<String, Value>>
             BTreeMap::from([
                 ("id".into(), json!(r.get::<i32, _>("id"))),
                 ("org_id".into(), json!(r.get::<String, _>("org_id"))),
-                ("recipient".into(), json!(r.get::<String, _>("recipient_email"))),
+                (
+                    "recipient".into(),
+                    json!(r.get::<String, _>("recipient_email")),
+                ),
                 ("kind".into(), json!(r.get::<String, _>("kind"))),
                 ("status".into(), json!(r.get::<String, _>("status"))),
                 ("attempts".into(), json!(r.get::<i32, _>("attempts"))),
-                ("resend_message_id".into(),
-                 json!(r.get::<Option<String>, _>("resend_message_id"))),
+                (
+                    "resend_message_id".into(),
+                    json!(r.get::<Option<String>, _>("resend_message_id")),
+                ),
                 ("error".into(), json!(r.get::<Option<String>, _>("error"))),
-                ("sent".into(),
-                 json!(r.get::<Option<chrono::NaiveDateTime>, _>("sent_at").is_some())),
-                ("attempted".into(),
-                 json!(r.get::<Option<chrono::NaiveDateTime>, _>("last_attempt_at").is_some())),
+                (
+                    "sent".into(),
+                    json!(r
+                        .get::<Option<chrono::NaiveDateTime>, _>("sent_at")
+                        .is_some()),
+                ),
+                (
+                    "attempted".into(),
+                    json!(r
+                        .get::<Option<chrono::NaiveDateTime>, _>("last_attempt_at")
+                        .is_some()),
+                ),
             ])
         })
         .collect())
@@ -242,11 +285,16 @@ async fn dump_log(pool: &sqlx::PgPool) -> Result<Vec<BTreeMap<String, Value>>, s
         .map(|r| {
             BTreeMap::from([
                 ("org_id".into(), json!(r.get::<String, _>("org_id"))),
-                ("recipient".into(), json!(r.get::<String, _>("recipient_email"))),
+                (
+                    "recipient".into(),
+                    json!(r.get::<String, _>("recipient_email")),
+                ),
                 ("kind".into(), json!(r.get::<String, _>("kind"))),
                 ("status".into(), json!(r.get::<String, _>("status"))),
-                ("resend_message_id".into(),
-                 json!(r.get::<Option<String>, _>("resend_message_id"))),
+                (
+                    "resend_message_id".into(),
+                    json!(r.get::<Option<String>, _>("resend_message_id")),
+                ),
                 ("error".into(), json!(r.get::<Option<String>, _>("error"))),
             ])
         })

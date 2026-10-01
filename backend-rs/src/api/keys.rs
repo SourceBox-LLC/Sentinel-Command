@@ -92,11 +92,7 @@ fn python_str(value: &Value) -> String {
 const KEY_SELECT: &str = "SELECT id, name, created_at, last_used_at, revoked, \
                           scope_mode, scope_tools, kind FROM mcp_api_keys";
 
-async fn list_keys(
-    state: &AppState,
-    org_id: &str,
-    kind: &str,
-) -> Result<Json<Value>, ApiError> {
+async fn list_keys(state: &AppState, org_id: &str, kind: &str) -> Result<Json<Value>, ApiError> {
     let rows: Vec<KeyRow> = sqlx::query_as(&format!(
         "{KEY_SELECT} WHERE org_id = $1 AND revoked = false AND kind = $2 \
          ORDER BY created_at DESC"
@@ -266,7 +262,10 @@ pub async fn create_integration_key(
     rate.check().await?;
 
     let raw_key = format!("{INTEGRATION_KEY_PREFIX}{}", crate::crypto::token_hex(16));
-    let key_hash = crate::crypto::hex(&{ use sha2::Digest; sha2::Sha256::digest(raw_key.as_bytes()) });
+    let key_hash = crate::crypto::hex(&{
+        use sha2::Digest;
+        sha2::Sha256::digest(raw_key.as_bytes())
+    });
 
     let (key_id, created_at): (i32, Option<NaiveDateTime>) = sqlx::query_as(
         "INSERT INTO mcp_api_keys
@@ -288,7 +287,10 @@ pub async fn create_integration_key(
         "integration_key_created",
         &user.user_id,
         &label,
-        Some(python_json(&[("key_id", json!(key_id)), ("name", json!(name))])),
+        Some(python_json(&[
+            ("key_id", json!(key_id)),
+            ("name", json!(name)),
+        ])),
         &headers,
         Some(&peer.ip().to_string()),
     )
@@ -373,10 +375,14 @@ pub async fn revoke_mcp_key(
 
     // `audit_label(user) or user.user_id or "unknown user"` — the first
     // of the three that is not empty.
-    let actor = [audit_label(&user), user.user_id.clone(), "unknown user".to_string()]
-        .into_iter()
-        .find(|candidate| !candidate.is_empty())
-        .unwrap_or_default();
+    let actor = [
+        audit_label(&user),
+        user.user_id.clone(),
+        "unknown user".to_string(),
+    ]
+    .into_iter()
+    .find(|candidate| !candidate.is_empty())
+    .unwrap_or_default();
     crate::notifications::create_notification(
         &state,
         &user.org_id,
@@ -426,9 +432,7 @@ pub async fn create_mcp_key(
     // rather than a silent fall-through to full access.
     let scope_mode = match body.get("scope_mode") {
         None => "all".to_string(),
-        Some(Value::String(value))
-            if matches!(value.as_str(), "all" | "readonly" | "custom") =>
-        {
+        Some(Value::String(value)) if matches!(value.as_str(), "all" | "readonly" | "custom") => {
             value.clone()
         }
         Some(other) => {
@@ -438,14 +442,16 @@ pub async fn create_mcp_key(
     };
     // The validator deduplicates and drops empty names WITHOUT
     // reordering: the list a customer picked is the list they see back.
-    let scope_tools = errors.optional_list_of_strings(&body, "scope_tools").map(|tools| {
-        let mut seen = std::collections::HashSet::new();
-        tools
-            .into_iter()
-            .map(|name| name.trim().to_string())
-            .filter(|name| !name.is_empty() && seen.insert(name.clone()))
-            .collect::<Vec<String>>()
-    });
+    let scope_tools = errors
+        .optional_list_of_strings(&body, "scope_tools")
+        .map(|tools| {
+            let mut seen = std::collections::HashSet::new();
+            tools
+                .into_iter()
+                .map(|name| name.trim().to_string())
+                .filter(|name| !name.is_empty() && seen.insert(name.clone()))
+                .collect::<Vec<String>>()
+        });
     errors.finish()?;
     rate.check().await?;
 
@@ -475,7 +481,10 @@ pub async fn create_mcp_key(
     };
 
     let raw_key = format!("{MCP_KEY_PREFIX}{}", crate::crypto::token_hex(16));
-    let key_hash = crate::crypto::hex(&{ use sha2::Digest; sha2::Sha256::digest(raw_key.as_bytes()) });
+    let key_hash = crate::crypto::hex(&{
+        use sha2::Digest;
+        sha2::Sha256::digest(raw_key.as_bytes())
+    });
     // `json.dumps(scope_tools) if scope_tools else None` — an empty
     // list is falsy and stores NULL, not "[]".
     let stored_tools = scope_tools
@@ -532,7 +541,10 @@ pub async fn create_mcp_key(
         .find(|candidate| !candidate.is_empty())
         .unwrap_or_default();
     let scope_summary = if scope_mode == "custom" {
-        format!("{} scoped tool(s)", scope_tools.as_ref().map_or(0, Vec::len))
+        format!(
+            "{} scoped tool(s)",
+            scope_tools.as_ref().map_or(0, Vec::len)
+        )
     } else {
         "all tools".to_string()
     };
@@ -602,7 +614,6 @@ pub async fn list_mcp_tools(RequireAdmin(_user): RequireAdmin) -> Json<Value> {
     }))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -623,7 +634,14 @@ mod tests {
 
     #[test]
     fn an_unset_or_unparseable_scope_list_is_empty() {
-        for raw in [None, Some(""), Some("not json"), Some("{}"), Some("null"), Some("5")] {
+        for raw in [
+            None,
+            Some(""),
+            Some("not json"),
+            Some("{}"),
+            Some("null"),
+            Some("5"),
+        ] {
             assert!(scope_tools(raw).is_empty(), "{raw:?}");
         }
     }

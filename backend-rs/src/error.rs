@@ -119,7 +119,10 @@ impl IntoResponse for ApiError {
             // exception, down to the charset.
             return (
                 self.status,
-                [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                [(
+                    axum::http::header::CONTENT_TYPE,
+                    "text/plain; charset=utf-8",
+                )],
                 "Internal Server Error",
             )
                 .into_response();
@@ -162,7 +165,11 @@ mod tests {
             .unwrap_or_default()
             .to_string();
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        (status, content_type, String::from_utf8_lossy(&bytes).to_string())
+        (
+            status,
+            content_type,
+            String::from_utf8_lossy(&bytes).to_string(),
+        )
     }
 
     #[tokio::test]

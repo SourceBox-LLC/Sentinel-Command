@@ -158,7 +158,11 @@ impl HlsCache {
     /// Both are counts of CAMERAS, not of segments: the segment figure
     /// is how many cameras have a bucket, however full.
     pub fn cache_occupancy(&self) -> (usize, usize) {
-        let playlists = self.playlists.lock().expect("playlist cache poisoned").len();
+        let playlists = self
+            .playlists
+            .lock()
+            .expect("playlist cache poisoned")
+            .len();
         let segments = self
             .segments
             .lock()
@@ -180,7 +184,10 @@ impl HlsCache {
     }
 
     pub fn total_bytes(&self) -> i64 {
-        self.segments.lock().expect("segment cache poisoned").byte_total
+        self.segments
+            .lock()
+            .expect("segment cache poisoned")
+            .byte_total
     }
 
     /// `snapshot_recent_segment_bytes`: the newest `count` segments,
@@ -195,7 +202,13 @@ impl HlsCache {
             return Snapshot::Segments(Vec::new());
         }
         let skip = bucket.len().saturating_sub(count);
-        Snapshot::Segments(bucket.values().skip(skip).map(|(body, _)| body.clone()).collect())
+        Snapshot::Segments(
+            bucket
+                .values()
+                .skip(skip)
+                .map(|(body, _)| body.clone())
+                .collect(),
+        )
     }
 
     /// `cleanup_camera_cache`: everything held for one camera, across
@@ -208,10 +221,22 @@ impl HlsCache {
                 store.byte_total -= freed;
             }
         }
-        self.playlists.lock().expect("playlist cache poisoned").remove(camera_id);
-        self.playlist_updates.lock().expect("playlist counts poisoned").remove(camera_id);
-        self.first_playlist_logged.lock().expect("log set poisoned").remove(camera_id);
-        self.first_stream_get_logged.lock().expect("log set poisoned").remove(camera_id);
+        self.playlists
+            .lock()
+            .expect("playlist cache poisoned")
+            .remove(camera_id);
+        self.playlist_updates
+            .lock()
+            .expect("playlist counts poisoned")
+            .remove(camera_id);
+        self.first_playlist_logged
+            .lock()
+            .expect("log set poisoned")
+            .remove(camera_id);
+        self.first_stream_get_logged
+            .lock()
+            .expect("log set poisoned")
+            .remove(camera_id);
     }
 
     /// Age every one of a camera's segments, for tests that need the
@@ -237,7 +262,12 @@ impl HlsCache {
                 .cameras
                 .iter()
                 .filter(|(_, bucket)| {
-                    bucket.is_empty() || bucket.values().map(|(_, ts)| *ts).max().is_some_and(|newest| newest < cutoff)
+                    bucket.is_empty()
+                        || bucket
+                            .values()
+                            .map(|(_, ts)| *ts)
+                            .max()
+                            .is_some_and(|newest| newest < cutoff)
                 })
                 .map(|(camera_id, _)| camera_id.clone())
                 .collect();
@@ -250,10 +280,22 @@ impl HlsCache {
             stale
         };
         for camera_id in &stale {
-            self.playlists.lock().expect("playlist cache poisoned").remove(camera_id);
-            self.playlist_updates.lock().expect("playlist counts poisoned").remove(camera_id);
-            self.first_playlist_logged.lock().expect("log set poisoned").remove(camera_id);
-            self.first_stream_get_logged.lock().expect("log set poisoned").remove(camera_id);
+            self.playlists
+                .lock()
+                .expect("playlist cache poisoned")
+                .remove(camera_id);
+            self.playlist_updates
+                .lock()
+                .expect("playlist counts poisoned")
+                .remove(camera_id);
+            self.first_playlist_logged
+                .lock()
+                .expect("log set poisoned")
+                .remove(camera_id);
+            self.first_stream_get_logged
+                .lock()
+                .expect("log set poisoned")
+                .remove(camera_id);
         }
     }
 
@@ -263,11 +305,16 @@ impl HlsCache {
         {
             let mut playlists = self.playlists.lock().expect("playlist cache poisoned");
             if playlists.len() > CACHE_MAX_CAMERAS {
-                let mut by_age: Vec<(String, Instant)> =
-                    playlists.iter().map(|(k, (_, ts))| (k.clone(), *ts)).collect();
+                let mut by_age: Vec<(String, Instant)> = playlists
+                    .iter()
+                    .map(|(k, (_, ts))| (k.clone(), *ts))
+                    .collect();
                 by_age.sort_by_key(|(_, ts)| *ts);
                 let drop_count = by_age.len() - CACHE_MAX_CAMERAS;
-                let mut counts = self.playlist_updates.lock().expect("playlist counts poisoned");
+                let mut counts = self
+                    .playlist_updates
+                    .lock()
+                    .expect("playlist counts poisoned");
                 for (camera_id, _) in by_age.into_iter().take(drop_count) {
                     playlists.remove(&camera_id);
                     counts.remove(&camera_id);
@@ -306,7 +353,10 @@ impl HlsCache {
 
     /// Count this playlist push and say whether the sweep is due.
     pub fn bump_playlist_count(&self, camera_id: &str, interval: u64) -> bool {
-        let mut counts = self.playlist_updates.lock().expect("playlist counts poisoned");
+        let mut counts = self
+            .playlist_updates
+            .lock()
+            .expect("playlist counts poisoned");
         let count = counts.entry(camera_id.to_string()).or_insert(0);
         *count += 1;
         interval != 0 && (*count).is_multiple_of(interval)
@@ -669,7 +719,10 @@ mod tests {
             panic!("expected segments");
         };
         assert_eq!(all.len(), 5);
-        assert_eq!(cache.snapshot_recent("cam", 0), Snapshot::Segments(Vec::new()));
+        assert_eq!(
+            cache.snapshot_recent("cam", 0),
+            Snapshot::Segments(Vec::new())
+        );
         // A camera with no bucket is distinguishable from an empty one,
         // because the caller says "stream must be live" for the first.
         assert_eq!(cache.snapshot_recent("nope", 2), Snapshot::NoCamera);
@@ -682,7 +735,10 @@ mod tests {
         cache.push_segment("cam", &name, body, 60, i64::MAX);
         cache.set_playlist("cam", "#EXTM3U".into());
         cache.bump_playlist_count("cam", 20);
-        assert!(cache.first_playlist_push("cam"), "the first push is the first");
+        assert!(
+            cache.first_playlist_push("cam"),
+            "the first push is the first"
+        );
         assert!(!cache.first_playlist_push("cam"), "and the second is not");
 
         cache.cleanup_camera("cam");
@@ -720,7 +776,9 @@ mod tests {
     #[test]
     fn the_sweep_due_flag_follows_the_interval() {
         let cache = HlsCache::new();
-        let due: Vec<bool> = (1..=6).map(|_| cache.bump_playlist_count("cam", 3)).collect();
+        let due: Vec<bool> = (1..=6)
+            .map(|_| cache.bump_playlist_count("cam", 3))
+            .collect();
         assert_eq!(due, vec![false, false, true, false, false, true]);
     }
 

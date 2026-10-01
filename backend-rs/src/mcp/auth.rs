@@ -61,7 +61,12 @@ fn bearer(headers: &HeaderMap) -> Result<String, AuthError> {
         return Err(AuthError("Unauthorized: missing Bearer token".to_string()));
     }
     // `auth.split(" ", 1)[1].strip()`.
-    let raw = auth.split_once(' ').map(|rest| rest.1).unwrap_or("").trim().to_string();
+    let raw = auth
+        .split_once(' ')
+        .map(|rest| rest.1)
+        .unwrap_or("")
+        .trim()
+        .to_string();
     if raw.is_empty() {
         return Err(AuthError("Unauthorized: empty Bearer token".to_string()));
     }
@@ -133,7 +138,10 @@ pub async fn lookup_allowed(
     // `mcp_key.get_scope_tools()` — a NULL or unparseable column is
     // `[]`, never an error.
     let tools = parse_scope_tools(scope_tools.as_deref());
-    Some(scope::compute_allowed_tools(scope_mode.as_deref(), Some(&tools)))
+    Some(scope::compute_allowed_tools(
+        scope_mode.as_deref(),
+        Some(&tools),
+    ))
 }
 
 /// `get_scope_tools()` — the stored JSON list, or `[]`.
@@ -145,9 +153,7 @@ pub fn parse_scope_tools(stored: Option<&str>) -> Vec<String> {
         return Vec::new();
     };
     match serde_json::from_str::<serde_json::Value>(stored) {
-        Ok(serde_json::Value::Array(items)) => {
-            items.iter().map(crate::pyrepr::str_value).collect()
-        }
+        Ok(serde_json::Value::Array(items)) => items.iter().map(crate::pyrepr::str_value).collect(),
         _ => Vec::new(),
     }
 }
@@ -287,8 +293,7 @@ async fn resolve_via_agent_key(
     let license = crate::api::sentinel_config::license_ctx(state);
     if crate::license::sentinel_blocked_by_license(&license, &plan).await {
         return Err(AuthError(
-            "Agent override target org is self-hosted without a valid Sentinel license"
-                .to_string(),
+            "Agent override target org is self-hosted without a valid Sentinel license".to_string(),
         ));
     }
 
@@ -367,9 +372,18 @@ mod tests {
 
     #[test]
     fn the_scheme_is_matched_case_insensitively_and_the_token_trimmed() {
-        assert_eq!(bearer(&headers(&[("authorization", "Bearer abc")])).unwrap(), "abc");
-        assert_eq!(bearer(&headers(&[("authorization", "bearer abc")])).unwrap(), "abc");
-        assert_eq!(bearer(&headers(&[("authorization", "BEARER   abc  ")])).unwrap(), "abc");
+        assert_eq!(
+            bearer(&headers(&[("authorization", "Bearer abc")])).unwrap(),
+            "abc"
+        );
+        assert_eq!(
+            bearer(&headers(&[("authorization", "bearer abc")])).unwrap(),
+            "abc"
+        );
+        assert_eq!(
+            bearer(&headers(&[("authorization", "BEARER   abc  ")])).unwrap(),
+            "abc"
+        );
     }
 
     #[test]
@@ -379,21 +393,29 @@ mod tests {
             "Unauthorized: missing Bearer token"
         );
         assert_eq!(
-            bearer(&headers(&[("authorization", "Basic abc")])).unwrap_err().0,
+            bearer(&headers(&[("authorization", "Basic abc")]))
+                .unwrap_err()
+                .0,
             "Unauthorized: missing Bearer token"
         );
         // The scheme is there but nothing follows it.
         assert_eq!(
-            bearer(&headers(&[("authorization", "Bearer ")])).unwrap_err().0,
+            bearer(&headers(&[("authorization", "Bearer ")]))
+                .unwrap_err()
+                .0,
             "Unauthorized: empty Bearer token"
         );
         assert_eq!(
-            bearer(&headers(&[("authorization", "Bearer    ")])).unwrap_err().0,
+            bearer(&headers(&[("authorization", "Bearer    ")]))
+                .unwrap_err()
+                .0,
             "Unauthorized: empty Bearer token"
         );
         // No space at all is not the Bearer scheme.
         assert_eq!(
-            bearer(&headers(&[("authorization", "Bearer")])).unwrap_err().0,
+            bearer(&headers(&[("authorization", "Bearer")]))
+                .unwrap_err()
+                .0,
             "Unauthorized: missing Bearer token"
         );
     }
@@ -414,7 +436,12 @@ mod tests {
         // Python's str(), so a bool is "True".
         assert_eq!(
             parse_scope_tools(Some(r#"[1, true, null, "x"]"#)),
-            vec!["1".to_string(), "True".to_string(), "None".to_string(), "x".to_string()]
+            vec![
+                "1".to_string(),
+                "True".to_string(),
+                "None".to_string(),
+                "x".to_string()
+            ]
         );
     }
 

@@ -64,7 +64,10 @@ async fn build() -> (std::path::PathBuf, axum::Router) {
     let dir = tempdir();
     std::fs::write(dir.join("index.html"), "<!doctype html><title>SPA</title>").unwrap();
     std::env::set_var("STATIC_DIR", &dir);
-    std::env::set_var("DATABASE_URL", "postgresql://unused:unused@127.0.0.1:1/unused");
+    std::env::set_var(
+        "DATABASE_URL",
+        "postgresql://unused:unused@127.0.0.1:1/unused",
+    );
     // Local auth, so the case set does not depend on a Clerk key being
     // present in the environment.
     std::env::set_var("AUTH_PROVIDER", "local");
@@ -94,7 +97,10 @@ async fn build() -> (std::path::PathBuf, axum::Router) {
     (dir, build_router(state))
 }
 
-async fn send(router: &axum::Router, request: Request<Body>) -> (StatusCode, Vec<(String, String)>, String) {
+async fn send(
+    router: &axum::Router,
+    request: Request<Body>,
+) -> (StatusCode, Vec<(String, String)>, String) {
     let response = router.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let headers = response
@@ -102,7 +108,9 @@ async fn send(router: &axum::Router, request: Request<Body>) -> (StatusCode, Vec
         .iter()
         .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
-    let body = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+    let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
     (status, headers, String::from_utf8_lossy(&body).to_string())
 }
 
@@ -219,11 +227,8 @@ async fn post_mcp_is_gated_before_anything_reads_the_body() {
     assert_eq!(status, 411);
     assert_eq!(body, r#"{"error":"Content-Length required."}"#);
 
-    let (status, _, body) = send(
-        app,
-        with("POST", "/mcp/", &[("content-length", "2097153")]),
-    )
-    .await;
+    let (status, _, body) =
+        send(app, with("POST", "/mcp/", &[("content-length", "2097153")])).await;
     assert_eq!(status, 413);
     assert_eq!(body, r#"{"error":"Request body too large (max 2 MB)."}"#);
 
@@ -242,7 +247,10 @@ async fn post_mcp_is_gated_before_anything_reads_the_body() {
         with(
             "POST",
             "/mcp/",
-            &[("content-length", "2097152"), ("content-type", "application/json")],
+            &[
+                ("content-length", "2097152"),
+                ("content-type", "application/json"),
+            ],
         ),
     )
     .await;
@@ -260,7 +268,9 @@ async fn post_mcp_is_gated_before_anything_reads_the_body() {
     .await;
     assert_eq!(status, 307);
     assert!(
-        headers.iter().any(|(k, v)| k == "location" && v.ends_with("/mcp/")),
+        headers
+            .iter()
+            .any(|(k, v)| k == "location" && v.ends_with("/mcp/")),
         "{headers:?}"
     );
 }
@@ -272,10 +282,16 @@ async fn a_path_under_mcp_is_gated_and_then_404() {
     let (_dir, app) = app().await;
 
     let (status, _, body) = send(app, with("POST", "/mcp/messages", &[])).await;
-    assert_eq!(status, 411, "gated before the path is even considered: {body}");
+    assert_eq!(
+        status, 411,
+        "gated before the path is even considered: {body}"
+    );
 
-    let (status, _, body) =
-        send(app, with("POST", "/mcp/messages", &[("content-length", "0")])).await;
+    let (status, _, body) = send(
+        app,
+        with("POST", "/mcp/messages", &[("content-length", "0")]),
+    )
+    .await;
     assert_eq!(status, 404);
     assert_eq!(body, r#"{"detail":"Not Found"}"#);
 }
@@ -293,7 +309,11 @@ async fn the_static_walk_cannot_escape_its_root() {
     assert_eq!(body, "inside");
 
     // Traversal lands on the index rather than on a file above the root.
-    for path in ["/../Cargo.toml", "/a/../../Cargo.toml", "/%2e%2e/Cargo.toml"] {
+    for path in [
+        "/../Cargo.toml",
+        "/a/../../Cargo.toml",
+        "/%2e%2e/Cargo.toml",
+    ] {
         let (status, _, body) = send(app, get(path)).await;
         assert_eq!(status, 200, "{path}");
         assert!(body.contains("SPA"), "{path} served {body:?}");

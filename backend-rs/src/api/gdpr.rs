@@ -89,7 +89,10 @@ pub async fn export_organization_data(
             .map_err(|_| ApiError::internal("filename is not a header value"))?,
     );
     out.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    out.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/zip"));
+    out.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/zip"),
+    );
     Ok((out, archive).into_response())
 }
 
@@ -202,13 +205,27 @@ async fn export_org_data(
         org_rows(pool, "SELECT * FROM audit_log WHERE org_id = $1", org_id).await?;
     out.push(("audit_log", rows.iter().map(|r| r.to_json()).collect()));
 
-    let rows: Vec<crate::api::stream_logs::StreamAccessLogRow> =
-        org_rows(pool, "SELECT * FROM stream_access_logs WHERE org_id = $1", org_id).await?;
-    out.push(("stream_access_logs", rows.iter().map(|r| r.to_json()).collect()));
+    let rows: Vec<crate::api::stream_logs::StreamAccessLogRow> = org_rows(
+        pool,
+        "SELECT * FROM stream_access_logs WHERE org_id = $1",
+        org_id,
+    )
+    .await?;
+    out.push((
+        "stream_access_logs",
+        rows.iter().map(|r| r.to_json()).collect(),
+    ));
 
-    let rows: Vec<crate::api::mcp_activity::McpActivityLogRow> =
-        org_rows(pool, "SELECT * FROM mcp_activity_logs WHERE org_id = $1", org_id).await?;
-    out.push(("mcp_activity_logs", rows.iter().map(|r| r.to_json()).collect()));
+    let rows: Vec<crate::api::mcp_activity::McpActivityLogRow> = org_rows(
+        pool,
+        "SELECT * FROM mcp_activity_logs WHERE org_id = $1",
+        org_id,
+    )
+    .await?;
+    out.push((
+        "mcp_activity_logs",
+        rows.iter().map(|r| r.to_json()).collect(),
+    ));
 
     // Both kinds, `mcp` and `integration`: the export is the table, not
     // one surface's view of it.
@@ -216,9 +233,16 @@ async fn export_org_data(
         org_rows(pool, "SELECT * FROM mcp_api_keys WHERE org_id = $1", org_id).await?;
     out.push(("mcp_api_keys", rows.iter().map(|r| r.to_json()).collect()));
 
-    let rows: Vec<OrgMonthlyUsageRow> =
-        org_rows(pool, "SELECT * FROM org_monthly_usage WHERE org_id = $1", org_id).await?;
-    out.push(("org_monthly_usage", rows.iter().map(|r| r.to_json()).collect()));
+    let rows: Vec<OrgMonthlyUsageRow> = org_rows(
+        pool,
+        "SELECT * FROM org_monthly_usage WHERE org_id = $1",
+        org_id,
+    )
+    .await?;
+    out.push((
+        "org_monthly_usage",
+        rows.iter().map(|r| r.to_json()).collect(),
+    ));
 
     let rows: Vec<EmailLogRow> =
         org_rows(pool, "SELECT * FROM email_log WHERE org_id = $1", org_id).await?;
@@ -233,12 +257,20 @@ async fn export_org_data(
         introspect_rows(pool, "user_notification_state", org_id).await?,
     ));
 
-    let rows: Vec<crate::api::notifications::NotificationRow> =
-        org_rows(pool, "SELECT * FROM notifications WHERE org_id = $1", org_id).await?;
+    let rows: Vec<crate::api::notifications::NotificationRow> = org_rows(
+        pool,
+        "SELECT * FROM notifications WHERE org_id = $1",
+        org_id,
+    )
+    .await?;
     out.push(("notifications", rows.iter().map(|r| r.to_json()).collect()));
 
-    let rows: Vec<crate::api::motion::MotionEventRow> =
-        org_rows(pool, "SELECT * FROM motion_events WHERE org_id = $1", org_id).await?;
+    let rows: Vec<crate::api::motion::MotionEventRow> = org_rows(
+        pool,
+        "SELECT * FROM motion_events WHERE org_id = $1",
+        org_id,
+    )
+    .await?;
     out.push(("motion_events", rows.iter().map(|r| r.to_json()).collect()));
 
     // `camera_count` is a relationship length in Python, so it counts
@@ -252,19 +284,40 @@ async fn export_org_data(
     .await?;
     out.push(("camera_groups", rows.iter().map(|r| r.to_json()).collect()));
 
-    let rows: Vec<crate::api::sentinel_config::ConfigRow> =
-        org_rows(pool, "SELECT * FROM sentinel_config WHERE org_id = $1", org_id).await?;
-    out.push(("sentinel_config", rows.iter().map(|r| r.to_json()).collect()));
+    let rows: Vec<crate::api::sentinel_config::ConfigRow> = org_rows(
+        pool,
+        "SELECT * FROM sentinel_config WHERE org_id = $1",
+        org_id,
+    )
+    .await?;
+    out.push((
+        "sentinel_config",
+        rows.iter().map(|r| r.to_json()).collect(),
+    ));
 
-    let rows: Vec<crate::api::sentinel::SentinelRunRow> =
-        org_rows(pool, "SELECT * FROM sentinel_runs WHERE org_id = $1", org_id).await?;
+    let rows: Vec<crate::api::sentinel::SentinelRunRow> = org_rows(
+        pool,
+        "SELECT * FROM sentinel_runs WHERE org_id = $1",
+        org_id,
+    )
+    .await?;
     // `_serialize` calls `to_dict()` with no arguments, and the trace is
     // off by default.
-    out.push(("sentinel_runs", rows.iter().map(|r| r.to_json(false)).collect()));
+    out.push((
+        "sentinel_runs",
+        rows.iter().map(|r| r.to_json(false)).collect(),
+    ));
 
-    let rows: Vec<SentinelAgentKeyRow> =
-        org_rows(pool, "SELECT * FROM sentinel_agent_keys WHERE org_id = $1", org_id).await?;
-    out.push(("sentinel_agent_keys", rows.iter().map(|r| r.to_json()).collect()));
+    let rows: Vec<SentinelAgentKeyRow> = org_rows(
+        pool,
+        "SELECT * FROM sentinel_agent_keys WHERE org_id = $1",
+        org_id,
+    )
+    .await?;
+    out.push((
+        "sentinel_agent_keys",
+        rows.iter().map(|r| r.to_json()).collect(),
+    ));
 
     // --- the cascade parents, and their children per parent ---------
     let incidents: Vec<crate::api::incidents::IncidentRow> = org_rows(
@@ -599,13 +652,25 @@ mod tests {
         let now = chrono::DateTime::parse_from_rfc3339("2026-09-19T22:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        assert_eq!(export_filename("self-host", now), "gdpr-export-self-host-20260919.zip");
+        assert_eq!(
+            export_filename("self-host", now),
+            "gdpr-export-self-host-20260919.zip"
+        );
         // One dash per code point the regex refuses.
-        assert_eq!(export_filename("org/1 2", now), "gdpr-export-org-1-2-20260919.zip");
-        assert_eq!(export_filename("org_é.x", now), "gdpr-export-org_-.x-20260919.zip");
+        assert_eq!(
+            export_filename("org/1 2", now),
+            "gdpr-export-org-1-2-20260919.zip"
+        );
+        assert_eq!(
+            export_filename("org_é.x", now),
+            "gdpr-export-org_-.x-20260919.zip"
+        );
         // `str.replace` replaces every occurrence, including one the org
         // id brought with it.
-        assert_eq!(export_filename("a.csvb", now), "gdpr-export-a.zipb-20260919.zip");
+        assert_eq!(
+            export_filename("a.csvb", now),
+            "gdpr-export-a.zipb-20260919.zip"
+        );
     }
 
     #[test]

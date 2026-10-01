@@ -33,8 +33,8 @@ use chrono::NaiveDateTime;
 use serde_json::Value;
 
 use crate::api::notifications::NotificationRow;
-use crate::audit::python_json_value;
 use crate::app::AppState;
+use crate::audit::python_json_value;
 use crate::config::Config;
 use crate::email_templates::{self, NotificationView};
 use crate::email_unsubscribe;
@@ -63,13 +63,25 @@ const INBOX_KIND_TO_SETTING: [(&str, &str, bool); 16] = [
     // radius differs: an agent key authenticates an autonomous service
     // watching this org's cameras. Inbox only — there is deliberately
     // no email template for either.
-    ("sentinel_agent_key_created", "sentinel_agent_key_audit_notifications", true),
-    ("sentinel_agent_key_revoked", "sentinel_agent_key_audit_notifications", true),
+    (
+        "sentinel_agent_key_created",
+        "sentinel_agent_key_audit_notifications",
+        true,
+    ),
+    (
+        "sentinel_agent_key_revoked",
+        "sentinel_agent_key_audit_notifications",
+        true,
+    ),
     ("cameranode_disk_low", "cameranode_disk_notifications", true),
     ("member_added", "member_audit_notifications", true),
     ("member_role_changed", "member_audit_notifications", true),
     ("member_removed", "member_audit_notifications", true),
-    ("member_promotion_requested", "member_audit_notifications", true),
+    (
+        "member_promotion_requested",
+        "member_audit_notifications",
+        true,
+    ),
     ("welcome", "welcome_notifications", true),
 ];
 
@@ -342,7 +354,10 @@ pub async fn claim_motion_cooldown_or_silence(
     };
 
     let key = motion_cooldown_anchor_key(camera_id);
-    let existing = settings::get(pool, org_id, &key, Some("")).await.ok().flatten();
+    let existing = settings::get(pool, org_id, &key, Some(""))
+        .await
+        .ok()
+        .flatten();
     let cooldown_minutes = motion_cooldown_minutes(pool, org_id).await;
     let now = now_naive();
 
@@ -357,9 +372,7 @@ pub async fn claim_motion_cooldown_or_silence(
             // neither mailed nor re-anchored.
             Ok(anchor) if anchor.offset_us.is_some() => return false,
             Ok(anchor) => {
-                if (now - anchor.naive).num_seconds()
-                    < cooldown_minutes.saturating_mul(60)
-                {
+                if (now - anchor.naive).num_seconds() < cooldown_minutes.saturating_mul(60) {
                     return false;
                 }
             }
@@ -668,7 +681,11 @@ static DEBOUNCE: std::sync::Mutex<Option<Debounce>> = std::sync::Mutex::new(None
 /// zero sentinel puts the very first emit inside the debounce window
 /// and drops it. The Python uses `-inf` for the same reason.
 fn should_emit_transition(kind: &str, entity_id: &str, direction: &str) -> bool {
-    let key = (kind.to_string(), entity_id.to_string(), direction.to_string());
+    let key = (
+        kind.to_string(),
+        entity_id.to_string(),
+        direction.to_string(),
+    );
     let now = std::time::Instant::now();
     let mut guard = DEBOUNCE.lock().unwrap_or_else(|e| e.into_inner());
     let map = guard.get_or_insert_with(Debounce::default);
@@ -709,7 +726,11 @@ pub async fn emit_camera_transition(
 
     let online = new_status == "online";
     let mut notification = NewNotification::new(
-        if online { "camera_online" } else { "camera_offline" },
+        if online {
+            "camera_online"
+        } else {
+            "camera_offline"
+        },
         if online {
             format!("{display_name} is online")
         } else {
@@ -748,7 +769,11 @@ pub async fn emit_node_transition(
 
     let online = new_status == "online";
     let notification = NewNotification::new(
-        if online { "node_online" } else { "node_offline" },
+        if online {
+            "node_online"
+        } else {
+            "node_offline"
+        },
         if online {
             format!("Node '{display_name}' is online")
         } else {
@@ -797,8 +822,12 @@ mod tests {
             assert!(!EMAIL_KIND_TO_SETTING.iter().any(|(k, ..)| *k == kind));
         }
         // Our own disk filling is operator state, not an org's.
-        assert!(!EMAIL_KIND_TO_SETTING.iter().any(|(k, ..)| *k == "disk_critical"));
-        assert!(!INBOX_KIND_TO_SETTING.iter().any(|(k, ..)| *k == "disk_critical"));
+        assert!(!EMAIL_KIND_TO_SETTING
+            .iter()
+            .any(|(k, ..)| *k == "disk_critical"));
+        assert!(!INBOX_KIND_TO_SETTING
+            .iter()
+            .any(|(k, ..)| *k == "disk_critical"));
     }
 
     /// Only motion defaults to off, and the whole sender reputation
@@ -821,11 +850,24 @@ mod tests {
         let key_for = |map: &[(&str, &str, bool)], kind: &str| -> String {
             map.iter().find(|(k, ..)| *k == kind).unwrap().1.to_string()
         };
-        for (a, b) in [("camera_offline", "camera_online"), ("node_offline", "node_online")] {
-            assert_eq!(key_for(&EMAIL_KIND_TO_SETTING, a), key_for(&EMAIL_KIND_TO_SETTING, b));
-            assert_eq!(key_for(&INBOX_KIND_TO_SETTING, a), key_for(&INBOX_KIND_TO_SETTING, b));
+        for (a, b) in [
+            ("camera_offline", "camera_online"),
+            ("node_offline", "node_online"),
+        ] {
+            assert_eq!(
+                key_for(&EMAIL_KIND_TO_SETTING, a),
+                key_for(&EMAIL_KIND_TO_SETTING, b)
+            );
+            assert_eq!(
+                key_for(&INBOX_KIND_TO_SETTING, a),
+                key_for(&INBOX_KIND_TO_SETTING, b)
+            );
         }
-        for kind in ["member_role_changed", "member_removed", "member_promotion_requested"] {
+        for kind in [
+            "member_role_changed",
+            "member_removed",
+            "member_promotion_requested",
+        ] {
             assert_eq!(
                 key_for(&EMAIL_KIND_TO_SETTING, kind),
                 key_for(&EMAIL_KIND_TO_SETTING, "member_added")
@@ -912,10 +954,23 @@ mod tests {
     #[test]
     fn python_truthiness_decides_whether_meta_is_stored() {
         // Each of these is falsy in Python and stores NULL.
-        for falsy in [json!(null), json!({}), json!([]), json!(""), json!(0), json!(false)] {
+        for falsy in [
+            json!(null),
+            json!({}),
+            json!([]),
+            json!(""),
+            json!(0),
+            json!(false),
+        ] {
             assert!(is_falsy(&falsy), "{falsy}");
         }
-        for truthy in [json!({"a": 1}), json!([0]), json!("0"), json!(1), json!(true)] {
+        for truthy in [
+            json!({"a": 1}),
+            json!([0]),
+            json!("0"),
+            json!(1),
+            json!(true),
+        ] {
             assert!(!is_falsy(&truthy), "{truthy}");
         }
         // And what is stored is `json.dumps`-shaped, with the spaces.

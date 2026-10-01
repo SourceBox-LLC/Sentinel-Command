@@ -170,13 +170,13 @@ mod tests {
         // weird characters into our log lines or Sentry tags".
         for id in [
             "",
-            "short",                  // under 8
-            &"x".repeat(129),         // over 128
+            "short",          // under 8
+            &"x".repeat(129), // over 128
             "has space",
             "semi;colon",
             "new\nline",
             "quote\"mark",
-            "----------",             // hyphens only, nothing left after stripping
+            "----------", // hyphens only, nothing left after stripping
         ] {
             assert!(!inbound_id_is_valid(id), "{id:?} should be replaced");
         }
@@ -224,7 +224,10 @@ mod tests {
         assert_eq!(headers["x-request-id"], "abcd1234abcd1234");
         assert_eq!(headers["x-content-type-options"], "nosniff");
         assert_eq!(headers["x-frame-options"], "DENY");
-        assert_eq!(headers["referrer-policy"], "strict-origin-when-cross-origin");
+        assert_eq!(
+            headers["referrer-policy"],
+            "strict-origin-when-cross-origin"
+        );
         assert_eq!(
             headers["permissions-policy"],
             "camera=(), microphone=(), geolocation=()"
@@ -246,8 +249,7 @@ mod tests {
 
     #[test]
     fn minted_ids_differ() {
-        let ids: std::collections::HashSet<String> =
-            (0..100).map(|_| new_request_id()).collect();
+        let ids: std::collections::HashSet<String> = (0..100).map(|_| new_request_id()).collect();
         assert!(ids.len() > 90, "ids should not collide in bulk");
     }
 }

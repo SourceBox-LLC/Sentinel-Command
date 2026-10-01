@@ -27,8 +27,8 @@ use crate::error::ApiError;
 use crate::license::{sentinel_blocked_by_license, LicenseContext};
 use crate::models::{iso_naive, now_naive};
 use crate::plans::{effective_plan_for_caps, get_plan_display_name, PlanContext};
-use crate::pyrepr;
 use crate::pyint::PyInt;
+use crate::pyrepr;
 use crate::query::{BodyErrors, ModelBody, Query};
 
 /// Monthly run cap by plan. Sentinel is available on both paid tiers;
@@ -74,9 +74,9 @@ impl ConfigRow {
     pub(crate) fn active_days(&self) -> Value {
         match self.active_days.as_deref().filter(|s| !s.is_empty()) {
             Some(raw) => match serde_json::from_str::<Value>(raw) {
-                Ok(Value::Array(items)) => Value::Array(
-                    items.iter().map(|v| json!(pyrepr::str_value(v))).collect(),
-                ),
+                Ok(Value::Array(items)) => {
+                    Value::Array(items.iter().map(|v| json!(pyrepr::str_value(v))).collect())
+                }
                 _ => json!(DEFAULT_DAYS),
             },
             None => json!(DEFAULT_DAYS),
@@ -149,7 +149,10 @@ async fn ensure_config_row(state: &AppState, org_id: &str) -> Result<ConfigRow, 
         .ok_or_else(|| ApiError::internal("sentinel config row vanished after insert"))
 }
 
-pub(crate) async fn fetch_config(state: &AppState, org_id: &str) -> Result<Option<ConfigRow>, ApiError> {
+pub(crate) async fn fetch_config(
+    state: &AppState,
+    org_id: &str,
+) -> Result<Option<ConfigRow>, ApiError> {
     Ok(sqlx::query_as(&format!(
         "SELECT {CONFIG_COLUMNS} FROM sentinel_config WHERE org_id = $1 LIMIT 1"
     ))
@@ -182,7 +185,10 @@ pub(crate) fn license_ctx(state: &AppState) -> LicenseContext<'_> {
 
 /// Both "is Sentinel granted" and, when it is not, why — computed once
 /// so a 402 body cannot disagree with the check that produced it.
-pub(crate) async fn resolve_sentinel_access(state: &AppState, org_id: &str) -> Result<(bool, Value), ApiError> {
+pub(crate) async fn resolve_sentinel_access(
+    state: &AppState,
+    org_id: &str,
+) -> Result<(bool, Value), ApiError> {
     let plan = effective_plan_for_caps(&plan_ctx(state), org_id, true).await;
     if !plan_has_sentinel(&plan) {
         return Ok((false, json!({"error": "plan_required", "plan": "pro"})));
@@ -506,10 +512,11 @@ pub async fn list_runs(
     .fetch_one(&state.pool)
     .await?;
 
-    let runs_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sentinel_runs WHERE org_id = $1")
-        .bind(&user.org_id)
-        .fetch_one(&state.pool)
-        .await?;
+    let runs_total: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sentinel_runs WHERE org_id = $1")
+            .bind(&user.org_id)
+            .fetch_one(&state.pool)
+            .await?;
     let incident_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sentinel_runs WHERE org_id = $1 AND outcome = 'incident'",
     )
@@ -625,7 +632,8 @@ pub async fn post_manual_run(
     // spends model budget.
     if !state.config.sentinel_dispatch_enabled
         || (state.config.sentinel_global_monthly_run_cap > 0
-            && global_runs_this_month(&state).await? >= state.config.sentinel_global_monthly_run_cap)
+            && global_runs_this_month(&state).await?
+                >= state.config.sentinel_global_monthly_run_cap)
     {
         return Err(ApiError::new(
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -691,10 +699,17 @@ pub async fn post_manual_run(
         &user.org_id,
         "sentinel_manual_run",
         &user.user_id,
-        &if user.email.is_empty() { user.username.clone() } else { user.email.clone() },
+        &if user.email.is_empty() {
+            user.username.clone()
+        } else {
+            user.email.clone()
+        },
         Some(python_json(&[
             ("run_id", json!(run_id)),
-            ("camera_id", camera_id.clone().map(Value::String).unwrap_or(Value::Null)),
+            (
+                "camera_id",
+                camera_id.clone().map(Value::String).unwrap_or(Value::Null),
+            ),
             ("prompt_len", json!(prompt.chars().count())),
         ])),
         &headers,
@@ -733,7 +748,11 @@ async fn cap_reached(state: &AppState, org_id: &str, cap: i64) -> ApiError {
 
 /// `a or b` for two strings: the first non-empty one.
 fn python_or(a: &str, b: &str) -> String {
-    if a.is_empty() { b.to_string() } else { a.to_string() }
+    if a.is_empty() {
+        b.to_string()
+    } else {
+        a.to_string()
+    }
 }
 
 fn truncate_chars(s: &str, limit: usize) -> String {
@@ -753,7 +772,9 @@ pub(crate) fn fire_wakeup_webhook(state: &AppState) {
         return; // no agent configured — the run waits to be polled
     };
     let Some(secret) = state.config.sentinel_agent_key.clone() else {
-        tracing::warn!("sentinel wakeup: webhook URL set but SENTINEL_AGENT_KEY is empty — skipping");
+        tracing::warn!(
+            "sentinel wakeup: webhook URL set but SENTINEL_AGENT_KEY is empty — skipping"
+        );
         return;
     };
     let client = state.http.clone();
@@ -854,17 +875,49 @@ mod tests {
             NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").unwrap()
         }
         for (zone, now, want) in [
-            ("America/Los_Angeles", "2026-03-08T20:00:00Z", "2026-03-08 08:00:00"),
-            ("America/Los_Angeles", "2026-11-01T20:00:00Z", "2026-11-01 07:00:00"),
-            ("Europe/London", "2026-03-29T15:00:00Z", "2026-03-29 00:00:00"),
-            ("Australia/Lord_Howe", "2026-04-05T06:00:00Z", "2026-04-04 13:00:00"),
+            (
+                "America/Los_Angeles",
+                "2026-03-08T20:00:00Z",
+                "2026-03-08 08:00:00",
+            ),
+            (
+                "America/Los_Angeles",
+                "2026-11-01T20:00:00Z",
+                "2026-11-01 07:00:00",
+            ),
+            (
+                "Europe/London",
+                "2026-03-29T15:00:00Z",
+                "2026-03-29 00:00:00",
+            ),
+            (
+                "Australia/Lord_Howe",
+                "2026-04-05T06:00:00Z",
+                "2026-04-04 13:00:00",
+            ),
             ("UTC", "2026-05-07T15:00:00Z", "2026-05-07 00:00:00"),
-            ("Asia/Kolkata", "2026-05-07T20:00:00Z", "2026-05-07 18:30:00"),
-            ("America/Havana", "2026-11-01T05:30:00Z", "2026-11-01 05:00:00"),
+            (
+                "Asia/Kolkata",
+                "2026-05-07T20:00:00Z",
+                "2026-05-07 18:30:00",
+            ),
+            (
+                "America/Havana",
+                "2026-11-01T05:30:00Z",
+                "2026-11-01 05:00:00",
+            ),
             // Not a zone: Python catches the lookup and uses UTC, so
             // this is the UTC answer for the same instant.
-            ("Mars/Olympus_Mons", "2026-05-07T15:00:00Z", "2026-05-07 00:00:00"),
-            ("../etc/passwd", "2026-05-07T15:00:00Z", "2026-05-07 00:00:00"),
+            (
+                "Mars/Olympus_Mons",
+                "2026-05-07T15:00:00Z",
+                "2026-05-07 00:00:00",
+            ),
+            (
+                "../etc/passwd",
+                "2026-05-07T15:00:00Z",
+                "2026-05-07 00:00:00",
+            ),
             ("", "2026-05-07T15:00:00Z", "2026-05-07 00:00:00"),
         ] {
             let got = midnight_in_zone(zone, now.parse().unwrap()).unwrap();

@@ -174,7 +174,9 @@ pub fn build_unsubscribe_url(
 ) -> Option<String> {
     let token = make_token(secret, org_id, kind, recipient, now)?;
     let base = frontend_url.trim_end_matches('/');
-    Some(format!("{base}/api/notifications/email/unsubscribe?t={token}"))
+    Some(format!(
+        "{base}/api/notifications/email/unsubscribe?t={token}"
+    ))
 }
 
 #[cfg(test)]
@@ -262,10 +264,22 @@ mod tests {
         // One second past the TTL. jsonwebtoken would allow a minute of
         // slack by default and PyJWT allows none, so this is the case
         // where the library's default would have diverged.
-        let token = make_token(&secret, "org", "motion", "a@b.c", now - TOKEN_TTL_SECONDS - 1);
+        let token = make_token(
+            &secret,
+            "org",
+            "motion",
+            "a@b.c",
+            now - TOKEN_TTL_SECONDS - 1,
+        );
         assert_eq!(verify_token(&secret, &token.unwrap()), None);
         // A second inside it still verifies.
-        let token = make_token(&secret, "org", "motion", "a@b.c", now - TOKEN_TTL_SECONDS + 5);
+        let token = make_token(
+            &secret,
+            "org",
+            "motion",
+            "a@b.c",
+            now - TOKEN_TTL_SECONDS + 5,
+        );
         assert!(verify_token(&secret, &token.unwrap()).is_some());
     }
 
@@ -276,19 +290,27 @@ mod tests {
         // Minted the same way, but claiming to be something else.
         let header = base64_url_nopad(br#"{"alg":"HS256","typ":"JWT"}"#);
         for claims in [
-            format!(r#"{{"org_id":"o","kind":"k","rcpt":"a@b.c","exp":{exp},"sub":"password-reset"}}"#),
+            format!(
+                r#"{{"org_id":"o","kind":"k","rcpt":"a@b.c","exp":{exp},"sub":"password-reset"}}"#
+            ),
             // A missing claim is as bad as a wrong one.
             format!(r#"{{"kind":"k","rcpt":"a@b.c","exp":{exp},"sub":"email-unsubscribe"}}"#),
             format!(r#"{{"org_id":"o","rcpt":"a@b.c","exp":{exp},"sub":"email-unsubscribe"}}"#),
             format!(r#"{{"org_id":"o","kind":"k","exp":{exp},"sub":"email-unsubscribe"}}"#),
             // An empty one too — the Python's check is falsiness.
-            format!(r#"{{"org_id":"","kind":"k","rcpt":"a@b.c","exp":{exp},"sub":"email-unsubscribe"}}"#),
+            format!(
+                r#"{{"org_id":"","kind":"k","rcpt":"a@b.c","exp":{exp},"sub":"email-unsubscribe"}}"#
+            ),
             // No exp at all.
             r#"{"org_id":"o","kind":"k","rcpt":"a@b.c","sub":"email-unsubscribe"}"#.to_string(),
         ] {
             let signed = format!("{header}.{}", base64_url_nopad(claims.as_bytes()));
             let sig = base64_url_nopad(&hmac_sha256(secret.as_bytes(), signed.as_bytes()));
-            assert_eq!(verify_token(&secret, &format!("{signed}.{sig}")), None, "{claims}");
+            assert_eq!(
+                verify_token(&secret, &format!("{signed}.{sig}")),
+                None,
+                "{claims}"
+            );
         }
     }
 
@@ -305,7 +327,11 @@ mod tests {
     #[test]
     fn the_url_carries_the_token_and_one_slash() {
         let secret = secret(CLERK);
-        for frontend in ["https://example.test", "https://example.test/", "https://example.test///"] {
+        for frontend in [
+            "https://example.test",
+            "https://example.test/",
+            "https://example.test///",
+        ] {
             let url =
                 build_unsubscribe_url(&secret, frontend, "org", "motion", "a@b.c", 0).unwrap();
             assert!(
@@ -313,6 +339,9 @@ mod tests {
                 "{url}"
             );
         }
-        assert_eq!(build_unsubscribe_url("", "https://x", "o", "k", "a@b.c", 0), None);
+        assert_eq!(
+            build_unsubscribe_url("", "https://x", "o", "k", "a@b.c", 0),
+            None
+        );
     }
 }

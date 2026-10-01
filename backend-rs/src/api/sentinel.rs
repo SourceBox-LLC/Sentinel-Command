@@ -9,9 +9,9 @@
 //! cache and the licence client, and minting or revoking a key sends
 //! email. Those move with their primitives.
 
+use axum::extract::FromRequestParts;
 use axum::extract::{Path, Request, State};
 use axum::http::request::Parts;
-use axum::extract::FromRequestParts;
 use axum::Json;
 use chrono::NaiveDateTime;
 use serde_json::{json, Value};
@@ -98,11 +98,12 @@ impl FromRequestParts<AppState> for AgentPrincipal {
         // Best-effort last-seen. An agent unable to work because a
         // bookkeeping write failed is a worse outcome than a stale
         // timestamp, so a failure here is logged and swallowed.
-        if let Err(err) = sqlx::query("UPDATE sentinel_agent_keys SET last_used_at = $1 WHERE id = $2")
-            .bind(now_naive())
-            .bind(id)
-            .execute(&state.pool)
-            .await
+        if let Err(err) =
+            sqlx::query("UPDATE sentinel_agent_keys SET last_used_at = $1 WHERE id = $2")
+                .bind(now_naive())
+                .bind(id)
+                .execute(&state.pool)
+                .await
         {
             tracing::warn!(error = %err, key_id = id, "sentinel: could not stamp last_used_at");
         }
@@ -643,7 +644,9 @@ pub async fn post_run_complete(
             Some("low") | Some("medium") | Some("high") | Some("critical")
         )
     {
-        return Err(ApiError::bad_request("severity required for outcome=incident"));
+        return Err(ApiError::bad_request(
+            "severity required for outcome=incident",
+        ));
     }
 
     let row = agent_visible_run(&state, &agent, &run_id).await?;
@@ -655,7 +658,8 @@ pub async fn post_run_complete(
         // result rather than stay behind that defensive stamp. The
         // reverse is refused, so a reported outcome cannot be
         // downgraded.
-        let upgrading = row.outcome == "error" && matches!(outcome.as_str(), "incident" | "no_action");
+        let upgrading =
+            row.outcome == "error" && matches!(outcome.as_str(), "incident" | "no_action");
         if !upgrading {
             return Ok(Json(row.to_json(true)));
         }
@@ -720,7 +724,11 @@ pub async fn post_run_complete(
           WHERE id = $8",
     )
     .bind(&outcome)
-    .bind(if is_incident { severity.as_deref() } else { None })
+    .bind(if is_incident {
+        severity.as_deref()
+    } else {
+        None
+    })
     // Both of these are bigints on the way in, so a value too large for
     // the `integer` column is the "integer out of range" Postgres raises
     // for the Python too — a 500, not a silently clamped row.
@@ -908,7 +916,11 @@ mod tests {
             assert!(key.ends_with(&last4), "{key} does not end with {last4}");
             // `osa_` plus 32 hex characters.
             assert_eq!(key.len(), 4 + 32);
-            assert!(key.strip_prefix("osa_").unwrap().chars().all(|c| c.is_ascii_hexdigit()));
+            assert!(key
+                .strip_prefix("osa_")
+                .unwrap()
+                .chars()
+                .all(|c| c.is_ascii_hexdigit()));
         }
         // Shorter than four characters takes the saturating branch
         // rather than panicking on the slice.
@@ -982,10 +994,20 @@ mod tests {
             .collect();
         let out = serialise_tool_trace(&trace);
         // CPython keeps [-50:], so t0..t9 are gone and t10 leads.
-        assert!(out.starts_with(r#"[{"tool": "t10", "args": {"i": 10}, "result": "r"}"#), "{out}");
-        assert!(out.ends_with(r#"{"tool": "t59", "args": {"i": 59}, "result": "r"}]"#), "{out}");
+        assert!(
+            out.starts_with(r#"[{"tool": "t10", "args": {"i": 10}, "result": "r"}"#),
+            "{out}"
+        );
+        assert!(
+            out.ends_with(r#"{"tool": "t59", "args": {"i": 59}, "result": "r"}]"#),
+            "{out}"
+        );
         assert_eq!(out.matches("\"tool\": ").count(), 50);
-        assert_eq!(out.chars().count(), 2550, "byte-for-byte length CPython produces");
+        assert_eq!(
+            out.chars().count(),
+            2550,
+            "byte-for-byte length CPython produces"
+        );
     }
 
     #[test]
@@ -1010,8 +1032,14 @@ mod tests {
         // 500 here would take out the operator's run drawer for one bad
         // row.
         let mut row = run_row();
-        for raw in [None, Some(""), Some("not json at all"), Some(r#"{"not": "a list"}"#),
-                    Some("null"), Some("7")] {
+        for raw in [
+            None,
+            Some(""),
+            Some("not json at all"),
+            Some(r#"{"not": "a list"}"#),
+            Some("null"),
+            Some("7"),
+        ] {
             row.tool_trace = raw.map(str::to_string);
             assert_eq!(row.tool_trace_json(), json!([]), "raw {raw:?}");
         }
@@ -1043,8 +1071,11 @@ mod tests {
     fn only_the_three_terminal_outcomes_are_terminal() {
         let mut row = run_row();
         for (outcome, terminal) in [
-            ("pending", false), ("running", false),
-            ("incident", true), ("no_action", true), ("error", true),
+            ("pending", false),
+            ("running", false),
+            ("incident", true),
+            ("no_action", true),
+            ("error", true),
         ] {
             row.outcome = outcome.to_string();
             assert_eq!(row.is_terminal(), terminal, "{outcome}");
@@ -1066,7 +1097,10 @@ mod tests {
     #[test]
     fn truncation_counts_characters_not_bytes() {
         // Python slices a str by characters; a four-byte emoji is one.
-        assert_eq!(truncate_chars("\u{1F3A5}\u{1F3A5}\u{1F3A5}", 2), "\u{1F3A5}\u{1F3A5}");
+        assert_eq!(
+            truncate_chars("\u{1F3A5}\u{1F3A5}\u{1F3A5}", 2),
+            "\u{1F3A5}\u{1F3A5}"
+        );
         assert_eq!(truncate_chars("abc", 10), "abc");
         assert_eq!(truncate_chars("caf\u{e9}s", 4), "caf\u{e9}");
     }

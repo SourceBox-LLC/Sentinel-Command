@@ -28,16 +28,19 @@ use crate::app::AppState;
 use crate::audit::{python_json, write_audit};
 use crate::auth::{AuthUser, RequireAdmin};
 use crate::error::ApiError;
+use crate::models::{iso_naive, now_naive};
 use crate::plans;
 use crate::query::path_segment;
 use crate::ratelimit::PerHour;
-use crate::models::{iso_naive, now_naive};
 
 /// A node is offline after three missed heartbeats.
 const HEARTBEAT_GRACE_SECONDS: i64 = 90;
 
 /// `CameraNode.effective_status` as a function of its two columns.
-pub fn node_effective_status(status: Option<&str>, last_seen: Option<NaiveDateTime>) -> Option<String> {
+pub fn node_effective_status(
+    status: Option<&str>,
+    last_seen: Option<NaiveDateTime>,
+) -> Option<String> {
     let status = status.map(str::to_string);
     let Some(last_seen) = last_seen else {
         return Some(status.unwrap_or_else(|| "offline".to_string()));
@@ -147,11 +150,10 @@ pub async fn list_nodes(
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
 ) -> Result<Json<Vec<Value>>, ApiError> {
-    let rows: Vec<CameraNodeRow> =
-        sqlx::query_as(&format!("{NODE_SELECT} WHERE n.org_id = $1"))
-            .bind(&user.org_id)
-            .fetch_all(&state.pool)
-            .await?;
+    let rows: Vec<CameraNodeRow> = sqlx::query_as(&format!("{NODE_SELECT} WHERE n.org_id = $1"))
+        .bind(&user.org_id)
+        .fetch_all(&state.pool)
+        .await?;
 
     let latest = crate::versions::latest_node_version(&state.config.latest_node_version);
     Ok(Json(
@@ -182,17 +184,17 @@ pub async fn get_node(
     Path(node_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let node_id = path_segment(&node_id)?;
-    let row: Option<CameraNodeRow> =
-        sqlx::query_as(&format!("{NODE_SELECT} WHERE n.node_id = $1 AND n.org_id = $2"))
-            .bind(node_id)
-            .bind(&user.org_id)
-            .fetch_optional(&state.pool)
-            .await?;
+    let row: Option<CameraNodeRow> = sqlx::query_as(&format!(
+        "{NODE_SELECT} WHERE n.node_id = $1 AND n.org_id = $2"
+    ))
+    .bind(node_id)
+    .bind(&user.org_id)
+    .fetch_optional(&state.pool)
+    .await?;
 
     let row = row.ok_or_else(|| ApiError::not_found("Node not found"))?;
     Ok(Json(row.to_json()))
 }
-
 
 /// `GET /api/nodes/plan` — what the dashboard's plan panel reads.
 ///
@@ -223,15 +225,20 @@ pub async fn get_plan_info(
         .fetch_one(&state.pool)
         .await?;
 
-    let past_due = crate::settings::get(&state.pool, &user.org_id, "payment_past_due", Some("false"))
-        .await?
-        .as_deref()
-        == Some("true");
-    let cancel_pending =
-        crate::settings::get(&state.pool, &user.org_id, "plan_cancel_pending", Some("false"))
+    let past_due =
+        crate::settings::get(&state.pool, &user.org_id, "payment_past_due", Some("false"))
             .await?
             .as_deref()
             == Some("true");
+    let cancel_pending = crate::settings::get(
+        &state.pool,
+        &user.org_id,
+        "plan_cancel_pending",
+        Some("false"),
+    )
+    .await?
+    .as_deref()
+        == Some("true");
 
     // The grace countdown, so the banner can say how long is left
     // rather than repeating the static seven days the terms promise.
@@ -262,7 +269,10 @@ pub async fn get_plan_info(
         }
     }
 
-    let viewer_seconds = state.hls.warm_viewer_seconds(&state.pool, &user.org_id).await;
+    let viewer_seconds = state
+        .hls
+        .warm_viewer_seconds(&state.pool, &user.org_id)
+        .await;
     Ok(Json(json!({
         "plan": user.plan,
         "plan_name": plans::get_plan_display_name(&user.plan),
@@ -331,10 +341,11 @@ pub async fn decommission_self(
 
     // The same cache cleanup the admin delete does, so a camera's
     // segments do not outlive the node that was pushing them.
-    let cameras: Vec<(String,)> = sqlx::query_as("SELECT camera_id FROM cameras WHERE node_id = $1")
-        .bind(node_pk)
-        .fetch_all(&state.pool)
-        .await?;
+    let cameras: Vec<(String,)> =
+        sqlx::query_as("SELECT camera_id FROM cameras WHERE node_id = $1")
+            .bind(node_pk)
+            .fetch_all(&state.pool)
+            .await?;
     for (camera_id,) in &cameras {
         state.hls.cleanup_camera(camera_id);
     }
@@ -444,7 +455,9 @@ mod tests {
         // registered but not finished setup must not read as "online".
         let seen = now_naive() - Duration::seconds(5);
         assert_eq!(
-            node(Some("pending"), Some(seen)).effective_status().as_deref(),
+            node(Some("pending"), Some(seen))
+                .effective_status()
+                .as_deref(),
             Some("pending")
         );
     }
@@ -457,14 +470,19 @@ mod tests {
             node(Some("pending"), None).effective_status().as_deref(),
             Some("pending")
         );
-        assert_eq!(node(None, None).effective_status().as_deref(), Some("offline"));
+        assert_eq!(
+            node(None, None).effective_status().as_deref(),
+            Some("offline")
+        );
     }
 
     #[test]
     fn three_missed_heartbeats_mean_offline() {
         let seen = now_naive() - Duration::seconds(91);
         assert_eq!(
-            node(Some("online"), Some(seen)).effective_status().as_deref(),
+            node(Some("online"), Some(seen))
+                .effective_status()
+                .as_deref(),
             Some("offline")
         );
     }
@@ -473,7 +491,9 @@ mod tests {
     fn the_grace_boundary_is_exclusive() {
         let seen = now_naive() - Duration::seconds(90);
         assert_eq!(
-            node(Some("online"), Some(seen)).effective_status().as_deref(),
+            node(Some("online"), Some(seen))
+                .effective_status()
+                .as_deref(),
             Some("online")
         );
     }

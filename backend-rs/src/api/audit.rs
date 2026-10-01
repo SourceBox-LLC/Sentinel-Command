@@ -182,7 +182,14 @@ fn csv_export(
     });
     crate::csv_export::stream_csv_response(
         &crate::csv_export::filename_for("audit-log", Some(org_id)),
-        &["timestamp", "event", "username", "user_id", "ip_address", "details"],
+        &[
+            "timestamp",
+            "event",
+            "username",
+            "user_id",
+            "ip_address",
+            "details",
+        ],
         rows,
     )
 }

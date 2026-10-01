@@ -624,8 +624,7 @@ pub async fn run_motion_digest(state: &AppState) -> Result<DigestSummary, sqlx::
         // carrying an offset would still parse; Python compares the
         // naive datetime too, and would raise on a mixed comparison
         // rather than convert.
-        let Ok(anchor_ts) = crate::pydatetime::fromisoformat(&anchor_value).map(|t| t.naive)
-        else {
+        let Ok(anchor_ts) = crate::pydatetime::fromisoformat(&anchor_value).map(|t| t.naive) else {
             // Corrupt timestamp. Dropped so the next motion event starts
             // a fresh window, rather than the camera being silenced
             // forever by a value nothing can parse.
@@ -634,7 +633,8 @@ pub async fn run_motion_digest(state: &AppState) -> Result<DigestSummary, sqlx::
             continue;
         };
 
-        let cooldown_min = crate::notifications::motion_cooldown_minutes(&state.pool, &org_id).await;
+        let cooldown_min =
+            crate::notifications::motion_cooldown_minutes(&state.pool, &org_id).await;
         if (now - anchor_ts).num_seconds() < cooldown_min * 60 {
             summary.anchors_open += 1;
             continue;
@@ -784,7 +784,10 @@ pub async fn reconcile_org_plans(state: &AppState) -> Result<ReconcileSummary, s
     .fetch_all(&state.pool)
     .await?;
 
-    let mut summary = ReconcileSummary { checked: paid.len(), ..Default::default() };
+    let mut summary = ReconcileSummary {
+        checked: paid.len(),
+        ..Default::default()
+    };
     for (org_id, cached) in paid {
         let live = crate::plans::fetch_live_plan_slug(
             &state.http,
@@ -801,7 +804,9 @@ pub async fn reconcile_org_plans(state: &AppState) -> Result<ReconcileSummary, s
             "[PlanReconcile] cached plan disagrees with Clerk — correcting"
         );
         crate::plans::invalidate_effective_plan_cache(Some(&org_id));
-        crate::settings::set(&state.pool, &org_id, "org_plan", &live).await.ok();
+        crate::settings::set(&state.pool, &org_id, "org_plan", &live)
+            .await
+            .ok();
         crate::api::clerk_webhook::set_org_member_limit(
             state,
             &org_id,
@@ -818,7 +823,9 @@ pub async fn reconcile_org_plans(state: &AppState) -> Result<ReconcileSummary, s
             clerk_secret: &state.config.clerk_secret_key,
             local_auth: state.config.is_local_auth(),
         };
-        crate::plans::enforce_camera_cap(&ctx, &state.pool, &org_id).await.ok();
+        crate::plans::enforce_camera_cap(&ctx, &state.pool, &org_id)
+            .await
+            .ok();
         summary.changed += 1;
         summary.corrections.push((org_id, cached, live));
     }
@@ -977,7 +984,11 @@ fn spawn_disk_check(interval: u64) {
         let started = std::time::Instant::now();
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
-            let path = if std::path::Path::new("/data").is_dir() { "/data" } else { "." };
+            let path = if std::path::Path::new("/data").is_dir() {
+                "/data"
+            } else {
+                "."
+            };
             // `(total, free, used)` — the same reading the health probe
             // takes, so a volume cannot be 96% full on one surface and
             // fine on the other.
@@ -1041,8 +1052,10 @@ fn spawn_license_checkin(state: AppState) {
 fn spawn_data_sync(state: AppState) {
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(SENTINEL_SYNC_INTERVAL_SECONDS))
-                .await;
+            tokio::time::sleep(std::time::Duration::from_secs(
+                SENTINEL_SYNC_INTERVAL_SECONDS,
+            ))
+            .await;
             let summary = crate::sync::push_pending_changes(&state).await;
             if !summary.pushed.is_empty() || !summary.failed.is_empty() {
                 tracing::info!(
@@ -1097,7 +1110,10 @@ mod tests {
     fn a_disk_below_the_threshold_says_nothing_and_clears_the_debounce() {
         let mut debounce = DiskDebounce::default();
         // 95% is the threshold, so 94 is quiet.
-        assert_eq!(check_disk_critical(&mut debounce, "/data", 100, 6, 94, 0.0), None);
+        assert_eq!(
+            check_disk_critical(&mut debounce, "/data", 100, 6, 94, 0.0),
+            None
+        );
         assert_eq!(debounce.last_emit_seconds, None);
 
         // Crossing alerts, and stamps.
@@ -1108,8 +1124,14 @@ mod tests {
         // immediately rather than waiting out a cooldown from an
         // incident that is already over. This is the one the mutation
         // targeted.
-        assert_eq!(check_disk_critical(&mut debounce, "/data", 100, 6, 94, 20.0), None);
-        assert_eq!(debounce.last_emit_seconds, None, "a recovery must clear the debounce");
+        assert_eq!(
+            check_disk_critical(&mut debounce, "/data", 100, 6, 94, 20.0),
+            None
+        );
+        assert_eq!(
+            debounce.last_emit_seconds, None,
+            "a recovery must clear the debounce"
+        );
         assert!(
             check_disk_critical(&mut debounce, "/data", 100, 4, 96, 21.0).is_some(),
             "the next crossing alerts without waiting six hours"
@@ -1122,10 +1144,14 @@ mod tests {
         let mut debounce = DiskDebounce::default();
         assert!(check_disk_critical(&mut debounce, "/data", 100, 4, 96, 0.0).is_some());
         // Still full, five hours later: nothing.
-        assert_eq!(check_disk_critical(&mut debounce, "/data", 100, 4, 96, 5.0 * 3600.0), None);
+        assert_eq!(
+            check_disk_critical(&mut debounce, "/data", 100, 4, 96, 5.0 * 3600.0),
+            None
+        );
         // Six hours and a second: alerts again.
-        assert!(check_disk_critical(&mut debounce, "/data", 100, 4, 96, 6.0 * 3600.0 + 1.0)
-            .is_some());
+        assert!(
+            check_disk_critical(&mut debounce, "/data", 100, 4, 96, 6.0 * 3600.0 + 1.0).is_some()
+        );
     }
 
     /// A zero total is a reading that failed, not a full disk. Dividing
@@ -1135,7 +1161,10 @@ mod tests {
     #[test]
     fn a_zero_total_is_not_a_full_disk() {
         let mut debounce = DiskDebounce::default();
-        assert_eq!(check_disk_critical(&mut debounce, "/data", 0, 0, 0, 0.0), None);
+        assert_eq!(
+            check_disk_critical(&mut debounce, "/data", 0, 0, 0, 0.0),
+            None
+        );
     }
 
     /// The alert's numbers are what an operator reads. `round(pct, 1)`,
@@ -1192,7 +1221,10 @@ mod tests {
         // purpose is telling those two apart.
         assert_eq!(json["corrections"][0][1], "pro");
         assert_eq!(json["corrections"][0][2], "free_org");
-        assert_eq!(ReconcileSummary::default().to_json()["corrections"], serde_json::json!([]));
+        assert_eq!(
+            ReconcileSummary::default().to_json()["corrections"],
+            serde_json::json!([])
+        );
     }
 
     /// An empty pass reports zeroes rather than omitting the keys — a

@@ -102,7 +102,12 @@ See docs/runbooks/DISASTER_RECOVERY.md.
 ";
 
 fn parse_args() -> Args {
-    let mut args = Args { list: false, dry_run: false, overwrite: false, table: None };
+    let mut args = Args {
+        list: false,
+        dry_run: false,
+        overwrite: false,
+        table: None,
+    };
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     while i < raw.len() {
@@ -145,7 +150,10 @@ async fn run(args: Args) -> Result<std::process::ExitCode, String> {
              so there is nothing to restore from without the key this install syncs with."
                 .to_string()
         })?;
-    let base = config.sentinel_sync_service_url.trim_end_matches('/').to_string();
+    let base = config
+        .sentinel_sync_service_url
+        .trim_end_matches('/')
+        .to_string();
     if base.is_empty() {
         return Err("SENTINEL_SYNC_SERVICE_URL is not set.".to_string());
     }
@@ -218,18 +226,23 @@ async fn run(args: Args) -> Result<std::process::ExitCode, String> {
         if !known.contains_key(summary.table.as_str()) {
             // Mirrored by a Command Center that syncs a table this build
             // does not know. Skipped loudly rather than guessed at.
-            println!("  {:<22} skipped — not a table this build knows", summary.table);
+            println!(
+                "  {:<22} skipped — not a table this build knows",
+                summary.table
+            );
             continue;
         }
         let columns = table_columns(&pool, &summary.table).await?;
-        let (written, skipped, failed) = restore_table(
-            &client, &base, &key, &pool, &summary.table, &columns, &args,
-        )
-        .await?;
+        let (written, skipped, failed) =
+            restore_table(&client, &base, &key, &pool, &summary.table, &columns, &args).await?;
         total_written += written;
         total_skipped += skipped;
         total_failed += failed;
-        let verb = if args.dry_run { "would restore" } else { "restored" };
+        let verb = if args.dry_run {
+            "would restore"
+        } else {
+            "restored"
+        };
         let mut line = format!(
             "  {:<22} {verb} {written:>6}, skipped {skipped:>6}",
             summary.table
@@ -351,10 +364,7 @@ async fn get(
 /// "character varying" where the cast wants `character varying(100)` or
 /// `varchar`, and "ARRAY" for anything array-typed, which is not a type
 /// at all.
-async fn table_columns(
-    pool: &sqlx::PgPool,
-    table: &str,
-) -> Result<Vec<(String, String)>, String> {
+async fn table_columns(pool: &sqlx::PgPool, table: &str) -> Result<Vec<(String, String)>, String> {
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT a.attname::text,
                 pg_catalog.format_type(a.atttypid, a.atttypmod) AS cast_to
@@ -459,12 +469,13 @@ async fn row_exists(
     };
     // `id::text` so one comparison works for an integer key and the
     // Sentinel run's hex string alike.
-    let found: Option<(i32,)> =
-        sqlx::query_as(&format!("SELECT 1 FROM {table} WHERE id::text = $1 LIMIT 1"))
-            .bind(&raw)
-            .fetch_optional(pool)
-            .await
-            .map_err(|err| format!("{err}"))?;
+    let found: Option<(i32,)> = sqlx::query_as(&format!(
+        "SELECT 1 FROM {table} WHERE id::text = $1 LIMIT 1"
+    ))
+    .bind(&raw)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| format!("{err}"))?;
     Ok(found.is_some())
 }
 
@@ -484,7 +495,9 @@ async fn write_row(
         // Unknown keys in the payload are dropped rather than raising: a
         // mirror written by a newer or older Command Center than the one
         // restoring must not hard-fail the whole restore.
-        let Some(value) = data.get(name) else { continue };
+        let Some(value) = data.get(name) else {
+            continue;
+        };
         names.push(name);
         let index = values.len() + 1;
         // Cast to the column's own type. Every value is bound as text
@@ -539,9 +552,11 @@ async fn write_row(
     for value in &values {
         query = query.bind(value.as_deref());
     }
-    query
-        .execute(pool)
-        .await
-        .map(|_| ())
-        .map_err(|err| err.to_string().lines().next().unwrap_or("write failed").to_string())
+    query.execute(pool).await.map(|_| ()).map_err(|err| {
+        err.to_string()
+            .lines()
+            .next()
+            .unwrap_or("write failed")
+            .to_string()
+    })
 }

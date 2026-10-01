@@ -81,11 +81,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let clerk = clerk.ok_or("--clerk is required")?;
     let database_url = database_url.ok_or("--db or PROBE_DATABASE_URL is required")?;
-    let root = clerk.rsplit_once("/v1").map(|(a, _)| a.to_string()).unwrap_or_default();
+    let root = clerk
+        .rsplit_once("/v1")
+        .map(|(a, _)| a.to_string())
+        .unwrap_or_default();
 
-    let spec: CaseFile = serde_json::from_str(&std::fs::read_to_string(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/differential/plan_cases.json"),
-    )?)?;
+    let spec: CaseFile = serde_json::from_str(&std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/differential/plan_cases.json"
+    ))?)?;
 
     let pool = sqlx::PgPool::connect(&database_url).await?;
     let client = reqwest::Client::new();

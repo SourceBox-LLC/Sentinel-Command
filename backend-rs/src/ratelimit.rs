@@ -92,10 +92,8 @@ impl Limiter {
                 // INCR then EXPIRE on first write. A crash between the
                 // two would leave a key without a TTL, so the EXPIRE is
                 // re-issued whenever the count is at 1.
-                let count: Result<u32, _> = redis::cmd("INCR")
-                    .arg(bucket)
-                    .query_async(&mut conn)
-                    .await;
+                let count: Result<u32, _> =
+                    redis::cmd("INCR").arg(bucket).query_async(&mut conn).await;
                 match count {
                     Ok(count) => {
                         if count == 1 {
@@ -239,7 +237,11 @@ fn base64url_decode(input: &str) -> Option<Vec<u8>> {
 pub(crate) fn too_many_requests(limit: u32, window_secs: u64) -> Response {
     // slowapi renders the limit as e.g. "120 per 1 minute" or
     // "30 per 1 hour" — both measured against the running service.
-    let window = if window_secs >= 3600 { "hour" } else { "minute" };
+    let window = if window_secs >= 3600 {
+        "hour"
+    } else {
+        "minute"
+    };
     let body = json!({
         "error": "rate_limit_exceeded",
         "message": "Too many requests. Back off and retry after the Retry-After window. \
@@ -389,7 +391,10 @@ mod tests {
         // payload = {"org_id":"org_42"}, base64url, unsigned — the
         // limiter never verifies, by design.
         let token = "x.eyJvcmdfaWQiOiJvcmdfNDIifQ.y";
-        let key = tenant_key(&headers(&[("authorization", &format!("Bearer {token}"))]), None);
+        let key = tenant_key(
+            &headers(&[("authorization", &format!("Bearer {token}"))]),
+            None,
+        );
         assert_eq!(key, "org:org_42");
     }
 
@@ -397,7 +402,10 @@ mod tests {
     fn the_v2_compact_claim_is_read_too() {
         // payload = {"o":{"id":"org_99"}}
         let token = "x.eyJvIjp7ImlkIjoib3JnXzk5In19.y";
-        let key = tenant_key(&headers(&[("authorization", &format!("Bearer {token}"))]), None);
+        let key = tenant_key(
+            &headers(&[("authorization", &format!("Bearer {token}"))]),
+            None,
+        );
         assert_eq!(key, "org:org_99");
     }
 
@@ -453,7 +461,10 @@ mod tests {
                 "request {i} should be allowed"
             );
         }
-        assert!(!limiter.check("b", 5, minute).await, "the 6th must be rejected");
+        assert!(
+            !limiter.check("b", 5, minute).await,
+            "the 6th must be rejected"
+        );
     }
 
     #[tokio::test]

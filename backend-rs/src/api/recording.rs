@@ -20,7 +20,7 @@ use crate::audit::{audit_label, python_json, write_audit};
 use crate::auth::RequireAdmin;
 use crate::error::ApiError;
 use crate::models::now_naive;
-use crate::query::{parse_handler_json, BodyErrors, ModelBody, path_segment};
+use crate::query::{parse_handler_json, path_segment, BodyErrors, ModelBody};
 use crate::ratelimit::PerMinute;
 
 /// Fetch a camera's current recording fields, scoped to the caller's org.

@@ -156,7 +156,9 @@ impl EchoOff {
         let original = term;
         term.c_lflag &= !libc::ECHO;
         unsafe { libc::tcsetattr(fd, libc::TCSANOW, &term) };
-        Self { restore: Some(original) }
+        Self {
+            restore: Some(original),
+        }
     }
 }
 

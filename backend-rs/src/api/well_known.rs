@@ -81,14 +81,22 @@ mod tests {
     #[test]
     fn the_canonical_url_has_exactly_one_slash() {
         for base in ["https://app.example.com", "https://app.example.com/"] {
-            assert!(build(base).contains("Canonical: https://app.example.com/.well-known/security.txt"));
+            assert!(
+                build(base).contains("Canonical: https://app.example.com/.well-known/security.txt")
+            );
         }
     }
 
     #[test]
     fn every_field_rfc_9116_requires_is_present() {
         let out = build("https://app.example.com");
-        for field in ["Contact:", "Expires:", "Canonical:", "Policy:", "Preferred-Languages:"] {
+        for field in [
+            "Contact:",
+            "Expires:",
+            "Canonical:",
+            "Policy:",
+            "Preferred-Languages:",
+        ] {
             assert!(out.contains(field), "missing {field}");
         }
         // Most-preferred contact first.

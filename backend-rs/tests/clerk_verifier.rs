@@ -404,7 +404,14 @@ async fn garbage_is_rejected_without_panicking() {
     let h = start_jwks_server(JWKS.to_string()).await;
     let v = verifier(&h.issuer);
 
-    for token in ["", "not-a-jwt", "a.b.c", "...", "....", "eyJhbGciOiJSUzI1NiJ9"] {
+    for token in [
+        "",
+        "not-a-jwt",
+        "a.b.c",
+        "...",
+        "....",
+        "eyJhbGciOiJSUzI1NiJ9",
+    ] {
         assert!(
             v.verify(token).await.is_err(),
             "should reject {token:?} without panicking"

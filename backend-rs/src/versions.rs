@@ -48,7 +48,9 @@ fn cache() -> &'static Mutex<Option<CachedRelease>> {
 /// `_strip_leading_v`: GitHub tags are conventionally `v0.1.39`, and
 /// everything else here compares plain `X.Y.Z`.
 fn strip_leading_v(tag: &str) -> &str {
-    tag.strip_prefix('v').or_else(|| tag.strip_prefix('V')).unwrap_or(tag)
+    tag.strip_prefix('v')
+        .or_else(|| tag.strip_prefix('V'))
+        .unwrap_or(tag)
 }
 
 /// `latest_node_version()` — the freshest tag this process has cached,
@@ -97,7 +99,10 @@ pub async fn refresh_release(client: &reqwest::Client, force: bool) -> Option<Va
         // differential is what found this: both caches are cold in a
         // test environment, so unit tests on either side would have
         // agreed on the fallback and said nothing.
-        .header("User-Agent", concat!("sentinel-command/", env!("CARGO_PKG_VERSION")))
+        .header(
+            "User-Agent",
+            concat!("sentinel-command/", env!("CARGO_PKG_VERSION")),
+        )
         .timeout(Duration::from_secs(5))
         .send()
         .await;

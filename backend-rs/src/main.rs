@@ -50,7 +50,8 @@ async fn main() -> anyhow::Result<()> {
     // Refused here rather than inside the pool: this build has no SQLite
     // driver, and the Python it replaces did. See
     // `config::unsupported_database_url`.
-    if let Some(message) = sentinel_command::config::unsupported_database_url(&config.database_url) {
+    if let Some(message) = sentinel_command::config::unsupported_database_url(&config.database_url)
+    {
         anyhow::bail!(message);
     }
 
@@ -88,9 +89,7 @@ async fn main() -> anyhow::Result<()> {
             &config.cors_allowed_origins,
         ),
         hls: Arc::new(sentinel_command::hls::HlsCache::new()),
-        limiter: Arc::new(
-            sentinel_command::ratelimit::Limiter::from_env(&config.redis_url).await,
-        ),
+        limiter: Arc::new(sentinel_command::ratelimit::Limiter::from_env(&config.redis_url).await),
         http,
         config: Arc::new(config),
         pool,
@@ -108,7 +107,9 @@ async fn main() -> anyhow::Result<()> {
     sentinel_command::versions::spawn_refresh_loop(state.http.clone());
     // The outbox drain. It owns the last-tick stamp the health probe
     // reads, so it has to run in whichever process answers that probe.
-    tokio::spawn(sentinel_command::email_worker::email_worker_loop(state.clone()));
+    tokio::spawn(sentinel_command::email_worker::email_worker_loop(
+        state.clone(),
+    ));
     // And the database-backed sweeps: the offline sweep, log cleanup,
     // sentinel reaper, motion digest and disk check, plus whichever of
     // the licence check-in, data sync and plan reconcile this auth mode
@@ -125,10 +126,10 @@ async fn main() -> anyhow::Result<()> {
         listener,
         build_router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-            tracing::info!("shutting down");
-        })
-        .await?;
+    .with_graceful_shutdown(async {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::info!("shutting down");
+    })
+    .await?;
     Ok(())
 }

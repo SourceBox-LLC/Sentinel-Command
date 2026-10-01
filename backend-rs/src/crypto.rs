@@ -28,10 +28,12 @@ pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
 /// `.hexdigest()` — lower case, no separators.
 pub fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
-    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
-        let _ = write!(out, "{byte:02x}");
-        out
-    })
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
 }
 
 /// `secrets.token_hex(n)` — `n` bytes from the OS CSPRNG as `2n`
@@ -90,7 +92,11 @@ pub fn base64_standard_decode(input: &str) -> Option<Vec<u8>> {
 fn encode(bytes: &[u8], alphabet: &[u8; 64], pad: bool) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
         for i in 0..4 {
             if i <= chunk.len() {
@@ -237,13 +243,20 @@ mod tests {
     fn a_token_is_uniform_hex_of_the_right_length() {
         let token = token_hex(16);
         assert_eq!(token.len(), 32);
-        assert!(token.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(token
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
         // Two draws differ, and neither carries a v4 UUID's fixed
         // nibbles — the whole reason this is not `Uuid::new_v4`.
         let other = token_hex(16);
         assert_ne!(token, other);
-        let fixed_four = (0..64).filter(|_| token_hex(16).as_bytes()[12] == b'4').count();
-        assert!(fixed_four < 20, "{fixed_four}/64 tokens had a 4 in the v4 position");
+        let fixed_four = (0..64)
+            .filter(|_| token_hex(16).as_bytes()[12] == b'4')
+            .count();
+        assert!(
+            fixed_four < 20,
+            "{fixed_four}/64 tokens had a 4 in the v4 position"
+        );
     }
 
     #[test]
@@ -270,7 +283,11 @@ mod tests {
     fn the_standard_alphabet_round_trips() {
         for raw in [&b""[..], b"a", b"ab", b"abc", b"abcd", &[0u8, 255, 16][..]] {
             let encoded = base64_standard(raw);
-            assert_eq!(base64_standard_decode(&encoded).as_deref(), Some(raw), "{encoded}");
+            assert_eq!(
+                base64_standard_decode(&encoded).as_deref(),
+                Some(raw),
+                "{encoded}"
+            );
         }
         // A character outside the alphabet is a refusal, not a skip.
         assert_eq!(base64_standard_decode("ab!c"), None);

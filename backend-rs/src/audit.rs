@@ -239,26 +239,29 @@ mod tests {
         // disagrees on every row below the first: it emits UTF-8 for
         // non-ASCII and leaves DEL raw.
         for (input, expected) in [
-            ("plain", "\"plain\""),  // plain
-            ("Caf\u{e9}", "\"Caf\\u00e9\""),  // an accented letter
-            ("\u{1f3a5}", "\"\\ud83c\\udfa5\""),  // an astral character -> surrogate pair
-            ("quote\"inside", "\"quote\\\"inside\""),  // a quote
-            ("back\\slash", "\"back\\\\slash\""),  // a backslash
-            ("tab\u{9}here", "\"tab\\there\""),  // a tab
-            ("line\u{a}break", "\"line\\nbreak\""),  // a newline
-            ("\u{d}", "\"\\r\""),  // carriage return
-            ("\u{8}", "\"\\b\""),  // backspace
-            ("\u{c}", "\"\\f\""),  // form feed
-            ("\u{0}", "\"\\u0000\""),  // NUL
-            ("\u{7f}", "\"\\u007f\""),  // DEL — above Python's printable range, below serde_json's
-            ("\u{1f}", "\"\\u001f\""),  // unit separator
-            ("~", "\"~\""),  // the top of the printable range
-            (" ", "\" \""),  // the bottom of the printable range
-            ("\u{a0}", "\"\\u00a0\""),  // non-breaking space
-            ("\u{2026}", "\"\\u2026\""),  // ellipsis
-            ("\u{ffff}", "\"\\uffff\""),  // the top of the BMP
-            ("\u{10ffff}", "\"\\udbff\\udfff\""),  // the highest code point
-            ("mixed \u{e9}\u{1f3a5}\"x\\", "\"mixed \\u00e9\\ud83c\\udfa5\\\"x\\\\\""),  // several at once
+            ("plain", "\"plain\""),                   // plain
+            ("Caf\u{e9}", "\"Caf\\u00e9\""),          // an accented letter
+            ("\u{1f3a5}", "\"\\ud83c\\udfa5\""),      // an astral character -> surrogate pair
+            ("quote\"inside", "\"quote\\\"inside\""), // a quote
+            ("back\\slash", "\"back\\\\slash\""),     // a backslash
+            ("tab\u{9}here", "\"tab\\there\""),       // a tab
+            ("line\u{a}break", "\"line\\nbreak\""),   // a newline
+            ("\u{d}", "\"\\r\""),                     // carriage return
+            ("\u{8}", "\"\\b\""),                     // backspace
+            ("\u{c}", "\"\\f\""),                     // form feed
+            ("\u{0}", "\"\\u0000\""),                 // NUL
+            ("\u{7f}", "\"\\u007f\""), // DEL — above Python's printable range, below serde_json's
+            ("\u{1f}", "\"\\u001f\""), // unit separator
+            ("~", "\"~\""),            // the top of the printable range
+            (" ", "\" \""),            // the bottom of the printable range
+            ("\u{a0}", "\"\\u00a0\""), // non-breaking space
+            ("\u{2026}", "\"\\u2026\""), // ellipsis
+            ("\u{ffff}", "\"\\uffff\""), // the top of the BMP
+            ("\u{10ffff}", "\"\\udbff\\udfff\""), // the highest code point
+            (
+                "mixed \u{e9}\u{1f3a5}\"x\\",
+                "\"mixed \\u00e9\\ud83c\\udfa5\\\"x\\\\\"",
+            ), // several at once
         ] {
             assert_eq!(python_json_string(input), expected, "input {input:?}");
         }

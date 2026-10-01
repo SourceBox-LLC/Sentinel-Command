@@ -32,7 +32,11 @@ pub fn truthy(value: &Value) -> bool {
 /// escaped; other characters — non-ASCII letters included — are left
 /// literal, as Python does for printable text.
 pub fn repr_str(s: &str) -> String {
-    let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+    let quote = if s.contains('\'') && !s.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
     let mut out = String::with_capacity(s.len() + 2);
     out.push(quote);
     for ch in s.chars() {
@@ -67,7 +71,11 @@ pub fn repr_float(f: f64) -> String {
         return if f > 0.0 { "inf".into() } else { "-inf".into() };
     }
     if f == 0.0 {
-        return if f.is_sign_negative() { "-0.0".into() } else { "0.0".into() };
+        return if f.is_sign_negative() {
+            "-0.0".into()
+        } else {
+            "0.0".into()
+        };
     }
     // `{:e}` gives the shortest round-tripping digits, which is what
     // Python's repr uses too; only the layout differs.
@@ -84,7 +92,11 @@ pub fn repr_float(f: f64) -> String {
         } else if point as usize >= digits.len() {
             format!("{}{}.0", digits, "0".repeat(point as usize - digits.len()))
         } else {
-            format!("{}.{}", &digits[..point as usize], &digits[point as usize..])
+            format!(
+                "{}.{}",
+                &digits[..point as usize],
+                &digits[point as usize..]
+            )
         };
         return if negative { format!("-{body}") } else { body };
     }
@@ -94,7 +106,11 @@ pub fn repr_float(f: f64) -> String {
         digits
     };
     let sign = if exp < 0 { '-' } else { '+' };
-    format!("{}{m}e{sign}{:02}", if negative { "-" } else { "" }, exp.abs())
+    format!(
+        "{}{m}e{sign}{:02}",
+        if negative { "-" } else { "" },
+        exp.abs()
+    )
 }
 
 /// `repr()` of a value that arrived as JSON — what `str(list)` and
@@ -175,7 +191,6 @@ pub fn round_half_even(x: f64) -> f64 {
 pub fn round_to(x: f64, digits: usize) -> f64 {
     format!("{x:.digits$}").parse().unwrap_or(x)
 }
-
 
 /// Python's `str.title()`.
 ///
@@ -359,12 +374,25 @@ mod tests {
 
     #[test]
     fn truthiness_is_python_s_not_json_s() {
-        for falsy in [json_null(), Value::Bool(false), 0.into(), 0.0.into(), "".into(),
-                      Value::Array(vec![]), Value::Object(Default::default())] {
+        for falsy in [
+            json_null(),
+            Value::Bool(false),
+            0.into(),
+            0.0.into(),
+            "".into(),
+            Value::Array(vec![]),
+            Value::Object(Default::default()),
+        ] {
             assert!(!truthy(&falsy), "{falsy} should be falsy");
         }
-        for t in [Value::Bool(true), 1.into(), (-0.5).into(), "0".into(), " ".into(),
-                  Value::Array(vec![Value::Null])] {
+        for t in [
+            Value::Bool(true),
+            1.into(),
+            (-0.5).into(),
+            "0".into(),
+            " ".into(),
+            Value::Array(vec![Value::Null]),
+        ] {
             assert!(truthy(&t), "{t} should be truthy");
         }
     }
@@ -377,8 +405,14 @@ mod tests {
         assert_eq!(len(&Value::Bool(true)), None);
         assert_eq!(len(&"caf\u{e9}".into()), Some(4), "characters, not bytes");
         assert_eq!(contains_str(&serde_json::json!(["\n"]), "\n"), Some(true));
-        assert_eq!(contains_str(&serde_json::json!(["a\nb"]), "\n"), Some(false));
-        assert_eq!(contains_str(&serde_json::json!({"\n": 1}), "\n"), Some(true));
+        assert_eq!(
+            contains_str(&serde_json::json!(["a\nb"]), "\n"),
+            Some(false)
+        );
+        assert_eq!(
+            contains_str(&serde_json::json!({"\n": 1}), "\n"),
+            Some(true)
+        );
         assert_eq!(contains_str(&5.into(), "\n"), None);
     }
 

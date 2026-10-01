@@ -58,7 +58,9 @@ fn segment_filename_re() -> &'static Regex {
 /// line is the unit either way.
 fn segment_uri_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"^(?:.*[/\\])?(segment_\d+\.ts)[ \t\r]*$").expect("static pattern"))
+    RE.get_or_init(|| {
+        Regex::new(r"^(?:.*[/\\])?(segment_\d+\.ts)[ \t\r]*$").expect("static pattern")
+    })
 }
 
 /// `_RE_CODECS`.
@@ -145,7 +147,9 @@ async fn read_capped_body(request: Request, max_bytes: usize) -> Result<Bytes, A
         }
     }
     if total > max_bytes {
-        return Err(too_large(format!("Body is {total} bytes; max is {max_bytes}")));
+        return Err(too_large(format!(
+            "Body is {total} bytes; max is {max_bytes}"
+        )));
     }
     Ok(Bytes::from(body))
 }
@@ -238,7 +242,12 @@ pub async fn get_hls_playlist(
     if state.hls.access_log_due(&user.user_id, camera_id) {
         let user_agent: String = headers
             .get(header::USER_AGENT)
-            .map(|v| String::from_utf8_lossy(v.as_bytes()).chars().take(500).collect())
+            .map(|v| {
+                String::from_utf8_lossy(v.as_bytes())
+                    .chars()
+                    .take(500)
+                    .collect()
+            })
             .unwrap_or_default();
         let logged = sqlx::query(
             "INSERT INTO stream_access_logs
@@ -349,7 +358,10 @@ pub async fn get_hls_segment(
     let plan = plans::effective_plan_for_caps(&plan_ctx(&state), &user.org_id, true).await;
     let max_hours = plans::get_plan_limits(&plan).max_viewer_hours_per_month;
     if max_hours > 0 {
-        let used = state.hls.warm_viewer_seconds(&state.pool, &user.org_id).await;
+        let used = state
+            .hls
+            .warm_viewer_seconds(&state.pool, &user.org_id)
+            .await;
         if used >= max_hours * 3600 {
             return Err(ApiError::new(
                 StatusCode::TOO_MANY_REQUESTS,
@@ -446,7 +458,9 @@ pub async fn push_segment(
         state.config.segment_cache_max_per_camera,
         state.config.segment_cache_max_total_bytes,
     );
-    Ok(Json(json!({ "success": true, "cached_segments": cached_segments })))
+    Ok(Json(
+        json!({ "success": true, "cached_segments": cached_segments }),
+    ))
 }
 
 /// `POST /api/cameras/{camera_id}/playlist`.
@@ -497,11 +511,16 @@ pub async fn update_hls_playlist(
         );
     }
 
-    if state.hls.bump_playlist_count(&camera_id, state.config.cleanup_interval) {
+    if state
+        .hls
+        .bump_playlist_count(&camera_id, state.config.cleanup_interval)
+    {
         state.hls.evict_caches();
     }
 
-    Ok(Json(json!({ "success": true, "message": "Playlist updated" })))
+    Ok(Json(
+        json!({ "success": true, "message": "Playlist updated" }),
+    ))
 }
 
 /// `POST /api/cameras/{camera_id}/motion`.
@@ -571,7 +590,12 @@ mod tests {
 
     #[test]
     fn the_filename_pattern_is_pythons() {
-        for good in ["segment_1.ts", "segment_00001.ts", "segment_1.ts\n", "segment_٣.ts"] {
+        for good in [
+            "segment_1.ts",
+            "segment_00001.ts",
+            "segment_1.ts\n",
+            "segment_٣.ts",
+        ] {
             assert!(segment_filename_re().is_match(good), "{good:?}");
         }
         for bad in [
@@ -596,8 +620,14 @@ mod tests {
         );
         // Any prefix is dropped, forward or back slash, and trailing
         // whitespace goes with it.
-        assert_eq!(rewrite_playlist("/var/hls/segment_7.ts"), "segment/segment_7.ts");
-        assert_eq!(rewrite_playlist("C:\\hls\\segment_7.ts"), "segment/segment_7.ts");
+        assert_eq!(
+            rewrite_playlist("/var/hls/segment_7.ts"),
+            "segment/segment_7.ts"
+        );
+        assert_eq!(
+            rewrite_playlist("C:\\hls\\segment_7.ts"),
+            "segment/segment_7.ts"
+        );
         assert_eq!(rewrite_playlist("segment_7.ts  \r"), "segment/segment_7.ts");
         // A comment line is never a URI, even one that ends like a
         // segment name.

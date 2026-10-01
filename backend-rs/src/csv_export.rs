@@ -200,7 +200,13 @@ pub fn filename_for_at(
 /// for exactly this reason.
 pub fn safe_segment(text: &str) -> String {
     text.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect()
 }
 
@@ -223,8 +229,7 @@ fn write_row<'a>(out: &mut String, cells: impl IntoIterator<Item = &'a Cell>) {
         // empty record rather than a record holding one empty field. No
         // export here is single-column, but a helper that gets this
         // wrong is a trap for the one that eventually is.
-        let needs_quotes = (single && field.is_empty())
-            || field.contains([',', '"', '\r', '\n']);
+        let needs_quotes = (single && field.is_empty()) || field.contains([',', '"', '\r', '\n']);
         if needs_quotes {
             out.push('"');
             for ch in field.chars() {
@@ -257,8 +262,16 @@ pub fn stream_csv_response(
     // half-way through a download.
     let name = {
         let safe = safe_segment(filename);
-        let safe = if safe.is_empty() { "export.csv".to_string() } else { safe };
-        if safe.ends_with(".csv") { safe } else { format!("{safe}.csv") }
+        let safe = if safe.is_empty() {
+            "export.csv".to_string()
+        } else {
+            safe
+        };
+        if safe.ends_with(".csv") {
+            safe
+        } else {
+            format!("{safe}.csv")
+        }
     };
     let disposition = HeaderValue::from_str(&format!("attachment; filename=\"{name}\""))
         .map_err(|_| ApiError::internal("filename is not a header value"))?;
@@ -272,7 +285,11 @@ pub fn stream_csv_response(
         rows: RowStream,
         done: bool,
     }
-    let state = Chunker { pending: Some(Bytes::from(first)), rows, done: false };
+    let state = Chunker {
+        pending: Some(Bytes::from(first)),
+        rows,
+        done: false,
+    };
 
     let body = futures_util::stream::unfold(state, |mut state| async move {
         if let Some(chunk) = state.pending.take() {
@@ -337,7 +354,11 @@ mod tests {
     #[test]
     fn plain_fields_are_not_quoted() {
         assert_eq!(
-            row(vec![Cell::Text("a".into()), Cell::Text(String::new()), Cell::Raw("7".into())]),
+            row(vec![
+                Cell::Text("a".into()),
+                Cell::Text(String::new()),
+                Cell::Raw("7".into())
+            ]),
             "a,,7\r\n"
         );
     }
@@ -346,8 +367,14 @@ mod tests {
     #[test]
     fn only_the_minimal_set_forces_quotes() {
         assert_eq!(row(vec![Cell::Text("a,b".into())]), "\"a,b\"\r\n");
-        assert_eq!(row(vec![Cell::Text("say \"hi\"".into())]), "\"say \"\"hi\"\"\"\r\n");
-        assert_eq!(row(vec![Cell::Text("two\nlines".into())]), "\"two\nlines\"\r\n");
+        assert_eq!(
+            row(vec![Cell::Text("say \"hi\"".into())]),
+            "\"say \"\"hi\"\"\"\r\n"
+        );
+        assert_eq!(
+            row(vec![Cell::Text("two\nlines".into())]),
+            "\"two\nlines\"\r\n"
+        );
         assert_eq!(row(vec![Cell::Text("cr\rhere".into())]), "\"cr\rhere\"\r\n");
         // Not on the list: a semicolon or a tab mid-field stays bare.
         assert_eq!(row(vec![Cell::Text("a;b\tc".into())]), "a;b\tc\r\n");
@@ -359,7 +386,10 @@ mod tests {
     fn a_lone_empty_field_is_quoted() {
         assert_eq!(row(vec![Cell::Text(String::new())]), "\"\"\r\n");
         // Two empty fields are not — `,\r\n` already reads back as two.
-        assert_eq!(row(vec![Cell::Text(String::new()), Cell::Text(String::new())]), ",\r\n");
+        assert_eq!(
+            row(vec![Cell::Text(String::new()), Cell::Text(String::new())]),
+            ",\r\n"
+        );
     }
 
     /// The injection mitigation, on the cells that carry caller text.
@@ -389,7 +419,10 @@ mod tests {
     /// A defanged field that also needs quotes gets both, in that order.
     #[test]
     fn defanging_happens_before_quoting() {
-        assert_eq!(row(vec![Cell::Text("=SUM(A1,A2)".into())]), "\"'=SUM(A1,A2)\"\r\n");
+        assert_eq!(
+            row(vec![Cell::Text("=SUM(A1,A2)".into())]),
+            "\"'=SUM(A1,A2)\"\r\n"
+        );
     }
 
     /// The oracle test: a corpus whose expected bytes were produced by
@@ -405,7 +438,11 @@ mod tests {
     #[test]
     fn the_bytes_match_pythons_csv_writer() {
         let corpus: Vec<Vec<Cell>> = vec![
-            vec![Cell::Text("a".into()), Cell::Text("b".into()), Cell::Text("c".into())],
+            vec![
+                Cell::Text("a".into()),
+                Cell::Text("b".into()),
+                Cell::Text("c".into()),
+            ],
             vec![Cell::text(None), Cell::text(None), Cell::text(None)],
             vec![
                 Cell::Text("a,b".into()),
@@ -434,7 +471,11 @@ mod tests {
                 Cell::int(Some(42)),
                 Cell::int(Some(-5)),
             ],
-            vec![Cell::Text(String::new()), Cell::int(Some(0)), Cell::int(None)],
+            vec![
+                Cell::Text(String::new()),
+                Cell::int(Some(0)),
+                Cell::int(None),
+            ],
             vec![
                 Cell::Text("=\"a,b\"".into()),
                 Cell::Text("\"".into()),
@@ -455,7 +496,15 @@ mod tests {
         ];
 
         let mut out = String::new();
-        write_row(&mut out, [Cell::Raw("c1".into()), Cell::Raw("c2".into()), Cell::Raw("c3".into())].iter());
+        write_row(
+            &mut out,
+            [
+                Cell::Raw("c1".into()),
+                Cell::Raw("c2".into()),
+                Cell::Raw("c3".into()),
+            ]
+            .iter(),
+        );
         for row in &corpus {
             write_row(&mut out, row.iter());
         }
@@ -494,14 +543,20 @@ mod tests {
             filename_for_at("audit-log", Some("a\"b/../c\n"), now),
             "audit-log-a-b-..-c--20260505.csv"
         );
-        assert_eq!(filename_for_at("audit-log", None, now), "audit-log-unknown-20260505.csv");
+        assert_eq!(
+            filename_for_at("audit-log", None, now),
+            "audit-log-unknown-20260505.csv"
+        );
     }
 
     /// The header row is quoted like any other row but never defanged.
     #[tokio::test]
     async fn the_response_leads_with_the_header() {
         let rows: RowStream = Box::pin(futures_util::stream::iter(vec![
-            Ok(vec![Cell::Text("2026-05-05T00:00:00".into()), Cell::int(Some(3))]),
+            Ok(vec![
+                Cell::Text("2026-05-05T00:00:00".into()),
+                Cell::int(Some(3)),
+            ]),
             Ok(vec![Cell::Text("=evil".into()), Cell::int(None)]),
         ]));
         let response =
@@ -515,12 +570,17 @@ mod tests {
             response.headers().get(header::CONTENT_DISPOSITION).unwrap(),
             "attachment; filename=\"audit-log-org_1-20260505.csv\""
         );
-        assert_eq!(response.headers().get(header::CACHE_CONTROL).unwrap(), "no-store");
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
         // A streamed body has no content-length, which is what lets the
         // export start before the query has finished.
         assert!(response.headers().get(header::CONTENT_LENGTH).is_none());
 
-        let body = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
         assert_eq!(
             String::from_utf8(body.to_vec()).unwrap(),
             "timestamp,n\r\n2026-05-05T00:00:00,3\r\n'=evil,\r\n"
@@ -553,7 +613,9 @@ mod tests {
     async fn an_empty_export_still_has_its_header() {
         let rows: RowStream = Box::pin(futures_util::stream::iter(vec![]));
         let response = stream_csv_response("x.csv", &["a", "b"], rows).unwrap();
-        let body = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
         assert_eq!(String::from_utf8(body.to_vec()).unwrap(), "a,b\r\n");
     }
 
@@ -569,7 +631,10 @@ mod tests {
         ]));
         let response = stream_csv_response("x.csv", &["a"], rows).unwrap();
         let err = axum::body::to_bytes(response.into_body(), 1 << 20).await;
-        assert!(err.is_err(), "the body should have failed, not ended cleanly");
+        assert!(
+            err.is_err(),
+            "the body should have failed, not ended cleanly"
+        );
     }
 
     /// Batching is invisible in the bytes, which is the property that
@@ -581,7 +646,9 @@ mod tests {
             .collect();
         let rows: RowStream = Box::pin(futures_util::stream::iter(items));
         let response = stream_csv_response("x.csv", &["name", "n"], rows).unwrap();
-        let body = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
         let text = String::from_utf8(body.to_vec()).unwrap();
         let lines: Vec<&str> = text.split_terminator("\r\n").collect();
         assert_eq!(lines.len(), 2_001);

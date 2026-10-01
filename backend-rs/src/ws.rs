@@ -61,7 +61,10 @@ struct LimiterInner {
 
 impl NodeRateLimiter {
     pub const fn new(max: usize) -> Self {
-        Self { inner: Mutex::new(None), max }
+        Self {
+            inner: Mutex::new(None),
+            max,
+        }
     }
 
     fn with<T>(&self, f: impl FnOnce(&mut LimiterInner) -> T) -> T {
@@ -77,7 +80,10 @@ impl NodeRateLimiter {
         self.with(|inner| {
             sweep(inner, now);
             let window = inner.windows.entry(node_id.to_string()).or_default();
-            while window.front().is_some_and(|at| now.duration_since(*at) >= WINDOW) {
+            while window
+                .front()
+                .is_some_and(|at| now.duration_since(*at) >= WINDOW)
+            {
                 window.pop_front();
             }
             if window.len() >= max {
@@ -138,7 +144,9 @@ fn sweep(inner: &mut LimiterInner, now: Instant) {
 #[derive(Debug, PartialEq, Eq)]
 pub enum CommandError {
     /// No socket for this node on this machine.
-    NotConnected { node: String },
+    NotConnected {
+        node: String,
+    },
     /// The socket was already half-closed — a TCP reset, or a node that
     /// crashed — and the receive loop had not noticed yet.
     ///
@@ -147,11 +155,19 @@ pub enum CommandError {
     /// happened to say. There is no reproducing that string, and no
     /// harness can reach this branch: it needs a socket half-closed
     /// between the registry lookup and the send.
-    SendFailed { node: String },
-    Timeout { node: String, command: String },
+    SendFailed {
+        node: String,
+    },
+    Timeout {
+        node: String,
+        command: String,
+    },
     /// The node reconnected, or went away, while the command was in
     /// flight. Its future is cancelled rather than left to time out.
-    Disconnected { node: String, command: String },
+    Disconnected {
+        node: String,
+        command: String,
+    },
 }
 
 impl std::fmt::Display for CommandError {
@@ -214,7 +230,9 @@ pub struct Registration {
 
 impl ConnectionManager {
     pub const fn new() -> Self {
-        Self { inner: Mutex::new(None) }
+        Self {
+            inner: Mutex::new(None),
+        }
     }
 
     fn with<T>(&self, f: impl FnOnce(&mut ManagerInner) -> T) -> T {
@@ -246,10 +264,16 @@ impl ConnectionManager {
             let id = inner.next_id;
             // Dropping the old sender closes its channel, which is what
             // ends that socket's writer and closes it.
-            if inner.connections.insert(
-                node_id.to_string(),
-                Connection { id, frames: frames_tx },
-            ).is_some()
+            if inner
+                .connections
+                .insert(
+                    node_id.to_string(),
+                    Connection {
+                        id,
+                        frames: frames_tx,
+                    },
+                )
+                .is_some()
             {
                 cancel_pending(inner, node_id);
             } else {
@@ -261,7 +285,11 @@ impl ConnectionManager {
             id
         });
         tracing::info!(node_id, "[WS] Node connected via WebSocket");
-        Registration { node_id: node_id.to_string(), id, frames: frames_rx }
+        Registration {
+            node_id: node_id.to_string(),
+            id,
+            frames: frames_rx,
+        }
     }
 
     /// `disconnect(node_id, ws)`.
@@ -316,12 +344,17 @@ impl ConnectionManager {
             let handle = (connection.id, connection.frames.clone());
             inner.pending.insert(
                 correlation_id.clone(),
-                Pending { node_id: node_id.to_string(), answer: answer_tx },
+                Pending {
+                    node_id: node_id.to_string(),
+                    answer: answer_tx,
+                },
             );
             Some(handle)
         });
         let Some((connection_id, sender)) = connection else {
-            return Err(CommandError::NotConnected { node: node_id.to_string() });
+            return Err(CommandError::NotConnected {
+                node: node_id.to_string(),
+            });
         };
 
         // A closed channel means the writer is gone: the socket was
@@ -331,7 +364,9 @@ impl ConnectionManager {
         if sender.send(frame).await.is_err() {
             self.forget_pending(&correlation_id);
             self.disconnect(node_id, connection_id);
-            return Err(CommandError::SendFailed { node: node_id.to_string() });
+            return Err(CommandError::SendFailed {
+                node: node_id.to_string(),
+            });
         }
 
         let outcome = match tokio::time::timeout(timeout, answer_rx).await {
@@ -397,7 +432,9 @@ impl ConnectionManager {
 fn cancel_pending(inner: &mut ManagerInner, node_id: &str) {
     // Dropping the oneshot sender is the cancellation: the awaiting
     // half sees a closed channel.
-    inner.pending.retain(|_, pending| pending.node_id != node_id);
+    inner
+        .pending
+        .retain(|_, pending| pending.node_id != node_id);
 }
 
 /// The message-rate limiter, one window per connected node.
@@ -476,11 +513,20 @@ mod tests {
         assert_eq!(M.connected_nodes(), vec!["node-a".to_string()]);
 
         let issued = tokio::spawn(async {
-            M.send_command("node-a", "take_snapshot", json!({"camera_id": "cam-1"}), COMMAND_TIMEOUT)
-                .await
+            M.send_command(
+                "node-a",
+                "take_snapshot",
+                json!({"camera_id": "cam-1"}),
+                COMMAND_TIMEOUT,
+            )
+            .await
         });
 
-        let frame = registration.frames.recv().await.expect("a frame should be queued");
+        let frame = registration
+            .frames
+            .recv()
+            .await
+            .expect("a frame should be queued");
         let parsed: Value = serde_json::from_str(&frame).unwrap();
         assert_eq!(parsed["type"], "command");
         assert_eq!(parsed["command"], "take_snapshot");
@@ -524,7 +570,12 @@ mod tests {
             .send_command("node-missing", "take_snapshot", json!({}), COMMAND_TIMEOUT)
             .await
             .unwrap_err();
-        assert_eq!(err, CommandError::NotConnected { node: "node-missing".into() });
+        assert_eq!(
+            err,
+            CommandError::NotConnected {
+                node: "node-missing".into()
+            }
+        );
         // The message is what the route puts in the response body.
         assert_eq!(err.to_string(), "Node node-missing is not connected");
         assert_eq!(m.pending_count(), 0);
@@ -535,7 +586,12 @@ mod tests {
         let m = ConnectionManager::new();
         let mut registration = m.connect("node-a");
         let err = m
-            .send_command("node-a", "list_recordings", json!({}), Duration::from_millis(60))
+            .send_command(
+                "node-a",
+                "list_recordings",
+                json!({}),
+                Duration::from_millis(60),
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, CommandError::Timeout { .. }), "{err:?}");
@@ -576,7 +632,13 @@ mod tests {
         static M: ConnectionManager = ConnectionManager::new();
         let mut first = M.connect("node-a");
         let issued = tokio::spawn(async {
-            M.send_command("node-a", "take_snapshot", json!({}), Duration::from_secs(30)).await
+            M.send_command(
+                "node-a",
+                "take_snapshot",
+                json!({}),
+                Duration::from_secs(30),
+            )
+            .await
         });
         // Wait for the frame so the pending entry definitely exists.
         assert!(first.frames.recv().await.is_some());
@@ -621,7 +683,13 @@ mod tests {
         let mut a = M.connect("node-a");
         M.connect("node-b");
         let issued = tokio::spawn(async {
-            M.send_command("node-a", "take_snapshot", json!({}), Duration::from_millis(200)).await
+            M.send_command(
+                "node-a",
+                "take_snapshot",
+                json!({}),
+                Duration::from_millis(200),
+            )
+            .await
         });
         let frame = a.frames.recv().await.expect("a frame");
         let correlation = serde_json::from_str::<Value>(&frame).unwrap()["id"]

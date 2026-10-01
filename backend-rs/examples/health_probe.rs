@@ -51,8 +51,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--db" => { db = args[i + 1].clone(); i += 2; }
-            "--cases" => { cases = args[i + 1].clone(); i += 2; }
+            "--db" => {
+                db = args[i + 1].clone();
+                i += 2;
+            }
+            "--cases" => {
+                cases = args[i + 1].clone();
+                i += 2;
+            }
             _ => i += 1,
         }
     }
@@ -117,12 +123,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let mut config = Config::from_env();
-        config.auth_provider = if scenario.local_auth { "local".into() } else { "clerk".into() };
+        config.auth_provider = if scenario.local_auth {
+            "local".into()
+        } else {
+            "clerk".into()
+        };
         config.email_enabled = scenario.email_enabled;
-        config.sentinel_license_key = scenario
-            .license_key
-            .clone()
-            .filter(|k| !k.is_empty());
+        config.sentinel_license_key = scenario.license_key.clone().filter(|k| !k.is_empty());
         // The Clerk probe must not reach the network: local auth
         // short-circuits, and an empty secret reports unconfigured.
         config.clerk_secret_key = String::new();
@@ -180,7 +187,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// The same path rule the probe uses, so the reported `path` matches.
 fn disk_path() -> &'static str {
-    if std::path::Path::new("/data").is_dir() { "/data" } else { "." }
+    if std::path::Path::new("/data").is_dir() {
+        "/data"
+    } else {
+        "."
+    }
 }
 
 /// `json.dumps(..., sort_keys=True)` on the Python side; serde_json

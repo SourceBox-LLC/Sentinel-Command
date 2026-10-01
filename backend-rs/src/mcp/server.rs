@@ -107,7 +107,10 @@ impl ServerHandler for SentinelMcp {
             .filter(|(name, _)| allowed.as_ref().is_none_or(|set| set.contains(name)))
             .map(|(name, description)| build_tool(name, description))
             .collect();
-        Ok(ListToolsResult { tools, ..Default::default() })
+        Ok(ListToolsResult {
+            tools,
+            ..Default::default()
+        })
     }
 
     async fn call_tool(
@@ -133,7 +136,11 @@ impl ServerHandler for SentinelMcp {
 
         let started = std::time::Instant::now();
         let summary = crate::mcp::scope::summarize_args(&args);
-        let args_summary = if summary.is_empty() { None } else { Some(summary) };
+        let args_summary = if summary.is_empty() {
+            None
+        } else {
+            Some(summary)
+        };
 
         let principal = match crate::mcp::auth::resolve(&self.state, &headers).await {
             Ok(principal) => principal,
@@ -242,7 +249,12 @@ impl SentinelMcp {
             tool_name: tool_name.to_string(),
             org_id: org_id.to_string(),
             key_name: key_name.to_string(),
-            status: if error.is_some() { "error" } else { "completed" }.to_string(),
+            status: if error.is_some() {
+                "error"
+            } else {
+                "completed"
+            }
+            .to_string(),
             // `round((time.time() - start) * 1000)` — an integer.
             duration_ms: Some(crate::pyrepr::round_half_even(
                 started.elapsed().as_secs_f64() * 1000.0,
@@ -293,16 +305,17 @@ fn success(name: &str, output: ToolOutput) -> CallToolResult {
             } else {
                 // Compact separators: FastMCP writes the text block
                 // with `separators=(",", ":")`.
-                vec![ContentBlock::text(crate::audit::python_json_compact(&value))]
+                vec![ContentBlock::text(crate::audit::python_json_compact(
+                    &value,
+                ))]
             };
             let mut result = CallToolResult::success(blocks);
-            result.structured_content = Some(
-                if crate::mcp::scope::WRAP_RESULT_TOOLS.contains(&name) {
+            result.structured_content =
+                Some(if crate::mcp::scope::WRAP_RESULT_TOOLS.contains(&name) {
                     json!({ "result": value })
                 } else {
                     value
-                },
-            );
+                });
             result.is_error = Some(false);
             result
         }
@@ -579,7 +592,10 @@ mod tests {
     /// than `URL` is Python's `title()`, not a typo.
     #[test]
     fn every_tool_carries_a_derived_title() {
-        assert_eq!(build_tool("get_stream_url", "x").title.as_deref(), Some("Get Stream Url"));
+        assert_eq!(
+            build_tool("get_stream_url", "x").title.as_deref(),
+            Some("Get Stream Url")
+        );
         assert_eq!(
             build_tool("list_camera_groups", "x").title.as_deref(),
             Some("List Camera Groups")

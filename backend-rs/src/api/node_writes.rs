@@ -83,7 +83,10 @@ fn psycopg_can_bind(items: &[Value]) -> bool {
         if lists != 0 && lists != items.len() {
             *regular = false;
         }
-        let lengths: Vec<usize> = items.iter().filter_map(|v| v.as_array().map(Vec::len)).collect();
+        let lengths: Vec<usize> = items
+            .iter()
+            .filter_map(|v| v.as_array().map(Vec::len))
+            .collect();
         if lengths.windows(2).any(|w| w[0] != w[1]) {
             *regular = false;
         }
@@ -184,7 +187,9 @@ pub async fn validate_node(
         return Err(ApiError::forbidden("Invalid API key for this node"));
     }
 
-    Ok(Json(json!({ "success": true, "node_id": node_id, "name": name })))
+    Ok(Json(
+        json!({ "success": true, "node_id": node_id, "name": name }),
+    ))
 }
 
 /// Persist why a node is stuck in `pending`, so the dashboard can show
@@ -396,12 +401,13 @@ pub async fn rotate_api_key(
 ) -> Result<Json<Value>, ApiError> {
     let node_id = path_segment(&node_id)?.to_string();
     rate.check().await?;
-    let row: Option<(i32, String)> =
-        sqlx::query_as("SELECT id, name FROM camera_nodes WHERE node_id = $1 AND org_id = $2 LIMIT 1")
-            .bind(&node_id)
-            .bind(&user.org_id)
-            .fetch_optional(&state.pool)
-            .await?;
+    let row: Option<(i32, String)> = sqlx::query_as(
+        "SELECT id, name FROM camera_nodes WHERE node_id = $1 AND org_id = $2 LIMIT 1",
+    )
+    .bind(&node_id)
+    .bind(&user.org_id)
+    .fetch_optional(&state.pool)
+    .await?;
     let Some((id, name)) = row else {
         return Err(ApiError::not_found("Node not found"));
     };
@@ -427,7 +433,10 @@ pub async fn rotate_api_key(
         "node_key_rotated",
         &user.user_id,
         &audit_label(&user),
-        Some(python_json(&[("node_id", json!(node_id)), ("name", json!(name))])),
+        Some(python_json(&[
+            ("node_id", json!(node_id)),
+            ("name", json!(name)),
+        ])),
         &headers,
         Some(&peer.ip().to_string()),
     )
@@ -446,7 +455,8 @@ pub async fn rotate_api_key(
 /// just wrote must echo the stored value, not the nanosecond one.
 fn truncate_to_micros(ts: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
     use chrono::Timelike;
-    ts.with_nanosecond(ts.nanosecond() / 1_000 * 1_000).unwrap_or(ts)
+    ts.with_nanosecond(ts.nanosecond() / 1_000 * 1_000)
+        .unwrap_or(ts)
 }
 
 // ---------------------------------------------------------------------
@@ -526,7 +536,11 @@ pub async fn create_node(
             // The unique constraint is the arbiter, not a pre-check
             // SELECT, which would race two concurrent creates.
             Err(sqlx::Error::Database(db)) if db.is_unique_violation() => {
-                tracing::warn!(node_id, attempt = attempt + 1, "node_id collision — regenerating");
+                tracing::warn!(
+                    node_id,
+                    attempt = attempt + 1,
+                    "node_id collision — regenerating"
+                );
             }
             Err(err) => return Err(err.into()),
         }
@@ -545,7 +559,10 @@ pub async fn create_node(
         "node_created",
         &user.user_id,
         &audit_label(&user),
-        Some(python_json(&[("node_id", json!(node_id)), ("name", json!(name))])),
+        Some(python_json(&[
+            ("node_id", json!(node_id)),
+            ("name", json!(name)),
+        ])),
         &headers,
         Some(&peer.ip().to_string()),
     )
@@ -574,7 +591,9 @@ async fn require_active_paid_plan(
     user: &crate::auth::claims::AuthUser,
 ) -> Result<(), ApiError> {
     if !user.features.iter().any(|f| f == "admin") {
-        return Err(ApiError::forbidden("Danger zone requires a Pro or Pro Plus plan."));
+        return Err(ApiError::forbidden(
+            "Danger zone requires a Pro or Pro Plus plan.",
+        ));
     }
     let ctx = PlanContext {
         pool: &state.pool,
@@ -621,7 +640,11 @@ pub async fn wipe_stream_logs(
         .await?
         .rows_affected();
     tx.commit().await?;
-    tracing::warn!(stream, mcp, "admin wiped stream and MCP logs (org redacted)");
+    tracing::warn!(
+        stream,
+        mcp,
+        "admin wiped stream and MCP logs (org redacted)"
+    );
 
     write_audit(
         &state.pool,
@@ -669,13 +692,12 @@ pub async fn delete_node(
     rate.check().await?;
     let node_id = crate::query::path_segment(&node_id)?;
 
-    let node: Option<(i32, Option<String>)> = sqlx::query_as(
-        "SELECT id, name FROM camera_nodes WHERE node_id = $1 AND org_id = $2",
-    )
-    .bind(node_id)
-    .bind(&user.org_id)
-    .fetch_optional(&state.pool)
-    .await?;
+    let node: Option<(i32, Option<String>)> =
+        sqlx::query_as("SELECT id, name FROM camera_nodes WHERE node_id = $1 AND org_id = $2")
+            .bind(node_id)
+            .bind(&user.org_id)
+            .fetch_optional(&state.pool)
+            .await?;
     let Some((node_pk, node_name)) = node else {
         return Err(ApiError::not_found("Node not found"));
     };
@@ -756,7 +778,11 @@ mod tests {
         assert!(codecs.len() > 10);
         for row in codecs {
             let input = row["in"].as_str().unwrap();
-            assert_eq!(sanitize_video_codec(input), row["out"].as_str().unwrap(), "input {input:?}");
+            assert_eq!(
+                sanitize_video_codec(input),
+                row["out"].as_str().unwrap(),
+                "input {input:?}"
+            );
         }
     }
 
@@ -785,7 +811,7 @@ mod tests {
             (json!([1.5]), true),
             (json!(["a", null]), true),
             (json!([null, "a"]), true),
-            (json!([[ "a"], "b"]), true),
+            (json!([["a"], "b"]), true),
             (json!([["a"], ["b"]]), true),
             (json!([""]), true),
             (json!([1, 1.5]), false),

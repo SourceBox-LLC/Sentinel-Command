@@ -28,7 +28,10 @@ pub fn now_naive() -> NaiveDateTime {
 /// `Duration::days` panics somewhere further out again — so the range
 /// has to be applied deliberately, or the two stacks disagree exactly
 /// where the Python breaks.
-pub fn python_window_start(n: crate::pyint::PyInt, unit_seconds: i64) -> Result<NaiveDateTime, ApiError> {
+pub fn python_window_start(
+    n: crate::pyint::PyInt,
+    unit_seconds: i64,
+) -> Result<NaiveDateTime, ApiError> {
     let overflow = || ApiError::internal("date value out of range");
     let n = n.small().ok_or_else(overflow)?;
 
@@ -230,7 +233,9 @@ mod tests {
     #[test]
     fn a_camera_that_has_never_been_seen_is_offline() {
         assert_eq!(
-            camera(Some("streaming"), None).effective_status().as_deref(),
+            camera(Some("streaming"), None)
+                .effective_status()
+                .as_deref(),
             Some("offline")
         );
     }

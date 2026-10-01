@@ -88,7 +88,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .max_connections(4)
         .connect(&db)
         .await?;
-    let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
 
     // A real AppState, not a narrower context: the sweep's
     // notifications go through `create_notification`, which broadcasts
@@ -153,7 +155,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             post(http, &base, "/__reset", &json!({})).await?;
             sentinel_command::sync::push_pending_changes(&sync_state).await;
             out.insert("first".into(), summarise_pushes(http, &base).await?);
-            out.insert("cursors_after_first".into(), read_cursors(&pool, &org).await?);
+            out.insert(
+                "cursors_after_first".into(),
+                read_cursors(&pool, &org).await?,
+            );
 
             // Nothing has changed since, so a correct cursor means an
             // empty cycle. This is the case a port that never advanced
@@ -166,13 +171,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // and every other table must still push — the cursors are
             // independent and partial progress is the design.
             post(http, &base, "/__reset", &json!({})).await?;
-            post(http, &base, "/__fail", &json!({"tables": ["motion_events"]})).await?;
+            post(
+                http,
+                &base,
+                "/__fail",
+                &json!({"tables": ["motion_events"]}),
+            )
+            .await?;
             sqlx::query("DELETE FROM settings WHERE key LIKE 'sentinel_sync_cursor_%'")
                 .execute(&pool)
                 .await?;
             sentinel_command::sync::push_pending_changes(&sync_state).await;
             out.insert("with_failure".into(), summarise_pushes(http, &base).await?);
-            out.insert("cursors_after_failure".into(), read_cursors(&pool, &org).await?);
+            out.insert(
+                "cursors_after_failure".into(),
+                read_cursors(&pool, &org).await?,
+            );
 
             println!(
                 "{}",
@@ -267,21 +281,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // and printing one would be comparing the probe's own
             // arithmetic. The rows are the comparison.
             let _ = sentinel_command::loops::run_motion_digest(&state).await?;
-            println!("{}", serde_json::to_string(&json!({"summary": {"ticked": true}}))?);
+            println!(
+                "{}",
+                serde_json::to_string(&json!({"summary": {"ticked": true}}))?
+            );
             for (label, sql) in DIGEST_ROWS {
                 dump(&pool, label, sql).await?;
             }
         }
         "reaper" => {
             let summary = sentinel_command::loops::reap_stranded_runs(&state).await?;
-            println!("{}", serde_json::to_string(&json!({"summary": summary.to_json()}))?);
+            println!(
+                "{}",
+                serde_json::to_string(&json!({"summary": summary.to_json()}))?
+            );
             for (label, sql) in REAPER_ROWS {
                 dump(&pool, label, sql).await?;
             }
         }
         "cleanup" => {
             let summary = sentinel_command::loops::run_log_cleanup(&state).await?;
-            println!("{}", serde_json::to_string(&json!({"summary": summary.to_json()}))?);
+            println!(
+                "{}",
+                serde_json::to_string(&json!({"summary": summary.to_json()}))?
+            );
             for (label, sql) in CLEANUP_ROWS {
                 dump(&pool, label, sql).await?;
             }
@@ -300,7 +323,12 @@ async fn post(
     path: &str,
     body: &serde_json::Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    client.post(format!("{base}{path}")).json(body).send().await?.error_for_status()?;
+    client
+        .post(format!("{base}{path}"))
+        .json(body)
+        .send()
+        .await?
+        .error_for_status()?;
     Ok(())
 }
 
@@ -314,8 +342,12 @@ async fn summarise_pushes(
     client: &reqwest::Client,
     base: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let pushes: Vec<serde_json::Value> =
-        client.get(format!("{base}/__pushes")).send().await?.json().await?;
+    let pushes: Vec<serde_json::Value> = client
+        .get(format!("{base}/__pushes"))
+        .send()
+        .await?
+        .json()
+        .await?;
     let mut out = Vec::new();
     for push in pushes {
         let rows = push["rows"].as_array().cloned().unwrap_or_default();
@@ -333,8 +365,10 @@ async fn summarise_pushes(
             // Sorted: the id set is a set, and the query behind it has
             // no ORDER BY on either side.
             Some(ids) => {
-                let mut ids: Vec<String> =
-                    ids.iter().filter_map(|i| i.as_str().map(str::to_string)).collect();
+                let mut ids: Vec<String> = ids
+                    .iter()
+                    .filter_map(|i| i.as_str().map(str::to_string))
+                    .collect();
                 ids.sort();
                 json!(ids)
             }

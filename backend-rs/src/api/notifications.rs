@@ -8,7 +8,7 @@
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::HeaderMap;
 use axum::Json;
-use chrono::{NaiveDateTime};
+use chrono::NaiveDateTime;
 use serde_json::{json, Map, Value};
 
 use crate::app::AppState;
@@ -208,7 +208,9 @@ pub async fn stream_notifications(
     // After auth, which is where slowapi's decorator runs: a refused
     // request must not spend the org's budget.
     rate.check().await?;
-    let cap = crate::plans::get_plan_limits(&user.plan).max_sse_subscribers.max(0) as usize;
+    let cap = crate::plans::get_plan_limits(&user.plan)
+        .max_sse_subscribers
+        .max(0) as usize;
     let Some(subscription) =
         crate::notifications::BROADCASTER.subscribe(&user.org_id, user.is_admin(), cap)
     else {
@@ -273,7 +275,9 @@ pub async fn mark_viewed(
     .execute(&state.pool)
     .await?;
 
-    Ok(Json(json!({ "success": true, "last_viewed_at": iso_naive(now) })))
+    Ok(Json(
+        json!({ "success": true, "last_viewed_at": iso_naive(now) }),
+    ))
 }
 
 /// `POST /api/notifications/clear-all`.
@@ -484,8 +488,7 @@ pub async fn email_unsubscribe(
         crate::email_unsubscribe::derive_secret(base).unwrap_or_default()
     };
 
-    let Some((org_id, kind, recipient)) =
-        crate::email_unsubscribe::verify_token(&secret, &token)
+    let Some((org_id, kind, recipient)) = crate::email_unsubscribe::verify_token(&secret, &token)
     else {
         return Ok(html(
             axum::http::StatusCode::BAD_REQUEST,
@@ -593,7 +596,6 @@ pub async fn update_email_preferences(
     ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     ModelBody(RequireAdmin(user), body): ModelBody<RequireAdmin>,
 ) -> Result<Json<Value>, ApiError> {
-
     let mut errors = BodyErrors::new();
     let mut changes: Vec<String> = Vec::new();
     let mut updates: Vec<(&str, bool)> = Vec::new();

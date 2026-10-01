@@ -177,7 +177,9 @@ pub async fn stream_motion_events(
     RequireView(user): RequireView,
 ) -> Result<axum::response::Response, ApiError> {
     rate.check().await?;
-    let cap = crate::plans::get_plan_limits(&user.plan).max_sse_subscribers.max(0) as usize;
+    let cap = crate::plans::get_plan_limits(&user.plan)
+        .max_sse_subscribers
+        .max(0) as usize;
     // No audience filter on this feed: every motion event is visible to
     // any member who can see the camera.
     let Some(subscription) = BROADCASTER.subscribe(&user.org_id, true, cap) else {

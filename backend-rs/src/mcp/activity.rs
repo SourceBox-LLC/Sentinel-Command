@@ -84,8 +84,6 @@ struct Inner {
     total_calls: HashMap<String, i64>,
 }
 
-
-
 pub struct McpActivityTracker {
     /// `Option` because `HashMap::new` is not const and this is a
     /// static — the same shape `sse.rs` and the plan caches use.
@@ -159,90 +157,93 @@ impl McpActivityTracker {
         // `"all"`, not `"admin"`: the activity stream's route is
         // already admin-only, and the audience filter here is for
         // events that reach a mixed set of subscribers.
-        self.broadcaster
-            .notify(&event.org_id, "all", &crate::audit::python_json_value(&payload));
+        self.broadcaster.notify(
+            &event.org_id,
+            "all",
+            &crate::audit::python_json_value(&payload),
+        );
     }
 
     /// The most recent events for an org, oldest first.
     pub fn recent_events(&self, org_id: &str, limit: usize) -> Vec<McpEvent> {
         self.with(|inner| {
-        let matching: Vec<&McpEvent> =
-            inner.events.iter().filter(|e| e.org_id == org_id).collect();
-        // `org_events[-limit:]` — the LAST `limit`, and a limit of zero
-        // is the whole list in Python, because `[-0:]` is `[0:]`.
-        let start = if limit == 0 {
-            0
-        } else {
-            matching.len().saturating_sub(limit)
-        };
-        matching[start..].iter().map(|e| (*e).clone()).collect()
+            let matching: Vec<&McpEvent> =
+                inner.events.iter().filter(|e| e.org_id == org_id).collect();
+            // `org_events[-limit:]` — the LAST `limit`, and a limit of zero
+            // is the whole list in Python, because `[-0:]` is `[0:]`.
+            let start = if limit == 0 {
+                0
+            } else {
+                matching.len().saturating_sub(limit)
+            };
+            matching[start..].iter().map(|e| (*e).clone()).collect()
         })
     }
 
     /// Sessions seen within the timeout, most recently active first.
     pub fn active_sessions(&self, org_id: &str, now: f64) -> Vec<Value> {
         self.with(|inner| {
-        let Some(sessions) = inner.sessions.get(org_id) else {
-            return Vec::new();
-        };
-        let mut rows: Vec<(f64, Value)> = sessions
-            .iter()
-            .map(|session| {
-                let age = now - session.last_active;
-                let status = if age < SESSION_ACTIVE_SECONDS {
-                    "active"
-                } else if age < SESSION_TIMEOUT_SECONDS {
-                    "idle"
-                } else {
-                    "disconnected"
-                };
-                (
-                    session.last_active,
-                    json!({
-                        "key_name": session.key_name,
-                        "last_active": session.last_active,
-                        // `round(age)` — to an int, ties to even.
-                        "last_active_ago": crate::pyrepr::round_half_even(age) as i64,
-                        "call_count": session.call_count,
-                        "status": status,
-                    }),
-                )
-            })
-            .collect();
-        // Stable, so ties keep the order the keys first called in.
-        rows.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-        rows.into_iter()
-            .map(|(_, row)| row)
-            .filter(|row| row["status"] != "disconnected")
-            .collect()
+            let Some(sessions) = inner.sessions.get(org_id) else {
+                return Vec::new();
+            };
+            let mut rows: Vec<(f64, Value)> = sessions
+                .iter()
+                .map(|session| {
+                    let age = now - session.last_active;
+                    let status = if age < SESSION_ACTIVE_SECONDS {
+                        "active"
+                    } else if age < SESSION_TIMEOUT_SECONDS {
+                        "idle"
+                    } else {
+                        "disconnected"
+                    };
+                    (
+                        session.last_active,
+                        json!({
+                            "key_name": session.key_name,
+                            "last_active": session.last_active,
+                            // `round(age)` — to an int, ties to even.
+                            "last_active_ago": crate::pyrepr::round_half_even(age) as i64,
+                            "call_count": session.call_count,
+                            "status": status,
+                        }),
+                    )
+                })
+                .collect();
+            // Stable, so ties keep the order the keys first called in.
+            rows.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            rows.into_iter()
+                .map(|(_, row)| row)
+                .filter(|row| row["status"] != "disconnected")
+                .collect()
         })
     }
 
     pub fn stats(&self, org_id: &str, now: f64) -> Value {
         self.with(|inner| {
-        let events: Vec<&McpEvent> =
-            inner.events.iter().filter(|e| e.org_id == org_id).collect();
-        let recent = events.iter().filter(|e| now - e.timestamp < 60.0).count();
-        let recent_5m = events.iter().filter(|e| now - e.timestamp < 300.0).count();
-        let errors = events.iter().filter(|e| e.status == "error").count();
-        let active = inner
-            .sessions
-            .get(org_id)
-            .map(|sessions| {
-                sessions
-                    .iter()
-                    .filter(|s| now - s.last_active < SESSION_TIMEOUT_SECONDS)
-                    .count()
+            let events: Vec<&McpEvent> =
+                inner.events.iter().filter(|e| e.org_id == org_id).collect();
+            let recent = events.iter().filter(|e| now - e.timestamp < 60.0).count();
+            let recent_5m = events.iter().filter(|e| now - e.timestamp < 300.0).count();
+            let errors = events.iter().filter(|e| e.status == "error").count();
+            let active = inner
+                .sessions
+                .get(org_id)
+                .map(|sessions| {
+                    sessions
+                        .iter()
+                        .filter(|s| now - s.last_active < SESSION_TIMEOUT_SECONDS)
+                        .count()
+                })
+                .unwrap_or(0);
+            json!({
+                "total_calls": inner.total_calls.get(org_id).copied().unwrap_or(0),
+                "calls_per_min": recent,
+                "calls_5m": recent_5m,
+                "error_count": errors,
+                "active_clients": active,
+                "recent_event_count": events.len(),
             })
-            .unwrap_or(0);
-        json!({
-            "total_calls": inner.total_calls.get(org_id).copied().unwrap_or(0),
-            "calls_per_min": recent,
-            "calls_5m": recent_5m,
-            "error_count": errors,
-            "active_clients": active,
-            "recent_event_count": events.len(),
-        })
         })
     }
 
@@ -331,9 +332,15 @@ mod tests {
     fn events_are_scoped_to_their_org() {
         let tracker = McpActivityTracker::new();
         tracker.with(|inner| {
-            inner.events.push_back(event("a", "k1", "list_cameras", "completed", 1.0));
-            inner.events.push_back(event("b", "k2", "get_camera", "completed", 2.0));
-            inner.events.push_back(event("a", "k1", "get_camera", "completed", 3.0));
+            inner
+                .events
+                .push_back(event("a", "k1", "list_cameras", "completed", 1.0));
+            inner
+                .events
+                .push_back(event("b", "k2", "get_camera", "completed", 2.0));
+            inner
+                .events
+                .push_back(event("a", "k1", "get_camera", "completed", 3.0));
         });
         let mine = tracker.recent_events("a", 50);
         assert_eq!(mine.len(), 2);
@@ -351,7 +358,9 @@ mod tests {
         let tracker = McpActivityTracker::new();
         tracker.with(|inner| {
             for i in 0..5 {
-                inner.events.push_back(event("a", "k", "t", "completed", i as f64));
+                inner
+                    .events
+                    .push_back(event("a", "k", "t", "completed", i as f64));
             }
         });
         let two = tracker.recent_events("a", 2);
@@ -371,7 +380,9 @@ mod tests {
                 if inner.events.len() == MAX_EVENTS {
                     inner.events.pop_front();
                 }
-                inner.events.push_back(event("a", "k", "t", "completed", i as f64));
+                inner
+                    .events
+                    .push_back(event("a", "k", "t", "completed", i as f64));
             }
         });
         let all = tracker.recent_events("a", 1000);
@@ -387,9 +398,21 @@ mod tests {
             inner.sessions.insert(
                 "a".into(),
                 vec![
-                    Session { key_name: "fresh".into(), last_active: 1000.0, call_count: 3 },
-                    Session { key_name: "idling".into(), last_active: 900.0, call_count: 1 },
-                    Session { key_name: "gone".into(), last_active: 500.0, call_count: 9 },
+                    Session {
+                        key_name: "fresh".into(),
+                        last_active: 1000.0,
+                        call_count: 3,
+                    },
+                    Session {
+                        key_name: "idling".into(),
+                        last_active: 900.0,
+                        call_count: 1,
+                    },
+                    Session {
+                        key_name: "gone".into(),
+                        last_active: 500.0,
+                        call_count: 9,
+                    },
                 ],
             );
         });
@@ -414,21 +437,46 @@ mod tests {
             inner.sessions.insert(
                 "a".into(),
                 vec![
-                    Session { key_name: "just-active".into(), last_active: 1000.0 - 59.9, call_count: 1 },
-                    Session { key_name: "just-idle".into(), last_active: 1000.0 - 60.0, call_count: 1 },
-                    Session { key_name: "just-kept".into(), last_active: 1000.0 - 299.9, call_count: 1 },
-                    Session { key_name: "just-dropped".into(), last_active: 1000.0 - 300.0, call_count: 1 },
+                    Session {
+                        key_name: "just-active".into(),
+                        last_active: 1000.0 - 59.9,
+                        call_count: 1,
+                    },
+                    Session {
+                        key_name: "just-idle".into(),
+                        last_active: 1000.0 - 60.0,
+                        call_count: 1,
+                    },
+                    Session {
+                        key_name: "just-kept".into(),
+                        last_active: 1000.0 - 299.9,
+                        call_count: 1,
+                    },
+                    Session {
+                        key_name: "just-dropped".into(),
+                        last_active: 1000.0 - 300.0,
+                        call_count: 1,
+                    },
                 ],
             );
         });
         let rows = tracker.active_sessions("a", 1000.0);
         let by_name: Vec<(&str, &str)> = rows
             .iter()
-            .map(|r| (r["key_name"].as_str().unwrap(), r["status"].as_str().unwrap()))
+            .map(|r| {
+                (
+                    r["key_name"].as_str().unwrap(),
+                    r["status"].as_str().unwrap(),
+                )
+            })
             .collect();
         assert_eq!(
             by_name,
-            vec![("just-active", "active"), ("just-idle", "idle"), ("just-kept", "idle")]
+            vec![
+                ("just-active", "active"),
+                ("just-idle", "idle"),
+                ("just-kept", "idle")
+            ]
         );
     }
 
@@ -436,23 +484,39 @@ mod tests {
     fn stats_count_the_windows_separately() {
         let tracker = McpActivityTracker::new();
         tracker.with(|inner| {
-            inner.events.push_back(event("a", "k", "t", "completed", 1000.0));
+            inner
+                .events
+                .push_back(event("a", "k", "t", "completed", 1000.0));
             inner.events.push_back(event("a", "k", "t", "error", 900.0));
-            inner.events.push_back(event("a", "k", "t", "completed", 100.0));
-            inner.events.push_back(event("b", "k", "t", "completed", 1000.0));
+            inner
+                .events
+                .push_back(event("a", "k", "t", "completed", 100.0));
+            inner
+                .events
+                .push_back(event("b", "k", "t", "completed", 1000.0));
             inner.total_calls.insert("a".into(), 42);
             inner.sessions.insert(
                 "a".into(),
-                vec![Session { key_name: "k".into(), last_active: 1000.0, call_count: 3 }],
+                vec![Session {
+                    key_name: "k".into(),
+                    last_active: 1000.0,
+                    call_count: 3,
+                }],
             );
         });
         let stats = tracker.stats("a", 1000.0);
         assert_eq!(stats["total_calls"], 42);
-        assert_eq!(stats["calls_per_min"], 1, "only the one inside sixty seconds");
+        assert_eq!(
+            stats["calls_per_min"], 1,
+            "only the one inside sixty seconds"
+        );
         assert_eq!(stats["calls_5m"], 2);
         assert_eq!(stats["error_count"], 1);
         assert_eq!(stats["active_clients"], 1);
-        assert_eq!(stats["recent_event_count"], 3, "this org's events, not every org's");
+        assert_eq!(
+            stats["recent_event_count"], 3,
+            "this org's events, not every org's"
+        );
     }
 
     /// An org nobody has called for reports zeroes rather than

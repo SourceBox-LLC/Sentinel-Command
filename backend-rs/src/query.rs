@@ -111,7 +111,13 @@ impl Query {
     /// The same, for a parameter Python bounds on one side or not at
     /// all — where a value beyond i64 reaches the handler and has to be
     /// dealt with there, as Python deals with it.
-    pub fn big_int(&mut self, name: &str, default: PyInt, ge: Option<i64>, le: Option<i64>) -> PyInt {
+    pub fn big_int(
+        &mut self,
+        name: &str,
+        default: PyInt,
+        ge: Option<i64>,
+        le: Option<i64>,
+    ) -> PyInt {
         let Some(raw) = self.last(name).map(str::to_string) else {
             return default;
         };
@@ -139,7 +145,13 @@ impl Query {
         if let Some(ge) = ge {
             if !value.ge(ge) {
                 let msg = format!("Input should be greater than or equal to {ge}");
-                self.push_error("greater_than_equal", name, msg, &raw, Some(json!({"ge": ge})));
+                self.push_error(
+                    "greater_than_equal",
+                    name,
+                    msg,
+                    &raw,
+                    Some(json!({"ge": ge})),
+                );
                 return default;
             }
         }
@@ -159,7 +171,13 @@ impl Query {
     /// it the way Pydantic does; matching is done against `allowed`,
     /// which keeps a regex engine out of the dependency tree for the one
     /// place this is used.
-    pub fn pattern(&mut self, name: &str, default: &str, pattern: &str, allowed: &[&str]) -> String {
+    pub fn pattern(
+        &mut self,
+        name: &str,
+        default: &str,
+        pattern: &str,
+        allowed: &[&str],
+    ) -> String {
         let Some(raw) = self.last(name).map(str::to_string) else {
             return default.to_string();
         };
@@ -267,8 +285,6 @@ pub fn parse_pydantic_int(value: &Value) -> Result<PyInt, IntError> {
         _ => Err(IntError::Type),
     }
 }
-
-
 
 /// Build the 422 envelope `main.py`'s handler produces, or `Ok` when
 /// there is nothing to report.
@@ -443,7 +459,9 @@ where
         let (mut parts, body) = req.into_parts();
         let bytes = axum::body::to_bytes(body, 2 * 1024 * 1024)
             .await
-            .map_err(|_| ApiError::bad_request("There was an error parsing the body").into_response())?;
+            .map_err(|_| {
+                ApiError::bad_request("There was an error parsing the body").into_response()
+            })?;
         let decoded = decode_json_body(&bytes).map_err(IntoResponse::into_response)?;
         let auth = A::from_request_parts(&mut parts, state)
             .await
@@ -657,7 +675,10 @@ impl BodyErrors {
             [only] => format!("'{only}'"),
             [rest @ .., last] => format!(
                 "{} or '{last}'",
-                rest.iter().map(|o| format!("'{o}'")).collect::<Vec<_>>().join(", ")
+                rest.iter()
+                    .map(|o| format!("'{o}'"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
         };
         self.push(
@@ -1019,8 +1040,10 @@ fn is_hhmm(value: &str) -> bool {
     if b.len() != 5 || b[2] != b':' {
         return false;
     }
-    if !(b[0].is_ascii_digit() && b[1].is_ascii_digit()
-        && b[3].is_ascii_digit() && b[4].is_ascii_digit())
+    if !(b[0].is_ascii_digit()
+        && b[1].is_ascii_digit()
+        && b[3].is_ascii_digit()
+        && b[4].is_ascii_digit())
     {
         return false;
     }
@@ -1129,8 +1152,6 @@ pub fn int4(value: PyInt) -> Result<i32, ApiError> {
         .ok_or_else(|| ApiError::internal("integer out of range"))
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1214,7 +1235,6 @@ mod tests {
         assert_eq!(err.detail["errors"][0]["type"], json!("missing"));
     }
 
-
     #[test]
     fn integers_come_from_the_pydantic_port() {
         // The forms themselves are held to pydantic by
@@ -1241,8 +1261,18 @@ mod tests {
         for bad in [
             // the one an operator actually types
             "8:30",
-            "24:00", "23:60", "2:5", "0830", "08-30", "aa:bb", "08:3", "08:300",
-            "", " 8:30", "08:30 ", "٠٨:٣٠",
+            "24:00",
+            "23:60",
+            "2:5",
+            "0830",
+            "08-30",
+            "aa:bb",
+            "08:3",
+            "08:300",
+            "",
+            " 8:30",
+            "08:30 ",
+            "٠٨:٣٠",
         ] {
             assert!(!is_hhmm(bad), "{bad:?} should be rejected");
         }
@@ -1273,7 +1303,10 @@ mod tests {
         // body; the SPA parses the 422 envelope instead.
         let err = path_int("incident_id", "abc").unwrap_err();
         assert_eq!(err.status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(err.detail["errors"][0]["loc"], json!(["path", "incident_id"]));
+        assert_eq!(
+            err.detail["errors"][0]["loc"],
+            json!(["path", "incident_id"])
+        );
         assert_eq!(err.detail["errors"][0]["input"], "abc");
         assert_eq!(
             err.detail["message"],
@@ -1289,12 +1322,20 @@ mod tests {
         assert_eq!(path_int("id", "-1").unwrap(), PyInt::Small(-1));
         // A value past the column is not a parse failure: FastAPI took
         // it, and the database is what refuses it.
-        assert_eq!(path_int("id", "99999999999999").unwrap(), PyInt::Small(99999999999999));
         assert_eq!(
-            int4(path_int("id", "99999999999999").unwrap()).unwrap_err().status,
+            path_int("id", "99999999999999").unwrap(),
+            PyInt::Small(99999999999999)
+        );
+        assert_eq!(
+            int4(path_int("id", "99999999999999").unwrap())
+                .unwrap_err()
+                .status,
             StatusCode::INTERNAL_SERVER_ERROR
         );
-        assert_eq!(int4(path_int("id", "-2147483648").unwrap()).unwrap(), i32::MIN);
+        assert_eq!(
+            int4(path_int("id", "-2147483648").unwrap()).unwrap(),
+            i32::MIN
+        );
         assert!(path_int("id", "abc").is_err());
     }
 
@@ -1309,7 +1350,10 @@ mod tests {
     fn absent_parameters_take_the_default_without_erroring() {
         let mut q = Query::parse(None);
         assert_eq!(q.int("limit", 100, 1, 500), 100);
-        assert_eq!(q.pattern("format", "json", "^(json|csv)$", &["json", "csv"]), "json");
+        assert_eq!(
+            q.pattern("format", "json", "^(json|csv)$", &["json", "csv"]),
+            "json"
+        );
         assert_eq!(q.optional_str("event"), None);
         assert!(q.finish().is_ok());
     }

@@ -88,10 +88,7 @@ pub async fn redoc() -> Response {
 
 fn html(body: &'static str) -> Response {
     (
-        [(
-            axum::http::header::CONTENT_TYPE,
-            "text/html; charset=utf-8",
-        )],
+        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
         body,
     )
         .into_response()
@@ -115,7 +112,11 @@ mod tests {
         // floor rather than an equality so
         // adding a route does not fail here — `openapi_drift.py` is what
         // holds the two in step, and it can say WHICH path is missing.
-        assert!(paths.len() >= 80, "only {} paths in the document", paths.len());
+        assert!(
+            paths.len() >= 80,
+            "only {} paths in the document",
+            paths.len()
+        );
         for path in [
             "/api/cameras",
             "/api/nodes/heartbeat",
@@ -129,7 +130,9 @@ mod tests {
             assert!(paths.contains_key(path), "{path} missing from the document");
         }
         assert!(
-            parsed["components"]["schemas"].as_object().is_some_and(|s| s.len() >= 20),
+            parsed["components"]["schemas"]
+                .as_object()
+                .is_some_and(|s| s.len() >= 20),
             "the component schemas did not survive the harvest"
         );
     }

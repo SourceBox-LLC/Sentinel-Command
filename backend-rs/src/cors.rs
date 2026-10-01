@@ -106,7 +106,10 @@ where
     // Already been through Python's middleware — this is a proxied
     // response. A second Access-Control-Allow-Origin makes the browser
     // reject it outright.
-    if response.headers().contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN) {
+    if response
+        .headers()
+        .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+    {
         return response;
     }
 
@@ -148,7 +151,12 @@ fn append_vary_origin(response: &mut Response<axum::body::Body>) {
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
     let value = match existing {
-        Some(v) if v.split(',').any(|t| t.trim().eq_ignore_ascii_case("origin")) => return,
+        Some(v)
+            if v.split(',')
+                .any(|t| t.trim().eq_ignore_ascii_case("origin")) =>
+        {
+            return
+        }
         Some(v) => format!("{v}, Origin"),
         None => "Origin".to_string(),
     };
@@ -216,7 +224,10 @@ mod tests {
     fn duplicates_collapse() {
         let c = CorsConfig::from_env("http://localhost:5173", "http://localhost:5173");
         assert_eq!(
-            c.origins.iter().filter(|o| *o == "http://localhost:5173").count(),
+            c.origins
+                .iter()
+                .filter(|o| *o == "http://localhost:5173")
+                .count(),
             1
         );
     }
