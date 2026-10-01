@@ -27,8 +27,9 @@
 #   4. Prunes local backups older than BACKUP_RETENTION_DAYS.
 #
 # USAGE
-#   On the Fly machine:   bash backend/scripts/backup_db.sh
-#   Locally:              DATABASE_URL=postgresql://... bash backend/scripts/backup_db.sh
+#   On the Fly machine:   bash /app/scripts/backup_db.sh
+#   Locally:              DATABASE_URL=postgresql://... bash scripts/backup_db.sh
+#   Self-hosted compose:  docker compose exec app bash /app/scripts/backup_db.sh
 #
 # ENV
 #   DATABASE_URL           required. Read from the app's own environment

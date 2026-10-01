@@ -25,12 +25,30 @@ primary_region = "sjc"
   # 384 MiB on the 1 GiB machine leaves ~600 MiB for the web tier
   # (~25 concurrent live cameras). Scale this and memory_mb TOGETHER.
   #
-  # That headroom figure was measured against Python at 239 MB RSS. The
-  # Rust tier should need substantially less, which is the one benefit
-  # this rewrite was actually justified on — but this number stays where
-  # it is until it has been MEASURED in production rather than assumed,
-  # because the failure mode of getting it wrong is the OOM killer
-  # taking every org's streams at once.
+  # That headroom figure was measured against Python at 239 MB RSS in
+  # production. The Rust tier has now been measured too, though NOT in
+  # production — `backend-rs/tests/differential/memory_run.sh` runs both
+  # tiers on one machine over one Postgres with identical load, release
+  # binary, production cache ceilings:
+  #
+  #                                python     rust
+  #   idle, just booted            152.8 MB   14.7 MB
+  #   + 2 cameras x 60 segments    190.3 MB   60.3 MB   (~36 MB of .ts)
+  #   + 400 segment reads          190.8 MB   61.1 MB
+  #
+  # Two things to read off that. The FIXED cost is about a tenth: ~15 MB
+  # against ~153 MB, which is the ~140 MB this rewrite was justified on.
+  # And the cache itself costs the same either way — it is bytes — with
+  # Rust in fact growing slightly MORE than the data it cached (45 MB for
+  # 36 MB of segments, glibc holding freed 300 KB blocks), so none of the
+  # saving comes from the thing this variable bounds.
+  #
+  # The number therefore STAYS at 384 MiB. The comment's own bar was a
+  # production measurement and a laptop is not one; what has changed is
+  # that raising it is now an argument someone can make from evidence
+  # rather than from hope. Raise it only alongside a production RSS
+  # reading, because the failure mode of getting it wrong is the OOM
+  # killer taking every org's streams at once.
   # The database no longer shares this machine's RAM for page cache,
   # so there is a little more headroom here than there used to be.
   SEGMENT_CACHE_MAX_TOTAL_BYTES = "402653184"

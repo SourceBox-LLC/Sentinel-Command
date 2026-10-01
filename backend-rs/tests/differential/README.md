@@ -1371,6 +1371,7 @@ everything in this directory. What that did to each kind of harness:
 | `openapi_drift.py`, `agent_contract.py` | still run | themselves — both were written for this world |
 | the generated corpora | still used | the `py*` unit tests that consume them |
 | `csv_run.sh` | **runs**, against a worktree | itself, see below |
+| `memory_run.sh` | **runs**, against a worktree | itself — it measures rather than compares answers |
 
 ¹ `route_capture.py`, `blockers.py`, `ratelimit_parity.py`,
 `auth_parity.py`, `notify_parity.py`, `column_defaults.py`,
@@ -1408,3 +1409,22 @@ neither contains a quote, a CRLF or a formula leader.
 
 This is the pattern for any slice that lands after its reference is
 gone. "The Python is deleted" is a cost, not a wall.
+
+### Measuring the thing the rewrite was justified on
+
+`memory_run.sh` uses the same worktree trick for a different purpose: not
+"do the two agree" but "what does each cost". The rewrite's case was
+memory — the plan was explicit that it was not latency, since Python cost
+~1 ms of a request whose database round trip is 25 — and `fly.toml` still
+sizes the segment cache against a measured Python figure with a comment
+saying the number stays put until the Rust tier has been measured too,
+"because the failure mode of getting it wrong is the OOM killer taking
+every org's streams at once".
+
+So both tiers come up on one machine over one Postgres, the release
+binary rather than the debug one, and RSS is sampled at three points:
+booted, after N segments pushed to each, and after 400 segment reads.
+What it does not claim is a production number — it is a laptop and the
+load is synthetic. It is an apples-to-apples comparison of two processes
+doing identical work, which is what that comment asks for before anyone
+moves the ceiling.

@@ -92,6 +92,27 @@ harness is plain HTTP. Must honour `X-Forwarded-Proto`.
 11. update `AGENTS.md`, `README.md`, `docs/`
 12. re-verify what still can be
 
+All twelve are done. Step 12 found more than it was meant to, which is
+recorded here rather than only in the commits, because the pattern is the
+useful part:
+
+| found | how |
+| --- | --- |
+| `?format=csv` on three routes was a 502 | `grep proxy::forward src/` — the deletion turned three documented deferrals into three broken downloads |
+| the MCP pre-auth body cap had silently stopped applying, and its rate limit was never ported | reading `spa::fallback` and noticing `json_error` had a `429` branch nothing called |
+| Sentry was never ported | listing the Python's `app/core/*` and asking which had no counterpart |
+| `request_id` / `org_id` in logs were never ported | the same list: `logging_setup.py`, `request_context.py` |
+| **all 46 email templates were missing from the repo and the image** | the same list again — and two tests that covered them had been skipping since the deletion |
+| nothing scanned the Rust dependency tree | comparing the three advisory gates against the three dependency sets |
+| `pip-audit --strict` was already failing | running the new agent job's commands by hand instead of trusting them |
+| `tiers.sh` names the wrong password for its own hash | a login that should have worked, during the compose verification |
+
+The common shape: **a check that cannot fail is indistinguishable from a
+check that passes.** Two of these were guarded by `if not path.exists():
+return`, one by a comparison of two stacks that both said no, one by a
+`cargo audit` that was never wired up. Looking for green is not the same
+as looking for *reachable*.
+
 ## What step 12 can and cannot cover
 
 Every harness in `tests/differential/` diffs against the running Python

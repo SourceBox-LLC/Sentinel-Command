@@ -20,8 +20,8 @@
 #   On Fly:  fly machine stop <id>, restore, then start.
 #
 # USAGE
-#   bash backend/scripts/restore_db.sh /data/backups/sentinel-<stamp>.dump
-#   DATABASE_URL=postgresql://... bash backend/scripts/restore_db.sh ./backup.dump --yes
+#   bash /app/scripts/restore_db.sh /data/backups/sentinel-<stamp>.dump
+#   DATABASE_URL=postgresql://... bash scripts/restore_db.sh ./backup.dump --yes
 #
 # ENV
 #   DATABASE_URL   required — the database to restore INTO.
