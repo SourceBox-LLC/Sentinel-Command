@@ -71,6 +71,27 @@ RUN if [ -n "$CLERK_PUBLISHABLE_KEY" ]; then \
       echo "Clerk key: no build arg set — falling back to committed .env.production"; \
     fi
 
+# The auth provider, which is ALSO a build-time constant.
+#
+# `frontend/src/auth/index.jsx` reads `import.meta.env.VITE_AUTH_PROVIDER`
+# once at module load, so the choice between Clerk's UI and the local
+# login page is baked into the bundle — setting AUTH_PROVIDER=local on the
+# container changes the backend and leaves the dashboard asking Clerk to
+# sign in a user the backend has never heard of.
+#
+# That is exactly what the first docker-compose.yml shipped. Its login was
+# "verified" with curl against the API, which the bundle is not involved
+# in; the page itself would have been a Clerk sign-in over a local-auth
+# server. Named without the VITE_ prefix for the reason given above, and
+# APPENDED, because the Clerk block may already have written this file.
+ARG AUTH_PROVIDER=""
+RUN if [ "$AUTH_PROVIDER" = "local" ]; then \
+      printf 'VITE_AUTH_PROVIDER=local\n' >> .env.production.local; \
+      echo "Auth provider: local (self-hosted bundle)"; \
+    else \
+      echo "Auth provider: clerk (default)"; \
+    fi
+
 # Build React app (outputs to /frontend/dist/)
 RUN npm run build
 

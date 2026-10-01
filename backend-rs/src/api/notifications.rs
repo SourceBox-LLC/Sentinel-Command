@@ -81,7 +81,7 @@ impl NotificationRow {
 /// A write on a GET, deliberately: a brand-new user with every existing
 /// notification marked unread is noise, so the row is initialised with
 /// `last_viewed_at = now` and they only see what arrives afterwards.
-async fn get_or_init_state(
+pub async fn get_or_init_state(
     pool: &sqlx::PgPool,
     user_id: &str,
     org_id: &str,
@@ -99,17 +99,41 @@ async fn get_or_init_state(
         return Ok(row);
     }
 
+    // INSERT … ON CONFLICT DO NOTHING, then read back — not a bare INSERT.
+    //
+    // The dashboard fires the inbox, the unread count and the SSE stream
+    // at the same instant on first load, and all three land here for a
+    // user with no row yet. Check-then-insert lets two of them both see
+    // "absent" and both insert; the loser violates
+    // `uq_user_notif_state_user_org` and the request is a 500. Found by
+    // driving a real browser at a fresh install: the first page a new
+    // user ever sees logged a 500 in its console.
+    //
+    // The Python has the same check-then-insert (PYTHON_BUGS #17) and the
+    // serial differential could never have shown it — it takes two
+    // requests in flight. The read-back matters as much as the conflict
+    // clause: the loser must return the WINNER's timestamp, or two tabs
+    // would disagree about what is unread.
     let now = now_naive();
     sqlx::query(
         "INSERT INTO user_notification_state (clerk_user_id, org_id, last_viewed_at)
-         VALUES ($1, $2, $3)",
+         VALUES ($1, $2, $3)
+         ON CONFLICT (clerk_user_id, org_id) DO NOTHING",
     )
     .bind(user_id)
     .bind(org_id)
     .bind(now)
     .execute(pool)
     .await?;
-    Ok((Some(now), None))
+    let row: (Option<NaiveDateTime>, Option<NaiveDateTime>) = sqlx::query_as(
+        "SELECT last_viewed_at, cleared_at FROM user_notification_state
+          WHERE clerk_user_id = $1 AND org_id = $2",
+    )
+    .bind(user_id)
+    .bind(org_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
 }
 
 /// Non-admins never see `audience = "admin"` rows.

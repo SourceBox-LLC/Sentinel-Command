@@ -10,7 +10,10 @@
 # Quick start:
 #
 #   cp backend-rs/.env.example .env
-#   # fill in LOCAL_ADMIN_USERNAME / LOCAL_ADMIN_EMAIL, then:
+#   # fill in LOCAL_ADMIN_USERNAME / LOCAL_ADMIN_EMAIL, and change
+#   # FRONTEND_URL to http://localhost:8000 (the example's :5173 is the
+#   # dev server; here the dashboard and the API are one origin, and that
+#   # value is the base of every link in a notification email), then:
 #   openssl rand -hex 32                        # → APP_SECRET_KEY
 #   docker compose run --rm --no-deps app sentinel-hash-password
 #                                               # → LOCAL_ADMIN_PASSWORD_HASH
@@ -63,7 +66,14 @@ services:
       - "5432"
 
   app:
-    build: .
+    # The build arg is not optional decoration: the dashboard's auth
+    # provider is compiled into the JavaScript bundle, so without it this
+    # image serves Clerk's sign-in page in front of a local-auth backend.
+    # It must agree with AUTH_PROVIDER below.
+    build:
+      context: .
+      args:
+        AUTH_PROVIDER: local
     restart: unless-stopped
     depends_on:
       db:

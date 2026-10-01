@@ -470,3 +470,44 @@ until fix (1) or (2) lands.
 rejects the batch before the push, with a comment pointing here. The two
 stacks have to agree while both are serving, and this is the single most
 important thing in that file to fix on master.
+
+## 17. A new user's first page load can be a 500
+
+**Where:** `backend/app/api/notifications.py::_get_or_create_state`
+
+```python
+state = db.query(UserNotificationState).filter(...).first()
+if state is None:
+    state = UserNotificationState(clerk_user_id=..., org_id=..., last_viewed_at=now)
+    db.add(state)
+    db.commit()
+```
+
+Check-then-insert against `uq_user_notif_state_user_org`. On first load
+the dashboard asks for the inbox, the unread count and the notification
+SSE stream at the same instant, and all three call this for a user with
+no row yet. Two of them see "absent", both insert, and the loser raises
+`IntegrityError` — an unhandled 500 on the first page a new user ever
+sees.
+
+**How it was found:** not by the differential, which could not have
+found it. Every harness here sends one request at a time, so this path
+scored identical for the whole port; it takes two requests in flight.
+It surfaced when a real browser was pointed at a fresh self-hosted
+install and the console showed a 500, with
+`duplicate key value violates unique constraint` in the server log.
+
+Python is likelier to get away with it — its sync handlers run on a
+threadpool and the window is narrower — but nothing prevents it, and it
+needs only a fresh user, which is every user once.
+
+**Not reproduced in the port.** This is the one entry in this file where
+the Rust deliberately differs, because the Python is no longer serving
+and there is nothing left to agree with: `get_or_init_state` uses
+`INSERT … ON CONFLICT DO NOTHING` and reads the row back, so the loser
+returns the winner's cursor. `tests/notification_state_db.rs` fires
+twenty first-requests at once; it fails without the conflict clause.
+
+**Fix on master, if the Python is ever served again:** the same —
+`INSERT … ON CONFLICT DO NOTHING` (`on_conflict_do_nothing()` on the
+Postgres dialect), or catch `IntegrityError`, roll back and re-query.

@@ -187,12 +187,12 @@ Backend config is loaded from environment variables (see `backend-rs/.env.exampl
 - `FRONTEND_URL` — extra CORS origin (must have scheme, no trailing slash)
 - `REDIS_URL` — shared rate-limiter storage (the Python used it through slowapi; `ratelimit.rs` uses the same keys, so counters survive the rewrite). Without it, per-process in-memory counters (single-VM safe; multi-VM round-robins around the limit). Currently in production via Upstash on Fly.
 - `SEGMENT_CACHE_MAX_PER_CAMERA` — segments cached in memory per camera (default **60**, ~60s — CameraNode emits 1-second segments)
-- `SEGMENT_CACHE_MAX_TOTAL_BYTES` — global byte ceiling across all camera caches (default 2 GiB). When exceeded, `hls.rs` evicts oldest segments across ALL cameras until back under cap.
+- `SEGMENT_CACHE_MAX_TOTAL_BYTES` — global byte ceiling across all camera caches (default **384 MiB**, in both the Python and the Rust; this line said 2 GiB for a long time and was never true). When exceeded, `hls.rs` evicts oldest segments across ALL cameras until back under cap.
 - `SEGMENT_PUSH_MAX_BYTES` — max bytes per pushed segment (default 2 MB)
 - `PLAYLIST_PUSH_MAX_BYTES` — max bytes per pushed playlist (default 64 KB)
 - `CLEANUP_INTERVAL` — run cache eviction every N playlist updates (default 20)
-- `INACTIVE_CAMERA_CLEANUP_HOURS` — free caches for cameras offline this long (default 24)
-- `LOG_RETENTION_DAYS` — stream + MCP + audit + motion + notification + email log retention (default 90; per-tier override via plan slug — Free 30 / Pro 90 / Pro Plus 365)
+- ~~`INACTIVE_CAMERA_CLEANUP_HOURS`~~ — **not read.** The Python's daily loop freed caches for cameras offline this long; the 60-second stale sweep in `hls.rs` (`evict_stale_cameras`) drops a camera's segments, playlist and counters a minute after it stops pushing, which leaves the daily pass nothing to do. Setting it has no effect.
+- ~~`LOG_RETENTION_DAYS`~~ — **not read, and it never did anything.** Retention is per plan (Free 30 / Pro 90 / Pro Plus 365, in `plans.rs`). The Python took this as a fallback for an org whose plan could not be resolved, but `get_plan_limits` falls back to the free tier's whole dict, so the fallback was unreachable; the port dropped the parameter rather than carry a knob that cannot change an answer.
 - `OFFLINE_SWEEP_INTERVAL_SECONDS` — how often to mark stale rows offline (default 30)
 **Sentinel AI agent (the gated agent feature):**
 - `SENTINEL_AGENT_KEY` — shared secret for the run-queue API (`X-Sentinel-Agent-Key`) and the HMAC on outbound `/wakeup` webhooks. Must match the agent's own `SENTINEL_AGENT_KEY`. ⚠️ **Multi-tenant** — its holder can drain every org's queue. Never give it to a customer; issue a scoped `osa_` key from **MCP → Sentinel Agent Keys** instead. Leaving it unset disables only the first-party agent path — scoped keys keep working, which is what a self-hosted Command Center wants.
@@ -338,7 +338,7 @@ MCP Client ──Bearer osc_…──→ rmcp → mcp::scope gate → tools
 5. Backend rewrites playlist segment filenames to relative `segment/<file>` proxy URLs and caches the result in `_playlist_cache`
 6. Browser calls `GET /api/cameras/{id}/stream.m3u8` with JWT → served instantly from `_playlist_cache`
 7. Browser fetches each segment via `GET /api/cameras/{id}/segment/{filename}` → served from `_segment_cache` in memory
-8. Cache eviction sweeps every `CLEANUP_INTERVAL` playlist updates; the daily cleanup loop flushes caches for cameras offline >`INACTIVE_CAMERA_CLEANUP_HOURS`
+8. Cache eviction sweeps every `CLEANUP_INTERVAL` playlist updates, and a 60-second timer drops every cache for a camera that has stopped pushing — so the advertised inactivity cutoff holds even when no node is pushing at all
 
 ### SPA serving
 

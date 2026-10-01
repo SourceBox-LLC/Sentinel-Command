@@ -18,12 +18,28 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 
 async fn pool() -> Option<PgPool> {
-    let url = std::env::var("TEST_DATABASE_URL").ok()?;
-    PgPoolOptions::new()
+    let url = std::env::var("TEST_DATABASE_URL")
+        .ok()
+        .filter(|u| !u.is_empty())?;
+    // Unset means skip; SET AND UNREACHABLE means fail. This used to end
+    // in `.ok()`, which turned a wrong URL into a silent skip — so the CI
+    // leg that exists to run these would have reported green with every
+    // one of them returning early.
+    let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect(&url)
         .await
-        .ok()
+        .expect("TEST_DATABASE_URL is set but the database is unreachable");
+    // And the schema is applied here, not assumed. CI hands this an EMPTY
+    // database; locally it was always the differential's, which had the
+    // tables already, so the assumption held everywhere except the one
+    // place these are meant to run. Idempotent, and sqlx takes an advisory
+    // lock, so parallel tests racing to migrate is safe.
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("migrations must apply to the test database");
+    Some(pool)
 }
 
 /// Every test shares one table, so each uses its own org_id prefix and

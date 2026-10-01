@@ -92,8 +92,12 @@ jobs:
     #                proves the suite still passes for a contributor with
     #                no Postgres running.
     #   postgres     the same command with a live Postgres, which turns
-    #                on tests/{hls_db,plans_db,settings_db}.rs and the
-    #                migration.
+    #                on tests/*_db.rs. Each applies the migrations itself,
+    #                because this service container starts EMPTY — the
+    #                first version of this leg would have failed on that,
+    #                the tests having only ever met a database that
+    #                already had the schema. A set-but-unreachable URL is
+    #                a failure, not a skip.
     #
     # This replaces the old sqlite/postgres pair. The Python tier branched
     # on the URL scheme and supported both engines; the Rust tier is
