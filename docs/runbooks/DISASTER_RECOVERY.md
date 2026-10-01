@@ -317,9 +317,9 @@ between its 30-minute pushes, so there is no redundancy left to trade
 away. The conclusion survives the reason changing, on stronger grounds:
 
 `sentinel_sync` holds a **mirror**, not a source of truth. Every row in
-it was pushed from a self-hosted operator's local SQLite, which remains
-authoritative, and `push_pending_changes` only advances its cursors on
-confirmed success. Losing this database entirely costs one sync cycle;
+it was pushed from a self-hosted operator's own database, which remains
+authoritative, and the push only advances its cursors on confirmed
+success. Losing this database entirely costs one sync cycle;
 the operators re-push. A dump job would be a second copy of data the
 cluster snapshot already holds, of data that is itself already a copy.
 
@@ -354,10 +354,11 @@ only in-flight HLS segments and the local copies of dumps.
 
 Everything above is about **this** hosted deployment — Postgres on a
 managed cluster, backed up by snapshots plus `backup_db.sh`. A
-self-hosted operator has none of that: they run **SQLite** (the
-`DATABASE_URL` default), on their own hardware, with no Fly volume, no
-S3 bucket, and no backup cron. Their recovery story is the **cloud
-data-sync tier**, and it's a different procedure.
+self-hosted operator has none of that: they run **their own Postgres** —
+the repo's `docker-compose.yml` brings one up beside the dashboard — on
+their own hardware, with no Fly volume, no S3 bucket, and no backup cron.
+Their recovery story is the **cloud data-sync tier**, and it's a different
+procedure.
 
 > Note the asymmetry this creates: the `pg_dump`-based scripts above are
 > hosted-only — but since the Rust rewrite a **self-hosted install is
@@ -367,6 +368,13 @@ data-sync tier**, and it's a different procedure.
 > URL at startup (see AGENTS.md › Configuration). A self-hoster restoring
 > an old SQLite database needs the last Python release, or a migration
 > into Postgres.
+>
+> The `pg_dump` scripts reach a compose-run database the same way they
+> reach any other, which is worth writing down because it is the backup
+> cron a self-hoster did not have before:
+>
+>     docker compose exec db pg_dump -U sentinel sentinel > backup.sql
+>     docker compose exec -T db psql -U sentinel sentinel < backup.sql
 
 **Who this applies to:** `AUTH_PROVIDER=local` installs whose licence
 has the data-sync entitlement (`sync_enabled`). Without that
