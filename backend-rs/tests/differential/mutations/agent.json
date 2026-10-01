@@ -1,9 +1,21 @@
 {
-  "_comment": "Mutations for the Rust Sentinel AI agent, scored against agent_run.sh — both agents against one Command Center and one scripted model, on all three wires. `restart_rust` is false because agent_run.sh builds and restarts its own processes. The harness has four named divergences (frame order, the OpenAI 5xx retry, the replay of malformed arguments, list order); none of the mutations below should be able to hide behind one.",
+  "_comment": "Mutations for the Rust Sentinel AI agent, scored against agent_run.sh — both agents against one Command Center and one scripted model, on all three wires. `restart_rust` is false because agent_run.sh builds and restarts its own processes. The harness has four named divergences (frame order, the OpenAI 5xx retry, the replay of malformed arguments, list order); none of the mutations below should be able to hide behind one. The harness is listed once per wire because mutate.py reads ONE summary line per command: listed as a single command, only the Ollama wire was ever scored, and both OpenAI-only mutations were reported as misses the first time this ran.",
   "restart_rust": false,
   "harness": [
     [
-      "tests/differential/agent_run.sh"
+      "tests/differential/agent_run.sh",
+      "--wire",
+      "ollama"
+    ],
+    [
+      "tests/differential/agent_run.sh",
+      "--wire",
+      "openai"
+    ],
+    [
+      "tests/differential/agent_run.sh",
+      "--wire",
+      "anthropic"
     ]
   ],
   "mutations": [
@@ -138,7 +150,8 @@
       "file": "src/agent/queue.rs",
       "_why": "",
       "old": "    if let Some(severity) = &completion.severity {\n        body.insert(\"severity\".into(), json!(severity));\n    }",
-      "new": "    body.insert(\"severity\".into(), json!(completion.severity));"
+      "new": "    body.insert(\"severity\".into(), json!(completion.severity));",
+      "equivalent": "Command Center's `optional_string` reads a present null exactly as an absent key (`None | Some(Value::Null) => None`), and Pydantic's Optional did the same, so the row is identical. The omission is pinned where it can be seen: `agent::queue`'s unit test asserts the key set."
     }
   ]
 }

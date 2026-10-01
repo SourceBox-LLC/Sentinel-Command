@@ -120,6 +120,25 @@ SCENARIOS = [
      [tools(call("create_incident", title="t", summary="s", severity="catastrophic")),
       text("Tried to file.")]),
 
+    # The three below exist because mutations/agent.json missed without
+    # them: every other filing here goes through create_incident with a
+    # valid severity, so nothing reached the default, nothing made
+    # finalize_incident the only source of the id, and nothing was long
+    # enough to be cut.
+    ("finalize alone names the incident, at the default severity", ALL,
+     [run(1, "incident_opened", None)],
+     [tools(call("finalize_incident", incident_id=1, report="## Report\n\nReviewed the existing incident.")),
+      text("Report written.")]),
+
+    ("a rejected severity does not follow the run to a later filing", ("ollama",),
+     [run(1, "incident_opened", None)],
+     [tools(call("update_incident", incident_id=1, severity="catastrophic")),
+      tools(call("finalize_incident", incident_id=1, report="## Report\n\nStill the same incident.")),
+      text("Done.")]),
+
+    ("a summary longer than the row allows is cut", ("ollama",),
+     [run(1)], [text("é" * 9000)]),
+
     ("an incident named only in prose is not an incident", ALL,
      [run(1)],
      [tools(call("list_incidents")), text("I reviewed incident #1 and incident_id 2; nothing new to file.")]),
