@@ -42,11 +42,12 @@ Sentinel has two main components:
 | **Command Center** | Rust (axum) + React | [Sentinel-Command](https://github.com/SourceBox-LLC/Sentinel-Command) |
 | **CameraNode** | Rust | [Sentinel-CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode) |
 
-The backend was Python (FastAPI) until it was rewritten in Rust;
-`backend/app/sentinel_agent/` is the only Python left, and it is the AI
-agent, which runs as its own process. If you are looking for a file that
-used to be under `backend/app/`, its counterpart is named in
-[AGENTS.md › API Routes](AGENTS.md#api-routes).
+The backend was Python (FastAPI) and the AI agent a Python worker until
+both were rewritten in Rust; they are two binaries from one crate,
+`backend-rs/`, and there is no Python left. If you are looking for a file
+that used to be under `backend/app/`, its counterpart is named in
+[AGENTS.md › API Routes](AGENTS.md#api-routes); the agent's is
+`backend-rs/src/agent/`.
 
 ### Command Center
 

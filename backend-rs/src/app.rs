@@ -118,6 +118,24 @@ fn mcp_service(
     // client written against the Python and parsing the body directly
     // would break on an event-stream frame.
     config.json_response = true;
+    // rmcp's DNS-rebinding guard allows only `localhost`, `127.0.0.1`
+    // and `::1` in `Host` by default, and answers 403 to anything else.
+    // That is the right default for an MCP server on a developer's
+    // machine with no authentication, and it is fatal here: this server
+    // is reached as sentinel-command.com, as *.flycast by the agent, and
+    // as whatever a self-hoster calls their box — every one of which was
+    // a 403 "Host header is not allowed".
+    //
+    // Every differential and every test addressed 127.0.0.1, so 150/150
+    // MCP cases were identical and none of them could see it. It was
+    // found by putting the agent in a container and pointing it at
+    // `http://app:8000`. `tests/routing.rs` now sends a foreign Host.
+    //
+    // Off rather than configured with a list: the guard protects a
+    // browser-reachable server that trusts its network position, and
+    // this one trusts nothing but the bearer key on each request — which
+    // a rebinding page does not have. FastMCP applied no Host check.
+    let config = config.disable_allowed_hosts();
     StreamableHttpService::new(
         move || {
             Ok(crate::mcp::server::SentinelMcp {

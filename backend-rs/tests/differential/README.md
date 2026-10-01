@@ -1368,7 +1368,9 @@ everything in this directory. What that did to each kind of harness:
 | --- | --- | --- |
 | `*_run.sh` + `*_diff.py` (12 pairs) | cannot run — nothing on :8001 | the Rust test suite; `tests/routing.rs` for the router's 404/405 |
 | the seven static checkers¹ | refuse, exit 2 | the same suite, plus the code they were holding in step is now single-sourced |
-| `openapi_drift.py`, `agent_contract.py` | still run | themselves — both were written for this world |
+| `openapi_drift.py` | still runs | itself — it was written for this world |
+| `agent_contract.py` | **gone** | `tests/agent_contract.rs`: both sides are one crate now, so the agent's body is produced by calling the function rather than by parsing Python |
+| `agent_run.sh` | **runs**, against a worktree | itself, see "The agent" below |
 | the generated corpora | still used | the `py*` unit tests that consume them |
 | `csv_run.sh` | **runs**, against a worktree | itself, see below |
 | `memory_run.sh` | **runs**, against a worktree | itself — it measures rather than compares answers |
@@ -1428,3 +1430,56 @@ What it does not claim is a production number — it is a laptop and the
 load is synthetic. It is an apples-to-apples comparison of two processes
 doing identical work, which is what that comment asks for before anyone
 moves the ceiling.
+
+## The agent
+
+The Sentinel AI agent was ported after the web tier and verified the same
+way, with one extra piece: a model that does what it is told.
+
+    tests/differential/agent_run.sh [-v] [--wire ollama|openai|anthropic]
+
+It starts ONE Command Center, the Rust agent, the Python agent and
+`fake_llm.py`, then plays each scenario through both agents in turn:
+seed a run, load a script of model turns, send a signed wakeup, and
+compare
+
+* every request the model received, reduced to a provider-neutral list
+  of events (LiteLLM and rig do not serialise identically; what has to
+  match is what the model is *told*);
+* the run rows — outcome, severity, incident id, tool count, summary,
+  tool trace;
+* the incidents and evidence filed;
+* the wakeup's own response.
+
+Ollama 20/20, OpenAI 15/15, Anthropic 12/12.
+
+**The reference needs `mcp` 1.x, not the repository's lock.** Under the
+locked 2.2.0 the Python agent cannot open an MCP connection at all
+(`PYTHON_BUGS.md` #18), so the reference interpreter is a separate venv
+with `mcp==1.28.1`, and the script refuses to run against anything else.
+The Python source comes from the pre-cut worktree, as `csv_run.sh`'s
+does.
+
+### Four differences the harness names
+
+Each is a decision, and each is asserted in both directions so that it
+cannot quietly widen: if the Python stops doing the thing, or the Rust
+starts, the scenario fails.
+
+| | python | rust | where |
+| --- | --- | --- | --- |
+| frames in a multi-call turn | after the call that made them | after the whole batch | `tools_before_frames` |
+| a 5xx on the OpenAI wire | retried by the OpenAI SDK | one attempt, as on Ollama | `collapse_retries` |
+| unparseable tool arguments | replayed to the model verbatim | replayed as `{}` | `unparsed_replay` |
+| `list_cameras` row order | whatever the planner chose | `ORDER BY c.id` | fixed in Command Center, not masked |
+
+### What it cannot see
+
+* Real providers. `fake_llm.py` answers in each wire's documented shape;
+  a provider that deviates from its own documentation is not covered.
+* Timeouts at their production values, and the 270 s wall clock —
+  `src/agent/processor.rs`'s tests cover those with a paused clock.
+* Streaming. The agent does not stream.
+
+`mutations/agent.json` is the spec that proves the harness can fail.
+

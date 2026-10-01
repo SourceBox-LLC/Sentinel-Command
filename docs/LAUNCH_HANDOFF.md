@@ -444,8 +444,7 @@ a page.
 [X] Support inbox configured and monitored (item 10)                 — done 2026-07-05 (ImprovMX: support@ + security@)
 [X] Resend signup + EMAIL_ENABLED=true + smoke test (item 2)         — done
 [ ] Run `cd backend-rs && cargo test && cargo clippy --all-targets` — green,
-    zero warnings (420+ tests). Plus `cd backend && uv run pytest` for the
-    agent's 16.
+    zero warnings (420+ tests, the agent's included — same crate).
 [ ] Run `cd frontend && npm run build && npm audit --omit=dev` — both clean
 [ ] Browse the live site at 375px, 1024px, 1440px — nothing broken
 [ ] Hit /api/health/detailed — overall "healthy", DB latency < 50ms,

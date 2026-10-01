@@ -1,9 +1,11 @@
-# Command Center — the backend
+# Command Center — the backend, and the agent
 
-Rust (axum), and the whole of it. This was a Python FastAPI application
-until the rewrite; `backend/app/sentinel_agent/` is the only Python left
-in the repository and it is the AI agent, which runs as its own Fly
-process group.
+Rust, and the whole of it: one crate, four binaries. `sentinel-command`
+is the web tier (axum) and was a Python FastAPI application until the
+rewrite. `sentinel-agent` is the Sentinel AI agent (`src/agent/`, rig +
+rmcp's client) and was a Python worker on LiteLLM; it runs as its own
+Fly process group from the same image. The other two are operator
+tools. There is no Python left in the repository.
 
 **The route table in `src/app.rs` is the public surface.** Every route the
 service answers is registered there, in one place. It used to be a
@@ -45,11 +47,14 @@ line now:
   database-gated integration tests, which skip themselves without it.
 * **`cargo clippy --all-targets`** — kept at zero warnings, enforced in
   CI with `-D warnings`.
-* **The checkers that need no Python**: `openapi_drift.py` (the harvested
-  OpenAPI document vs the route table, both directions) and
-  `agent_contract.py` (the agent's `/complete` body vs what the handler
-  reads — a renamed key there would silently record zero tool calls on
-  every run, with no 422 and no log line).
+* **`openapi_drift.py`** — the harvested OpenAPI document vs the route
+  table, both directions. Reads source only.
+* **`tests/agent_contract.rs`** — the agent's `/complete` body vs what the
+  handler reads. A renamed key there would silently record zero tool
+  calls on every run, with no 422 and no log line.
+* **`tests/differential/agent_run.sh`** — the agent's own differential,
+  against the Python agent from the pre-cut worktree and a scripted
+  model, on three provider wires.
 * **`tests/differential/csv_run.sh`** — the one harness that still runs a
   real differential, by checking out the commit before the deletion as a
   git worktree and serving *that* Python against the same Postgres. It is
@@ -71,11 +76,14 @@ table.
   at startup with a sentence that says what to do — rather than letting
   the pool time out after ten seconds on a URL it was never going to
   open. Porting it means a dialect layer over 266 query sites plus a
-  migration derived from `pg_dump`: a slice of its own, and the
-  rewrite's one remaining carve-out.
-* **The AI agent.** `backend/app/sentinel_agent/` owns the only LiteLLM
-  import, deploys independently as the `agent` process group, and was out
-  of scope by decision. The image still carries a Python runtime for it.
+  migration derived from `pg_dump`: a slice of its own, and the one
+  thing the Python did that nothing here does.
+* **Every LLM provider LiteLLM knew.** The agent speaks three wires —
+  Ollama, Anthropic, and OpenAI Chat Completions (which, with
+  `LLM_API_BASE`, reaches any compatible endpoint). Another provider
+  prefix in `LLM_MODEL` is refused at startup with that list.
+  `docs/SENTINEL_AGENT.md` § "What the port changed" has the other three
+  places the agent deliberately differs from the Python.
 
 ## Schema
 

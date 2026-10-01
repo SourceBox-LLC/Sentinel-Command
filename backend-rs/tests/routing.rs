@@ -329,3 +329,39 @@ fn tempdir() -> std::path::PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
+
+/// The MCP server answers under whatever name it is reached by.
+///
+/// rmcp allows only `localhost` / `127.0.0.1` / `::1` in `Host` unless
+/// told otherwise, and every harness in this repository addressed
+/// 127.0.0.1 — so the Rust tier would have answered 403 to every MCP
+/// client in production, with 150/150 differential cases green. Whatever
+/// this request ends in (no key is presented, and there is no database),
+/// it must not be that.
+#[tokio::test]
+async fn mcp_is_not_restricted_to_a_localhost_host_header() {
+    let (_dir, app) = app().await;
+    let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+
+    for host in [
+        "sentinel-command.com",
+        "sentinel-command.flycast:8080",
+        "app:8000",
+    ] {
+        let request = Request::builder()
+            .method("POST")
+            .uri("/mcp/")
+            .header("host", host)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("content-length", body.len().to_string())
+            .body(Body::from(body))
+            .unwrap();
+        let (status, _, text) = send(app, request).await;
+        assert!(
+            !text.contains("Host header is not allowed"),
+            "Host: {host} was refused by the DNS-rebinding guard ({status}): {text}"
+        );
+        assert_ne!(status, 403, "Host: {host} → {text}");
+    }
+}

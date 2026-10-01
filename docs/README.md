@@ -12,7 +12,7 @@ Start here if you're new. Every repository, every deployed service, and the path
 
 ## [SENTINEL_AGENT.md](SENTINEL_AGENT.md) — the AI agent
 
-How the Sentinel AI agent works, how to run one yourself, and every environment variable it reads. It lives in this repo at `backend/app/sentinel_agent/` and deploys as the `agent` process group of the `sentinel-command` Fly app — not, as older references may suggest, a separate repository or app.
+How the Sentinel AI agent works, how to run one yourself, and every environment variable it reads. It lives in this repo at `backend-rs/src/agent/` and deploys as the `agent` process group of the `sentinel-command` Fly app — not, as older references may suggest, a separate repository or app.
 
 ## Architecture Decision Records (`docs/adr/`)
 

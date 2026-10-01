@@ -1,7 +1,7 @@
 name: Test & Deploy
 
-# One workflow, one app, one image. Command Center and the Sentinel AI
-# agent both ship from here: the image carries both, and fly.toml's
+# One workflow, one app, one image, one crate. Command Center and the
+# Sentinel AI agent both ship from here: the image carries both binaries, and fly.toml's
 # [processes] block runs them as two process groups on separate machines.
 # There is no separate agent workflow or agent app any more.
 #
@@ -13,15 +13,18 @@ name: Test & Deploy
 #
 # ⚠️ **`Backend tests (sqlite)` NO LONGER EXISTS.** The backend is Rust,
 # and the Rust tier is Postgres-only, so the matrix leg it named is gone;
-# the two legs are now `no database` and `postgres`, and there is a new
-# `Agent checks (python)` job for the Python that remains. Branch
+# the two legs are now `no database` and `postgres`. There is no agent
+# job: the agent is a binary in the same crate, so the backend legs build,
+# lint, audit and test it. (`Agent checks (python)` existed on this branch
+# for a few commits while the agent was still Python; it never reached
+# master, so nothing requires it.) Branch
 # protection must be updated IN THE SAME BREATH as merging this — a
 # required check that never reports blocks a PR forever, and the failure
 # looks like a stuck check rather than a config error. The checks to
 # require after the merge:
 #
 #   Backend tests (no database) · Backend tests (postgres) ·
-#   Agent checks (python) · Frontend audit + build
+#   Frontend audit + build
 #
 # GitHub reports NO status for a workflow that a path filter skipped —
 # not "skipped", nothing at all — so a required check on a path-filtered
@@ -207,65 +210,12 @@ jobs:
         working-directory: backend-rs
         run: cargo build --release
 
-  agent:
-    # The Python that survived the rewrite: `backend/app/sentinel_agent/`,
-    # which runs as its own Fly process group and is out of the port's
-    # scope. It has its own dependency set (99 packages, not the web
-    # tier's 151) and its own tests, and nothing above would notice if
-    # either broke.
-    name: Agent checks (python)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install uv
-        # astral-sh/setup-uv doesn't publish sliding major-version tags
-        # (v7, v8 etc.) the way actions/* and docker/* do — only specific
-        # versions like v8.1.0. Pin to the exact tag and bump manually
-        # when there's a reason to.
-        uses: astral-sh/setup-uv@v10.0.1
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Install dependencies
-        working-directory: backend
-        run: uv sync --extra dev
-
-      - name: Lint with ruff
-        working-directory: backend
-        run: uv run ruff check
-
-      # Scan the agent's dep tree against the PyPA Advisory DB. `--strict`
-      # makes any vulnerability a non-zero exit so a known-bad transitive
-      # dep blocks the deploy. When a CVE shows up with no fix yet, add
-      # `--ignore-vuln <PYSEC-ID>` here with a comment citing the upstream
-      # issue and the date we plan to revisit.
-      - name: Dependency scan (pip-audit)
-        working-directory: backend
-        run: uv run pip-audit --strict
-
-      - name: Run tests
-        working-directory: backend
-        run: uv run pytest -v
-
-      # The two cross-language checks. Both read source on both sides and
-      # compare — neither imports anything, because one side is Rust.
-      #
-      # `agent_contract.py` is the one that matters: the agent hand-builds
-      # the `/complete` body, Command Center ignores unknown fields, and a
-      # renamed key would silently record zero tool calls on every run
-      # with no 422, no exception and no log line. It replaces
-      # `backend/tests/test_agent_contract.py`, which did this by
-      # importing Command Center's Pydantic model and so could not
-      # survive the web tier being Rust.
-      - name: Agent ↔ Command Center contract
-        run: python3 backend-rs/tests/differential/agent_contract.py
-
       # The OpenAPI document is a harvested snapshot of what FastAPI
       # generated, so it cannot notice a route being added. This compares
-      # its paths against app.rs's route table in both directions.
+      # its paths against app.rs's route table in both directions. Reads
+      # source only; one leg is enough.
       - name: OpenAPI drift
+        if: matrix.database == 'no database'
         run: python3 backend-rs/tests/differential/openapi_drift.py
 
   frontend:
@@ -344,7 +294,7 @@ jobs:
   deploy:
     name: Deploy to Fly.io
     runs-on: ubuntu-latest
-    needs: [test, agent, frontend]
+    needs: [test, frontend]
     # Push-to-master only. PRs run test+frontend for validation but must
     # never deploy (no secrets exposure, no half-reviewed code shipped).
     if: github.event_name == 'push'

@@ -12,7 +12,6 @@ __pycache__
 venv/
 ENV/
 .ruff_cache
-backend/.venv/
 
 # Node.js
 node_modules/
@@ -28,8 +27,6 @@ frontend/.vite/
 # Environment files
 .env
 .env.local
-backend/.env
-backend/.env.local
 frontend/.env
 frontend/.env.local
 
@@ -48,4 +45,7 @@ Thumbs.db
 !README.md
 
 # Local development databases
-backend/sentinel.db
+
+# Rust build output — gigabytes, and never an image input.
+backend-rs/target/
+backend-rs/.env

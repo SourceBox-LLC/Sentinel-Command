@@ -12,7 +12,7 @@
 //! credential, and a TLS handshake per call is real money on a machine
 //! billed by the second.
 //!
-//! The `/complete` body is the contract `agent_contract.py` holds against
+//! The `/complete` body is the contract `tests/agent_contract.rs` holds against
 //! the handler. Command Center ignores unknown fields, so a key renamed
 //! on one side alone records its column's default forever with no 422 and
 //! no log line. The keys are built in [`complete_body`] and nowhere else.

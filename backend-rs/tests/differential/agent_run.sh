@@ -30,9 +30,14 @@ RS="$REPO/backend-rs"
 LOGS="${TIER_LOGS:-$RS/target/tier-logs}"
 PG_CONTAINER="${PG_CONTAINER:-cc-schema-test}"
 REF_PYTHON="${REF_PYTHON:-$RS/target/ref-agent-venv/bin/python}"
-# The agent source to use as the reference. Defaults to the tree's own
-# backend/, falling back to the commit before it was deleted.
-REF_AGENT_DIR="${REF_AGENT_DIR:-$REPO/backend}"
+# The agent source to use as the reference. `backend/` is gone from the
+# tree — the agent was the last thing in it — so this is the same
+# worktree csv_run.sh uses: the commit before the WEB tier was deleted,
+# whose `app/sentinel_agent/` is byte-identical to the one this port was
+# written against (checked with `diff -r` before the deletion).
+PRE_CUT="${PRE_CUT:-$RS/target/pre-cut-worktree}"
+CUT="${CUT:-2baabe6}"
+REF_AGENT_DIR="${REF_AGENT_DIR:-$PRE_CUT/backend}"
 
 CC_PORT=8052; RS_PORT=8050; PY_PORT=8051; LLM_PORT=18096
 QUEUE_KEY=harness-agent-queue-key
@@ -94,11 +99,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ ! -f "$REF_AGENT_DIR/app/sentinel_agent/agent.py" ]]; then
-    echo "REFUSING: no Python agent at $REF_AGENT_DIR/app/sentinel_agent." >&2
-    echo "It was deleted when the agent was ported. To run this differential:" >&2
-    echo "    git worktree add target/pre-agent-cut <commit before the deletion>" >&2
-    echo "    REF_AGENT_DIR=target/pre-agent-cut/backend $0" >&2
-    exit 2
+    if [[ "$REF_AGENT_DIR" != "$PRE_CUT/backend" ]]; then
+        echo "REFUSING: no Python agent at $REF_AGENT_DIR/app/sentinel_agent." >&2
+        exit 2
+    fi
+    echo "creating the pre-cut worktree at $PRE_CUT ($CUT~1)..."
+    git -C "$REPO" worktree add -q --detach "$PRE_CUT" "$CUT~1"
 fi
 if ! "$REF_PYTHON" -c "import mcp, litellm, importlib.metadata as m; assert m.version('mcp').startswith('1.')" 2>/dev/null; then
     echo "REFUSING: $REF_PYTHON is not an environment with litellm and mcp 1.x." >&2

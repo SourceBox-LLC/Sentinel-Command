@@ -2,8 +2,8 @@ name: Weekly dependency refresh
 
 # Proactively refresh the dependency locks within their existing semver
 # ranges, so a newly-disclosed CVE doesn't turn the Test & Deploy
-# cargo-audit / pip-audit / npm-audit gate red out of nowhere. It has happened more than
-# once — see the [tool.uv] constraint comments in backend/pyproject.toml.
+# cargo-audit / npm-audit gate red out of nowhere. It has happened more
+# than once.
 #
 # This runs the SAME gates the deploy pipeline runs, then opens ONE PR with
 # the refreshed locks. deploy.yml only triggers on push-to-master, so the
@@ -12,9 +12,9 @@ name: Weekly dependency refresh
 # upgrade breaks a test, or a CVE has no fix yet) the run goes red and NO PR
 # is opened — that red run is the signal to look manually.
 #
-# Scope is lock-only and within-range: `uv lock --upgrade` respects the
-# floors in pyproject.toml and `npm update` stays inside the package.json
-# semver ranges. Major-version bumps stay deliberate and manual.
+# Scope is lock-only and within-range: `cargo update` respects the ranges
+# in Cargo.toml and `npm update` stays inside the package.json semver
+# ranges. Major-version bumps stay deliberate and manual.
 #
 # One-time setup: Settings → Actions → General → Workflow permissions →
 # enable "Allow GitHub Actions to create and approve pull requests", or the
@@ -41,35 +41,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # ── The AI agent (Python) — uv lock --upgrade, then its gates ──
-      # `backend/` is the agent and nothing else since the web tier was
-      # rewritten; its lock is a 99-package set, not the old 151.
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
-      - name: Set up Python
-        run: uv python install 3.12
-      - name: Upgrade the agent's lock (within pyproject constraints)
-        working-directory: backend
-        run: uv lock --upgrade
-      - name: Install the agent's deps
-        working-directory: backend
-        run: uv sync --extra dev
-      # Gate parity with deploy.yml: ruff floats (>=0.6.0), so a lock
-      # refresh can pull a ruff release whose rules changed.  Without
-      # this step the weekly PR verifies green, merges, and the
-      # post-merge deploy goes red on the ruff gate — the exact
-      # "red out of nowhere" failure this workflow exists to prevent.
-      - name: Lint with ruff
-        working-directory: backend
-        run: uv run ruff check
-      - name: Agent dependency scan (pip-audit --strict)
-        working-directory: backend
-        run: uv run pip-audit --strict
-      - name: Agent tests
-        working-directory: backend
-        run: uv run pytest -q
-
-      # ── Backend (Rust) — cargo update, then deploy.yml's Rust gates ──
+      # ── Backend and agent (Rust, one crate) — cargo update, then
+      #    deploy.yml's Rust gates ──
       #
       # This section did not exist until the backend stopped being Python,
       # and its absence was the same shape of gap as the missing
@@ -78,7 +51,9 @@ jobs:
       # was watching a dependency tree that no longer builds the service.
       #
       # `cargo update` is lock-only and respects the semver ranges in
-      # Cargo.toml, exactly as `uv lock --upgrade` and `npm update` are.
+      # Cargo.toml, exactly as `npm update` does for package.json. The
+      # Sentinel AI agent is a binary in this same crate, so this one
+      # section covers what used to need a second, Python one.
       - name: Install Rust 1.98
         uses: dtolnay/rust-toolchain@1.98.0
         with:
@@ -134,7 +109,6 @@ jobs:
         uses: peter-evans/create-pull-request@v8
         with:
           add-paths: |
-            backend/uv.lock
             backend-rs/Cargo.lock
             frontend/package-lock.json
           branch: deps/weekly-refresh
@@ -143,18 +117,16 @@ jobs:
           title: "chore(deps): weekly dependency lock refresh"
           labels: dependencies
           body: |
-            Automated weekly refresh of `backend-rs/Cargo.lock`,
-            `backend/uv.lock` and `frontend/package-lock.json`, bounded to
-            the existing semver ranges (`cargo update` +
-            `uv lock --upgrade` + `npm update`).
+            Automated weekly refresh of `backend-rs/Cargo.lock` and
+            `frontend/package-lock.json`, bounded to the existing semver
+            ranges (`cargo update` + `npm update`).
 
             Every deploy gate passed in the refresh run **before** this PR
             was opened:
 
             - `cargo audit` — backend advisory scan (RustSec)
-            - `cargo clippy -D warnings` + `cargo test` — backend suite
-            - `pip-audit --strict` — the AI agent's advisory scan
-            - `pytest` — the AI agent's suite
+            - `cargo clippy -D warnings` + `cargo test` — backend and
+              agent suite
             - `npm audit --audit-level=high --omit=dev` — frontend
             - `vitest` + production build — frontend
 

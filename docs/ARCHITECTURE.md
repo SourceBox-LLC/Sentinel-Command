@@ -66,7 +66,7 @@ Command Center owns the queue; the agent is a worker draining it. That single de
 
 A run: claim via `POST /runs/{id}/start` → investigate through MCP tools → report via `POST /runs/{id}/complete` with `incident`, `no_action`, or `error`. Bounded at every layer — per-call, per-tool, iteration count, and wall clock — with a CC-side reaper for runs that strand anyway.
 
-The model is a config string (`LLM_MODEL`, via LiteLLM). **Changing it on the hosted deployment moves customer camera imagery to a different processor** — see `legal/SUB_PROCESSORS.md` before you do.
+The model is a config string (`LLM_MODEL`: Ollama, Anthropic, or an OpenAI-compatible endpoint). **Changing it on the hosted deployment moves customer camera imagery to a different processor** — see `legal/SUB_PROCESSORS.md` before you do.
 
 Full detail: [SENTINEL_AGENT.md](SENTINEL_AGENT.md).
 
@@ -103,7 +103,7 @@ Backups: nightly `pg_dump` for `sentinel_command` and `sentinel_license`, with r
 | Database | Postgres | SQLite |
 | Cameras, recording, motion, MCP | Plan-limited | **Free and unrestricted** |
 | Sentinel AI | Plan-limited | Unlocked by licence key |
-| Agent | `agent` process group | Bundled; `python -m app.sentinel_agent` |
+| Agent | `agent` process group | Bundled; the `sentinel-agent` binary |
 
 Only Sentinel AI is gated for self-hosters, because it is the one feature with an ongoing per-run cost. Everything else ships unlocked.
 

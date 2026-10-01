@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Sentinel Command Center — cloud dashboard for managing and viewing security cameras under the **Sentinel by SourceBox** product brand. Rust (axum) backend + React 19 frontend with Clerk authentication. It was FastAPI until the rewrite; see [Repository layout](#repository-layout--one-app-two-process-groups). Live video is streamed through an in-memory segment cache — **no Tigris, no S3, no presigned URLs in the live path**.
+Sentinel Command Center — cloud dashboard for managing and viewing security cameras under the **Sentinel by SourceBox** product brand. Rust (axum) backend + React 19 frontend with Clerk authentication. There is no Python in this repository: the backend was FastAPI and the AI agent was a LiteLLM worker until the rewrite; see [Repository layout](#repository-layout--one-app-two-process-groups). Live video is streamed through an in-memory segment cache — **no Tigris, no S3, no presigned URLs in the live path**.
 
 > **Brand-history note for grep-discoverability:** the product has carried three names — `OpenSentry` (early), `SourceBox Sentry` (mid), and `Sentinel by SourceBox` (current, from May 2026 onward). The `Sentinel AI` name is reserved specifically for the AI-agent feature. Both GitHub repos were renamed in May 2026: Command Center `OpenSentry-Command` → `Sentinel-Command`, and CameraNode `opensentry-cloud-node` → `Sentinel-CameraNode` (note the deliberate "CameraNode" — the repo name now describes the artifact more literally, while the binary, install paths, and product UI keep saying "CameraNode"). GitHub auto-redirects the old URLs, so any hardcoded reference in a release artifact / cached doc / external bookmark continues to resolve. Identifiers preserved verbatim across the rebrands (do **not** rename these without a migration plan): the env-var prefix `SOURCEBOX_SENTRY_*`, the Windows install path `C:\ProgramData\SourceBoxSentry\`, and the production hostname `sentinel-command.com` (tied to the Fly app, decoupled from the repo rename).
 
@@ -34,18 +34,20 @@ Command Center and the Sentinel AI agent ship from **one repo, one image, one de
 
 | | Command Center | Sentinel AI agent |
 | ------ | -------------- | ----------------- |
-| Language | **Rust** (axum) | Python |
-| Code | `backend-rs/` + `frontend/` | `backend/app/sentinel_agent/` |
+| Language | **Rust** (axum) | **Rust** (rig + rmcp client) |
+| Code | `backend-rs/` + `frontend/` | `backend-rs/src/agent/` — same crate |
 | Process group | `app` | `agent` |
-| Command | `/usr/local/bin/sentinel-command` | `python -m app.sentinel_agent` |
+| Command | `/usr/local/bin/sentinel-command` | `/usr/local/bin/sentinel-agent` |
 | Machine | 1 GB, always-on, owns the volume | 512 MB, always-on, no volume |
 
-**The two groups no longer share a language.** Command Center was
-FastAPI until the rewrite; it is a Rust binary now, and
-`backend/app/sentinel_agent/` is the only Python left in this
-repository. The image still carries a Python runtime for its sake alone.
-That asymmetry is deliberate: the agent owns the only LiteLLM import and
-was out of scope for the rewrite from the start.
+**Both groups are binaries from one crate.** Command Center was FastAPI
+and the agent was a Python worker on LiteLLM and the Python MCP SDK; both
+are Rust now, and the image carries no Python runtime. The agent was
+ported last and on its own evidence — `tests/differential/agent_run.sh`
+ran both agents against one Command Center and one scripted model on all
+three provider wires (Ollama 20/20, OpenAI 15/15, Anthropic 12/12). The
+four places it deliberately differs from the Python are listed in
+[docs/SENTINEL_AGENT.md](docs/SENTINEL_AGENT.md#what-the-port-changed).
 
 How the rewrite was verified, since the reference it was checked against
 no longer exists: `backend-rs/tests/differential/` drove both stacks
@@ -58,21 +60,21 @@ before the deletion. `backend-rs/README.md` says what replaces them.
 
 Both are the `sentinel-command` Fly app, built from the root `Dockerfile` and deployed by `.github/workflows/deploy.yml`. There is no separate agent app, agent image, agent workflow, or agent lockfile.
 
-Four rules follow, and breaking any of them breaks a deploy:
+Five rules follow, and breaking any of them breaks a deploy:
 
-1. **`backend/pyproject.toml` is the AGENT's dependency set now, not a shared one.** It used to cover both groups, which is why it carried `fastapi`, `sqlalchemy`, `psycopg`, `pyjwt`, `svix`, `clerk-backend-api`, `slowapi`, `redis`, `websockets` and `fastmcp`. All of those belonged to the web tier and went with it: 151 packages down to 99. What remains is what the agent's module tree actually imports, determined by importing it and reading the closure. `mcp` still uses a wide range (`>=1.6.0,<3`) on purpose — `app/sentinel_agent/mcp_client.py` imports the streamable-HTTP client under **both** the 1.x and 2.x symbol names, because they were renamed.
+1. **One `Cargo.toml` builds both binaries, so a dependency change is a change to both.** `rig-core` and `rig-reqwest` are the agent's alone and are pre-1.0: a 0.x minor is a breaking release, the wire shapes they produce are pinned only by the agent differential (which CI cannot run — it needs the deleted Python), and so Dependabot is told to leave their minors alone (`.github/dependabot.yml`). Move them by hand, with `agent_run.sh`.
 2. **`[[mounts]]` must stay scoped to `processes = ["app"]`.** Unscoped, it applies to every group and the agent machine fails to boot fighting for the volume's single attachment slot.
-3. **`[processes]` overrides the Dockerfile `CMD`.** The `app` command in `fly.toml` must stay in sync with that `CMD`. Both are now `/usr/local/bin/sentinel-command`, with no arguments — uvicorn's flags are gone, and `fly.toml` records why each one was not replaced rather than leaving that to be rediscovered.
-4. **The required checks are named, so renaming a CI job hangs every PR.** `master` still requires `Backend tests (sqlite)`, `Backend tests (postgres)` and `Frontend audit + build` by exact name. `deploy.yml` on this branch now produces `Backend tests (no database)`, `Backend tests (postgres)`, `Agent checks (python)` and `Frontend audit + build` — the sqlite leg is gone, because the Rust tier is Postgres-only. **Branch protection has to be updated in the same breath as the merge**: GitHub reports *no status at all* for a check that never runs, so the PR waits forever on it and it presents as a stuck check rather than a config error. See the ⚠️ note at the top of `deploy.yml`.
+3. **`[processes]` overrides the Dockerfile `CMD`.** The `app` command in `fly.toml` must stay in sync with that `CMD`. Both are now `/usr/local/bin/sentinel-command`, with no arguments — uvicorn's flags are gone, and `fly.toml` records why each one was not replaced rather than leaving that to be rediscovered. The `agent` command is `/usr/local/bin/sentinel-agent`.
+4. **The required checks are named, so renaming a CI job hangs every PR.** `master` still requires `Backend tests (sqlite)`, `Backend tests (postgres)` and `Frontend audit + build` by exact name. `deploy.yml` on this branch now produces `Backend tests (no database)`, `Backend tests (postgres)` and `Frontend audit + build` — the sqlite leg is gone, because the Rust tier is Postgres-only, and there is no agent job because the agent is in the crate the backend legs already test. **Branch protection has to be updated in the same breath as the merge**: GitHub reports *no status at all* for a check that never runs, so the PR waits forever on it and it presents as a stuck check rather than a config error. See the ⚠️ note at the top of `deploy.yml`.
 5. **CI path filtering is asymmetric.** `push` is filtered (docs and Markdown only); `pull_request` is **never** filtered. The required checks are named above, and GitHub reports *no status at all* for a workflow a path filter skipped — so a filtered PR trigger would hang every PR that missed it, presenting as a stuck check rather than a config error.
 
-The agent runs as a separate **process group** — its own machine, kept warm rather than scaled to zero. Both choices are deliberate and both have non-obvious reasons: memory contention with the segment cache, and a boot time that loses a race with Fly's proxy. Neither is restated here; see [docs/SENTINEL_AGENT.md](docs/SENTINEL_AGENT.md) for the agent's side and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#deployed-services-flyio) for how it compares to the services that *do* sleep.
+The agent runs as a separate **process group** — its own machine, kept warm rather than scaled to zero. Both choices are deliberate and both have non-obvious reasons: memory contention with the segment cache, and a boot time that lost a race with Fly's proxy. The second reason belonged to the Python agent and no longer holds, but scale-to-zero has not been switched on, because that race can only be observed in production. Neither is restated here; see [docs/SENTINEL_AGENT.md](docs/SENTINEL_AGENT.md) for the agent's side and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#deployed-services-flyio) for how it compares to the services that *do* sleep.
 
-Self-hosting still works the same way: `python -m app.sentinel_agent` runs standalone with `AGENT_MODE=poll` and a per-org `osa_` key, needing no inbound connectivity. Agent docs are in `docs/SENTINEL_AGENT.md`. The code came from the `SourceBox-Sentinel` repo (archived 2026-09-09).
+Self-hosting still works the same way: `sentinel-agent` runs standalone with `AGENT_MODE=poll` and a per-org `osa_` key, needing no inbound connectivity. Agent docs are in `docs/SENTINEL_AGENT.md`. The code came from the `SourceBox-Sentinel` repo (archived 2026-09-09).
 
 ## Build & Run
 
-**Prerequisites:** Rust (the toolchain in `Dockerfile`'s builder stage — pinned, not `latest`), Node 18+. Python ≥ 3.12 and `uv` only if you are working on the Sentinel AI agent.
+**Prerequisites:** Rust (the toolchain in `Dockerfile`'s builder stage — pinned, not `latest`), Node 18+. No Python.
 
 ```bash
 # Command Center
@@ -138,13 +140,14 @@ fly ssh console -a sentinel-command -C sentinel-hash-password
 fly ssh console -a sentinel-command -C "sentinel-restore-from-cloud --list"
 ```
 
-**The agent, which is still Python:**
+**The agent** is a second binary in the same crate, so `cargo test` above
+already covers it:
 
 ```bash
-cd backend
-uv sync
-uv run pytest                        # 16 tests; the web tier's 55 files went with it
-LLM_API_KEY=… uv run python -m app.sentinel_agent
+cd backend-rs
+OLLAMA_API_KEY=… SENTINEL_AGENT_KEY=dev-secret AGENT_MODE=poll \
+OPENSENTRY_API_BASE=http://localhost:8000 WEBHOOK_VERIFY_SIGNATURE=false \
+  cargo run --bin sentinel-agent    # :8080; reads .env in the working directory
 ```
 
 See Authentication → "Local auth (self-hosted)" below for what this mode does and doesn't enable.
@@ -241,7 +244,7 @@ Frontend config: `VITE_AUTH_PROVIDER` (`clerk` default or `local`), `VITE_CLERK_
 ## Project Structure
 
 ```
-backend-rs/                       # Command Center. 41 modules + 28 route files.
+backend-rs/                       # Command Center AND the agent. One crate, four binaries.
 ├── src/
 │   ├── main.rs                   # entrypoint: pool, migrations, loops, serve
 │   ├── app.rs                    # the route table, the SPA fallback, the MCP
@@ -283,9 +286,15 @@ backend-rs/                       # Command Center. 41 modules + 28 route files.
 │                                 # fromisoformat, int() coercion, str().
 │                                 # Each one exists because a differential
 │                                 # case failed on it.
+│   ├── agent.rs / agent/         # the Sentinel AI agent: config, server,
+│   │                             # processor, run (the loop), llm (rig, and
+│   │                             # ALL provider-shaped knowledge), mcp_client
+│   │                             # (rmcp), queue, prompts
 │   ├── bin/
+│   │   ├── agent.rs              # sentinel-agent — the `agent` process group
 │   │   ├── hash_password.rs      # sentinel-hash-password
 │   │   └── restore_from_cloud.rs # sentinel-restore-from-cloud
+├── assets/agent/*.txt            # the agent's five prompts, compiled in
 ├── assets/openapi.json           # FastAPI's own document, harvested at port
 │                                 # time and compiled in. See api/docs.rs.
 ├── templates/emails/             # the 46 Jinja templates — _layout.html.j2
@@ -301,13 +310,11 @@ backend-rs/                       # Command Center. 41 modules + 28 route files.
     │                             # so it runs against the commit before the
     │                             # deletion — plus the checkers that do not:
     │                             # column_defaults, openapi_drift,
-    │                             # agent_contract, ratelimit/auth parity.
+    │                             # ratelimit/auth parity. agent_run.sh is
+    │                             # the agent's, with fake_llm.py as the
+    │                             # scripted model.
+    ├── agent_contract.rs         # the agent's /complete body vs. the handler
     └── *_db.rs                   # integration tests, gated on TEST_DATABASE_URL
-
-backend/                          # the Sentinel AI agent, and nothing else
-├── app/sentinel_agent/           # out of scope for the rewrite by decision
-├── tests/                        # 16 tests; the web tier's 55 files went
-└── pyproject.toml                # the agent's dependency set (99 packages)
 
 scripts/                          # served from SCRIPTS_DIR, or run by an operator
 ├── install.sh  mcp-setup.sh  mcp-setup.ps1
@@ -696,7 +703,7 @@ because a reader comparing the two stacks needs the correspondence.
 
 Mounted at `/mcp/` via rmcp's streamable-HTTP transport, stateless and
 JSON-framed (`json_response = true`), which is what FastMCP answered when a
-client accepted JSON. Authenticates with `Authorization: Bearer osc_...` against `McpApiKey.key_hash`. Exposes **23 tools** (16 read + 7 write).
+client accepted JSON. rmcp's DNS-rebinding guard is **disabled** (`app.rs`): its default allows only a localhost `Host`, which would answer 403 to every real client, and every request here carries a bearer key anyway — `tests/routing.rs` sends a foreign Host to keep it that way. Authenticates with `Authorization: Bearer osc_...` against `McpApiKey.key_hash`. Exposes **23 tools** (16 read + 7 write).
 
 ### Scope middleware
 
@@ -908,8 +915,15 @@ keyed camera → filename → (bytes, timestamp). One process owns it. Backend n
 
 - `axum` / `tokio` / `hyper` — the web framework and runtime
 - `sqlx` — Postgres (runtime-checked queries, so a build needs no live database), with the migrations embedded at compile time
-- `rmcp` — the Model Context Protocol server. Replaced `fastmcp`; pinned to
-  `3.5` because `"0.9"` resolves to a much older crate of the same name.
+- `rmcp` — the Model Context Protocol, both ends: the server Command
+  Center mounts (replaced `fastmcp`) and the client the agent connects
+  with (replaced the Python SDK). Pinned to `3.5` because `"0.9"`
+  resolves to a much older crate of the same name. Its client does not
+  follow the 307 from `/mcp` to `/mcp/`, which is why the agent's URL
+  always ends in the slash.
+- `rig-core` (+ `rig-reqwest` for the transport it wraps) — the agent's
+  model calls, on three wires: Ollama, Anthropic, OpenAI Chat
+  Completions. Replaced LiteLLM. Pre-1.0; see rule 1 above.
 - `serde` / `serde_json` — with the `preserve_order` feature, which is
   load-bearing: key order is on the wire and Python's dicts are ordered.
   Note `Map::remove` is a SWAP-remove under it; use `shift_remove`.
@@ -924,9 +938,6 @@ keyed camera → filename → (bytes, timestamp). One process owns it. Backend n
 - `libc` — `statvfs` for the disk probe, and `termios` for the password
   tool's echo suppression, which is why no terminal crate is needed
 
-The agent's Python set is separate and much smaller than it was; see
-`backend/pyproject.toml`.
-
 ## Development Notes
 
 - Schema is applied on startup by `sqlx::migrate!`, from `migrations/`
@@ -940,7 +951,7 @@ The agent's Python set is separate and much smaller than it was; see
 - `VITE_LOCAL_HLS=true` bypasses the backend and streams directly from CameraNode on localhost:8080 (for local dev only)
 - Tests live beside the code in `backend-rs/src/**` plus `backend-rs/tests/`,
   and run with `cargo test` — no database needed; the DB-gated ones skip
-  themselves unless `TEST_DATABASE_URL` is set. `backend/tests/` is the
-  agent's 16 tests. How the port was verified, and what replaces the
+  themselves unless `TEST_DATABASE_URL` is set. The agent's tests are in
+  `src/agent/**` and `tests/agent_contract.rs`. How the port was verified, and what replaces the
   differential harnesses now that the Python is gone, is in
   `backend-rs/tests/differential/README.md` ("After the cut").

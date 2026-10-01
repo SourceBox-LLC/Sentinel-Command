@@ -8,7 +8,9 @@ name: Cold-start probe
 # That margin is the whole reason this workflow exists. The agent sat at
 # ~7s, adding LiteLLM pushed it to ~10s, and wakeups started coming back
 # RemoteDisconnected; the agent had to be taken off scale-to-zero
-# entirely. The number was never tracked, so the regression was found by
+# entirely. (That agent was Python. It is a Rust binary now and almost
+# certainly fits, but it is still kept warm — see fly.toml — so it is not
+# probed here.) The number was never tracked, so the regression was found by
 # a user-visible failure rather than by a graph.
 #
 # The failure mode is quiet: Fly gives up and the caller sees a 502. For

@@ -7,9 +7,13 @@
 # Deploy" PR checks pass, and leaves MAJOR bumps for manual review.
 version: 2
 updates:
-  # Backend — Python (uv)
-  - package-ecosystem: "uv"
-    directory: "/backend"
+  # Backend and agent — Rust (cargo). One crate builds both binaries.
+  #
+  # This entry was `uv` on `/backend` until the agent was ported, which
+  # means that from the day the web tier became Rust until then,
+  # Dependabot was watching the 99-package agent and not the service.
+  - package-ecosystem: "cargo"
+    directory: "/backend-rs"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -19,6 +23,19 @@ updates:
     labels:
       - "dependencies"
       - "backend"
+    ignore:
+      # Pre-1.0, and a 0.x "minor" is a breaking release that
+      # dependabot-auto-merge.yml would still classify as minor and merge
+      # on green. What these two do on the wire — the three model
+      # providers and the MCP client — is pinned by the agent differential
+      # (backend-rs/tests/differential/agent_run.sh), which CI cannot run.
+      # So these move by hand, with that harness.
+      - dependency-name: "rig-core"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "rig-reqwest"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "rmcp"
+        update-types: ["version-update:semver-major"]
 
   # Frontend — npm
   - package-ecosystem: "npm"

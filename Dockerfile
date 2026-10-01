@@ -96,7 +96,7 @@ RUN if [ "$AUTH_PROVIDER" = "local" ]; then \
 RUN npm run build
 
 # ============================================================
-# Stage 2: Build the Rust web tier
+# Stage 2: Build the Rust binaries (web tier, agent, operator tools)
 # ============================================================
 # Pinned to the toolchain this was developed and tested against rather
 # than `latest`: a compiler bump is a change to the artefact, and it
@@ -115,6 +115,7 @@ RUN mkdir -p src/bin \
     && echo '' > src/lib.rs \
     && echo 'fn main() {}' > src/bin/hash_password.rs \
     && echo 'fn main() {}' > src/bin/restore_from_cloud.rs \
+    && echo 'fn main() {}' > src/bin/agent.rs \
     && cargo build --release 2>/dev/null || true
 
 # The real thing. `migrations/` and `assets/` are both compiled IN —
@@ -136,26 +137,27 @@ COPY backend-rs/examples ./examples
 # Touched so cargo does not trust the fake sources' timestamps.
 RUN touch src/main.rs src/lib.rs && cargo build --release --locked \
     && strip target/release/sentinel-command \
+    && strip target/release/sentinel-agent \
     && strip target/release/sentinel-hash-password \
     && strip target/release/sentinel-restore-from-cloud
 
 # ============================================================
 # Stage 3: Runtime
 # ============================================================
-# Debian rather than a distroless or Alpine base for two concrete
-# reasons, not habit:
+# Debian rather than a distroless or Alpine base for one concrete
+# reason, not habit: postgresql-client-18 is REQUIRED by
+# scripts/backup_db.sh and restore_db.sh and by every documented recovery
+# path in docs/runbooks/. Version 18 specifically, from PGDG rather than
+# Debian: pg_dump REFUSES to dump a server whose major version is newer
+# than its own, and bookworm ships client 15 against an 18.x server.
+# Verified directly against this cluster. Bump this pin whenever the
+# cluster's major version moves.
 #
-#   * postgresql-client-18 is REQUIRED by scripts/backup_db.sh and
-#     restore_db.sh and by every documented recovery path in
-#     docs/runbooks/. Version 18 specifically, from PGDG rather than
-#     Debian: pg_dump REFUSES to dump a server whose major version is
-#     newer than its own, and bookworm ships client 15 against an 18.x
-#     server. Verified directly against this cluster. Bump this pin
-#     whenever the cluster's major version moves.
-#   * the `agent` process group is still Python, so this image needs a
-#     Python runtime regardless. See the note at [processes] in fly.toml
-#     and the one below.
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+# There was a second reason until the agent was ported: the `agent`
+# process group was Python, so this was `uv:python3.12-bookworm-slim` and
+# carried an interpreter and 99 packages for that group alone. Both
+# groups are Rust binaries now and there is no Python in this image.
+FROM debian:bookworm-slim
 
 WORKDIR /app
 
@@ -171,25 +173,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get purge -y gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# ── The Sentinel AI agent, which is still Python ──────────────────────
+# ── The binaries ─────────────────────────────────────────────────────
 #
-# The rewrite deliberately stops here. `sentinel_agent/` owns the only
-# LiteLLM import, was out of scope from the start, and ships as the
-# `agent` process group from this same image — Fly gives one image per
-# app and differs the groups only by command.
-#
-# Its dependency set is now its OWN rather than the whole web tier's,
-# because the web tier's is gone: fastapi, sqlalchemy, psycopg, pyjwt,
-# svix, clerk-backend-api, slowapi, redis, websockets and fastmcp all
-# left with it. What remains is what the agent's module tree actually
-# imports, checked by importing it rather than by reading the old list.
-COPY backend/pyproject.toml backend/uv.lock* ./
-RUN uv sync --frozen --no-dev
-COPY backend/app/__init__.py ./app/__init__.py
-COPY backend/app/sentinel_agent ./app/sentinel_agent
-
-# ── The Rust web tier ────────────────────────────────────────────────
+# `sentinel-command` is the `app` process group and `sentinel-agent` the
+# `agent` one — Fly gives one image per app and differs the groups only
+# by command. The other two are operator tools, on PATH for
+# `fly ssh console -C …` and `docker compose run`.
 COPY --from=backend-builder /build/target/release/sentinel-command /usr/local/bin/
+COPY --from=backend-builder /build/target/release/sentinel-agent /usr/local/bin/
 COPY --from=backend-builder /build/target/release/sentinel-hash-password /usr/local/bin/
 COPY --from=backend-builder /build/target/release/sentinel-restore-from-cloud /usr/local/bin/
 
@@ -205,14 +196,14 @@ COPY --from=frontend-builder /frontend/dist ./static
 # first.
 COPY scripts ./scripts
 
-ENV PYTHONUNBUFFERED=1
 ENV STATIC_DIR=/app/static
 ENV SCRIPTS_DIR=/app/scripts
 
 EXPOSE 8000
 
 # `[processes]` in fly.toml OVERRIDES this for both groups, so the `app`
-# command there must stay in sync with this line. It is here for a plain
+# command there must stay in sync with this line. The agent is
+# `/usr/local/bin/sentinel-agent`, from this same image. It is here for a plain
 # `docker run` and for anyone reading the image.
 #
 # Note what is no longer needed: uvicorn's `--forwarded-allow-ips=*`,

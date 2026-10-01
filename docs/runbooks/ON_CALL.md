@@ -582,7 +582,7 @@ not yet on the latest commit.
 - **Deploy is BLOCKING a critical fix:** as a one-time emergency
   override, you can bypass CI and deploy manually:
   ```
-  cd backend && uv run python -c "..."  # tests still must pass locally
+  cd backend-rs && cargo test          # tests still must pass locally
   cd frontend && npm run build
   fly deploy -a sentinel-command  # USE WITH CAUTION
   ```
@@ -603,8 +603,8 @@ not yet on the latest commit.
 > checklist before pushing.
 
 - `cd backend-rs && cargo test && cargo clippy --all-targets` — green, no
-  warnings. (`cd backend && uv run pytest` covers the AI agent, which is
-  the only Python left.)
+  warnings. This covers the AI agent too: it is a binary in the same
+  crate.
 - `cd frontend && npm run build && npm run lint` — must be clean
   (lint warnings allowed; errors are not).
 - `git log origin/master..HEAD` — read every commit message. If
