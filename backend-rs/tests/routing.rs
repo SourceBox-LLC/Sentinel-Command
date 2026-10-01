@@ -220,7 +220,7 @@ async fn post_mcp_is_gated_before_anything_reads_the_body() {
     assert_eq!(body, r#"{"error":"Content-Length required."}"#);
 
     let (status, _, body) = send(
-        &app,
+        app,
         with("POST", "/mcp/", &[("content-length", "2097153")]),
     )
     .await;
@@ -228,7 +228,7 @@ async fn post_mcp_is_gated_before_anything_reads_the_body() {
     assert_eq!(body, r#"{"error":"Request body too large (max 2 MB)."}"#);
 
     let (status, _, body) = send(
-        &app,
+        app,
         with("POST", "/mcp/", &[("content-length", "not-a-number")]),
     )
     .await;
@@ -238,7 +238,7 @@ async fn post_mcp_is_gated_before_anything_reads_the_body() {
     // Exactly at the cap is allowed through — and reaches the transport,
     // which rejects it for its own reasons rather than the gate's.
     let (status, _, _) = send(
-        &app,
+        app,
         with(
             "POST",
             "/mcp/",
@@ -254,7 +254,7 @@ async fn post_mcp_is_gated_before_anything_reads_the_body() {
     let (status, _, _) = send(app, with("POST", "/mcp", &[])).await;
     assert_eq!(status, 411);
     let (status, headers, _) = send(
-        &app,
+        app,
         with("POST", "/mcp", &[("content-length", "0"), ("host", "h")]),
     )
     .await;

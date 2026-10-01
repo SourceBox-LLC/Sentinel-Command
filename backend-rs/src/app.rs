@@ -588,6 +588,25 @@ pub fn build_router(state: AppState) -> Router {
         // `index` for the SPA fallback, which owns every client-side
         // route.
         .layer(axum::Extension(IndexPath(index)))
+        // Sentry, outermost, and in this order because the order is the
+        // whole point:
+        //
+        // * `NewSentryLayer` gives each request its own hub, which is
+        //   what makes `sentry::set_user_context` from the auth
+        //   extractor safe. Without it the tags go on a thread-local
+        //   scope, and under a multi-threaded runtime one request's
+        //   org_id would end up on the next error raised by whatever
+        //   task landed on that thread. A mislabelled error in a
+        //   multi-tenant tracker is worse than an unlabelled one.
+        // * `SentryHttpLayer` attaches the request (method, path) and
+        //   starts a transaction. It reads `send_default_pii` off the
+        //   initialised client, so with PII off it strips the sensitive
+        //   headers itself — `sentry::scrub` is the second line, not the
+        //   first.
+        //
+        // Both are no-ops with no DSN: no client, nothing captured.
+        .layer(sentry::integrations::tower::SentryHttpLayer::new().enable_transaction())
+        .layer(sentry::integrations::tower::NewSentryLayer::new_from_top())
 }
 
 /// A GET that Rust has ported, on a path whose other methods Python

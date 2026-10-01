@@ -256,6 +256,44 @@ impl Config {
     }
 }
 
+/// Whether this URL is one this binary can actually open.
+///
+/// **The Rust tier is Postgres-only, and the Python it replaces was not.**
+/// `app/core/database.py` branched on the URL scheme and supported SQLite
+/// for self-hosted installs — WAL, `busy_timeout`, the conditional PRAGMA
+/// handler — with `sqlite:///./sentinel.db` as its documented default.
+/// sqlx here is built with the `postgres` feature and no `sqlite` one, so
+/// a SQLite URL does not fall back to anything: it fails inside the pool
+/// with a message about a scheme, at a point where the operator has no
+/// reason to suspect the answer is "this build cannot do that".
+///
+/// So it is checked here, by hand, before the pool is built. A wrong
+/// answer at startup is cheap; a confusing one costs someone an evening.
+///
+/// Porting the SQLite path is a slice of its own — 266 query sites with
+/// `$n` placeholders, `ILIKE`, `RETURNING` and a `pg_dump`-derived
+/// migration — and it is the one carve-out this rewrite still has. Until
+/// it lands, a self-hosted install needs Postgres.
+pub fn unsupported_database_url(url: &str) -> Option<String> {
+    let scheme = url.split("://").next().unwrap_or("").to_ascii_lowercase();
+    if matches!(scheme.as_str(), "postgres" | "postgresql") {
+        return None;
+    }
+    let what = if scheme.starts_with("sqlite") {
+        "SQLite"
+    } else if scheme.is_empty() {
+        "a URL with no scheme"
+    } else {
+        "that database"
+    };
+    Some(format!(
+        "DATABASE_URL is {url:?}, and this build cannot open it: {what} is not \
+         supported. Command Center's Rust tier requires PostgreSQL — set \
+         DATABASE_URL to a postgresql:// URL. (The Python tier supported \
+         SQLite for self-hosted installs; that path is not ported yet.)"
+    ))
+}
+
 /// Strip SQLAlchemy's `+driver` from a URL scheme.
 ///
 /// The Fly secret holds `postgresql+psycopg://…`, which sqlx does not
@@ -354,6 +392,25 @@ mod tests {
             normalize_database_url("postgresql+psycopg://u:p@h:5432/db"),
             "postgresql://u:p@h:5432/db"
         );
+    }
+
+    /// The guard that turns a confusing pool error into a sentence.
+    #[test]
+    fn only_postgres_urls_are_accepted() {
+        for url in [
+            "postgresql://u:p@h/db",
+            "postgres://u:p@h/db",
+            "POSTGRESQL://u:p@h/db",
+        ] {
+            assert!(unsupported_database_url(url).is_none(), "{url}");
+        }
+        // The Python's documented self-host default, which is the URL an
+        // operator following AGENTS.md would actually arrive with.
+        let message = unsupported_database_url("sqlite:///./sentinel.db").expect("refused");
+        assert!(message.contains("SQLite"), "{message}");
+        assert!(message.contains("PostgreSQL"), "{message}");
+        assert!(unsupported_database_url("mysql://u@h/db").is_some());
+        assert!(unsupported_database_url("/var/lib/sentinel.db").is_some());
     }
 
     #[test]

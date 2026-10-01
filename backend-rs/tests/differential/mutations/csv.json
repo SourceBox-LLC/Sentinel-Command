@@ -1,0 +1,153 @@
+{
+  "_comment": "Mutations for the three `?format=csv` exports, scored against csv_run.sh \u2014 the harness that serves the Python from a worktree of 2baabe6~1. This spec exists because that harness was written AFTER the reference was deleted, which makes it the one case list in this directory whose author could not be corrected by a failing run while writing it. Everything here is a bug a CSV port plausibly has: LF instead of CRLF, quoting too much or too little, defanging a number, dropping the header, exporting another org. Several change bytes that a CSV parser does not care about at all \u2014 which is the point: the harness compares bytes, and a compliance archive is bytes. `restart_rust` is false because csv_run.sh builds and restarts its own tier pair on 8010/8011; mutate.py's tiers.sh path would refuse, the Python it wants being gone.",
+  "restart_rust": false,
+  "harness": [
+    [
+      "tests/differential/csv_run.sh"
+    ]
+  ],
+  "mutations": [
+    {
+      "name": "LF line endings instead of CRLF",
+      "file": "src/csv_export.rs",
+      "_why": "RFC 4180 says CRLF and `csv.writer(lineterminator=\"\\r\\n\")` writes it. Every spreadsheet opens the LF file identically, so nothing downstream complains \u2014 and the archived bytes differ from every export that came before.",
+      "old": "    out.push_str(\"\\r\\n\");",
+      "new": "    out.push('\\n');"
+    },
+    {
+      "name": "every field quoted",
+      "file": "src/csv_export.rs",
+      "_why": "QUOTE_ALL parses the same as QUOTE_MINIMAL and is a different file. The tempting mutation: quoting everything is *safer* in isolation and wrong as a port.",
+      "old": "        let needs_quotes = (single && field.is_empty())\n            || field.contains([',', '\"', '\\r', '\\n']);",
+      "new": "        let needs_quotes = true;"
+    },
+    {
+      "name": "a newline inside a field is not quoted",
+      "file": "src/csv_export.rs",
+      "_why": "The one omission that corrupts the file rather than just differing: an unquoted LF ends the record, so a details column containing a newline silently becomes two rows and every column after it shifts.",
+      "old": "            || field.contains([',', '\"', '\\r', '\\n']);",
+      "new": "            || field.contains([',', '\"']);"
+    },
+    {
+      "name": "an embedded quote is not doubled",
+      "file": "src/csv_export.rs",
+      "_why": "`\"\"` is how RFC 4180 escapes a quote inside a quoted field. Without the doubling the field terminates early and the rest of the row is unparseable.",
+      "old": "                if ch == '\"' {\n                    out.push('\"');\n                }",
+      "new": "                if false {\n                    out.push('\"');\n                }"
+    },
+    {
+      "name": "formula leaders are not defanged",
+      "file": "src/csv_export.rs",
+      "_why": "The OWASP mitigation. MCP key names and node names inside audit details are caller-controlled, so `=HYPERLINK(...)` in an export executes when an admin opens it.",
+      "old": "                if value.starts_with(FORMULA_PREFIXES) {",
+      "new": "                if false {"
+    },
+    {
+      "name": "a hyphen is not treated as a formula leader",
+      "file": "src/csv_export.rs",
+      "_why": "`-` is on Python's list, and dropping just that one is the plausible mistake: it looks like a minus sign rather than an attack. The fixture has a username of `-5`.",
+      "old": "const FORMULA_PREFIXES: [char; 6] = ['=', '+', '-', '@', '\\t', '\\r'];",
+      "new": "const FORMULA_PREFIXES: [char; 5] = ['=', '+', '@', '\\t', '\\r'];"
+    },
+    {
+      "name": "integers are defanged like strings",
+      "file": "src/csv_export.rs",
+      "_why": "The reason Cell::Raw exists. `duration_ms = -5` is an int in the Python row builder and is NOT defanged; treating every cell as text turns it into `'-5`, which a spreadsheet then sorts as text.",
+      "old": "            Cell::Raw(value) => std::borrow::Cow::Borrowed(value),",
+      "new": "            Cell::Raw(value) => {\n                if value.starts_with(FORMULA_PREFIXES) {\n                    std::borrow::Cow::Owned(format!(\"'{value}\"))\n                } else {\n                    std::borrow::Cow::Borrowed(value)\n                }\n            }"
+    },
+    {
+      "name": "the header row is defanged too",
+      "file": "src/csv_export.rs",
+      "_why": "`writer.writerow(header)` passes plain strings through the escape path without defanging. No current column name starts with a leader, so this is invisible today \u2014 and it is one renamed column from being visible.",
+      "old": "    let header_cells: Vec<Cell> = header.iter().map(|h| Cell::Raw((*h).to_string())).collect();",
+      "new": "    let header_cells: Vec<Cell> = header.iter().map(|h| Cell::Text((*h).to_string())).collect();",
+      "equivalent": "No column name in the three exports starts with =, +, -, @, tab or CR, so Text and Raw render identically for every header this code can produce. Recorded rather than deleted: it is the mutation that would catch a future column named `-duration`."
+    },
+    {
+      "name": "the export has no header row",
+      "file": "src/csv_export.rs",
+      "_why": "An export whose first row is data looks fine in a spreadsheet \u2014 the first audit entry simply becomes the column names \u2014 and every downstream parser silently loses a row.",
+      "old": "    write_row(&mut first, header_cells.iter());",
+      "new": "    let _ = header_cells;"
+    },
+    {
+      "name": "a NULL text column exports as the word null",
+      "file": "src/csv_export.rs",
+      "_why": "`log.ip_address or \"\"` \u2014 a NULL is an empty field, not a literal. The fixture has NULLs in every nullable column of all three tables.",
+      "old": "        Cell::Text(value.unwrap_or_default())",
+      "new": "        Cell::Text(value.unwrap_or_else(|| \"null\".to_string()))"
+    },
+    {
+      "name": "a NULL duration exports as zero",
+      "file": "src/csv_export.rs",
+      "_why": "`duration_ms if ... is not None else \"\"`. Zero is a measurement; empty is the absence of one, and a tool that never reported a duration is not a tool that took no time.",
+      "old": "            None => Cell::Text(String::new()),",
+      "new": "            None => Cell::Raw(\"0\".to_string()),"
+    },
+    {
+      "name": "the filename loses its date",
+      "file": "src/csv_export.rs",
+      "_why": "The date is what makes a month of exports sort chronologically in a download folder, and Content-Disposition is compared by the harness because it is what the browser saves the file as.",
+      "old": "    format!(\"{}-{org}-{date}.csv\", safe_segment(prefix))",
+      "new": "    format!(\"{}-{org}.csv\", safe_segment(prefix))"
+    },
+    {
+      "name": "the org id is not sanitised into the filename",
+      "file": "src/csv_export.rs",
+      "_why": "The org id is Clerk's string. A quote in it breaks the quoted Content-Disposition value; a control character makes HeaderValue::from_str fail and the export 500s.",
+      "old": "        Some(org) => safe_segment(org),",
+      "new": "        Some(org) => org.to_string(),",
+      "equivalent": "The fixture's org id is `self-host`, which safe_segment leaves untouched \u2014 so this harness cannot tell the two apart, and the first version of this mutation did not even compile (a missing comma), which scored as `no result` rather than as the MISS it is. What catches it is the unit test `filenames_are_dated_and_sanitised`, which feeds it `a\"b/../c\\n`. Kept as the record of which check owns this, because a fixture whose org id contained a quote would move it here and that is worth knowing."
+    },
+    {
+      "name": "the download is cacheable",
+      "file": "src/csv_export.rs",
+      "_why": "An audit export is one org's compliance data. A proxy or a shared browser cache holding it is a real privacy regression, and `Cache-Control: no-store` is the only thing preventing it.",
+      "old": "    out.insert(header::CACHE_CONTROL, HeaderValue::from_static(\"no-store\"));",
+      "new": "    out.insert(header::CACHE_CONTROL, HeaderValue::from_static(\"max-age=60\"));"
+    },
+    {
+      "name": "the content type loses its charset",
+      "file": "src/csv_export.rs",
+      "_why": "`text/csv; charset=utf-8`. The fixture holds non-ASCII, and a client that believes a bare `text/csv` is Latin-1 renders mojibake.",
+      "old": "        HeaderValue::from_static(\"text/csv; charset=utf-8\"),",
+      "new": "        HeaderValue::from_static(\"text/csv\"),"
+    },
+    {
+      "name": "the CSV window ignores the caller's filters",
+      "file": "src/api/audit.rs",
+      "_why": "The export must cover the rows the auditor was looking at. Dropping the WHERE clause exports the whole org \u2014 and, with org_id in it, every org.",
+      "old": "           FROM audit_log{where_sql} ORDER BY timestamp DESC LIMIT 50000\"",
+      "new": "           FROM audit_log ORDER BY timestamp DESC LIMIT 50000\""
+    },
+    {
+      "name": "the export is ordered oldest first",
+      "file": "src/api/mcp_activity.rs",
+      "_why": "`ORDER BY timestamp DESC` matches the JSON page beside it. Reversing it is a different file with the same rows, which no assertion about row COUNT could catch.",
+      "old": "           FROM mcp_activity_logs{where_sql} ORDER BY timestamp DESC LIMIT 50000\"",
+      "new": "           FROM mcp_activity_logs{where_sql} ORDER BY timestamp ASC LIMIT 50000\""
+    },
+    {
+      "name": "the stream export column order follows the JSON body",
+      "file": "src/api/stream_logs.rs",
+      "_why": "The export leads with `accessed_at` so a spreadsheet sorted by column A is sorted by time; the JSON body leads with `id`. Two orders that are each defensible and only one of which is the Python's. Note what this mutation actually does: it reorders the HEADER only, since the cells come from the SQL in its own order \u2014 so it is caught as a header that no longer describes its data, which is a worse bug than the one the name describes.",
+      "old": "        &[\"accessed_at\", \"camera_id\", \"node_id\", \"user_email\", \"user_id\", \"ip_address\"],",
+      "new": "        &[\"camera_id\", \"node_id\", \"user_email\", \"user_id\", \"ip_address\", \"accessed_at\"],"
+    },
+    {
+      "name": "CSV honours the JSON row limit",
+      "file": "src/api/audit.rs",
+      "_why": "The CSV branch deliberately bypasses `limit`/`offset` for a flat 50,000-row window \u2014 an auditor wants a window, not a page. Honouring `?limit=1` would hand them one row and no error.",
+      "old": "           FROM audit_log{where_sql} ORDER BY timestamp DESC LIMIT 50000\"",
+      "new": "           FROM audit_log{where_sql} ORDER BY timestamp DESC LIMIT 1\""
+    },
+    {
+      "name": "the format parameter is validated after the branch",
+      "file": "src/api/audit.rs",
+      "_why": "`q.finish()` runs before the CSV hand-off, so `?format=csv&limit=0` is a 422 and not a download. Dropping it lets an invalid request succeed \u2014 and it compiles, which I wrongly expected it not to: `limit` and `offset` are still read by the JSON path below. Caught by the four 422 cases in csv_diff.py.",
+      "old": "    let format = q.pattern(\"format\", \"json\", \"^(json|csv)$\", &[\"json\", \"csv\"]);\n    q.finish()?;\n    rate.check().await?;",
+      "new": "    let format = q.pattern(\"format\", \"json\", \"^(json|csv)$\", &[\"json\", \"csv\"]);\n    rate.check().await?;"
+    }
+  ]
+}

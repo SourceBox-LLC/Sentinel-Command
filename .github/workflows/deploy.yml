@@ -11,6 +11,18 @@ name: Test & Deploy
 #   Backend tests (sqlite) · Backend tests (postgres) ·
 #   Frontend audit + build
 #
+# ⚠️ **`Backend tests (sqlite)` NO LONGER EXISTS.** The backend is Rust,
+# and the Rust tier is Postgres-only, so the matrix leg it named is gone;
+# the two legs are now `no database` and `postgres`, and there is a new
+# `Agent checks (python)` job for the Python that remains. Branch
+# protection must be updated IN THE SAME BREATH as merging this — a
+# required check that never reports blocks a PR forever, and the failure
+# looks like a stuck check rather than a config error. The checks to
+# require after the merge:
+#
+#   Backend tests (no database) · Backend tests (postgres) ·
+#   Agent checks (python) · Frontend audit + build
+#
 # GitHub reports NO status for a workflow that a path filter skipped —
 # not "skipped", nothing at all — so a required check on a path-filtered
 # PR trigger blocks the PR forever. Hence: PRs always run everything,
@@ -67,27 +79,34 @@ jobs:
   test:
     # Explicit name so the branch-protection check name is STABLE.
     # Without it GitHub derives the name from the whole matrix entry —
-    # "Backend tests (postgres, postgresql+psycopg://sentinel:sentinel@
-    # localhost:5432/sentinel_test)" — and editing that URL would rename
-    # the check, silently detaching it from branch protection.
-    name: Backend tests (${{ matrix.dialect }})
+    # including the database URL — and editing that URL would rename the
+    # check, silently detaching it from branch protection.
+    name: Backend tests (${{ matrix.database }})
     runs-on: ubuntu-latest
-    # One codebase, two databases: hosted Command Center runs Postgres,
-    # self-hosted runs SQLite. Testing only one of them means shipping
-    # the other unverified, so the suite runs against both and a failure
-    # in either blocks the deploy.
+    # Two legs, because the suite has two halves and running only the
+    # first ships the second unverified:
     #
-    # fail-fast is off deliberately — when a dialect-specific bug lands,
-    # seeing which engine broke (and whether the other survived) is the
-    # whole diagnostic.
+    #   no database  `cargo test` with TEST_DATABASE_URL unset. The
+    #                database-gated integration tests skip themselves, so
+    #                this is the pure-logic suite — and it is the leg that
+    #                proves the suite still passes for a contributor with
+    #                no Postgres running.
+    #   postgres     the same command with a live Postgres, which turns
+    #                on tests/{hls_db,plans_db,settings_db}.rs and the
+    #                migration.
+    #
+    # This replaces the old sqlite/postgres pair. The Python tier branched
+    # on the URL scheme and supported both engines; the Rust tier is
+    # Postgres-only (`config::unsupported_database_url` says so at
+    # startup), so a SQLite leg would have nothing to run.
     strategy:
       fail-fast: false
       matrix:
         include:
-          - dialect: sqlite
+          - database: no database
             test_database_url: ""
-          - dialect: postgres
-            test_database_url: postgresql+psycopg://sentinel:sentinel@localhost:5432/sentinel_test
+          - database: postgres
+            test_database_url: postgresql://sentinel:sentinel@localhost:5432/sentinel_test
     services:
       # Always started, used only by the postgres leg. GitHub has no
       # per-matrix-entry `services`, and an idle container costs a few
@@ -109,12 +128,64 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Pinned to the Dockerfile's `rust:1.98-bookworm`. A CI toolchain
+      # ahead of the builder's can accept code the deploy then fails to
+      # compile, which is the one failure this job exists to prevent.
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt, clippy
+
+      # Keyed on the lockfile, so a dependency bump misses the cache and
+      # everything else hits it.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend-rs
+
+      - name: Formatting
+        working-directory: backend-rs
+        run: cargo fmt --check
+
+      # `-D warnings` because a clippy warning nobody fails on is a
+      # clippy warning nobody reads. --all-targets covers the tests and
+      # the examples, which is where the probe binaries live.
+      - name: Lint (clippy)
+        working-directory: backend-rs
+        run: cargo clippy --all-targets -- -D warnings
+
+      # TEST_DATABASE_URL is empty for the first leg, and the
+      # database-gated tests skip themselves when it is unset — so the two
+      # matrix entries share one command.
+      - name: Run tests (${{ matrix.database }})
+        working-directory: backend-rs
+        env:
+          TEST_DATABASE_URL: ${{ matrix.test_database_url }}
+        run: cargo test --all-targets
+
+      # The release profile has `lto = true`, which is where a linker or
+      # codegen problem shows up — and that is what ships. Only on the
+      # postgres leg: building it twice would double the job for nothing.
+      - name: Release build
+        if: matrix.database == 'postgres'
+        working-directory: backend-rs
+        run: cargo build --release
+
+  agent:
+    # The Python that survived the rewrite: `backend/app/sentinel_agent/`,
+    # which runs as its own Fly process group and is out of the port's
+    # scope. It has its own dependency set (99 packages, not the web
+    # tier's 151) and its own tests, and nothing above would notice if
+    # either broke.
+    name: Agent checks (python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
       - name: Install uv
-        # astral-sh/setup-uv doesn't publish sliding major-version
-        # tags (v7, v8 etc.) the way actions/* and docker/* do — only
-        # specific versions like v8.1.0.  Pin to the exact tag and
-        # bump manually when there's a reason to.  v8.x is the first
-        # Node.js 24-ready major.
+        # astral-sh/setup-uv doesn't publish sliding major-version tags
+        # (v7, v8 etc.) the way actions/* and docker/* do — only specific
+        # versions like v8.1.0. Pin to the exact tag and bump manually
+        # when there's a reason to.
         uses: astral-sh/setup-uv@v10.0.1
 
       - name: Set up Python
@@ -124,37 +195,41 @@ jobs:
         working-directory: backend
         run: uv sync --extra dev
 
-      # Lint before tests — ruff is sub-second and catches the kind of
-      # issue (unused imports, import-sort drift, missing `from err` on
-      # re-raises) that masks real bugs and clutters review diffs.  Ruleset
-      # is conservative (F + E9 + W6 + I + B + UP) so the bar is "real
-      # problems only" rather than "every style nit"; tighten in pyproject
-      # when the team agrees on each new rule.
       - name: Lint with ruff
         working-directory: backend
         run: uv run ruff check
 
-      # Scan our Python dep tree against the PyPA Advisory DB.
-      # ``--strict`` makes any vulnerability a non-zero exit so a
-      # known-bad transitive dep blocks the deploy.  Mirrors the
-      # frontend's npm-audit gate (--audit-level=high --omit=dev)
-      # in policy: this also blocks at high+ tiers — pip-audit
-      # doesn't currently expose a severity gate, so anything in
-      # the advisory DB counts.  When a CVE shows up with no fix
-      # yet, add ``--ignore-vuln <PYSEC-ID>`` here with a comment
-      # citing the upstream issue and the date we plan to revisit.
+      # Scan the agent's dep tree against the PyPA Advisory DB. `--strict`
+      # makes any vulnerability a non-zero exit so a known-bad transitive
+      # dep blocks the deploy. When a CVE shows up with no fix yet, add
+      # `--ignore-vuln <PYSEC-ID>` here with a comment citing the upstream
+      # issue and the date we plan to revisit.
       - name: Dependency scan (pip-audit)
         working-directory: backend
         run: uv run pip-audit --strict
 
-      # TEST_DATABASE_URL is empty for the sqlite leg, and conftest.py
-      # falls back to in-memory SQLite when it's unset — so the two
-      # matrix entries share one command.
-      - name: Run tests (${{ matrix.dialect }})
+      - name: Run tests
         working-directory: backend
-        env:
-          TEST_DATABASE_URL: ${{ matrix.test_database_url }}
         run: uv run pytest -v
+
+      # The two cross-language checks. Both read source on both sides and
+      # compare — neither imports anything, because one side is Rust.
+      #
+      # `agent_contract.py` is the one that matters: the agent hand-builds
+      # the `/complete` body, Command Center ignores unknown fields, and a
+      # renamed key would silently record zero tool calls on every run
+      # with no 422, no exception and no log line. It replaces
+      # `backend/tests/test_agent_contract.py`, which did this by
+      # importing Command Center's Pydantic model and so could not
+      # survive the web tier being Rust.
+      - name: Agent ↔ Command Center contract
+        run: python3 backend-rs/tests/differential/agent_contract.py
+
+      # The OpenAPI document is a harvested snapshot of what FastAPI
+      # generated, so it cannot notice a route being added. This compares
+      # its paths against app.rs's route table in both directions.
+      - name: OpenAPI drift
+        run: python3 backend-rs/tests/differential/openapi_drift.py
 
   frontend:
     name: Frontend audit + build
@@ -232,7 +307,7 @@ jobs:
   deploy:
     name: Deploy to Fly.io
     runs-on: ubuntu-latest
-    needs: [test, frontend]
+    needs: [test, agent, frontend]
     # Push-to-master only. PRs run test+frontend for validation but must
     # never deploy (no secrets exposure, no half-reviewed code shipped).
     if: github.event_name == 'push'

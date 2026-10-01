@@ -117,7 +117,22 @@ impl Authenticator {
     }
 
     /// Resolve the caller from a request's headers.
+    ///
+    /// On success the caller's identity is tagged onto the per-request
+    /// Sentry scope, where the Python did the same from
+    /// `get_current_user`. Deliberately after the token is verified and
+    /// deliberately only `user_id`, `org_id` and `plan`: an email or a
+    /// username would be PII, and the point of the tags is to find which
+    /// org an error belongs to, not who was logged in.
     pub async fn authenticate(&self, parts: &Parts) -> Result<AuthUser, AuthError> {
+        let resolved = self.authenticate_inner(parts).await;
+        if let Ok(ref user) = resolved {
+            crate::sentry::set_user_context(&user.user_id, &user.org_id, &user.plan);
+        }
+        resolved
+    }
+
+    async fn authenticate_inner(&self, parts: &Parts) -> Result<AuthUser, AuthError> {
         match self {
             Authenticator::Unconfigured => Err(AuthError::NotConfigured),
 

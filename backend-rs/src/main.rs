@@ -11,14 +11,48 @@ use sentinel_command::{build_router, AppState, VERSION};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
-        )
-        .init();
+    // One subscriber, two layers: the usual formatter, plus the bridge
+    // that turns `tracing::error!` into a Sentry event. They go in ONE
+    // subscriber because a second `init()` is silently ignored — which
+    // is how error tracking can look configured and deliver nothing.
+    {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "info".into()),
+            )
+            .with(tracing_subscriber::fmt::layer())
+            .with(sentinel_command::sentry::tracing_layer())
+            .init();
+    }
+
+    // Sentry second, and the order took a wrong turn first. The Python
+    // initialised it before anything else, "as early as possible so any
+    // exception raised during app construction is still captured", and
+    // that reasoning does not carry over: the layer above resolves the
+    // hub at event time, so it captures everything after this line
+    // whatever order the two were installed in. Putting `init` first
+    // only meant its own log lines — including "SENTRY_DSN is not a
+    // valid DSN" — had no subscriber yet and went nowhere. The silence
+    // cost twenty minutes of chasing a hang that was a stopped Postgres
+    // container.
+    //
+    // The guard is held to the end of `main`: dropping it flushes the
+    // queue and shuts the client down, so `_` instead of `_sentry` would
+    // disable Sentry on the line that enabled it.
+    let _sentry = sentinel_command::sentry::init();
 
     let config = Config::from_env();
     let port = config.port;
+
+    // Refused here rather than inside the pool: this build has no SQLite
+    // driver, and the Python it replaces did. See
+    // `config::unsupported_database_url`.
+    if let Some(message) = sentinel_command::config::unsupported_database_url(&config.database_url) {
+        anyhow::bail!(message);
+    }
 
     let pool = PgPoolOptions::new()
         .max_connections(10)

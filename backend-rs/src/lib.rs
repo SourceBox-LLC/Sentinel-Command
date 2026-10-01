@@ -32,6 +32,7 @@ pub mod models;
 pub mod notifications;
 pub mod plans;
 pub mod sentinel_dispatch;
+pub mod sentry;
 pub mod pydatetime;
 pub mod pycodec;
 pub mod pyint;
