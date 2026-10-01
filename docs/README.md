@@ -39,9 +39,9 @@ sections, command-oriented, not narrative.
   do when the whole machine/volume is lost, RPO/RTO, and a rehearsal
   drill. Also covers **self-hosted** installs, whose recovery story is
   completely different — no Fly volume or S3 bucket, but a cloud
-  mirror they restore from with
-  `backend/scripts/restore_from_cloud.py`, including what that
-  deliberately does *not* bring back (node API keys, evidence blobs).
+  mirror they restore from with the `sentinel-restore-from-cloud`
+  binary, including what that deliberately does *not* bring back (node
+  API keys, evidence blobs).
 
 ## Legal templates (`docs/legal/`)
 

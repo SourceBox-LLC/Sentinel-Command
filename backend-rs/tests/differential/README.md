@@ -399,8 +399,12 @@ two stacks answered different routes for the same request.
 No privilege escalation — every endpoint involved requires the same auth
 — but a proxy that rewrites paths is not a transparent proxy, and
 transparency is the entire contract during a strangler migration. The
-proxy now uses hyper directly and passes the URI through byte for byte;
-`proxy.rs` has a regression test for it.
+proxy was switched to hyper, which passes the URI through byte for byte.
+
+Both the proxy and that test are gone with the Python; what is left of
+the finding is that **axum matches on the raw path and Starlette
+percent-decoded it first**, which is why `query.rs::path_segment` refuses
+a decoded slash — see "Path parameters" below.
 
 ## Query-parameter validation
 

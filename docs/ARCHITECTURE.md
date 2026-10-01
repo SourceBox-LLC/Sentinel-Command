@@ -89,11 +89,11 @@ A `readonly` MCP key is intersected with the read-tool set **in middleware**, so
 
 **Hosted — Postgres.** Three databases on the single `sentinel-postgres` cluster: `sentinel_command`, `sentinel_license`, `sentinel_sync`. Isolation is by *role*, not by cluster — each service's role owns exactly one database, `CONNECT` is revoked from `PUBLIC`, and none is a superuser. One cluster rather than three was a deliberate cost decision; roles supply the isolation separate clusters would have charged for.
 
-**Self-hosted — SQLite.** The same codebase. This is why the backend suite is parametrised across **both dialects** and a failure in either blocks the deploy.
+**Self-hosted — Postgres too, since the Rust rewrite.** The same codebase, and that is the point: the Python tier branched on the URL scheme and supported SQLite for self-hosting, which is the one behaviour the rewrite did not carry over. A self-hosted install now needs a Postgres container; the binary refuses a `sqlite://` URL at startup rather than failing obscurely inside the pool. The CI matrix that used to be "sqlite | postgres" is "no database | postgres" for the same reason. See AGENTS.md › Configuration for why it is a slice of its own.
 
-Schema changes run through a `sync_schema()` sweep on every boot rather than Alembic — see [ADR 0001](adr/0001-sync-schema-vs-alembic.md).
+Schema changes are sqlx migrations embedded at compile time; the first one adopts exactly what the Python's `create_all()` + `sync_schema()` sweep had already built in production, taken from `pg_dump --schema-only`. [ADR 0001](adr/0001-sync-schema-vs-alembic.md) is the history that led there.
 
-Backups: nightly `pg_dump` for `sentinel_command` and `sentinel_license`, with restores rehearsed rather than assumed. `sentinel_sync` deliberately has none — it holds a mirror whose source of truth is the operator's local SQLite. See [DISASTER_RECOVERY.md](runbooks/DISASTER_RECOVERY.md).
+Backups: nightly `pg_dump` for `sentinel_command` and `sentinel_license`, with restores rehearsed rather than assumed. `sentinel_sync` deliberately has none — it holds a mirror whose source of truth is the operator's own database. See [DISASTER_RECOVERY.md](runbooks/DISASTER_RECOVERY.md).
 
 ## Two ways to run it
 

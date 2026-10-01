@@ -360,11 +360,13 @@ S3 bucket, and no backup cron. Their recovery story is the **cloud
 data-sync tier**, and it's a different procedure.
 
 > Note the asymmetry this creates: the `pg_dump`-based scripts above are
-> hosted-only and do not apply to a self-hosted install. Since 2026-09
-> the Docker image no longer carries the `sqlite3` CLI either — nothing
-> in the hosted deployment reads a SQLite file any more. The Python
-> `sqlite3` module is stdlib and untouched, so a self-hosted run of this
-> same codebase works exactly as before.
+> hosted-only — but since the Rust rewrite a **self-hosted install is
+> also on Postgres**, so they now apply there too. That is the one
+> behaviour the rewrite did not carry over: the Python tier supported a
+> SQLite file for self-hosting and the Rust tier refuses a `sqlite://`
+> URL at startup (see AGENTS.md › Configuration). A self-hoster restoring
+> an old SQLite database needs the last Python release, or a migration
+> into Postgres.
 
 **Who this applies to:** `AUTH_PROVIDER=local` installs whose licence
 has the data-sync entitlement (`sync_enabled`). Without that
@@ -387,19 +389,26 @@ values. Deliberately **not** mirrored:
 ### Procedure
 
 ```bash
-cd backend
+# `sentinel-restore-from-cloud` is a second binary shipped in the image
+# and built from the same crate, so it reads the same DATABASE_URL and
+# the same licence settings the app does. On a deployed machine it is on
+# PATH; from a checkout it is `cargo run --bin sentinel-restore-from-cloud --`.
 
 # 1. What's actually up there? Also the quickest way to confirm sync
 #    was working — do this BEFORE you need it, not during.
-uv run python scripts/restore_from_cloud.py --list
+sentinel-restore-from-cloud --list
 
 # 2. See what would be written, without touching the database.
-uv run python scripts/restore_from_cloud.py --dry-run
+sentinel-restore-from-cloud --dry-run
 
 # 3. Restore. Creates the schema itself, so this works on a machine
 #    that has never started the app.
-uv run python scripts/restore_from_cloud.py
+sentinel-restore-from-cloud
 ```
+
+> It replaced `backend/scripts/restore_from_cloud.py` when the web tier
+> was rewritten in Rust. Same flags, same non-destructive default, same
+> exit codes — and the same two things it cannot bring back.
 
 Then start the app and re-register each camera node to issue fresh API
 keys.

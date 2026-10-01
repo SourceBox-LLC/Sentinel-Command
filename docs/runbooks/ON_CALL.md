@@ -287,14 +287,18 @@ self-hosted section applies to them, not this scenario.
   ```
   fly ssh console -a sentinel-command -C "sh -c 'ls -lt /data/backups | head'"
   ```
-  Then trigger early log cleanup if needed:
-  ```
-  fly ssh console -a sentinel-command \
-    -C "uv run python -c 'from app.main import run_log_cleanup; \
-        from app.core.database import SessionLocal; \
-        db = SessionLocal(); \
-        print(run_log_cleanup(db))'"
-  ```
+  **Log cleanup will not help here, and the step that used to live at
+  this point in the runbook said otherwise.** It deletes rows from
+  Postgres, and since the 2026-09-07 migration the database is not on
+  `/data` at all — this volume holds HLS working files and
+  `/data/backups`. A full `/data` is a streaming problem; see the note
+  at the top of this section.
+
+  There is also no longer a way to invoke the sweep by hand: the backend
+  is a Rust binary, so the `uv run python -c 'from app.main import
+  run_log_cleanup'` one-liner this step used to carry has no equivalent.
+  The loop runs every 24h and sleeps first, so a restart does not
+  trigger it either. For the *database* disk, see below.
 - **Database disk full:** extend the *cluster's* volume:
   ```
   fly volumes list -a sentinel-postgres
@@ -598,7 +602,9 @@ not yet on the latest commit.
 > Not a fire — but if you're deploying at 11pm, walk through this
 > checklist before pushing.
 
-- `cd backend && python -m pytest` — must be green.
+- `cd backend-rs && cargo test && cargo clippy --all-targets` — green, no
+  warnings. (`cd backend && uv run pytest` covers the AI agent, which is
+  the only Python left.)
 - `cd frontend && npm run build && npm run lint` — must be clean
   (lint warnings allowed; errors are not).
 - `git log origin/master..HEAD` — read every commit message. If

@@ -246,8 +246,9 @@ backend-rs/                       # Command Center. 41 modules + 28 route files.
 │   ├── spa.rs                    # the React document and its pass-through list
 │   ├── hls.rs                    # the in-memory segment cache (one owner)
 │   ├── auth.rs / auth/           # Clerk JWT (V1 + V2) and the local-auth path
-│   ├── proxy.rs                  # the strangler proxy. Unreachable now; see
-│   │                             # backend-rs/README.md before deleting it.
+│   ├── sentry.rs                 # error tracking; the tracing bridge is what
+│   │                             # turns an `error!` into an alert
+│   ├── csv_export.rs             # the three ?format=csv exports, streamed
 │   └── py*.rs                    # CPython semantics the port has to match
 │                                 # exactly: json.dumps spacing, round()
 │                                 # half-to-even, float() underscores,

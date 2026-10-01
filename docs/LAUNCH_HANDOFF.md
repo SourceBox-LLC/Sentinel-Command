@@ -176,7 +176,7 @@ There's no public status page yet.
 **State now.** Live and serving. `app.sentinel-command.com` (the app and
 API) holds a Fly-issued cert, valid to 2026-12-02; the apex
 `sentinel-command.com` (marketing site) is valid to 2026-12-07. CORS is
-hard-coded for that origin (`backend/app/main.py::cors_origins`).
+hard-coded for that origin (`backend-rs/src/cors.rs`).
 
 Note the split, because it has bitten the docs twice: **the API lives on
 `app.`, not the apex.** The apex has no `/api` and no `/docs`. Anything
@@ -443,7 +443,9 @@ a page.
 [X] Branch protection enabled on master (item 9)                      — done 2026-05-04
 [X] Support inbox configured and monitored (item 10)                 — done 2026-07-05 (ImprovMX: support@ + security@)
 [X] Resend signup + EMAIL_ENABLED=true + smoke test (item 2)         — done
-[ ] Run `cd backend && uv run pytest` — all green (450+ tests)
+[ ] Run `cd backend-rs && cargo test && cargo clippy --all-targets` — green,
+    zero warnings (420+ tests). Plus `cd backend && uv run pytest` for the
+    agent's 16.
 [ ] Run `cd frontend && npm run build && npm audit --omit=dev` — both clean
 [ ] Browse the live site at 375px, 1024px, 1440px — nothing broken
 [ ] Hit /api/health/detailed — overall "healthy", DB latency < 50ms,
@@ -487,7 +489,7 @@ When all twelve check, ship the launch announcement.
   rate-limit audit caught + closed 7 missing-decorator endpoints
   including 3 SSE streams, 4 admin DB endpoints, the incident-
   evidence proxy, and a custom in-memory connect-throttle for
-  the WebSocket (slowapi only does HTTP).  Full first-touch UX
+  the WebSocket (the HTTP limiter does not cover an upgrade).  Full first-touch UX
   pass — welcome email on `organization.created`, Help link in
   authenticated nav, in-app CameraNode install widget that
   auto-creates a node + bakes credentials into the displayed
