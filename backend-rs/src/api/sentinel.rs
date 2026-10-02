@@ -425,7 +425,9 @@ pub async fn create_agent_key(
 /// A UNIQUE constraint rejection, as opposed to any other database
 /// failure — the retry above must not swallow the rest.
 fn is_unique_violation(err: &sqlx::Error) -> bool {
-    matches!(err.as_database_error().and_then(|e| e.code()), Some(code) if code == "23505")
+    // Not the SQLSTATE: `23505` is Postgres's, and SQLite reports 2067.
+    err.as_database_error()
+        .is_some_and(|e| e.is_unique_violation())
 }
 
 /// What an admin reads when an agent key is revoked.

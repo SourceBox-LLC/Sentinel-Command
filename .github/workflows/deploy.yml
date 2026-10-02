@@ -11,20 +11,15 @@ name: Test & Deploy
 #   Backend tests (sqlite) · Backend tests (postgres) ·
 #   Frontend audit + build
 #
-# ⚠️ **`Backend tests (sqlite)` NO LONGER EXISTS.** The backend is Rust,
-# and the Rust tier is Postgres-only, so the matrix leg it named is gone;
-# the two legs are now `no database` and `postgres`. There is no agent
-# job: the agent is a binary in the same crate, so the backend legs build,
-# lint, audit and test it. (`Agent checks (python)` existed on this branch
-# for a few commits while the agent was still Python; it never reached
-# master, so nothing requires it.) Branch
-# protection must be updated IN THE SAME BREATH as merging this — a
-# required check that never reports blocks a PR forever, and the failure
-# looks like a stuck check rather than a config error. The checks to
-# require after the merge:
+# All three still exist, by exact name, which is what branch protection
+# matches on. This workflow also produces `Backend tests (no database)`;
+# it is not required today and nothing waits on it. There is no agent
+# job: the agent is a binary in the same crate, so the backend legs
+# build, lint, audit and test it.
 #
-#   Backend tests (no database) · Backend tests (postgres) ·
-#   Frontend audit + build
+# Renaming any of these jobs detaches it from branch protection: a
+# required check that never reports blocks a PR forever, and the failure
+# looks like a stuck check rather than a config error.
 #
 # GitHub reports NO status for a workflow that a path filter skipped —
 # not "skipped", nothing at all — so a required check on a path-filtered
@@ -86,8 +81,7 @@ jobs:
     # check, silently detaching it from branch protection.
     name: Backend tests (${{ matrix.database }})
     runs-on: ubuntu-latest
-    # Two legs, because the suite has two halves and running only the
-    # first ships the second unverified:
+    # Three legs, because there are three things to be wrong about:
     #
     #   no database  `cargo test` with TEST_DATABASE_URL unset. The
     #                database-gated integration tests skip themselves, so
@@ -96,16 +90,18 @@ jobs:
     #                no Postgres running.
     #   postgres     the same command with a live Postgres, which turns
     #                on tests/*_db.rs. Each applies the migrations itself,
-    #                because this service container starts EMPTY — the
-    #                first version of this leg would have failed on that,
-    #                the tests having only ever met a database that
-    #                already had the schema. A set-but-unreachable URL is
-    #                a failure, not a skip.
+    #                because this service container starts EMPTY. A
+    #                set-but-unreachable URL is a failure, not a skip.
+    #   sqlite       `--features sqlite`: the other driver, which is a
+    #                different BUILD (src/db.rs), so it is linted and
+    #                tested as one. Its tests/*_db.rs always run, on a
+    #                fresh file — there is nothing to provision, so
+    #                nothing to skip.
     #
-    # This replaces the old sqlite/postgres pair. The Python tier branched
-    # on the URL scheme and supported both engines; the Rust tier is
-    # Postgres-only (`config::unsupported_database_url` says so at
-    # startup), so a SQLite leg would have nothing to run.
+    # `Backend tests (sqlite)` is also, by exact name, a check `master`
+    # has required since the Python tier had a SQLite leg. It went away
+    # when the Rust tier was Postgres-only and is back because the engine
+    # is.
     strategy:
       fail-fast: false
       matrix:
@@ -114,6 +110,9 @@ jobs:
             test_database_url: ""
           - database: postgres
             test_database_url: postgresql://sentinel:sentinel@localhost:5432/sentinel_test
+          - database: sqlite
+            test_database_url: ""
+            cargo_features: --features sqlite
     services:
       # Always started, used only by the postgres leg. GitHub has no
       # per-matrix-entry `services`, and an idle container costs a few
@@ -163,7 +162,7 @@ jobs:
       # the examples, which is where the probe binaries live.
       - name: Lint (clippy)
         working-directory: backend-rs
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets ${{ matrix.cargo_features }} -- -D warnings
 
       # The Rust half of the dependency-scan parity this repo keeps on
       # three sides: pip-audit for Python, npm audit for the frontend, and
@@ -194,21 +193,24 @@ jobs:
         run: cargo audit --ignore RUSTSEC-2023-0071
 
       # TEST_DATABASE_URL is empty for the first leg, and the
-      # database-gated tests skip themselves when it is unset — so the two
-      # matrix entries share one command.
+      # database-gated tests skip themselves when it is unset — so the
+      # entries share one command. The sqlite leg ignores it: its
+      # database is a file `db::test_pool` creates.
       - name: Run tests (${{ matrix.database }})
         working-directory: backend-rs
         env:
           TEST_DATABASE_URL: ${{ matrix.test_database_url }}
-        run: cargo test --all-targets
+        run: cargo test --all-targets ${{ matrix.cargo_features }}
 
       # The release profile has `lto = true`, which is where a linker or
       # codegen problem shows up — and that is what ships. Only on the
-      # postgres leg: building it twice would double the job for nothing.
+      # no-database leg: the default build is the same binary either way.
+      # The sqlite leg builds its own, because it IS a different binary
+      # and the image ships both.
       - name: Release build
-        if: matrix.database == 'postgres'
+        if: matrix.database != 'no database'
         working-directory: backend-rs
-        run: cargo build --release
+        run: cargo build --release ${{ matrix.cargo_features }}
 
       # The OpenAPI document is a harvested snapshot of what FastAPI
       # generated, so it cannot notice a route being added. This compares

@@ -37,13 +37,13 @@
 //!    ~15 MB per concurrent export on a 1 GB machine whose segment cache
 //!    is already spoken for.
 
+use crate::db::Pool as PgPool;
+use crate::db::Row as PgRow;
 use axum::body::Body;
 use axum::http::{header, HeaderMap, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures_util::StreamExt;
-use sqlx::postgres::PgRow;
-use sqlx::PgPool;
 
 use crate::error::ApiError;
 

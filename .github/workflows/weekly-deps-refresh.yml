@@ -70,6 +70,12 @@ jobs:
       - name: Backend tests
         working-directory: backend-rs
         run: cargo test --all-targets
+      # The other driver is a different build; a lock refresh that breaks
+      # only sqlx's SQLite side would otherwise pass here and fail the
+      # deploy.
+      - name: Backend tests (sqlite build)
+        working-directory: backend-rs
+        run: cargo test --all-targets --features sqlite
       - name: Install cargo-audit
         uses: taiki-e/install-action@v2
         with:

@@ -18,6 +18,7 @@ pub mod config;
 pub mod cors;
 pub mod crypto;
 pub mod csv_export;
+pub mod db;
 pub mod email;
 pub mod email_templates;
 pub mod email_unsubscribe;

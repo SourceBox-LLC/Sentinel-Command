@@ -165,9 +165,10 @@ pub async fn list_cameras(
 
     let ids: Vec<i32> = cameras.iter().filter_map(|c| c.node_pk).collect();
     let nodes: Vec<NodeRow> = sqlx::query_as(&format!(
-        "SELECT {NODE_COLUMNS} FROM camera_nodes WHERE id = ANY($1)"
+        "SELECT {NODE_COLUMNS} FROM camera_nodes WHERE id {}",
+        crate::db::any(1)
     ))
-    .bind(&ids)
+    .bind(crate::db::list(&ids))
     .fetch_all(&state.pool)
     .await?;
     let node = |pk: Option<i32>| pk.and_then(|pk| nodes.iter().find(|n| n.id == pk));

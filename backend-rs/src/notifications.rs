@@ -244,7 +244,7 @@ impl NewNotification {
 ///
 /// An unknown kind is enabled: a notification type added without a
 /// settings migration must not silently disappear.
-pub async fn inbox_enabled(pool: &sqlx::PgPool, org_id: &str, kind: &str) -> bool {
+pub async fn inbox_enabled(pool: &crate::db::Pool, org_id: &str, kind: &str) -> bool {
     let Some((_, key, default)) = INBOX_KIND_TO_SETTING.iter().find(|(k, ..)| *k == kind) else {
         return true;
     };
@@ -256,7 +256,12 @@ pub async fn inbox_enabled(pool: &sqlx::PgPool, org_id: &str, kind: &str) -> boo
 /// Two gates in series: the global kill switch, then the per-org
 /// per-kind setting. An unknown kind is *disabled*, the opposite of the
 /// inbox default — see the module note.
-pub async fn email_enabled(config: &Config, pool: &sqlx::PgPool, org_id: &str, kind: &str) -> bool {
+pub async fn email_enabled(
+    config: &Config,
+    pool: &crate::db::Pool,
+    org_id: &str,
+    kind: &str,
+) -> bool {
     if !config.email_enabled {
         return false;
     }
@@ -273,7 +278,7 @@ pub async fn email_enabled(config: &Config, pool: &sqlx::PgPool, org_id: &str, k
 /// The Python's callers wrap these lookups in `try/except` and emit
 /// anyway, and a gate that cannot be read must not be a gate that
 /// blocks.
-async fn setting_is_true(pool: &sqlx::PgPool, org_id: &str, key: &str, default: bool) -> bool {
+async fn setting_is_true(pool: &crate::db::Pool, org_id: &str, key: &str, default: bool) -> bool {
     match settings::get(pool, org_id, key, None).await {
         Ok(Some(value)) => value == "true",
         Ok(None) => default,
@@ -300,7 +305,7 @@ pub fn motion_cooldown_anchor_key(camera_id: &str) -> String {
 /// `_motion_cooldown_minutes`. Hidden setting, default 15, floor 1 —
 /// zero would be pointless since the immediate mail fires anyway. A
 /// corrupt value falls back rather than disabling email outright.
-pub async fn motion_cooldown_minutes(pool: &sqlx::PgPool, org_id: &str) -> i64 {
+pub async fn motion_cooldown_minutes(pool: &crate::db::Pool, org_id: &str) -> i64 {
     let raw = settings::get(pool, org_id, "email_motion_cooldown_minutes", Some("15"))
         .await
         .ok()
@@ -341,7 +346,7 @@ fn parse_cooldown_minutes(raw: &str) -> i64 {
 /// lives in `settings` rather than in memory because a deploy in the
 /// middle of a window must not re-spam.
 pub async fn claim_motion_cooldown_or_silence(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     org_id: &str,
     camera_id: Option<&str>,
 ) -> bool {
@@ -532,7 +537,7 @@ fn is_falsy(value: &Value) -> bool {
 }
 
 async fn insert_notification(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     org_id: &str,
     row: &NotificationRow,
 ) -> Result<(i32, NaiveDateTime), sqlx::Error> {

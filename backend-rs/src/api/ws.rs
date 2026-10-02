@@ -260,7 +260,7 @@ pub async fn handle_heartbeat(
             SET status = 'online', last_seen = $1, node_version = $2,
                 version_checked_at = $1, updated_at = $1,
                 local_ip = CASE WHEN $3 THEN NULL
-                                WHEN $4::text IS NOT NULL THEN $4
+                                WHEN CAST($4 AS TEXT) IS NOT NULL THEN $4
                                 ELSE local_ip END
           WHERE node_id = $5",
     )
@@ -295,11 +295,12 @@ pub async fn handle_heartbeat(
             .iter()
             .filter_map(|camera| camera.get("camera_id").and_then(Value::as_str))
             .collect();
-        let known: Result<Vec<(String, String, Option<String>)>, _> = sqlx::query_as(
+        let known: Result<Vec<(String, String, Option<String>)>, _> = sqlx::query_as(&format!(
             "SELECT camera_id, status, name FROM cameras
-              WHERE camera_id = ANY($1) AND node_id = $2",
-        )
-        .bind(&reported)
+              WHERE camera_id {} AND node_id = $2",
+            crate::db::any(1)
+        ))
+        .bind(crate::db::list(&reported))
         .bind(node_pk)
         .fetch_all(&state.pool)
         .await;

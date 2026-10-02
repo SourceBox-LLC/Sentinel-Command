@@ -84,7 +84,11 @@ pub async fn list_mcp_logs(
         binds.push(format!("%{}%", super::audit::escape_like(k)));
         // Escaped here, unlike /api/audit/stream-logs: key names are
         // operator-chosen and routinely contain underscores.
-        where_sql.push_str(&format!(" AND key_name ILIKE ${} ESCAPE '\\'", binds.len()));
+        where_sql.push_str(&format!(
+            " AND key_name {} ${} ESCAPE '\\'",
+            crate::db::ILIKE,
+            binds.len()
+        ));
     }
     if let Some(ref s) = status {
         binds.push(s.clone());
@@ -114,7 +118,7 @@ pub async fn list_mcp_logs(
         "SELECT id, org_id, tool_name, key_name, status, duration_ms, args_summary, \
                 error, timestamp \
            FROM mcp_activity_logs{where_sql} \
-          ORDER BY timestamp DESC OFFSET {offset} LIMIT {limit}"
+          ORDER BY timestamp DESC LIMIT {limit} OFFSET {offset}"
     );
     let mut pq = sqlx::query_as::<_, McpActivityLogRow>(&page_sql).bind(&user.org_id);
     if let Some(ref t) = tool_name {

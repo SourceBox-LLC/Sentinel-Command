@@ -97,7 +97,11 @@ pub async fn list_audit_logs(
     }
     if let Some(ref u) = username {
         binds.push(format!("%{}%", escape_like(u)));
-        where_sql.push_str(&format!(" AND username ILIKE ${} ESCAPE '\\'", binds.len()));
+        where_sql.push_str(&format!(
+            " AND username {} ${} ESCAPE '\\'",
+            crate::db::ILIKE,
+            binds.len()
+        ));
     }
 
     // The CSV branch is bound by row count, not payload size: the JSON
@@ -125,7 +129,7 @@ pub async fn list_audit_logs(
     // is no path by which a caller's string reaches this format!.
     let page_sql = format!(
         "SELECT id, timestamp, event, ip_address, username, details \
-         FROM audit_log{where_sql} ORDER BY timestamp DESC OFFSET {offset} LIMIT {limit}"
+         FROM audit_log{where_sql} ORDER BY timestamp DESC LIMIT {limit} OFFSET {offset}"
     );
     let mut page_q = sqlx::query_as::<_, AuditLogRow>(&page_sql).bind(&user.org_id);
     if let Some(ref e) = event {

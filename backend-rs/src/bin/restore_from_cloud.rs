@@ -184,19 +184,34 @@ async fn run(args: Args) -> Result<std::process::ExitCode, String> {
         return Ok(std::process::ExitCode::SUCCESS);
     }
 
-    let wanted: Vec<&TableSummary> = summaries
+    let mut wanted: Vec<&TableSummary> = summaries
         .iter()
         .filter(|s| args.table.as_deref().is_none_or(|t| t == s.table))
         .collect();
+    // Parents before children, whatever order the mirror lists them in.
+    //
+    // Three foreign keys cross the mirrored tables: a camera names its
+    // node and its group, and a piece of evidence names its incident.
+    // Restored in the mirror's own order — which the Python did, and this
+    // did until it was run against an empty database — an alphabetical
+    // listing puts `incident_evidence` ahead of `incidents`, and every
+    // evidence row is refused for naming an incident that is thirty
+    // lines from existing. A second run would have fixed it, which is
+    // not something a person restoring after a disk loss should have to
+    // discover. A stable sort, so tables with no stake keep their order.
+    wanted.sort_by_key(|summary| restore_rank(&summary.table));
     if let Some(table) = &args.table {
         if wanted.is_empty() {
             return Err(format!("No mirrored data for table {table:?}."));
         }
     }
 
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(4)
-        .connect(&config.database_url)
+    sentinel_command::db::dispatch_to_matching_build(&config.database_url);
+    if let Some(message) = sentinel_command::config::unsupported_database_url(&config.database_url)
+    {
+        return Err(message);
+    }
+    let pool = sentinel_command::db::connect(&config.database_url, 4)
         .await
         .map_err(|err| format!("could not reach the local database: {err}"))?;
 
@@ -210,7 +225,7 @@ async fn run(args: Args) -> Result<std::process::ExitCode, String> {
     // also means a dry run against a fresh machine reports every row as
     // restorable, which is correct: nothing exists to skip.
     if !args.dry_run {
-        sqlx::migrate!("./migrations")
+        sentinel_command::db::MIGRATOR
             .run(&pool)
             .await
             .map_err(|err| format!("schema bring-up failed: {err}"))?;
@@ -364,9 +379,13 @@ async fn get(
 /// "character varying" where the cast wants `character varying(100)` or
 /// `varchar`, and "ARRAY" for anything array-typed, which is not a type
 /// at all.
-async fn table_columns(pool: &sqlx::PgPool, table: &str) -> Result<Vec<(String, String)>, String> {
+#[cfg(not(feature = "sqlite"))]
+async fn table_columns(
+    pool: &sentinel_command::db::Pool,
+    table: &str,
+) -> Result<Vec<(String, String)>, String> {
     let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT a.attname::text,
+        "SELECT CAST(a.attname AS TEXT),
                 pg_catalog.format_type(a.atttypid, a.atttypmod) AS cast_to
            FROM pg_catalog.pg_attribute a
            JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
@@ -384,12 +403,64 @@ async fn table_columns(pool: &sqlx::PgPool, table: &str) -> Result<Vec<(String, 
     Ok(rows)
 }
 
+/// The SQLite build's column list: name and DECLARED type, which is all
+/// SQLite has — and all `placeholder` below needs.
+#[cfg(feature = "sqlite")]
+async fn table_columns(
+    pool: &sentinel_command::db::Pool,
+    table: &str,
+) -> Result<Vec<(String, String)>, String> {
+    sqlx::query_as("SELECT name, type FROM pragma_table_info($1) ORDER BY cid")
+        .bind(table)
+        .fetch_all(pool)
+        .await
+        .map_err(|err| format!("could not read {table}'s columns: {err}"))
+}
+
+/// Where a table goes in the restore: referenced tables first, then the
+/// ones that reference them, then everything else as it came.
+fn restore_rank(table: &str) -> u8 {
+    match table {
+        "camera_groups" | "camera_nodes" | "incidents" => 0,
+        "cameras" | "incident_evidence" => 1,
+        _ => 2,
+    }
+}
+
+/// How a text-bound mirror value becomes the column's own type.
+#[cfg(not(feature = "sqlite"))]
+fn placeholder(index: usize, column_type: &str) -> String {
+    // Every value is bound as text because the mirror is JSON; without
+    // the cast Postgres refuses the insert outright rather than coercing.
+    format!("${index}::{column_type}")
+}
+
+/// SQLite would accept the text as it is — and store a boolean as the
+/// string `true` and a timestamp with a `T` in it, neither of which the
+/// service would read back as what it was. The mirror holds what
+/// Postgres's JSON renders (`sync.rs` makes the SQLite build push the
+/// same), so each is turned back into how this build stores it.
+#[cfg(feature = "sqlite")]
+fn placeholder(index: usize, column_type: &str) -> String {
+    let p = format!("${index}");
+    let upper = column_type.to_ascii_uppercase();
+    match upper.as_str() {
+        "BOOLEAN" => {
+            format!("CASE {p} WHEN 'true' THEN 1 WHEN 'false' THEN 0 ELSE CAST({p} AS INTEGER) END")
+        }
+        "DATETIME" | "TIMESTAMP" => format!("replace({p}, 'T', ' ')"),
+        "INTEGER" | "BIGINT" => format!("CAST({p} AS INTEGER)"),
+        "FLOAT" | "REAL" => format!("CAST({p} AS REAL)"),
+        _ => p,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn restore_table(
     client: &reqwest::Client,
     base: &str,
     key: &str,
-    pool: &sqlx::PgPool,
+    pool: &sentinel_command::db::Pool,
     table: &str,
     columns: &[(String, String)],
     args: &Args,
@@ -459,7 +530,7 @@ async fn restore_table(
 }
 
 async fn row_exists(
-    pool: &sqlx::PgPool,
+    pool: &sentinel_command::db::Pool,
     table: &str,
     id: &serde_json::Value,
 ) -> Result<bool, String> {
@@ -467,10 +538,10 @@ async fn row_exists(
         serde_json::Value::String(s) => s.clone(),
         other => other.to_string(),
     };
-    // `id::text` so one comparison works for an integer key and the
+    // Compared as text so one comparison works for an integer key and the
     // Sentinel run's hex string alike.
     let found: Option<(i32,)> = sqlx::query_as(&format!(
-        "SELECT 1 FROM {table} WHERE id::text = $1 LIMIT 1"
+        "SELECT 1 FROM {table} WHERE CAST(id AS TEXT) = $1 LIMIT 1"
     ))
     .bind(&raw)
     .fetch_optional(pool)
@@ -480,7 +551,7 @@ async fn row_exists(
 }
 
 async fn write_row(
-    pool: &sqlx::PgPool,
+    pool: &sentinel_command::db::Pool,
     table: &str,
     columns: &[(String, String)],
     data: &serde_json::Map<String, serde_json::Value>,
@@ -500,10 +571,8 @@ async fn write_row(
         };
         names.push(name);
         let index = values.len() + 1;
-        // Cast to the column's own type. Every value is bound as text
-        // because the mirror is JSON; without the cast Postgres refuses
-        // the insert outright rather than coercing.
-        casts.push(format!("${index}::{cast_to}"));
+        // Cast to the column's own type; see `placeholder`.
+        casts.push(placeholder(index, cast_to));
         values.push(match value {
             serde_json::Value::Null => None,
             serde_json::Value::String(s) => Some(s.clone()),
@@ -521,7 +590,7 @@ async fn write_row(
     // something. See `UNRESTORABLE_CREDENTIAL`.
     if table == "camera_nodes" && !names.contains(&"api_key_hash") {
         names.push("api_key_hash");
-        casts.push(format!("${}::text", values.len() + 1));
+        casts.push(format!("${}", values.len() + 1));
         values.push(Some(UNRESTORABLE_CREDENTIAL.to_string()));
     }
 
@@ -559,4 +628,26 @@ async fn write_row(
             .unwrap_or("write failed")
             .to_string()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::restore_rank;
+
+    /// Every foreign key among the mirrored tables, as (child, parent).
+    /// A new one added to the schema without a rank here restores in the
+    /// wrong order on some mirror listing, so this is the list to extend.
+    #[test]
+    fn a_referenced_table_is_restored_before_the_one_that_names_it() {
+        for (child, parent) in [
+            ("cameras", "camera_nodes"),
+            ("cameras", "camera_groups"),
+            ("incident_evidence", "incidents"),
+        ] {
+            assert!(
+                restore_rank(parent) < restore_rank(child),
+                "{parent} must be restored before {child}"
+            );
+        }
+    }
 }

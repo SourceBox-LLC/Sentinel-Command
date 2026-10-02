@@ -185,7 +185,7 @@ pub fn python_json_string(s: &str) -> String {
 /// that was already carried out. The failure is logged instead.
 #[allow(clippy::too_many_arguments)]
 pub async fn write_audit(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     org_id: &str,
     event: &str,
     user_id: &str,

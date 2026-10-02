@@ -167,7 +167,10 @@ impl Config {
         Self {
             database_url: normalize_database_url(&var_or(
                 "DATABASE_URL",
-                "postgresql://postgres:postgres@localhost:5432/sentinel",
+                // The Python tier's default, and for the same reason: an
+                // install that configures nothing gets a file beside the
+                // binary rather than a connection refused.
+                "sqlite:///./sentinel.db",
             )),
             port: var_or("PORT", "8000").parse().unwrap_or(8000),
             static_dir: var_or("STATIC_DIR", "/app/static"),
@@ -268,41 +271,39 @@ impl Config {
     }
 }
 
-/// Whether this URL is one this binary can actually open.
+/// Why this build cannot open `url`, if it cannot.
 ///
-/// **The Rust tier is Postgres-only, and the Python it replaces was not.**
-/// `app/core/database.py` branched on the URL scheme and supported SQLite
-/// for self-hosted installs — WAL, `busy_timeout`, the conditional PRAGMA
-/// handler — with `sqlite:///./sentinel.db` as its documented default.
-/// sqlx here is built with the `postgres` feature and no `sqlite` one, so
-/// a SQLite URL does not fall back to anything: it fails inside the pool
-/// with a message about a scheme, at a point where the operator has no
-/// reason to suspect the answer is "this build cannot do that".
+/// One backend is compiled into each binary (`db.rs`), so the scheme is
+/// checked by hand before the pool is built. Left to sqlx, a SQLite URL
+/// handed to the PostgreSQL build is ten seconds of acquire timeout and
+/// then "pool timed out while waiting for an open connection" — which
+/// reads like a network fault, and sends the reader to check a database
+/// that was never going to be contacted.
 ///
-/// So it is checked here, by hand, before the pool is built. A wrong
-/// answer at startup is cheap; a confusing one costs someone an evening.
-///
-/// Porting the SQLite path is a slice of its own — 266 query sites with
-/// `$n` placeholders, `ILIKE`, `RETURNING` and a `pg_dump`-derived
-/// migration — and it is the one carve-out this rewrite still has. Until
-/// it lands, a self-hosted install needs Postgres.
+/// `main` tries the sibling binary first (`dispatch_to_matching_build`);
+/// this is the sentence for when there is none.
 pub fn unsupported_database_url(url: &str) -> Option<String> {
-    let scheme = url.split("://").next().unwrap_or("").to_ascii_lowercase();
-    if matches!(scheme.as_str(), "postgres" | "postgresql") {
-        return None;
-    }
-    let what = if scheme.starts_with("sqlite") {
-        "SQLite"
-    } else if scheme.is_empty() {
-        "a URL with no scheme"
-    } else {
-        "that database"
+    use crate::db::{url_kind, UrlKind, BACKEND_NAME, SQLITE};
+    let asked = match url_kind(url) {
+        UrlKind::Postgres if !SQLITE => return None,
+        UrlKind::Sqlite if SQLITE => return None,
+        UrlKind::Postgres => "PostgreSQL",
+        UrlKind::Sqlite => "SQLite",
+        UrlKind::Other => {
+            return Some(format!(
+                "DATABASE_URL is {url:?}, which is neither a postgresql:// nor a \
+                 sqlite:// URL. Command Center runs on PostgreSQL or on a SQLite \
+                 file — for example sqlite:///./sentinel.db."
+            ));
+        }
     };
+    let other_binary = crate::db::sibling_binary_name(&crate::db::own_binary_name());
     Some(format!(
-        "DATABASE_URL is {url:?}, and this build cannot open it: {what} is not \
-         supported. Command Center's Rust tier requires PostgreSQL — set \
-         DATABASE_URL to a postgresql:// URL. (The Python tier supported \
-         SQLite for self-hosted installs; that path is not ported yet.)"
+        "DATABASE_URL is {url:?}, which asks for {asked}, and this binary is the \
+         {BACKEND_NAME} build. The database driver is chosen when the binary is \
+         compiled: run `{other_binary}` (it ships beside this one in the image), \
+         or build it with `cargo build --release{}`.",
+        if SQLITE { "" } else { " --features sqlite" }
     ))
 }
 
@@ -406,23 +407,45 @@ mod tests {
         );
     }
 
-    /// The guard that turns a confusing pool error into a sentence.
+    /// The guard that turns a confusing pool error into a sentence. Each
+    /// build accepts its own database and names the other binary for the
+    /// other one, so this asserts both halves from whichever build runs.
     #[test]
-    fn only_postgres_urls_are_accepted() {
-        for url in [
+    fn each_build_accepts_its_own_database_and_names_the_other() {
+        let postgres = [
             "postgresql://u:p@h/db",
             "postgres://u:p@h/db",
             "POSTGRESQL://u:p@h/db",
-        ] {
+        ];
+        // The Python tier's documented default, which is also this one's.
+        let sqlite = [
+            "sqlite:///./sentinel.db",
+            "sqlite:////data/sentinel.db",
+            "sqlite:x.db",
+        ];
+        let (mine, theirs) = if crate::db::SQLITE {
+            (sqlite, postgres)
+        } else {
+            (postgres, sqlite)
+        };
+        // Named after this binary, whatever it is called — the restore
+        // tool has a sibling too.
+        let other_binary = crate::db::sibling_binary_name(&crate::db::own_binary_name());
+        for url in mine {
             assert!(unsupported_database_url(url).is_none(), "{url}");
         }
-        // The Python's documented self-host default, which is the URL an
-        // operator following AGENTS.md would actually arrive with.
-        let message = unsupported_database_url("sqlite:///./sentinel.db").expect("refused");
-        assert!(message.contains("SQLite"), "{message}");
-        assert!(message.contains("PostgreSQL"), "{message}");
-        assert!(unsupported_database_url("mysql://u@h/db").is_some());
-        assert!(unsupported_database_url("/var/lib/sentinel.db").is_some());
+        for url in theirs {
+            let message = unsupported_database_url(url).expect("refused");
+            assert!(message.contains(&other_binary), "{url}: {message}");
+            assert!(
+                message.contains(crate::db::BACKEND_NAME),
+                "{url}: {message}"
+            );
+        }
+        for url in ["mysql://u@h/db", "/var/lib/sentinel.db", ""] {
+            let message = unsupported_database_url(url).expect("refused");
+            assert!(message.contains("sqlite://"), "{url:?}: {message}");
+        }
     }
 
     #[test]

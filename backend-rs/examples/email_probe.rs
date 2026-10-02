@@ -113,10 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let base = Config::from_env();
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(4)
-        .connect(&db)
-        .await?;
+    let pool = sentinel_command::db::connect(&db, 4).await?;
     let client = reqwest::Client::new();
 
     let file: CaseFile = serde_json::from_str(&std::fs::read_to_string(&cases)?)?;
@@ -161,7 +158,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn reset(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
+async fn reset(pool: &sentinel_command::db::Pool) -> Result<(), sqlx::Error> {
     for table in ["email_log", "email_outbox", "email_suppression"] {
         sqlx::query(&format!("DELETE FROM {table}"))
             .execute(pool)
@@ -170,7 +167,7 @@ async fn reset(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-async fn seed(pool: &sqlx::PgPool, scenario: &Scenario) -> Result<(), sqlx::Error> {
+async fn seed(pool: &sentinel_command::db::Pool, scenario: &Scenario) -> Result<(), sqlx::Error> {
     let now = sentinel_command::models::now_naive();
     for entry in &scenario.suppressed {
         let (address, reason) = match entry {
@@ -230,7 +227,9 @@ async fn seed(pool: &sqlx::PgPool, scenario: &Scenario) -> Result<(), sqlx::Erro
     Ok(())
 }
 
-async fn dump_outbox(pool: &sqlx::PgPool) -> Result<Vec<BTreeMap<String, Value>>, sqlx::Error> {
+async fn dump_outbox(
+    pool: &sentinel_command::db::Pool,
+) -> Result<Vec<BTreeMap<String, Value>>, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT id, org_id, recipient_email, kind, status, attempts,
                 resend_message_id, error, sent_at, last_attempt_at
@@ -273,7 +272,9 @@ async fn dump_outbox(pool: &sqlx::PgPool) -> Result<Vec<BTreeMap<String, Value>>
         .collect())
 }
 
-async fn dump_log(pool: &sqlx::PgPool) -> Result<Vec<BTreeMap<String, Value>>, sqlx::Error> {
+async fn dump_log(
+    pool: &sentinel_command::db::Pool,
+) -> Result<Vec<BTreeMap<String, Value>>, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT org_id, recipient_email, kind, status, resend_message_id, error
            FROM email_log ORDER BY id",

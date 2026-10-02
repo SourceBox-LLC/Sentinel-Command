@@ -99,7 +99,7 @@ pub async fn list_motion_events(
     let page_sql = format!(
         "SELECT id, org_id, camera_id, node_id, score, segment_seq, timestamp \
          FROM motion_events{where_sql} \
-         ORDER BY timestamp DESC OFFSET {offset} LIMIT {limit}"
+         ORDER BY timestamp DESC LIMIT {limit} OFFSET {offset}"
     );
     let mut pq = sqlx::query_as::<_, MotionEventRow>(&page_sql)
         .bind(&user.org_id)
@@ -141,12 +141,18 @@ pub async fn motion_stats(
     // value echoed back is the one Python echoes.
     let hours = hours.small().unwrap_or_default();
 
-    // No ORDER BY, matching the Python's bare `.group_by(...).all()`.
+    // Ordered, which the Python's bare `.group_by(...).all()` was not.
+    // It never needed to be while there was one database: the Postgres
+    // planner's hash aggregate gave both tiers the same order by
+    // accident. SQLite groups by sorting and returns another, so the two
+    // BUILDS disagreed about a response body — over rows nobody had
+    // asked to be in any order. Naming one makes it a property of the
+    // route rather than of the engine.
     let rows: Vec<(String, i64, Option<i32>, Option<NaiveDateTime>)> = sqlx::query_as(
         "SELECT camera_id, COUNT(id) AS count, MAX(score) AS peak_score, \
                 MAX(timestamp) AS latest \
            FROM motion_events WHERE org_id = $1 AND timestamp >= $2 \
-          GROUP BY camera_id",
+          GROUP BY camera_id ORDER BY camera_id",
     )
     .bind(&user.org_id)
     .bind(since)

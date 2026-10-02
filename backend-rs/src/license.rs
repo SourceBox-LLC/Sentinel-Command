@@ -54,7 +54,7 @@ const LICENSE_GATED_PLAN: &str = "self_host";
 
 /// Everything the read-side gate needs.
 pub struct LicenseContext<'a> {
-    pub pool: &'a sqlx::PgPool,
+    pub pool: &'a crate::db::Pool,
     pub org_id: &'a str,
     /// `AUTH_PROVIDER=local`.
     pub local_auth: bool,
@@ -184,7 +184,7 @@ impl CheckInOutcome {
 /// place indefinitely, which is the one outcome the grace window cannot
 /// reason about.
 pub async fn check_in(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     client: &reqwest::Client,
     org_id: &str,
     service_url: &str,
@@ -306,7 +306,7 @@ fn bool_str(value: bool) -> &'static str {
 /// Persisted rather than derived so it survives a restart: the licence
 /// service counts installs, and an id that changed every boot would read
 /// as an install per restart.
-pub async fn get_or_create_install_id(pool: &sqlx::PgPool, org_id: &str) -> String {
+pub async fn get_or_create_install_id(pool: &crate::db::Pool, org_id: &str) -> String {
     if let Ok(Some(existing)) = crate::settings::get(pool, org_id, INSTALL_ID, Some("")).await {
         if !existing.is_empty() {
             return existing;

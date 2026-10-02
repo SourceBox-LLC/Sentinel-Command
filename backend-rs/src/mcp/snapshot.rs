@@ -103,7 +103,7 @@ pub fn extract_image_b64(result: &Value, camera_id: &str) -> Result<String, Snap
 
 /// `_capture_snapshot_bytes` — `(jpeg, node_id)`, or why not.
 pub async fn capture_bytes(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     org_id: &str,
     camera_id: &str,
 ) -> Result<(Vec<u8>, String), SnapshotError> {

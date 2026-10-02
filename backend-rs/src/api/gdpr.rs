@@ -371,9 +371,9 @@ async fn export_org_data(
     Ok(out)
 }
 
-async fn org_rows<T>(pool: &sqlx::PgPool, sql: &str, org_id: &str) -> Result<Vec<T>, ApiError>
+async fn org_rows<T>(pool: &crate::db::Pool, sql: &str, org_id: &str) -> Result<Vec<T>, ApiError>
 where
-    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+    T: for<'r> sqlx::FromRow<'r, crate::db::Row> + Send + Unpin,
 {
     Ok(sqlx::query_as(sql).bind(org_id).fetch_all(pool).await?)
 }
@@ -385,7 +385,7 @@ where
 /// timestamp columns, so the `bytes` branch of the Python's
 /// introspection (`<binary N bytes>`) cannot arise here.
 async fn introspect_rows(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     table: &str,
     org_id: &str,
 ) -> Result<Vec<Value>, ApiError> {
@@ -399,16 +399,21 @@ async fn introspect_rows(
         for column in row.columns() {
             let name = column.name();
             let value = match column.type_info().name() {
+                // The names are the driver's: Postgres says INT4, INT8, BOOL and
+                // TIMESTAMP; SQLite says INTEGER, BIGINT, BOOLEAN and DATETIME
+                // for the same declarations. An unlisted name falls through to
+                // the text branch — which is how the SQLite build first met
+                // this route: an integer read as a string, and a 500.
                 "INT4" => row
                     .try_get::<Option<i32>, _>(name)
                     .map(|v| v.map_or(Value::Null, |v| json!(v))),
-                "INT8" => row
+                "INT8" | "INTEGER" | "BIGINT" => row
                     .try_get::<Option<i64>, _>(name)
                     .map(|v| v.map_or(Value::Null, |v| json!(v))),
-                "BOOL" => row
+                "BOOL" | "BOOLEAN" => row
                     .try_get::<Option<bool>, _>(name)
                     .map(|v| v.map_or(Value::Null, |v| json!(v))),
-                "TIMESTAMP" => row
+                "TIMESTAMP" | "DATETIME" => row
                     .try_get::<Option<NaiveDateTime>, _>(name)
                     .map(|v| v.map_or(Value::Null, |v| json!(iso_naive(v)))),
                 _ => row
@@ -584,7 +589,7 @@ const ORG_SCOPED_TABLES: [&str; 15] = [
 /// node ids still exist, and the in-memory caches, which no `DELETE`
 /// can reach.
 pub async fn delete_org_data(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx::Transaction<'_, crate::db::Db>,
     org_id: &str,
 ) -> Result<Vec<(&'static str, i64)>, sqlx::Error> {
     let mut counts: Vec<(&'static str, i64)> = Vec::new();

@@ -584,3 +584,39 @@ removes exactly that reordering from the comparison and nothing else.
 
 **Fix on master:** collect the image messages and extend `messages` with
 them after the `for tool_call in …` loop.
+
+## 20. A restore from the cloud mirror loses every evidence row on a fresh database
+
+`scripts/restore_from_cloud.py` restores tables in the order the mirror
+lists them (`for summary in wanted`, where `wanted` is the service's
+`/v1/sync/tables` response). Three foreign keys cross the mirrored
+tables — `cameras.node_id`, `cameras.group_id` and
+`incident_evidence.incident_id` — and nothing orders parents first. With
+an alphabetical listing, `incident_evidence` is restored before
+`incidents`, and every row is refused:
+
+```
+insert or update on table "incident_evidence" violates foreign key
+constraint "incident_evidence_incident_id_fkey"
+```
+
+The per-row SAVEPOINT that makes "one bad row does not sink the restore"
+true also makes this quiet: the run finishes, reports the failures, and
+restores everything else. Running it a SECOND time works, because the
+incidents now exist. The scenario the tool is for — a new machine after
+a lost disk — is exactly the one where the database is empty and the
+first run is the one that matters.
+
+**How it was found:** the mirror round trip added for the SQLite build
+(`tests/differential/dialect_restore.sh`), which restores into an EMPTY
+database. PostgreSQL to PostgreSQL failed 16 of 288 rows before SQLite
+was involved at all. The earlier restore check had gone into the
+database the rows were pushed from.
+
+**Not reproduced in the port.** `sentinel-restore-from-cloud` sorts the
+tables parents-first (`restore_rank`) and a unit test names each foreign
+key.
+
+**Fix on master:** the same — order `wanted` so `camera_groups`,
+`camera_nodes` and `incidents` come before `cameras` and
+`incident_evidence`.

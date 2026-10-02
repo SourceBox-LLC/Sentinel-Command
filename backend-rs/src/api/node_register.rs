@@ -643,10 +643,11 @@ pub async fn node_heartbeat(
 
     if !camera_updates.is_empty() {
         let ids: Vec<String> = camera_updates.iter().map(|c| c.camera_id.clone()).collect();
-        let known: Vec<(String,)> = sqlx::query_as(
-            "SELECT camera_id FROM cameras WHERE camera_id = ANY($1) AND node_id = $2",
-        )
-        .bind(&ids)
+        let known: Vec<(String,)> = sqlx::query_as(&format!(
+            "SELECT camera_id FROM cameras WHERE camera_id {} AND node_id = $2",
+            crate::db::any(1)
+        ))
+        .bind(crate::db::list(&ids))
         .bind(node.id)
         .fetch_all(&state.pool)
         .await?;

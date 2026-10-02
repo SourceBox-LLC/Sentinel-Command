@@ -429,7 +429,7 @@ impl HlsCache {
     ///
     /// A failed read is logged and counted as zero, as in the Python —
     /// the cap is not worth failing a segment over.
-    pub async fn warm_viewer_seconds(&self, pool: &sqlx::PgPool, org_id: &str) -> i64 {
+    pub async fn warm_viewer_seconds(&self, pool: &crate::db::Pool, org_id: &str) -> i64 {
         if let Some(total) = self.cached_viewer_seconds(org_id) {
             return total;
         }
@@ -456,7 +456,7 @@ impl HlsCache {
     /// The pending map is cleared before the write, as in the Python: a
     /// failed flush loses those increments rather than accumulating
     /// them through an outage.
-    pub async fn flush_viewer_usage(&self, pool: &sqlx::PgPool) -> usize {
+    pub async fn flush_viewer_usage(&self, pool: &crate::db::Pool) -> usize {
         let snapshot: Vec<((String, String), i64)> = {
             let mut viewer = self.viewer.lock().expect("viewer usage poisoned");
             if viewer.pending.is_empty() {

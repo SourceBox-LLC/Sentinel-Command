@@ -199,7 +199,7 @@ async fn push_table(
     }
     let projection = columns
         .iter()
-        .map(|c| format!("'{c}', t.\"{c}\""))
+        .map(|(c, kind)| format!("'{c}', {}", json_value_sql(c, kind)))
         .collect::<Vec<_>>()
         .join(", ");
 
@@ -209,16 +209,17 @@ async fn push_table(
         // Ordered by (cursor, id) so paging is stable, and filtered
         // strictly greater so a row is never pushed twice.
         let sql = format!(
-            "SELECT t.id::text,
-                    to_char(t.\"{cursor}\", 'YYYY-MM-DD\"T\"HH24:MI:SS.US') AS cursor_iso,
+            "SELECT CAST(t.id AS TEXT),
+                    {cursor_iso} AS cursor_iso,
                     t.\"{cursor}\" AS cursor_raw,
-                    json_build_object({projection}) AS data
+                    {JSON_OBJECT}({projection}) AS data
                FROM {table} t
-              WHERE ($1::timestamp IS NULL OR t.\"{cursor}\" > $1)
+              WHERE (CAST($1 AS TIMESTAMP) IS NULL OR t.\"{cursor}\" > $1)
               ORDER BY t.\"{cursor}\" ASC, t.id ASC
               LIMIT {BATCH_SIZE}",
             cursor = spec.cursor,
             table = spec.table,
+            cursor_iso = cursor_iso_sql(spec.cursor),
         );
         let rows: Vec<(
             String,
@@ -268,7 +269,7 @@ async fn push_table(
             // these small identity tables, and it is what lets the
             // service tombstone a row that is no longer here at all.
             let ids: Vec<(String,)> =
-                sqlx::query_as(&format!("SELECT id::text FROM {}", spec.table))
+                sqlx::query_as(&format!("SELECT CAST(id AS TEXT) FROM {}", spec.table))
                     .fetch_all(&state.pool)
                     .await?;
             payload["known_ids"] =
@@ -321,24 +322,85 @@ async fn push_table(
     Ok((total, batches))
 }
 
-/// The table's columns, in ordinal order, minus the denied ones.
+// ── The two dialects ─────────────────────────────────────────────────
+//
+// Everything about this query is shared except how a row becomes JSON,
+// and that is where the two databases differ most: Postgres knows a
+// column is a timestamp or a boolean and `json_build_object` renders it
+// as one; SQLite stores both as text and integer and would hand them
+// over as `"2026-09-15 10:00:00"` and `1`. The mirror has to hold the
+// same thing whichever database pushed it — `sentinel-restore-from-cloud`
+// reads it back into either — so the SQLite side restores the types by
+// hand, from the declared column types.
+
+#[cfg(not(feature = "sqlite"))]
+const JSON_OBJECT: &str = "json_build_object";
+#[cfg(feature = "sqlite")]
+const JSON_OBJECT: &str = "json_object";
+
+/// The cursor as `YYYY-MM-DDTHH:MM:SS.ffffff`, always six digits.
+#[cfg(not(feature = "sqlite"))]
+fn cursor_iso_sql(cursor: &str) -> String {
+    format!("to_char(t.\"{cursor}\", 'YYYY-MM-DD\"T\"HH24:MI:SS.US')")
+}
+
+/// The same string, from stored text. sqlx writes `%F %T%.f` — no
+/// fraction at all for a whole second, else three, six or nine digits —
+/// so it is padded out and cut back to the 26 characters Postgres gives.
+#[cfg(feature = "sqlite")]
+fn cursor_iso_sql(cursor: &str) -> String {
+    let c = format!("t.\"{cursor}\"");
+    format!(
+        "CASE WHEN {c} IS NULL THEN NULL ELSE substr(replace({c}, ' ', 'T') || \
+         CASE WHEN instr({c}, '.') = 0 THEN '.000000' ELSE '000000' END, 1, 26) END"
+    )
+}
+
+/// One column as a JSON value.
+#[cfg(not(feature = "sqlite"))]
+fn json_value_sql(column: &str, _declared_type: &str) -> String {
+    format!("t.\"{column}\"")
+}
+
+#[cfg(feature = "sqlite")]
+fn json_value_sql(column: &str, declared_type: &str) -> String {
+    let c = format!("t.\"{column}\"");
+    match declared_type.to_ascii_uppercase().as_str() {
+        // ISO 8601 with a `T`, as Postgres renders a timestamp in JSON.
+        "DATETIME" | "TIMESTAMP" => format!("replace({c}, ' ', 'T')"),
+        // `json('true')` is a JSON boolean; a bare 1 would be a number.
+        "BOOLEAN" => {
+            format!("json(CASE {c} WHEN 1 THEN 'true' WHEN 0 THEN 'false' ELSE 'null' END)")
+        }
+        _ => c,
+    }
+}
+
+/// The table's columns with their declared types, in ordinal order,
+/// minus the denied ones.
 async fn allowed_columns(
     state: &AppState,
     table: &str,
-) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT column_name FROM information_schema.columns
+) -> Result<Vec<(String, String)>, Box<dyn std::error::Error + Send + Sync>> {
+    #[cfg(not(feature = "sqlite"))]
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT column_name, data_type FROM information_schema.columns
           WHERE table_schema = 'public' AND table_name = $1
           ORDER BY ordinal_position",
     )
     .bind(table)
     .fetch_all(&state.pool)
     .await?;
+    #[cfg(feature = "sqlite")]
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT name, type FROM pragma_table_info($1) ORDER BY cid")
+            .bind(table)
+            .fetch_all(&state.pool)
+            .await?;
     let denied = denied_columns(table);
     Ok(rows
         .into_iter()
-        .map(|(name,)| name)
-        .filter(|name| !denied.contains(&name.as_str()))
+        .filter(|(name, _)| !denied.contains(&name.as_str()))
         .collect())
 }
 

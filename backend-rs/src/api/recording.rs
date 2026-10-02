@@ -25,7 +25,7 @@ use crate::ratelimit::PerMinute;
 
 /// Fetch a camera's current recording fields, scoped to the caller's org.
 async fn owned_camera(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     org_id: &str,
     camera_id: &str,
 ) -> Result<(bool, bool, Option<String>, Option<String>), ApiError> {

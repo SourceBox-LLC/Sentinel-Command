@@ -69,7 +69,7 @@ impl ProbeResult {
 
 /// `SELECT 1`. The most pager-worthy signal there is: every meaningful
 /// request reads or writes.
-pub async fn probe_database(pool: &sqlx::PgPool) -> ProbeResult {
+pub async fn probe_database(pool: &crate::db::Pool) -> ProbeResult {
     let started = std::time::Instant::now();
     match sqlx::query("SELECT 1").execute(pool).await {
         Ok(_) => {
@@ -285,7 +285,7 @@ pub fn probe_email_worker_with(
 /// a perfectly reachable service is not "ok".
 pub async fn probe_sentinel_license(
     config: &Config,
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     uptime_seconds: f64,
 ) -> ProbeResult {
     if !config.is_local_auth() {
@@ -335,7 +335,7 @@ pub async fn probe_sentinel_license(
     ProbeResult::new(status, data)
 }
 
-async fn setting(pool: &sqlx::PgPool, org_id: &str, key: &str) -> String {
+async fn setting(pool: &crate::db::Pool, org_id: &str, key: &str) -> String {
     crate::settings::get(pool, org_id, key, Some(""))
         .await
         .unwrap_or_default()
@@ -371,7 +371,7 @@ impl ReadinessReport {
 /// Clerk does not serialise behind the database ping.
 pub async fn run_readiness_probes(
     config: &Config,
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     client: &reqwest::Client,
     uptime_seconds: f64,
 ) -> ReadinessReport {
@@ -388,7 +388,7 @@ pub async fn run_readiness_probes(
 /// recomputing it and proving nothing.
 pub async fn run_readiness_probes_with(
     config: &Config,
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     client: &reqwest::Client,
     uptime_seconds: f64,
     disk_override: Option<ProbeResult>,

@@ -46,6 +46,11 @@ HERE = Path(__file__).resolve().parent
 RUST = os.environ.get("RUST_URL", "http://127.0.0.1:8000")
 PYTHON = os.environ.get("PYTHON_URL", "http://127.0.0.1:8001")
 PG_CONTAINER = "cc-schema-test"
+# Set by dialect_run.sh: the tier on PYTHON_URL is the SQLite build, and
+# this is its database file. The fixture is still applied to PostgreSQL
+# (it is written in PostgreSQL) and then copied across; that tier's
+# snapshot is read from the file. See dialect.py.
+SQLITE_DB = os.environ.get("DIALECT_SQLITE_DB", "")
 REDIS_CONTAINER = "cc-redis-test"
 
 TOKEN = sys.argv[1]
@@ -524,6 +529,33 @@ EXPECTED_DIVERGENCES = {
     # refuses. See expected_divergences.md and PYTHON_BUGS.md #2.
     "codec: audio as a list",
 }
+
+# In a dialect run the pair is two builds of the same Rust, so the list
+# above — Python-vs-Rust decisions — is simply not about them, and every
+# entry would be reported STALE. What differs there is the ENGINE, and
+# that has its own list:
+#
+#   * a 55-character codec. The column is VARCHAR(50). PostgreSQL
+#     enforces the length and the route is a 500 (as it was under the
+#     Python, on PostgreSQL); SQLite treats a declared length as
+#     documentation and stores it. The Python tier on SQLite stored it
+#     too. Neither build is wrong about its own database.
+if SQLITE_DB:
+    EXPECTED_DIVERGENCES = {
+        "codec: video 55 chars overflows the column",
+    }
+
+# And one about how ids are handed out. A full reset deletes the org's
+# audit rows and then writes one saying so. PostgreSQL's sequence never
+# goes back, so that row is one past the highest id EVER issued; a
+# SQLite `INTEGER PRIMARY KEY` (which is what the Python's models
+# declared — no AUTOINCREMENT) takes one past the highest id still
+# PRESENT, and so reuses the ids just deleted. Same row, different
+# number. Compared without the id, for these cases and that table only.
+ID_BLIND = {
+    "full reset": ("audit_log",),
+    "full reset on a free plan": ("audit_log",),
+} if SQLITE_DB else {}
 
 CASES += [
     # --- a NON-ADMIN attempting every ported write ---------------------
@@ -2750,6 +2782,13 @@ def run_case(base, method, path, body, who="admin", setup=None):
         # Some states cannot be reached any other way: an unlicensed
         # install, or an org that has already spent its monthly run cap.
         docker_psql(["-q"], input=setup, what="case setup")
+    on_sqlite = bool(SQLITE_DB) and base == PYTHON
+    if SQLITE_DB:
+        import dialect
+        # For BOTH tiers: see dialect.align_sequences.
+        dialect.align_sequences()
+    if on_sqlite:
+        dialect.copy_from_postgres(SQLITE_DB)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     status, raw, headers = fetch(base, method, path, body, who)
     if raw[:4] == b"PK\x03\x04":
@@ -2759,7 +2798,10 @@ def run_case(base, method, path, body, who="admin", setup=None):
             parsed = json.loads(raw)
         except Exception:  # noqa: BLE001
             parsed = raw.decode("utf-8", "replace")
-    rows = snapshot()
+    if on_sqlite:
+        rows = dialect.snapshot(SQLITE_DB, WATCHED, SNAPSHOT_FILTER)
+    else:
+        rows = snapshot()
     subs = {**dispatched_run_ids(rows), **issued_secrets(parsed), **issued_ids(parsed)}
     return (status, substitute(normalise(parsed, now), subs),
             substitute(normalise(rows, now), subs))
@@ -2881,6 +2923,11 @@ def _main():
             print(f"  INCONCLUSIVE {name}: a 429 (rust={rs_status} python={py_status}) — "
                   f"the budget was exhausted, so nothing was compared")
             continue
+
+        for table in ID_BLIND.get(name, ()):
+            for snapshot_rows in (py_db[table], rs_db[table]):
+                for row in snapshot_rows:
+                    row.pop("id", None)
 
         status_same = py_status == rs_status
         body_same = py_body == rs_body

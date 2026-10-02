@@ -415,7 +415,7 @@ pub async fn get_stream_logs(
     let rows: Vec<crate::api::stream_logs::StreamAccessLogRow> = sqlx::query_as(
         "SELECT id, user_id, user_email, org_id, camera_id, node_id, ip_address, accessed_at
            FROM stream_access_logs
-          WHERE org_id = $1 AND ($2::text IS NULL OR camera_id = $2)
+          WHERE org_id = $1 AND (CAST($2 AS TEXT) IS NULL OR camera_id = $2)
           ORDER BY accessed_at DESC
           LIMIT $3",
     )
@@ -449,7 +449,7 @@ pub async fn get_stream_stats(
     // whatever the planner returns, and the SPA sorts what it renders.
     let by_camera: Vec<(Option<String>, i64)> = sqlx::query_as(
         "SELECT camera_id, COUNT(id) FROM stream_access_logs
-          WHERE org_id = $1 AND accessed_at >= $2 GROUP BY camera_id",
+          WHERE org_id = $1 AND accessed_at >= $2 GROUP BY camera_id ORDER BY camera_id",
     )
     .bind(org_id)
     .bind(cutoff)
@@ -459,7 +459,8 @@ pub async fn get_stream_stats(
 
     let by_user: Vec<(Option<String>, Option<String>, i64)> = sqlx::query_as(
         "SELECT user_id, user_email, COUNT(id) FROM stream_access_logs
-          WHERE org_id = $1 AND accessed_at >= $2 GROUP BY user_id, user_email",
+          WHERE org_id = $1 AND accessed_at >= $2 GROUP BY user_id, user_email
+          ORDER BY user_id, user_email",
     )
     .bind(org_id)
     .bind(cutoff)
@@ -600,9 +601,9 @@ pub async fn list_incidents(
     let offset = int_or(args, "offset", 0);
 
     let filters = "WHERE i.org_id = $1
-          AND ($2::text IS NULL OR i.status = $2)
-          AND ($3::text IS NULL OR i.severity = $3)
-          AND ($4::text IS NULL OR i.camera_id = $4)";
+          AND (CAST($2 AS TEXT) IS NULL OR i.status = $2)
+          AND (CAST($3 AS TEXT) IS NULL OR i.severity = $3)
+          AND (CAST($4 AS TEXT) IS NULL OR i.camera_id = $4)";
     let (total,): (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM incidents i {filters}"))
         .bind(org_id)
         .bind(&status)
@@ -613,7 +614,7 @@ pub async fn list_incidents(
         .map_err(db_error)?;
 
     let rows: Vec<crate::api::incidents::IncidentRow> = sqlx::query_as(&format!(
-        "{} {filters} ORDER BY i.created_at DESC OFFSET $5 LIMIT $6",
+        "{} {filters} ORDER BY i.created_at DESC LIMIT $6 OFFSET $5",
         crate::api::incidents::INCIDENT_SELECT
     ))
     .bind(org_id)

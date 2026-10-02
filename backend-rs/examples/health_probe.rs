@@ -69,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("DATABASE_URL", &db);
     std::env::set_var("LOCAL_ORG_ID", "self-host");
 
-    let pool = sqlx::postgres::PgPoolOptions::new()
+    let pool = sentinel_command::db::PoolOptions::new()
         .max_connections(4)
         .connect(&db)
         .await?;

@@ -304,7 +304,7 @@ pub async fn fetch_live_plan_slug(
 
 /// Everything the resolvers need that is not the database.
 pub struct PlanContext<'a> {
-    pub pool: &'a sqlx::PgPool,
+    pub pool: &'a crate::db::Pool,
     pub client: &'a reqwest::Client,
     pub clerk_base_url: &'a str,
     pub clerk_secret: &'a str,
@@ -542,7 +542,7 @@ pub struct CapOutcome {
 /// for writes.
 pub async fn enforce_camera_cap(
     ctx: &PlanContext<'_>,
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     org_id: &str,
 ) -> Result<CapOutcome, sqlx::Error> {
     let plan_slug = effective_plan_for_caps(ctx, org_id, false).await;

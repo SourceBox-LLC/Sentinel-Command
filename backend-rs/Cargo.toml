@@ -7,6 +7,10 @@ description = "Command Center backend — Rust web tier."
 license = "AGPL-3.0"
 repository = "https://github.com/SourceBox-LLC/Sentinel-Command"
 
+[features]
+# The database is chosen per build; see src/db.rs. Default is PostgreSQL.
+sqlite = ["sqlx/sqlite"]
+
 [dependencies]
 axum = { version = "0.8", features = ["ws", "macros"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }

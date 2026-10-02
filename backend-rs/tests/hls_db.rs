@@ -12,33 +12,13 @@
 //! what happens a minute later. Getting it wrong is invisible until an
 //! org's usage silently stops counting — or counts twice.
 
+use sentinel_command::db::Pool as PgPool;
 use sentinel_command::hls::HlsCache;
-use sqlx::postgres::PgPoolOptions;
-use sqlx::PgPool;
 
 async fn pool() -> Option<PgPool> {
-    let url = std::env::var("TEST_DATABASE_URL")
-        .ok()
-        .filter(|u| !u.is_empty())?;
-    // Unset means skip; SET AND UNREACHABLE means fail. This used to end
-    // in `.ok()`, which turned a wrong URL into a silent skip — so the CI
-    // leg that exists to run these would have reported green with every
-    // one of them returning early.
-    let pool = PgPoolOptions::new()
-        .max_connections(2)
-        .connect(&url)
-        .await
-        .expect("TEST_DATABASE_URL is set but the database is unreachable");
-    // And the schema is applied here, not assumed. CI hands this an EMPTY
-    // database; locally it was always the differential's, which had the
-    // tables already, so the assumption held everywhere except the one
-    // place these are meant to run. Idempotent, and sqlx takes an advisory
-    // lock, so parallel tests racing to migrate is safe.
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .expect("migrations must apply to the test database");
-    Some(pool)
+    // Skips without TEST_DATABASE_URL on the PostgreSQL build; always
+    // runs, on a fresh file, on the SQLite build. See `db::test_pool`.
+    sentinel_command::db::test_pool(2).await
 }
 
 fn year_month() -> String {
@@ -112,10 +92,11 @@ async fn the_warm_total_includes_what_is_still_pending() {
     cleanup(&pool, org).await;
     sqlx::query(
         "INSERT INTO org_monthly_usage (org_id, year_month, viewer_seconds, updated_at)
-              VALUES ($1, $2, 100, now()::timestamp)",
+              VALUES ($1, $2, 100, $3)",
     )
     .bind(org)
     .bind(year_month())
+    .bind(chrono::Utc::now().naive_utc())
     .execute(&pool)
     .await
     .unwrap();

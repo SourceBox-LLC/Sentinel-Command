@@ -76,7 +76,7 @@ async fn build() -> (std::path::PathBuf, axum::Router) {
     let config = Config::from_env();
     // Lazy: nothing here reaches a handler, and requiring a live
     // Postgres would put these cases behind an env var.
-    let pool = sqlx::postgres::PgPoolOptions::new()
+    let pool = sentinel_command::db::PoolOptions::new()
         .connect_lazy(&config.database_url)
         .unwrap();
     let http = reqwest::Client::new();

@@ -30,7 +30,7 @@ const NOTIFICATION_KEYS: [&str; 3] = [
 /// a looser read here would disagree with the Python still serving the
 /// write path.
 async fn notification_flags(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     org_id: &str,
 ) -> Result<serde_json::Map<String, Value>, ApiError> {
     let mut out = serde_json::Map::new();

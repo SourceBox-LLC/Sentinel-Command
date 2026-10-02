@@ -11,8 +11,27 @@ use serde_json::{json, Value};
 
 /// Timestamps are stored and served naive (no offset) throughout, because
 /// the Python service writes `datetime.now(tz=UTC).replace(tzinfo=None)`.
+///
+/// Truncated to MICROSECONDS, which is all a Python `datetime` holds and
+/// all a Postgres `timestamp` stores — sqlx's Postgres encoder divides
+/// the nanoseconds away on the way in, so there this changes nothing.
+///
+/// On SQLite it is the difference between a cursor that works and one
+/// that does not. A timestamp is stored there as text, at whatever
+/// precision it was formatted with, and chrono's clock reads
+/// nanoseconds: the row would hold `…:07.123456789` while every reader
+/// renders, and every cursor round-trips, `…:07.123456`. A row is then
+/// always strictly greater than its own cursor, and the sync loop pushes
+/// its last row again on every cycle, forever.
 pub fn now_naive() -> NaiveDateTime {
-    Utc::now().naive_utc()
+    to_micros(Utc::now().naive_utc())
+}
+
+/// Drop sub-microsecond precision. See [`now_naive`].
+pub fn to_micros(at: NaiveDateTime) -> NaiveDateTime {
+    use chrono::Timelike;
+    at.with_nanosecond(at.nanosecond() / 1_000 * 1_000)
+        .unwrap_or(at)
 }
 
 /// `datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(<unit>=n)`,
@@ -206,6 +225,26 @@ impl CameraGroupRow {
 
 #[cfg(test)]
 mod tests {
+    /// The clock the service writes with holds nothing a Postgres
+    /// `timestamp` would drop — see `now_naive`.
+    #[test]
+    fn the_service_clock_has_microsecond_precision() {
+        use chrono::Timelike;
+        for _ in 0..50 {
+            assert_eq!(super::now_naive().nanosecond() % 1_000, 0);
+        }
+        let precise = chrono::NaiveDate::from_ymd_opt(2026, 9, 15)
+            .unwrap()
+            .and_hms_nano_opt(10, 0, 7, 123_456_789)
+            .unwrap();
+        assert_eq!(super::to_micros(precise).nanosecond(), 123_456_000);
+        // And what sqlx writes to SQLite for it is what Postgres holds.
+        assert_eq!(
+            super::to_micros(precise).format("%F %T%.f").to_string(),
+            "2026-09-15 10:00:07.123456"
+        );
+    }
+
     use super::*;
     use chrono::{Duration, NaiveDate};
 

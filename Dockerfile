@@ -124,6 +124,7 @@ RUN mkdir -p src/bin \
 # forgetting either is a compile error rather than a 500 in production.
 COPY backend-rs/src ./src
 COPY backend-rs/migrations ./migrations
+COPY backend-rs/migrations-sqlite ./migrations-sqlite
 COPY backend-rs/assets ./assets
 # The 46 email templates are `include_str!`d by src/email_templates.rs, so
 # they are a build input like the two above. They used to live under
@@ -135,11 +136,25 @@ COPY backend-rs/templates ./templates
 COPY backend-rs/tests ./tests
 COPY backend-rs/examples ./examples
 # Touched so cargo does not trust the fake sources' timestamps.
+#
+# TWO builds, because the database driver is chosen at compile time
+# (src/db.rs): PostgreSQL, the default, and `--features sqlite`. Only the
+# two binaries that open the database differ — the agent and the password
+# tool are built once. Both builds write `target/release/sentinel-command`,
+# so the first is moved out of the way before the second runs.
+#
+# The second build recompiles this crate and sqlx's driver and reuses
+# everything else, so it costs far less than the first.
 RUN touch src/main.rs src/lib.rs && cargo build --release --locked \
-    && strip target/release/sentinel-command \
-    && strip target/release/sentinel-agent \
-    && strip target/release/sentinel-hash-password \
-    && strip target/release/sentinel-restore-from-cloud
+    && mkdir -p /out \
+    && for bin in sentinel-command sentinel-agent sentinel-hash-password sentinel-restore-from-cloud; do \
+         strip "target/release/$bin" && cp "target/release/$bin" /out/; \
+       done \
+    && cargo build --release --locked --features sqlite \
+         --bin sentinel-command --bin sentinel-restore-from-cloud \
+    && for bin in sentinel-command sentinel-restore-from-cloud; do \
+         strip "target/release/$bin" && cp "target/release/$bin" "/out/$bin-sqlite"; \
+       done
 
 # ============================================================
 # Stage 3: Runtime
@@ -179,10 +194,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # `agent` one — Fly gives one image per app and differs the groups only
 # by command. The other two are operator tools, on PATH for
 # `fly ssh console -C …` and `docker compose run`.
-COPY --from=backend-builder /build/target/release/sentinel-command /usr/local/bin/
-COPY --from=backend-builder /build/target/release/sentinel-agent /usr/local/bin/
-COPY --from=backend-builder /build/target/release/sentinel-hash-password /usr/local/bin/
-COPY --from=backend-builder /build/target/release/sentinel-restore-from-cloud /usr/local/bin/
+COPY --from=backend-builder /out/ /usr/local/bin/
+#
+# `-sqlite` twins of the two that open the database. Nobody has to name
+# them: `sentinel-command` looks at DATABASE_URL and, given a sqlite://
+# URL, replaces itself with `sentinel-command-sqlite` (and the reverse).
+# Which database is in use is a matter of that one variable, as it was
+# for the Python tier.
 
 # The React build. `/app/static` is where SPA serving looks by default
 # (`STATIC_DIR`), the same path main.py used, so nothing about the

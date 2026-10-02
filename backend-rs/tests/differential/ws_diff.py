@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import pathlib
 import socket
 import subprocess
@@ -74,12 +75,25 @@ def psql(sql, *, stdin=None):
     return done.stdout.strip()
 
 
+
+# Set by dialect_run.sh: the tier on :8001 is the SQLite build and this
+# is its file. The fixture is PostgreSQL's, so it is applied there and
+# copied across — see dialect.py.
+SQLITE_DB = os.environ.get("DIALECT_SQLITE_DB", "")
+
+
+def mirror_to_sqlite() -> None:
+    if SQLITE_DB:
+        import dialect
+        dialect.copy_from_postgres(SQLITE_DB)
+
 def reseed():
     """Back to the fixture, so each tier's heartbeat starts level."""
     psql("", stdin=(HERE / "seed_cameras.sql").read_text())
+    mirror_to_sqlite()
 
 
-def rows():
+def rows(tier="rust"):
     """The watched tables, with the columns a clock moves stripped.
 
     `last_seen`, `version_checked_at` and `created_at` are written to
@@ -91,7 +105,11 @@ def rows():
         f"(SELECT * FROM {t} ORDER BY 1) x), '[]'::json)"
         for t in WATCHED
     )
-    data = json.loads(psql(f"SELECT json_build_object({parts})"))
+    if SQLITE_DB and tier == "python":
+        import dialect
+        data = dialect.snapshot(SQLITE_DB, WATCHED)
+    else:
+        data = json.loads(psql(f"SELECT json_build_object({parts})"))
     moving = {"last_seen", "version_checked_at", "created_at", "updated_at", "timestamp"}
     return {
         table: [
@@ -322,7 +340,7 @@ async def main() -> int:
     for name, port in PORTS.items():
         reseed()
         acks[name] = await converse(port, key, NODE, [heartbeat])
-        effects[name] = rows()
+        effects[name] = rows(name)
     compare("ack, via headers", acks, results)
     for table in WATCHED:
         compare(

@@ -74,7 +74,7 @@ pub fn reset_tick_for_tests() {
 /// would mean a JWKS cache, a proxy client and the segment caches, none
 /// of which the worker touches.
 pub struct EmailContext<'a> {
-    pub pool: &'a sqlx::PgPool,
+    pub pool: &'a crate::db::Pool,
     pub config: &'a Config,
     pub client: &'a reqwest::Client,
 }
@@ -142,11 +142,12 @@ pub async fn run_one_tick(ctx: &EmailContext<'_>) -> Result<TickSummary, sqlx::E
 
     let now = now_naive();
     let ids: Vec<i32> = pending.iter().map(|row| row.id).collect();
-    sqlx::query(
-        "UPDATE email_outbox SET status = 'sending', last_attempt_at = $1 WHERE id = ANY($2)",
-    )
+    sqlx::query(&format!(
+        "UPDATE email_outbox SET status = 'sending', last_attempt_at = $1 WHERE id {}",
+        crate::db::any(2)
+    ))
     .bind(now)
-    .bind(&ids)
+    .bind(crate::db::list(&ids))
     .execute(ctx.pool)
     .await?;
 

@@ -14,32 +14,12 @@
 //! default, and the past-due comparison is exact, so `"TRUE"` is not
 //! past due.
 
-use sqlx::postgres::PgPoolOptions;
-use sqlx::PgPool;
+use sentinel_command::db::Pool as PgPool;
 
 async fn pool() -> Option<PgPool> {
-    let url = std::env::var("TEST_DATABASE_URL")
-        .ok()
-        .filter(|u| !u.is_empty())?;
-    // Unset means skip; SET AND UNREACHABLE means fail. This used to end
-    // in `.ok()`, which turned a wrong URL into a silent skip — so the CI
-    // leg that exists to run these would have reported green with every
-    // one of them returning early.
-    let pool = PgPoolOptions::new()
-        .max_connections(2)
-        .connect(&url)
-        .await
-        .expect("TEST_DATABASE_URL is set but the database is unreachable");
-    // And the schema is applied here, not assumed. CI hands this an EMPTY
-    // database; locally it was always the differential's, which had the
-    // tables already, so the assumption held everywhere except the one
-    // place these are meant to run. Idempotent, and sqlx takes an advisory
-    // lock, so parallel tests racing to migrate is safe.
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .expect("migrations must apply to the test database");
-    Some(pool)
+    // Skips without TEST_DATABASE_URL on the PostgreSQL build; always
+    // runs, on a fresh file, on the SQLite build. See `db::test_pool`.
+    sentinel_command::db::test_pool(2).await
 }
 
 /// Every test shares one table, so each uses its own org_id prefix and

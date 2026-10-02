@@ -197,7 +197,7 @@ pub async fn validate_node(
 ///
 /// Best-effort: the caller is about to return a 4xx either way, so a
 /// failure here is logged and swallowed.
-pub(crate) async fn record_node_register_error(pool: &sqlx::PgPool, id: i32, reason: &str) {
+pub(crate) async fn record_node_register_error(pool: &crate::db::Pool, id: i32, reason: &str) {
     let reason: String = reason.chars().take(500).collect();
     let now = now_naive();
     if let Err(err) = sqlx::query(

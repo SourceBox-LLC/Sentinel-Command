@@ -25,8 +25,12 @@ import urllib.request
 
 from diffutil import value_diff
 
-RUST = "http://127.0.0.1:8000"
-PYTHON = "http://127.0.0.1:8001"
+# Overridable for the same reason write_diff.py's are: another pair. The
+# dialect differential (dialect_run.sh) points PYTHON_URL at the SQLite
+# build, and every "python" in this file's output then means "the tier
+# on PYTHON_URL" — the reference in that run is the PostgreSQL build.
+RUST = os.environ.get("RUST_URL", "http://127.0.0.1:8000")
+PYTHON = os.environ.get("PYTHON_URL", "http://127.0.0.1:8001")
 
 TOKEN = sys.argv[1]
 # A non-admin caller. Without one, every is_admin() branch and every
@@ -891,6 +895,43 @@ def check_coverage():
     return ok
 
 
+# ── the dialect run ──────────────────────────────────────────────────
+#
+# dialect_run.sh points this file at two builds of the SAME code on two
+# DIFFERENT databases. Two assumptions the Python-era run could make no
+# longer hold, and each is handled by name rather than by loosening the
+# comparison:
+#
+#   * one database. A read that writes — the lazily created Sentinel
+#     config row, `last_used_at` on a key — used to leave ONE row that
+#     both tiers then read back. Now each tier stamps its own, a few
+#     milliseconds apart. A timestamp from the last few minutes is
+#     therefore compared as "recent", on both sides; the fixture's are
+#     hours to months old and are still compared exactly.
+#   * one engine. PostgreSQL refuses a NUL byte in a text parameter and
+#     the request is a 500; SQLite stores NUL like any other byte and
+#     answers the question. The reference's 500 is the engine's, not the
+#     route's, so those cases are asserted in that shape and set aside.
+DIALECT = bool(os.environ.get("DIALECT_SQLITE_DB"))
+_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$")
+
+
+def mask_recent(value, now):
+    from datetime import datetime, timedelta
+    if isinstance(value, dict):
+        return {k: mask_recent(v, now) for k, v in value.items()}
+    if isinstance(value, list):
+        return [mask_recent(v, now) for v in value]
+    if isinstance(value, str) and _ISO.match(value):
+        try:
+            stamp = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+        if abs(now - stamp) < timedelta(minutes=5):
+            return "<recent>"
+    return value
+
+
 def main():
     # Generated, not listed — see the note in CASES.
     CASES.extend(("HEAD", p, True) for p in served_paths())
@@ -901,6 +942,7 @@ def main():
 
     bad = 0
     rate_limited = []
+    nul_cases = []
     wanted = [w for w in DIFF_ONLY.split("|") if w]
     cases = [c for c in CASES if not wanted or any(w in c[1] for w in wanted)]
     for case in cases:
@@ -909,6 +951,13 @@ def main():
         rs_status, rs_body, rs_head = fetch(RUST, method, path, auth, extra)
         py_status, py_body, py_head = fetch(PYTHON, method, path, auth, extra)
         rs, py = normalise(rs_body, path), normalise(py_body, path)
+        if DIALECT:
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            rs, py = mask_recent(rs, now), mask_recent(py, now)
+            if "%00" in path and rs_status == 500 and py_status != 500:
+                nul_cases.append(f"{method} {path} → sqlite {py_status}")
+                continue
 
         same = (rs_status == py_status) and (rs == py) and (rs_head == py_head)
         label = f"{method} {path}" + ("" if auth else "  (no auth)")
@@ -953,7 +1002,11 @@ def main():
         return 3
 
     scope = f" [DIFF_ONLY={DIFF_ONLY!r}: {len(cases)} of {len(CASES)} cases]" if DIFF_ONLY else ""
-    print(f"\n{len(cases) - bad}/{len(cases)} identical, {bad} differing{scope}")
+    if nul_cases:
+        print(f"\nset aside: {len(nul_cases)} NUL-byte case(s) PostgreSQL refuses (500) and SQLite answers:")
+        for line in nul_cases:
+            print(f"    {line}")
+    print(f"\n{len(cases) - bad - len(nul_cases)}/{len(cases) - len(nul_cases)} identical, {bad} differing{scope}")
     return 1 if bad else 0
 
 

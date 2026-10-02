@@ -14,9 +14,8 @@
 //! disabling the wrong cameras leaves the right *number* running, which
 //! is what a count-based check would look at.
 
+use sentinel_command::db::Pool as PgPool;
 use sentinel_command::plans::{enforce_camera_cap, PlanContext};
-use sqlx::postgres::PgPoolOptions;
-use sqlx::PgPool;
 use tokio::sync::Mutex;
 
 /// These tests share one database with the differential harness, and
@@ -32,28 +31,9 @@ use tokio::sync::Mutex;
 static DB: Mutex<()> = Mutex::const_new(());
 
 async fn pool() -> Option<PgPool> {
-    let url = std::env::var("TEST_DATABASE_URL")
-        .ok()
-        .filter(|u| !u.is_empty())?;
-    // Unset means skip; SET AND UNREACHABLE means fail. This used to end
-    // in `.ok()`, which turned a wrong URL into a silent skip — so the CI
-    // leg that exists to run these would have reported green with every
-    // one of them returning early.
-    let pool = PgPoolOptions::new()
-        .max_connections(2)
-        .connect(&url)
-        .await
-        .expect("TEST_DATABASE_URL is set but the database is unreachable");
-    // And the schema is applied here, not assumed. CI hands this an EMPTY
-    // database; locally it was always the differential's, which had the
-    // tables already, so the assumption held everywhere except the one
-    // place these are meant to run. Idempotent, and sqlx takes an advisory
-    // lock, so parallel tests racing to migrate is safe.
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .expect("migrations must apply to the test database");
-    Some(pool)
+    // Skips without TEST_DATABASE_URL on the PostgreSQL build; always
+    // runs, on a fresh file, on the SQLite build. See `db::test_pool`.
+    sentinel_command::db::test_pool(2).await
 }
 
 /// Walk each id sequence past the largest id actually present.
@@ -62,6 +42,7 @@ async fn pool() -> Option<PgPool> {
 /// database the harness has written to hands out ids that collide.
 /// That is a property of the shared fixture, not of the code under
 /// test — repair it rather than work around it.
+#[cfg(not(feature = "sqlite"))]
 async fn sync_sequences(pool: &PgPool) {
     for table in ["settings", "cameras"] {
         let sql = format!(
@@ -71,6 +52,11 @@ async fn sync_sequences(pool: &PgPool) {
         sqlx::query(&sql).execute(pool).await.unwrap();
     }
 }
+
+/// SQLite has no sequence to repair: an INTEGER PRIMARY KEY takes the
+/// largest rowid plus one, whatever was inserted explicitly.
+#[cfg(feature = "sqlite")]
+async fn sync_sequences(_pool: &PgPool) {}
 
 async fn cleanup(pool: &PgPool, org: &str) {
     for sql in [
@@ -88,13 +74,15 @@ async fn add_camera(pool: &PgPool, org: &str, camera_id: &str, age_days: i64, di
         "INSERT INTO cameras (camera_id, org_id, name, status, created_at, disabled_by_plan,
                               node_type, capabilities, continuous_24_7, scheduled_recording,
                               updated_at)
-         VALUES ($1, $2, $1, 'online', now()::timestamp - make_interval(days => $3::int),
-                 $4, 'rtsp', 'streaming', false, false, now()::timestamp)",
+         VALUES ($1, $2, $1, 'online', $3, $4, 'rtsp', 'streaming', false, false, $5)",
     )
     .bind(camera_id)
     .bind(org)
-    .bind(age_days as i32)
+    // Computed here rather than with `now() - make_interval(...)`: the
+    // same statement then runs on either database.
+    .bind(chrono::Utc::now().naive_utc() - chrono::Duration::days(age_days))
     .bind(disabled)
+    .bind(chrono::Utc::now().naive_utc())
     .execute(pool)
     .await
     .unwrap();
@@ -103,10 +91,11 @@ async fn add_camera(pool: &PgPool, org: &str, camera_id: &str, age_days: i64, di
 async fn set_plan(pool: &PgPool, org: &str, slug: &str) {
     sqlx::query(
         "INSERT INTO settings (org_id, key, value, updated_at)
-         VALUES ($1, 'org_plan', $2, now()::timestamp)",
+         VALUES ($1, 'org_plan', $2, $3)",
     )
     .bind(org)
     .bind(slug)
+    .bind(chrono::Utc::now().naive_utc())
     .execute(pool)
     .await
     .unwrap();

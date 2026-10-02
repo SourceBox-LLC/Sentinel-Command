@@ -82,7 +82,7 @@ impl NotificationRow {
 /// notification marked unread is noise, so the row is initialised with
 /// `last_viewed_at = now` and they only see what arrives afterwards.
 pub async fn get_or_init_state(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     user_id: &str,
     org_id: &str,
 ) -> Result<(Option<NaiveDateTime>, Option<NaiveDateTime>), ApiError> {
@@ -180,7 +180,7 @@ pub async fn list_notifications(
     let page_sql = format!(
         "SELECT id, kind, audience, title, body, severity, link, camera_id, node_id, \
                 meta_json, created_at FROM notifications{where_sql} \
-         ORDER BY created_at DESC OFFSET {offset} LIMIT {limit}"
+         ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"
     );
     let mut pq = sqlx::query_as::<_, NotificationRow>(&page_sql)
         .bind(&user.org_id)
@@ -333,7 +333,7 @@ pub async fn clear_all(
 }
 
 async fn current_email_prefs(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     org_id: &str,
 ) -> Result<Map<String, Value>, ApiError> {
     let mut out = Map::new();

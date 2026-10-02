@@ -96,7 +96,7 @@ pub async fn run_offline_sweep_with(
           WHERE status = 'online' AND last_seen IS NOT NULL AND last_seen < $1
          RETURNING node_id AS ident, org_id,
                    COALESCE(NULLIF(name, ''), node_id) AS display,
-                   NULL::text AS parent",
+                   CAST(NULL AS TEXT) AS parent",
     )
     .bind(cutoff)
     .bind(now)
@@ -104,11 +104,16 @@ pub async fn run_offline_sweep_with(
     .await?;
 
     let cameras: Vec<StaleRow> = sqlx::query_as(
-        "UPDATE cameras c SET status = 'offline', updated_at = $2
-          WHERE c.status = 'online' AND c.last_seen IS NOT NULL AND c.last_seen < $1
-         RETURNING c.camera_id AS ident, c.org_id,
-                   COALESCE(NULLIF(c.name, ''), c.camera_id) AS display,
-                   (SELECT n.node_id FROM camera_nodes n WHERE n.id = c.node_id) AS parent",
+        // No alias on the updated table. `UPDATE cameras c` is Postgres
+        // only, and with `AS c` SQLite accepts the statement and then
+        // cannot see `c` from RETURNING. The table's own name works in
+        // both — including from inside the subquery, where it has to be
+        // spelled out because both tables have a `node_id`.
+        "UPDATE cameras SET status = 'offline', updated_at = $2
+          WHERE status = 'online' AND last_seen IS NOT NULL AND last_seen < $1
+         RETURNING camera_id AS ident, org_id,
+                   COALESCE(NULLIF(name, ''), camera_id) AS display,
+                   (SELECT n.node_id FROM camera_nodes n WHERE n.id = cameras.node_id) AS parent",
     )
     .bind(cutoff)
     .bind(now)
@@ -398,17 +403,18 @@ pub async fn reap_stranded_runs(state: &AppState) -> Result<ReaperSummary, sqlx:
         // `error` beside the completion's own severity and incident_id,
         // and no repair path, because the agent's POST had already
         // succeeded.
-        summary.reaped = sqlx::query(
+        summary.reaped = sqlx::query(&format!(
             "UPDATE sentinel_runs
                 SET outcome = 'error', summary = $1, completed_at = $2, updated_at = $2
-              WHERE id = ANY($3) AND outcome = 'running'",
-        )
+              WHERE id {} AND outcome = 'running'",
+            crate::db::any(3)
+        ))
         .bind(format!(
             "Stranded — agent never completed within {STRANDED_RUN_AGE_MINUTES} min.  \
              Reaped automatically."
         ))
         .bind(now)
-        .bind(&stranded_ids)
+        .bind(crate::db::list(&stranded_ids))
         .execute(&state.pool)
         .await?
         .rows_affected();
@@ -777,10 +783,11 @@ impl ReconcileSummary {
 /// not cost a paying customer their plan — the whole sweep exists
 /// because a missing answer was treated as an answer once already.
 pub async fn reconcile_org_plans(state: &AppState) -> Result<ReconcileSummary, sqlx::Error> {
-    let paid: Vec<(String, String)> = sqlx::query_as(
-        "SELECT org_id, value FROM settings WHERE key = 'org_plan' AND value = ANY($1)",
-    )
-    .bind(&crate::plans::PAID_PLAN_SLUGS[..])
+    let paid: Vec<(String, String)> = sqlx::query_as(&format!(
+        "SELECT org_id, value FROM settings WHERE key = 'org_plan' AND value {}",
+        crate::db::any(1)
+    ))
+    .bind(crate::db::list(&crate::plans::PAID_PLAN_SLUGS[..]))
     .fetch_all(&state.pool)
     .await?;
 

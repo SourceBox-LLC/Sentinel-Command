@@ -18,7 +18,7 @@ use crate::{api, spa};
 
 #[derive(Clone)]
 pub struct AppState {
-    pub pool: sqlx::PgPool,
+    pub pool: crate::db::Pool,
     pub config: Arc<Config>,
     /// Shared client for outbound API calls — Clerk, Resend, the licence
     /// and sync services. Reused rather than built per request so those

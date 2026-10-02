@@ -84,10 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("EMAIL_ENABLED", "true");
 
     let config = Config::from_env();
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(4)
-        .connect(&db)
-        .await?;
+    let pool = sentinel_command::db::connect(&db, 4).await?;
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?;
@@ -386,7 +383,7 @@ async fn summarise_pushes(
     Ok(json!(out))
 }
 
-async fn install_id(pool: &sqlx::PgPool, org: &str) -> Result<String, sqlx::Error> {
+async fn install_id(pool: &sentinel_command::db::Pool, org: &str) -> Result<String, sqlx::Error> {
     let got: Option<(String,)> = sqlx::query_as(
         "SELECT value FROM settings WHERE org_id = $1 AND key = 'sentinel_install_id'",
     )
@@ -398,7 +395,7 @@ async fn install_id(pool: &sqlx::PgPool, org: &str) -> Result<String, sqlx::Erro
 
 /// Cursor presence, not value: the values are fixture timestamps.
 async fn read_cursors(
-    pool: &sqlx::PgPool,
+    pool: &sentinel_command::db::Pool,
     org: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let rows: Vec<(String, Option<String>)> = sqlx::query_as(
@@ -460,7 +457,10 @@ const LICENSE_SCENARIOS: [&str; 11] = [
     "unreachable",
 ];
 
-async fn clear_license_settings(pool: &sqlx::PgPool, org: &str) -> Result<(), sqlx::Error> {
+async fn clear_license_settings(
+    pool: &sentinel_command::db::Pool,
+    org: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "DELETE FROM settings
           WHERE org_id = $1
@@ -478,23 +478,33 @@ async fn clear_license_settings(pool: &sqlx::PgPool, org: &str) -> Result<(), sq
 /// is sixteen random bytes, and the behaviour under test is that one
 /// gets minted and reused, not which one. The timestamps likewise.
 async fn read_license_settings(
-    pool: &sqlx::PgPool,
+    pool: &sentinel_command::db::Pool,
     org: &str,
 ) -> Result<serde_json::Value, sqlx::Error> {
-    let (value,): (Option<serde_json::Value>,) = sqlx::query_as(
-        "SELECT json_build_object(
-           'valid',             max(value) FILTER (WHERE key = 'sentinel_license_valid'),
-           'reachable',         max(value) FILTER (WHERE key = 'sentinel_license_last_check_reachable'),
-           'sync_enabled',      max(value) FILTER (WHERE key = 'sentinel_data_sync_enabled'),
-           'has_install_id',    COALESCE(bool_or(key = 'sentinel_install_id'), false),
-           'has_last_check_at', COALESCE(bool_or(key = 'sentinel_license_last_check_at'), false),
-           'has_last_ok_at',    COALESCE(bool_or(key = 'sentinel_license_last_ok_at'), false))
-           FROM settings WHERE org_id = $1",
-    )
-    .bind(org)
-    .fetch_one(pool)
-    .await?;
-    Ok(value.unwrap_or_else(|| json!({})))
+    // Read as rows and assembled here, rather than with
+    // `json_build_object … FILTER`, so the SQLite build's probe runs the
+    // same statement. One row per key, so "the value" is the row's.
+    let rows: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT key, value FROM settings WHERE org_id = $1")
+            .bind(org)
+            .fetch_all(pool)
+            .await?;
+    let value_of = |key: &str| -> serde_json::Value {
+        rows.iter()
+            .filter(|(k, _)| k == key)
+            .filter_map(|(_, v)| v.clone())
+            .max()
+            .map_or(serde_json::Value::Null, |v| json!(v))
+    };
+    let has = |key: &str| rows.iter().any(|(k, _)| k == key);
+    Ok(json!({
+        "valid": value_of("sentinel_license_valid"),
+        "reachable": value_of("sentinel_license_last_check_reachable"),
+        "sync_enabled": value_of("sentinel_data_sync_enabled"),
+        "has_install_id": has("sentinel_install_id"),
+        "has_last_check_at": has("sentinel_license_last_check_at"),
+        "has_last_ok_at": has("sentinel_license_last_ok_at"),
+    }))
 }
 
 /// One snapshot query, printed as the Python probe prints it.
@@ -505,7 +515,28 @@ async fn read_license_settings(
 /// change shape (an i32 that serialises differently from Python's int).
 /// `to_jsonb` on the row and `json_agg` over it leaves Postgres as the
 /// single renderer for both sides.
-async fn dump(pool: &sqlx::PgPool, label: &str, sql: &str) -> Result<(), sqlx::Error> {
+///
+/// PostgreSQL only. The read-back queries are `json_agg`, `extract` and
+/// `interval` throughout, and they were written to compare against the
+/// Python probe's. The SQLite build's probe skips them: the dialect
+/// harness (`dialect_loops.sh`) compares the tables themselves after
+/// each body, which is a wider net than these readouts and needs no SQL
+/// in a second dialect.
+#[cfg(feature = "sqlite")]
+async fn dump(
+    _pool: &sentinel_command::db::Pool,
+    _label: &str,
+    _sql: &str,
+) -> Result<(), sqlx::Error> {
+    Ok(())
+}
+
+#[cfg(not(feature = "sqlite"))]
+async fn dump(
+    pool: &sentinel_command::db::Pool,
+    label: &str,
+    sql: &str,
+) -> Result<(), sqlx::Error> {
     let (rows,): (Option<serde_json::Value>,) = sqlx::query_as(sql).fetch_one(pool).await?;
     println!(
         "{}",

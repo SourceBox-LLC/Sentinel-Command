@@ -102,8 +102,14 @@ pub async fn list_stream_logs(
         // sibling log routes (/api/audit-logs, /api/mcp/activity/logs)
         // escape both. Copying the inconsistency keeps the ported route
         // returning the same rows; it is not an endorsement.
+        //
+        // The explicit ESCAPE changes nothing on Postgres, whose default
+        // escape is already a backslash. It is there for SQLite, which
+        // has no default, so that the same typed backslash means the
+        // same thing in both builds.
         where_sql.push_str(&format!(
-            " AND (user_email ILIKE ${n} OR user_id ILIKE ${n})"
+            " AND (user_email {like} ${n} ESCAPE '\\' OR user_id {like} ${n} ESCAPE '\\')",
+            like = crate::db::ILIKE
         ));
     }
 
@@ -128,7 +134,7 @@ pub async fn list_stream_logs(
     let page_sql = format!(
         "SELECT id, user_id, user_email, org_id, camera_id, node_id, ip_address, accessed_at \
          FROM stream_access_logs{where_sql} \
-         ORDER BY accessed_at DESC OFFSET {offset} LIMIT {limit}"
+         ORDER BY accessed_at DESC LIMIT {limit} OFFSET {offset}"
     );
     let mut pq = sqlx::query_as::<_, StreamAccessLogRow>(&page_sql).bind(&user.org_id);
     if let Some(ref c) = camera_id {

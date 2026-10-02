@@ -11,23 +11,12 @@
 //! is twenty callers at once, which is what a browser does.
 
 use sentinel_command::api::notifications::get_or_init_state;
-use sqlx::postgres::PgPoolOptions;
-use sqlx::PgPool;
+use sentinel_command::db::Pool as PgPool;
 
 async fn pool() -> Option<PgPool> {
-    let url = std::env::var("TEST_DATABASE_URL")
-        .ok()
-        .filter(|u| !u.is_empty())?;
-    let pool = PgPoolOptions::new()
-        .max_connections(20)
-        .connect(&url)
-        .await
-        .expect("TEST_DATABASE_URL is set but the database is unreachable");
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .expect("migrations must apply to the test database");
-    Some(pool)
+    // Skips without TEST_DATABASE_URL on the PostgreSQL build; always
+    // runs, on a fresh file, on the SQLite build. See `db::test_pool`.
+    sentinel_command::db::test_pool(20).await
 }
 
 #[tokio::test]

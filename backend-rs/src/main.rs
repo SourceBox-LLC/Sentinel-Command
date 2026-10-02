@@ -3,8 +3,6 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use sqlx::postgres::PgPoolOptions;
-
 use sentinel_command::auth::Authenticator;
 use sentinel_command::config::Config;
 use sentinel_command::{build_router, AppState, VERSION};
@@ -47,26 +45,26 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env();
     let port = config.port;
 
-    // Refused here rather than inside the pool: this build has no SQLite
-    // driver, and the Python it replaces did. See
-    // `config::unsupported_database_url`.
+    // One database driver is compiled into each binary. A URL for the
+    // other one is handed to the sibling binary if it is installed, and
+    // refused with a sentence if it is not.
+    sentinel_command::db::dispatch_to_matching_build(&config.database_url);
     if let Some(message) = sentinel_command::config::unsupported_database_url(&config.database_url)
     {
         anyhow::bail!(message);
     }
 
-    let pool = PgPoolOptions::new()
-        .max_connections(10)
-        .acquire_timeout(Duration::from_secs(10))
-        .connect(&config.database_url)
-        .await?;
+    let pool = sentinel_command::db::connect(&config.database_url, 10).await?;
 
     // Schema bring-up. The migration adopts what SQLAlchemy's create_all()
     // plus the hand-rolled sync_schema() already built in production —
     // taken from `pg_dump --schema-only` rather than transcribed — so this
     // is a verified no-op against the live database. Both stacks share one
     // schema for the whole migration; neither may redefine it.
-    sqlx::migrate!("./migrations").run(&pool).await?;
+    //
+    // The SQLite build's schema is the same models seen through SQLite —
+    // see migrations-sqlite/.
+    sentinel_command::db::MIGRATOR.run(&pool).await?;
 
     if config.clerk_issuer.is_none() && config.auth_provider == "clerk" {
         // Not fatal yet: nothing Rust serves is Clerk-gated until slice 1.

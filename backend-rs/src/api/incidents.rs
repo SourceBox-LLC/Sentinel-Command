@@ -104,7 +104,7 @@ pub const INCIDENT_SELECT: &str = r#"
       FROM incidents i
 "#;
 
-async fn evidence_for(pool: &sqlx::PgPool, incident_id: i32) -> Result<Vec<Value>, ApiError> {
+async fn evidence_for(pool: &crate::db::Pool, incident_id: i32) -> Result<Vec<Value>, ApiError> {
     // Ordered by timestamp, matching the relationship's `order_by`.
     // Never selects `data`.
     let rows: Vec<EvidenceRow> = sqlx::query_as(
@@ -118,7 +118,7 @@ async fn evidence_for(pool: &sqlx::PgPool, incident_id: i32) -> Result<Vec<Value
 }
 
 async fn owned_incident(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     org_id: &str,
     incident_id: i32,
 ) -> Result<IncidentRow, ApiError> {
@@ -353,7 +353,7 @@ pub async fn list_incidents(
     let total: i64 = cq.fetch_one(&state.pool).await?;
 
     let page_sql = format!(
-        "{INCIDENT_SELECT}{where_sql} ORDER BY i.created_at DESC OFFSET {offset} LIMIT {limit}"
+        "{INCIDENT_SELECT}{where_sql} ORDER BY i.created_at DESC LIMIT {limit} OFFSET {offset}"
     );
     let mut pq = sqlx::query_as::<_, IncidentRow>(&page_sql).bind(&user.org_id);
     for v in [&status, &severity, &camera_id].into_iter().flatten() {
@@ -437,7 +437,7 @@ struct EvidenceBlobRow {
 /// evidence table — or a database failure, which must stay a 500 rather
 /// than being flattened into a 404.
 async fn owned_evidence(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     org_id: &str,
     incident_id: i32,
     evidence_id: i32,

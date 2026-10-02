@@ -13,7 +13,7 @@
 /// bare `LIMIT 1` and no ordering; this matches it rather than imposing an
 /// order the Python does not have.
 pub async fn get(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     org_id: &str,
     key: &str,
     default: Option<&str>,
@@ -40,7 +40,7 @@ pub async fn get(
 /// and the string comparison is exact: anything other than `"true"` —
 /// unset, `"false"`, `"TRUE"` — means not past due. Being generous here
 /// would lock paying customers out of their own cameras.
-pub async fn payment_past_due(pool: &sqlx::PgPool, org_id: &str) -> Result<bool, sqlx::Error> {
+pub async fn payment_past_due(pool: &crate::db::Pool, org_id: &str) -> Result<bool, sqlx::Error> {
     Ok(get(pool, org_id, "payment_past_due", Some("false")).await? == Some("true".to_string()))
 }
 
@@ -56,7 +56,7 @@ pub async fn payment_past_due(pool: &sqlx::PgPool, org_id: &str) -> Result<bool,
 /// it — which is why this updates by the row's own id rather than by the
 /// pair, and inserts only when nothing was found.
 pub async fn set(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::Pool,
     org_id: &str,
     key: &str,
     value: &str,

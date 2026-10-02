@@ -75,6 +75,18 @@ def psql(sql: str) -> None:
         raise FixtureError(f"psql failed: {proc.stderr.decode()[:300]}")
 
 
+
+# Set by dialect_run.sh: the tier on :8001 is the SQLite build and this
+# is its file. The fixture is PostgreSQL's, so it is applied there and
+# copied across — see dialect.py.
+SQLITE_DB = os.environ.get("DIALECT_SQLITE_DB", "")
+
+
+def mirror_to_sqlite() -> None:
+    if SQLITE_DB:
+        import dialect
+        dialect.copy_from_postgres(SQLITE_DB)
+
 def reseed() -> None:
     psql((HERE / "seed_cameras.sql").read_text())
     subprocess.run(["docker", "exec", REDIS_CONTAINER, "redis-cli", "FLUSHDB"],
@@ -355,9 +367,31 @@ def run_scenario(base, steps, camera):
         " 'streaming,motion', now()::timestamp, now()::timestamp, now()::timestamp,"
         " false, false, false FROM camera_nodes WHERE node_id = 'node-aaaa1111';"
     )
+    on_sqlite = bool(SQLITE_DB) and base == PYTHON_BASE
+    if on_sqlite:
+        mirror_to_sqlite()
     transcript = []
     for kind, target, options in steps:
         target = target.replace("{cam}", camera)
+        if options.get("sql") and on_sqlite:
+            # The step's SQL is PostgreSQL's. The two that exist differ
+            # from SQLite's only in how "a minute ago" and a text cast
+            # are spelled, so they are respelled rather than duplicated —
+            # and anything else fails loudly instead of being guessed at.
+            import dialect
+            lite = (target.replace("count(*)::text", "CAST(count(*) AS TEXT)")
+                          .replace("now()::timestamp - interval '1 minute'",
+                                   "strftime('%Y-%m-%d %H:%M:%f', 'now', '-1 minute')"))
+            if "::" in lite or "now()" in lite:
+                raise FixtureError(f"step SQL has no SQLite spelling: {target[:120]}")
+            if kind == "setup":
+                import sqlite3
+                con = sqlite3.connect(SQLITE_DB, timeout=30)
+                con.execute(lite); con.commit(); con.close()
+            else:
+                found = dialect.query(SQLITE_DB, lite)
+                transcript.append({"sql": str(found[0][0]) if found else ""})
+            continue
         if options.get("sql"):
             proc = subprocess.run(
                 ["docker", "exec", "-i", PG_CONTAINER, "psql", "-U", "cc", "-d", "cc", "-tAc", target],

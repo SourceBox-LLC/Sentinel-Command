@@ -118,7 +118,7 @@ impl McpActivityTracker {
     /// Persistence is spawned rather than awaited: Python starts a
     /// daemon thread per event, and a slow database must not be in the
     /// path of a tool call that has already done its work.
-    pub fn log_event(&self, pool: &sqlx::PgPool, event: McpEvent) {
+    pub fn log_event(&self, pool: &crate::db::Pool, event: McpEvent) {
         self.with(|inner| {
             if inner.events.len() == MAX_EVENTS {
                 inner.events.pop_front();
@@ -259,7 +259,7 @@ impl McpActivityTracker {
 }
 
 /// `_persist_event` — best-effort, and never in the caller's way.
-async fn persist_event(pool: &sqlx::PgPool, event: &McpEvent) {
+async fn persist_event(pool: &crate::db::Pool, event: &McpEvent) {
     // `datetime.fromtimestamp(ts, tz=UTC).replace(tzinfo=None)`.
     let Some(stamped) = chrono::DateTime::from_timestamp_micros((event.timestamp * 1e6) as i64)
     else {

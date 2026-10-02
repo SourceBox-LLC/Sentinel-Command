@@ -91,6 +91,18 @@ def psql(sql: str) -> str:
     ).stdout
 
 
+
+# Set by dialect_run.sh: the tier on :8001 is the SQLite build and this
+# is its file. The fixture is PostgreSQL's, so it is applied there and
+# copied across — see dialect.py.
+SQLITE_DB = os.environ.get("DIALECT_SQLITE_DB", "")
+
+
+def mirror_to_sqlite() -> None:
+    if SQLITE_DB:
+        import dialect
+        dialect.copy_from_postgres(SQLITE_DB)
+
 def reseed() -> None:
     seed = (HERE / "seed_cameras.sql").read_text()
     result = subprocess.run(
@@ -101,6 +113,7 @@ def reseed() -> None:
         raise SystemExit(f"reseed failed: {result.stderr.strip()[:300]}")
     subprocess.run(["docker", "exec", REDIS_CONTAINER, "redis-cli", "FLUSHDB"],
                    capture_output=True, check=False, timeout=60)
+    mirror_to_sqlite()
 
 
 def rpc(port: int, body: dict, key: str | None, extra: dict | None = None):
