@@ -11,9 +11,9 @@
 //! is twenty callers at once, which is what a browser does.
 
 use sentinel_command::api::notifications::get_or_init_state;
-use sentinel_command::db::Pool as PgPool;
+use sentinel_command::db::Pool;
 
-async fn pool() -> Option<PgPool> {
+async fn pool() -> Option<Pool> {
     // Skips without TEST_DATABASE_URL on the PostgreSQL build; always
     // runs, on a fresh file, on the SQLite build. See `db::test_pool`.
     sentinel_command::db::test_pool(20).await

@@ -141,6 +141,12 @@ fn parse_args() -> Args {
 
 async fn run(args: Args) -> Result<std::process::ExitCode, String> {
     let config = sentinel_command::config::Config::from_env();
+    // First, before any network work: a URL for the other build replaces
+    // this process, and everything done before the exec would be done
+    // twice. The refusal for a build with no sibling stays below, beside
+    // the connect, so `--list` — which never opens the database — still
+    // works without one.
+    sentinel_command::db::dispatch_to_matching_build(&config.database_url);
     let key = config
         .sentinel_license_key
         .clone()
@@ -206,7 +212,6 @@ async fn run(args: Args) -> Result<std::process::ExitCode, String> {
         }
     }
 
-    sentinel_command::db::dispatch_to_matching_build(&config.database_url);
     if let Some(message) = sentinel_command::config::unsupported_database_url(&config.database_url)
     {
         return Err(message);

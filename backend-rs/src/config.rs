@@ -271,6 +271,27 @@ impl Config {
     }
 }
 
+/// The hosted deployment must say which database it uses.
+///
+/// Unset, `DATABASE_URL` falls back to `sqlite:///./sentinel.db` — the
+/// self-hosted default. On a Fly machine that fallback is the worst
+/// possible answer: the app would hand over to the SQLite build, create a
+/// file on the container's throwaway filesystem, pass its health check
+/// and serve an empty database, and every write would vanish on the next
+/// deploy. Before SQLite came back, the same missing secret was a crash
+/// loop, which is the right shape for it. `FLY_APP_NAME` is set by Fly on
+/// every machine and by nothing else this runs under.
+pub fn database_url_required(database_url_set: bool, fly_app_name: Option<&str>) -> Option<String> {
+    match fly_app_name {
+        Some(app) if !app.is_empty() && !database_url_set => Some(format!(
+            "DATABASE_URL is not set, and this is the Fly app {app:?}. Unset, it would \
+             default to a SQLite file on this machine's temporary filesystem and serve \
+             an empty database. Set it: fly secrets set DATABASE_URL=… -a {app}"
+        )),
+        _ => None,
+    }
+}
+
 /// Why this build cannot open `url`, if it cannot.
 ///
 /// One backend is compiled into each binary (`db.rs`), so the scheme is
@@ -446,6 +467,16 @@ mod tests {
             let message = unsupported_database_url(url).expect("refused");
             assert!(message.contains("sqlite://"), "{url:?}: {message}");
         }
+    }
+
+    #[test]
+    fn a_fly_machine_without_a_database_url_refuses_to_start() {
+        let message = database_url_required(false, Some("sentinel-command")).unwrap();
+        assert!(message.contains("fly secrets set"), "{message}");
+        assert!(database_url_required(true, Some("sentinel-command")).is_none());
+        // Self-hosted: unset is the documented SQLite default.
+        assert!(database_url_required(false, None).is_none());
+        assert!(database_url_required(false, Some("")).is_none());
     }
 
     #[test]

@@ -14,7 +14,7 @@
 //! disabling the wrong cameras leaves the right *number* running, which
 //! is what a count-based check would look at.
 
-use sentinel_command::db::Pool as PgPool;
+use sentinel_command::db::Pool;
 use sentinel_command::plans::{enforce_camera_cap, PlanContext};
 use tokio::sync::Mutex;
 
@@ -30,7 +30,7 @@ use tokio::sync::Mutex;
 ///     `sync_sequences` repairs it, and that repair has to not race.
 static DB: Mutex<()> = Mutex::const_new(());
 
-async fn pool() -> Option<PgPool> {
+async fn pool() -> Option<Pool> {
     // Skips without TEST_DATABASE_URL on the PostgreSQL build; always
     // runs, on a fresh file, on the SQLite build. See `db::test_pool`.
     sentinel_command::db::test_pool(2).await
@@ -43,7 +43,7 @@ async fn pool() -> Option<PgPool> {
 /// That is a property of the shared fixture, not of the code under
 /// test — repair it rather than work around it.
 #[cfg(not(feature = "sqlite"))]
-async fn sync_sequences(pool: &PgPool) {
+async fn sync_sequences(pool: &Pool) {
     for table in ["settings", "cameras"] {
         let sql = format!(
             "SELECT setval(pg_get_serial_sequence('{table}', 'id'),
@@ -56,9 +56,9 @@ async fn sync_sequences(pool: &PgPool) {
 /// SQLite has no sequence to repair: an INTEGER PRIMARY KEY takes the
 /// largest rowid plus one, whatever was inserted explicitly.
 #[cfg(feature = "sqlite")]
-async fn sync_sequences(_pool: &PgPool) {}
+async fn sync_sequences(_pool: &Pool) {}
 
-async fn cleanup(pool: &PgPool, org: &str) {
+async fn cleanup(pool: &Pool, org: &str) {
     for sql in [
         "DELETE FROM cameras WHERE org_id = $1",
         "DELETE FROM settings WHERE org_id = $1",
@@ -69,7 +69,7 @@ async fn cleanup(pool: &PgPool, org: &str) {
 
 /// `created_at` decides which cameras survive, so each one is given an
 /// explicit age rather than whatever the clock says.
-async fn add_camera(pool: &PgPool, org: &str, camera_id: &str, age_days: i64, disabled: bool) {
+async fn add_camera(pool: &Pool, org: &str, camera_id: &str, age_days: i64, disabled: bool) {
     sqlx::query(
         "INSERT INTO cameras (camera_id, org_id, name, status, created_at, disabled_by_plan,
                               node_type, capabilities, continuous_24_7, scheduled_recording,
@@ -88,7 +88,7 @@ async fn add_camera(pool: &PgPool, org: &str, camera_id: &str, age_days: i64, di
     .unwrap();
 }
 
-async fn set_plan(pool: &PgPool, org: &str, slug: &str) {
+async fn set_plan(pool: &Pool, org: &str, slug: &str) {
     sqlx::query(
         "INSERT INTO settings (org_id, key, value, updated_at)
          VALUES ($1, 'org_plan', $2, $3)",
@@ -101,7 +101,7 @@ async fn set_plan(pool: &PgPool, org: &str, slug: &str) {
     .unwrap();
 }
 
-async fn flags(pool: &PgPool, org: &str) -> Vec<(String, bool)> {
+async fn flags(pool: &Pool, org: &str) -> Vec<(String, bool)> {
     sqlx::query_as(
         "SELECT camera_id, disabled_by_plan FROM cameras WHERE org_id = $1 ORDER BY camera_id",
     )
@@ -111,7 +111,7 @@ async fn flags(pool: &PgPool, org: &str) -> Vec<(String, bool)> {
     .unwrap()
 }
 
-fn context(pool: &PgPool, client: &reqwest::Client) -> PlanContext<'static> {
+fn context(pool: &Pool, client: &reqwest::Client) -> PlanContext<'static> {
     // The context borrows; leaking here keeps the test terse and the
     // process is about to end anyway.
     PlanContext {

@@ -485,7 +485,7 @@ async fn insert_run(
     cap: i64,
 ) -> Result<bool, sqlx::Error> {
     let triggered_at: NaiveDateTime = now_naive();
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::db::begin_write(&state.pool).await?;
     sqlx::query(
         "INSERT INTO sentinel_runs
             (id, org_id, triggered_at, trigger_type, camera_id, tool_call_count, outcome,

@@ -170,7 +170,7 @@ pub async fn full_reset(
         }
     }
 
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::db::begin_write(&state.pool).await?;
     let counts = crate::api::gdpr::delete_org_data(&mut tx, &user.org_id).await?;
     tx.commit().await?;
 

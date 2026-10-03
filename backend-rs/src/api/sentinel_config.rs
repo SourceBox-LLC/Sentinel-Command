@@ -664,7 +664,7 @@ pub async fn post_manual_run(
 
     let run_id = uuid::Uuid::new_v4().simple().to_string();
     let triggered_at = now_naive();
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::db::begin_write(&state.pool).await?;
     sqlx::query(
         "INSERT INTO sentinel_runs
             (id, org_id, triggered_at, trigger_type, camera_id, tool_call_count, outcome,

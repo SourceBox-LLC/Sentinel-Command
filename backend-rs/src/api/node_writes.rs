@@ -350,7 +350,7 @@ pub async fn report_camera_codec(
     };
 
     let now = now_naive();
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::db::begin_write(&state.pool).await?;
     // A codec over the column's 50 characters (the check above allows
     // 64) is a Postgres error and a 500, on both stacks.
     sqlx::query(
@@ -628,7 +628,7 @@ pub async fn wipe_stream_logs(
     rate.check().await?;
     require_active_paid_plan(&state, &user).await?;
 
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::db::begin_write(&state.pool).await?;
     let stream = sqlx::query("DELETE FROM stream_access_logs WHERE org_id = $1")
         .bind(&user.org_id)
         .execute(&mut *tx)
@@ -731,7 +731,7 @@ pub async fn delete_node(
         state.hls.cleanup_camera(camera_id);
     }
 
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::db::begin_write(&state.pool).await?;
     sqlx::query("DELETE FROM cameras WHERE node_id = $1")
         .bind(node_pk)
         .execute(&mut *tx)

@@ -37,8 +37,7 @@
 //!    ~15 MB per concurrent export on a 1 GB machine whose segment cache
 //!    is already spoken for.
 
-use crate::db::Pool as PgPool;
-use crate::db::Row as PgRow;
+use crate::db::{Pool, Row};
 use axum::body::Body;
 use axum::http::{header, HeaderMap, HeaderValue};
 use axum::response::{IntoResponse, Response};
@@ -134,10 +133,10 @@ const ROW_BUFFER: usize = 500;
 /// text filters — which keeps this monomorphic rather than generic over
 /// a heterogeneous bind list for no present gain.
 pub fn stream_rows(
-    pool: PgPool,
+    pool: Pool,
     sql: String,
     binds: Vec<String>,
-    map: fn(&PgRow) -> RowResult,
+    map: fn(&Row) -> RowResult,
 ) -> RowStream {
     let (tx, rx) = tokio::sync::mpsc::channel::<RowResult>(ROW_BUFFER);
     tokio::spawn(async move {

@@ -546,7 +546,7 @@ async fn dispatch(
                 for (camera_id,) in &cameras {
                     state.hls.cleanup_camera(camera_id);
                 }
-                let mut tx = state.pool.begin().await?;
+                let mut tx = crate::db::begin_write(&state.pool).await?;
                 let counts = crate::api::gdpr::delete_org_data(&mut tx, &org_id).await?;
                 tx.commit().await?;
                 tracing::info!(

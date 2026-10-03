@@ -14,9 +14,9 @@
 //! default, and the past-due comparison is exact, so `"TRUE"` is not
 //! past due.
 
-use sentinel_command::db::Pool as PgPool;
+use sentinel_command::db::Pool;
 
-async fn pool() -> Option<PgPool> {
+async fn pool() -> Option<Pool> {
     // Skips without TEST_DATABASE_URL on the PostgreSQL build; always
     // runs, on a fresh file, on the SQLite build. See `db::test_pool`.
     sentinel_command::db::test_pool(2).await
@@ -24,7 +24,7 @@ async fn pool() -> Option<PgPool> {
 
 /// Every test shares one table, so each uses its own org_id prefix and
 /// cleans up after itself rather than truncating.
-async fn seed(pool: &PgPool, org: &str, value: Option<&str>) {
+async fn seed(pool: &Pool, org: &str, value: Option<&str>) {
     sqlx::query("DELETE FROM settings WHERE org_id = $1")
         .bind(org)
         .execute(pool)

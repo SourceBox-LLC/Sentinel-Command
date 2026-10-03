@@ -227,7 +227,7 @@ async fn push_table(
             Option<chrono::NaiveDateTime>,
             serde_json::Value,
         )> = sqlx::query_as(&sql)
-            .bind(cursor)
+            .bind(cursor_param(cursor))
             .fetch_all(&state.pool)
             .await?;
         if rows.is_empty() {
@@ -354,6 +354,25 @@ fn cursor_iso_sql(cursor: &str) -> String {
         "CASE WHEN {c} IS NULL THEN NULL ELSE substr(replace({c}, ' ', 'T') || \
          CASE WHEN instr({c}, '.') = 0 THEN '.000000' ELSE '000000' END, 1, 26) END"
     )
+}
+
+/// The cursor as bound for `t."cursor" > $1`.
+#[cfg(not(feature = "sqlite"))]
+fn cursor_param(cursor: Option<chrono::NaiveDateTime>) -> Option<chrono::NaiveDateTime> {
+    cursor
+}
+
+/// SQLite compares the stored TEXT, so the bound value has to be text
+/// that orders correctly against every spelling a row can have. sqlx
+/// would write `%F %T%.f` — no fraction for a whole second, else 3, 6 or
+/// 9 digits — while a row the Python tier wrote holds `%.6f` always. A
+/// legacy `…:07.120000` is then strictly greater than its own cursor
+/// bound as `…:07.120`, and is pushed again on every cycle. Six digits,
+/// always, compares as "not greater" against both spellings of the
+/// same instant and correctly against every other.
+#[cfg(feature = "sqlite")]
+fn cursor_param(cursor: Option<chrono::NaiveDateTime>) -> Option<String> {
+    cursor.map(|at| at.format("%F %T%.6f").to_string())
 }
 
 /// One column as a JSON value.

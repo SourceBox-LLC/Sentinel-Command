@@ -615,7 +615,7 @@ async fn enqueue_email(
     let notification_id = persisted.then_some(row.id);
     let now = chrono::Utc::now().timestamp();
 
-    let mut tx = match state.pool.begin().await {
+    let mut tx = match crate::db::begin_write(&state.pool).await {
         Ok(tx) => tx,
         Err(err) => {
             tracing::error!(error = %err, org_id, kind = %row.kind, "[Notifications] outbox commit failed");

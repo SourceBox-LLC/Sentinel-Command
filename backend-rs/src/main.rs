@@ -48,6 +48,12 @@ async fn main() -> anyhow::Result<()> {
     // One database driver is compiled into each binary. A URL for the
     // other one is handed to the sibling binary if it is installed, and
     // refused with a sentence if it is not.
+    if let Some(message) = sentinel_command::config::database_url_required(
+        std::env::var_os("DATABASE_URL").is_some_and(|v| !v.is_empty()),
+        std::env::var("FLY_APP_NAME").ok().as_deref(),
+    ) {
+        anyhow::bail!(message);
+    }
     sentinel_command::db::dispatch_to_matching_build(&config.database_url);
     if let Some(message) = sentinel_command::config::unsupported_database_url(&config.database_url)
     {

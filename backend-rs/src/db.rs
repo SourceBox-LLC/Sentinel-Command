@@ -79,6 +79,28 @@ mod tests {
     }
 }
 
+// ── Write transactions ───────────────────────────────────────────────
+
+/// Begin a transaction that is going to write.
+///
+/// PostgreSQL: a plain `BEGIN`.
+///
+/// SQLite: `BEGIN IMMEDIATE`, which takes the write lock up front. A
+/// plain (deferred) `BEGIN` whose first statement is a READ pins a WAL
+/// snapshot; if any other connection commits before the transaction's
+/// first write, that write fails at once with SQLITE_BUSY_SNAPSHOT —
+/// `busy_timeout` does not apply, because waiting cannot make a stale
+/// snapshot current. `delete_org_data` counts before it deletes, so
+/// without this a full reset races every heartbeat. Taking the lock
+/// first turns that into an ordinary wait under `busy_timeout`.
+pub async fn begin_write(pool: &Pool) -> Result<Transaction<'static>, sqlx::Error> {
+    if SQLITE {
+        pool.begin_with("BEGIN IMMEDIATE").await
+    } else {
+        pool.begin().await
+    }
+}
+
 // ── Connecting ───────────────────────────────────────────────────────
 
 /// The schema, embedded at compile time — the one for this build.
@@ -175,16 +197,26 @@ pub async fn connect(url: &str, max_connections: u32) -> Result<Pool, sqlx::Erro
     {
         use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
         let path = sqlite_path(url);
-        if let Some(parent) = std::path::Path::new(&path).parent() {
-            if !parent.as_os_str().is_empty() {
-                // A missing directory is the usual first-run failure, and
-                // SQLite reports it as "unable to open database file".
-                let _ = std::fs::create_dir_all(parent);
+        let base = if path == ":memory:" {
+            // `filename(":memory:")` would give EVERY pooled connection
+            // its own private, empty database — the migrations land on
+            // one and the rest answer "no such table". sqlx's own parse
+            // of the URL names one shared in-memory database instead.
+            "sqlite::memory:".parse::<SqliteConnectOptions>()?
+        } else {
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                if !parent.as_os_str().is_empty() {
+                    // A missing directory is the usual first-run failure,
+                    // and SQLite reports it as "unable to open database
+                    // file".
+                    let _ = std::fs::create_dir_all(parent);
+                }
             }
-        }
-        let options = SqliteConnectOptions::new()
-            .filename(&path)
-            .create_if_missing(true)
+            SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true)
+        };
+        let options = base
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(std::time::Duration::from_secs(30))
@@ -269,6 +301,25 @@ pub async fn test_pool(max_connections: u32) -> Option<Pool> {
         // Under target/, which is on real disk; the system temp directory
         // on this project's machines is a RAM-backed tmpfs.
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/target/test-dbs");
+        // Every call makes a file (plus -wal/-shm), and nothing else ever
+        // removes them, so once per process sweep what earlier runs left.
+        // By age rather than wholesale: another test binary may be
+        // running beside this one, and its files are a few seconds old.
+        static SWEEP: std::sync::Once = std::sync::Once::new();
+        SWEEP.call_once(|| {
+            let stale = std::time::Duration::from_secs(3600);
+            for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let old = entry
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|at| at.elapsed().ok())
+                    .is_some_and(|age| age > stale);
+                if old {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        });
         let path = format!(
             "{dir}/{}-{}-{}.db",
             std::process::id(),
@@ -461,5 +512,42 @@ mod order_by_tests {
             }
         }
         out
+    }
+}
+
+#[cfg(all(test, feature = "sqlite"))]
+mod sqlite_connect_tests {
+    /// One shared in-memory database across the pool, not one per
+    /// connection: the migration on one is visible from all of them.
+    #[tokio::test]
+    async fn an_in_memory_url_is_one_database_for_the_whole_pool() {
+        let pool = super::connect("sqlite::memory:", 4).await.unwrap();
+        super::MIGRATOR.run(&pool).await.unwrap();
+        let mut held = Vec::new();
+        for _ in 0..4 {
+            let mut conn = pool.acquire().await.unwrap();
+            let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM settings")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+            assert_eq!(n, 0);
+            held.push(conn);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_write_transaction_takes_the_lock_up_front() {
+        let pool = super::test_pool(2).await.unwrap();
+        let mut tx = super::begin_write(&pool).await.unwrap();
+        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM settings")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
+        sqlx::query("DELETE FROM settings")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
     }
 }

@@ -12,10 +12,10 @@
 //! what happens a minute later. Getting it wrong is invisible until an
 //! org's usage silently stops counting — or counts twice.
 
-use sentinel_command::db::Pool as PgPool;
+use sentinel_command::db::Pool;
 use sentinel_command::hls::HlsCache;
 
-async fn pool() -> Option<PgPool> {
+async fn pool() -> Option<Pool> {
     // Skips without TEST_DATABASE_URL on the PostgreSQL build; always
     // runs, on a fresh file, on the SQLite build. See `db::test_pool`.
     sentinel_command::db::test_pool(2).await
@@ -25,7 +25,7 @@ fn year_month() -> String {
     chrono::Utc::now().format("%Y-%m").to_string()
 }
 
-async fn cleanup(pool: &PgPool, org: &str) {
+async fn cleanup(pool: &Pool, org: &str) {
     sqlx::query("DELETE FROM org_monthly_usage WHERE org_id = $1")
         .bind(org)
         .execute(pool)
@@ -33,7 +33,7 @@ async fn cleanup(pool: &PgPool, org: &str) {
         .unwrap();
 }
 
-async fn stored(pool: &PgPool, org: &str) -> Option<i32> {
+async fn stored(pool: &Pool, org: &str) -> Option<i32> {
     sqlx::query_scalar(
         "SELECT viewer_seconds FROM org_monthly_usage WHERE org_id = $1 AND year_month = $2",
     )

@@ -91,7 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/tests/differential/plan_cases.json"
     ))?)?;
 
-    let pool = sentinel_command::db::Pool::connect(&database_url).await?;
+    let pool = sentinel_command::db::connect(&database_url, 10).await?;
     let client = reqwest::Client::new();
     client.post(format!("{root}/__reset")).send().await?;
 
