@@ -391,8 +391,16 @@ fn json_value_sql(column: &str, _declared_type: &str) -> String {
 fn json_value_sql(column: &str, declared_type: &str) -> String {
     let c = format!("t.\"{column}\"");
     match declared_type.to_ascii_uppercase().as_str() {
-        // ISO 8601 with a `T`, as Postgres renders a timestamp in JSON.
-        "DATETIME" | "TIMESTAMP" => format!("replace({c}, ' ', 'T')"),
+        // ISO 8601 with a `T`, as Postgres renders a timestamp in JSON —
+        // including its fraction, which Postgres writes with trailing
+        // zeros trimmed (`.89395`, not `.893950`) and omits when it is
+        // zero. The stored text may carry 3, 6 or 9 digits, so it is
+        // trimmed the same way. Only inside a fraction: a bare rtrim
+        // would eat the zero from `:40` too.
+        "DATETIME" | "TIMESTAMP" => format!(
+            "replace(CASE WHEN instr({c}, '.') > 0 \
+             THEN rtrim(rtrim({c}, '0'), '.') ELSE {c} END, ' ', 'T')"
+        ),
         // `json('true')` is a JSON boolean; a bare 1 would be a number.
         "BOOLEAN" => {
             format!("json(CASE {c} WHEN 1 THEN 'true' WHEN 0 THEN 'false' ELSE 'null' END)")

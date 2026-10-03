@@ -1508,10 +1508,10 @@ fixture and one comparison serve both.
 | --- | --- |
 | read | 592/592 |
 | write | 729/729, response and table contents |
-| MCP · WS · HLS · SSE | 150/150 · 20/20 · 49/49 · 29/29 |
-| loop bodies | 7/7, plus the 288 rows the sync pushed, compared by value |
+| MCP · WS · HLS · SSE | 151/151 · 20/20 · 49/49 · 29/29 |
+| loop bodies | 7/7, plus the 340 rows the sync pushed, compared by value |
 | email worker | 21/21 |
-| mirror round trip | 4/4 — pushed from either, restored into either |
+| mirror round trip | 4/4 — 340 rows across all 9 tables, pushed from either, restored into either |
 
 One engine difference is named in the harnesses, in both directions so
 it cannot quietly widen:
