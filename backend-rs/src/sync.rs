@@ -208,18 +208,22 @@ async fn push_table(
     loop {
         // Ordered by (cursor, id) so paging is stable, and filtered
         // strictly greater so a row is never pushed twice.
+        // A row whose cursor column is NULL sorts and compares as the
+        // epoch: it is pushed on the first pass and again when it is next
+        // updated, like any other row. See the note on PYTHON_BUGS #16
+        // below — it used to stop the whole table.
+        let effective = format!("COALESCE(t.\"{}\", {EPOCH_SQL})", spec.cursor);
         let sql = format!(
             "SELECT CAST(t.id AS TEXT),
                     {cursor_iso} AS cursor_iso,
-                    t.\"{cursor}\" AS cursor_raw,
+                    {effective} AS cursor_raw,
                     {JSON_OBJECT}({projection}) AS data
                FROM {table} t
-              WHERE (CAST($1 AS TIMESTAMP) IS NULL OR t.\"{cursor}\" > $1)
-              ORDER BY t.\"{cursor}\" ASC NULLS LAST, t.id ASC
+              WHERE (CAST($1 AS TIMESTAMP) IS NULL OR {effective} > $1)
+              ORDER BY {effective} ASC, t.id ASC
               LIMIT {BATCH_SIZE}",
-            cursor = spec.cursor,
             table = spec.table,
-            cursor_iso = cursor_iso_sql(spec.cursor),
+            cursor_iso = cursor_iso_sql(&effective),
         );
         let rows: Vec<(
             String,
@@ -234,20 +238,14 @@ async fn push_table(
             break;
         }
 
-        // A NULL cursor anywhere in the batch aborts the table, BEFORE
-        // the push. Python builds the envelope with
-        // `getattr(row, spec.cursor_attr).isoformat()` inside the row
-        // comprehension, so a single row whose cursor column is NULL
-        // raises AttributeError there — and the per-table `except`
-        // catches it, logs a warning, and moves on having sent nothing.
-        //
-        // The consequence is not a slow sync. It is that four of the
-        // nine tables — cameras, camera_groups, camera_nodes and
-        // sentinel_runs, the four that hold NULL cursor rows — NEVER
-        // reach the service. See PYTHON_BUGS #16; this is reproduced
-        // rather than fixed because the two stacks have to agree, and
-        // it is the single most important thing in this file to fix on
-        // master.
+        // PYTHON_BUGS #16, closed. The Python built the envelope with
+        // `getattr(row, cursor).isoformat()`, so one row with a NULL
+        // cursor raised, the per-table `except` swallowed it, and that
+        // table sent nothing — ever: cameras, camera_groups, camera_nodes
+        // and sentinel_runs, the four that held such rows, never reached
+        // the mirror. The port reproduced it while the two stacks had to
+        // agree. The COALESCE above means no row reaches here without a
+        // cursor; this stays as the assertion that it holds.
         if rows.iter().any(|(_, iso, _, _)| iso.is_none()) {
             return Err(format!(
                 "row with a NULL {} cannot be serialised for the sync envelope",
@@ -341,15 +339,23 @@ const JSON_OBJECT: &str = "json_object";
 /// The cursor as `YYYY-MM-DDTHH:MM:SS.ffffff`, always six digits.
 #[cfg(not(feature = "sqlite"))]
 fn cursor_iso_sql(cursor: &str) -> String {
-    format!("to_char(t.\"{cursor}\", 'YYYY-MM-DD\"T\"HH24:MI:SS.US')")
+    format!("to_char({cursor}, 'YYYY-MM-DD\"T\"HH24:MI:SS.US')")
 }
+
+/// The epoch, as each engine stores a timestamp. Not `CAST(… AS
+/// TIMESTAMP)`: SQLite gives that type name numeric affinity, so the cast
+/// would turn the text into the number 1970.
+#[cfg(not(feature = "sqlite"))]
+const EPOCH_SQL: &str = "TIMESTAMP '1970-01-01 00:00:00'";
+#[cfg(feature = "sqlite")]
+const EPOCH_SQL: &str = "'1970-01-01 00:00:00'";
 
 /// The same string, from stored text. sqlx writes `%F %T%.f` — no
 /// fraction at all for a whole second, else three, six or nine digits —
 /// so it is padded out and cut back to the 26 characters Postgres gives.
 #[cfg(feature = "sqlite")]
 fn cursor_iso_sql(cursor: &str) -> String {
-    let c = format!("t.\"{cursor}\"");
+    let c = cursor;
     format!(
         "CASE WHEN {c} IS NULL THEN NULL ELSE substr(replace({c}, ' ', 'T') || \
          CASE WHEN instr({c}, '.') = 0 THEN '.000000' ELSE '000000' END, 1, 26) END"

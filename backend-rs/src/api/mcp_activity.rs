@@ -196,7 +196,7 @@ pub async fn mcp_log_stats(
     request: Request,
 ) -> Result<axum::Json<Value>, ApiError> {
     let mut q = Query::parse(request.uri().query());
-    let days = q.big_int("days", PyInt::Small(7), None, Some(30));
+    let days = q.big_int("days", PyInt::Small(7), Some(0), Some(30));
     q.finish()?;
     rate.check().await?;
 

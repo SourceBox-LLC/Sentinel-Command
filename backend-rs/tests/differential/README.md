@@ -1506,22 +1506,26 @@ fixture and one comparison serve both.
 
 | | |
 | --- | --- |
-| read | 590/590 (two NUL-byte cases set aside: PostgreSQL refuses NUL in text, SQLite stores it) |
+| read | 592/592 |
 | write | 729/729, response and table contents |
 | MCP · WS · HLS · SSE | 150/150 · 20/20 · 49/49 · 29/29 |
 | loop bodies | 7/7, plus the 288 rows the sync pushed, compared by value |
 | email worker | 21/21 |
 | mirror round trip | 4/4 — pushed from either, restored into either |
 
-Three engine differences are named in the harnesses, each in both
-directions so it cannot quietly widen:
+One engine difference is named in the harnesses, in both directions so
+it cannot quietly widen:
 
-* **VARCHAR length.** SQLite stores a 55-character codec in a
-  `VARCHAR(50)`; PostgreSQL refuses it (`write_diff.py`).
 * **Id reuse.** An `INTEGER PRIMARY KEY` hands back ids freed by a
   delete; a sequence never does. Compared without the id where a case
   deletes and rewrites (`ID_BLIND`).
-* **NUL in text**, above.
+
+There were two more, and both were really validation gaps the engines
+happened to disagree about: a codec longer than its `VARCHAR(50)`
+(PostgreSQL refused it, SQLite stored it) and a NUL byte in the URL
+(PostgreSQL refused it, SQLite stored it). Both are 400s at the edge now
+— PYTHON_BUGS #3, and `app.rs::refuse_nul_bytes` — so the engines never
+see them.
 
 What it found that was not about SQLite at all: a nanosecond clock that
 PostgreSQL had been silently trimming, three unordered aggregates, the

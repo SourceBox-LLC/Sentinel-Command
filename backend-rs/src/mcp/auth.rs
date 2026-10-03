@@ -24,8 +24,10 @@
 //! simplification: the middleware defers to the tool's own auth when it
 //! cannot recognise a key, so an unknown token gets an unfiltered
 //! `tools/list` and then a refusal when it calls one. Reproduced,
-//! including the case where the disagreement is a hole — see
-//! `lookup_allowed` and PYTHON_BUGS.md #13.
+//! except where the disagreement was a hole: a scoped agent key used to
+//! be unrecognised by the scope pass and authenticated by the org pass,
+//! which let it call every tool. See `lookup_allowed` and PYTHON_BUGS.md
+//! #13.
 
 use std::collections::BTreeSet;
 
@@ -112,12 +114,19 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// which is why an unknown key sees every tool listed and is refused
 /// only when it calls one.
 ///
-/// **A scoped agent key returns `None` here**, because this lookup
-/// consults the shared key and `mcp_api_keys` and nothing else — so
-/// the agent allowlist does not apply to it, and it can call the
-/// config-write tool the allowlist exists to exclude. That is
-/// PYTHON_BUGS.md #13, reproduced deliberately: the two stacks have to
-/// agree while both are serving.
+/// **Every agent credential gets the agent allowlist** — the shared key
+/// and a scoped per-org `osa_` key alike. The Python consulted only the
+/// shared key and `mcp_api_keys` here, so a scoped key fell through to
+/// `None`, was authenticated a moment later by `resolve`, and could call
+/// `set_camera_recording_policy`: the one tool the allowlist exists to
+/// withhold, because an agent steered by what a camera sees must not be
+/// able to switch the camera off. That key is the one handed to
+/// customers running the agent on their own hardware. PYTHON_BUGS.md #13;
+/// reproduced while the two stacks had to agree, closed now that the
+/// Python is gone.
+///
+/// A lookup that fails on the database returns `None` and defers to
+/// `resolve`, which fails closed on the same error.
 pub async fn lookup_allowed(
     state: &AppState,
     headers: &HeaderMap,
@@ -126,11 +135,22 @@ pub async fn lookup_allowed(
     if is_shared_agent_key(state, &raw) {
         return Some(scope::agent_allowed_tools());
     }
+    let key_hash = sha256_hex(&raw);
+    let scoped_agent: Option<(i32,)> = sqlx::query_as(
+        "SELECT id FROM sentinel_agent_keys WHERE key_hash = $1 AND revoked = false LIMIT 1",
+    )
+    .bind(&key_hash)
+    .fetch_optional(&state.pool)
+    .await
+    .ok()?;
+    if scoped_agent.is_some() {
+        return Some(scope::agent_allowed_tools());
+    }
     let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT scope_mode, scope_tools FROM mcp_api_keys
           WHERE key_hash = $1 AND revoked = false AND kind = 'mcp' LIMIT 1",
     )
-    .bind(sha256_hex(&raw))
+    .bind(&key_hash)
     .fetch_optional(&state.pool)
     .await
     .ok()?;

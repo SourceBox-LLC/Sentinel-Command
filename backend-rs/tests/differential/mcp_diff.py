@@ -290,11 +290,10 @@ CASES: list[tuple] = [
      "osi_live_integration_key", None),
     ("tools/list: the shared agent key", {"method": "tools/list", "params": {}},
      AGENT_SHARED, {"X-Agent-Org-Override": "self-host"}),
-    # PYTHON_BUGS #13: a scoped agent key is not recognised by the scope
-    # lookup, so it sees the WHOLE catalog including the config-write
-    # tool the agent allowlist exists to exclude. Asserting the current
-    # behaviour on purpose — it fails loudly when master is fixed.
-    ("tools/list: a scoped agent key sees everything (PYTHON_BUGS #13)",
+    # PYTHON_BUGS #13, closed: a scoped agent key gets the agent
+    # allowlist, the same catalog as the shared key above. Against the
+    # Python this case differs, and is meant to.
+    ("tools/list: a scoped agent key sees the agent allowlist (PYTHON_BUGS #13)",
      {"method": "tools/list", "params": {}}, AGENT_SCOPED,
      {"X-Agent-Org-Override": "self-host"}),
 
@@ -402,8 +401,9 @@ CASES: list[tuple] = [
           ("list_incidents", {"severity": "critical"}),
           ("list_incidents", {"severity": "nonsense"}),
           ("list_incidents", {"camera_id": "cam-live"}),
-          # `is not None`: an empty camera_id IS a filter, and it
-          # matches nothing.
+          # An empty camera_id means "no filter" in every tool now
+          # (PYTHON_BUGS #14); the Python read it as a filter that
+          # matched nothing.
           ("list_incidents", {"camera_id": ""}),
           ("list_incidents", {"limit": 2, "offset": 1}),
           ("get_incident", {"incident_id": 1}),
@@ -468,10 +468,8 @@ CASES: list[tuple] = [
            {"title": "T", "summary": "S", "camera_id": "cam-live"}),
           ("create_incident", "with an unknown camera",
            {"title": "T", "summary": "S", "camera_id": "nope"}),
-          # `if camera_id:` skips the existence check, and then the
-          # column is assigned the argument anyway — so this stores the
-          # empty string rather than NULL, on the row AND on the
-          # notification.
+          # Stored as NULL, like any camera-less incident. The Python
+          # stored the empty string (PYTHON_BUGS #14).
           ("create_incident", "with an empty camera_id",
            {"title": "T", "summary": "S", "camera_id": ""}),
           ("create_incident", "high severity",
@@ -498,8 +496,8 @@ CASES: list[tuple] = [
            {"incident_id": 1, "text": "t", "camera_id": "cam-live"}),
           ("add_observation", "with a foreign camera",
            {"incident_id": 1, "text": "t", "camera_id": "cam-theirs"}),
-          # `is not None` here, so the empty string is looked up and
-          # refused — the opposite of `create_incident` above.
+          # Accepted as "no camera". The Python looked the empty string
+          # up and refused it (PYTHON_BUGS #14).
           ("add_observation", "with an empty camera_id",
            {"incident_id": 1, "text": "t", "camera_id": ""}),
           ("add_observation", "blank", {"incident_id": 1, "text": "  "}),
@@ -561,14 +559,18 @@ CASES: list[tuple] = [
       ]],
 
     # ---- scope -------------------------------------------------------
-    # The shared agent key IS recognised by the scope lookup, so the
-    # config-write tool is refused for it — the contrast with the scoped
-    # key above is the whole of PYTHON_BUGS #13.
+    # Neither agent credential may set a recording policy. The scoped
+    # one could, before PYTHON_BUGS #13 was closed.
     ("call: the shared agent key cannot set a recording policy",
      {"method": "tools/call", "params": {
          "name": "set_camera_recording_policy",
          "arguments": {"camera_id": "cam-live", "continuous_24_7": False}}},
      AGENT_SHARED, {"X-Agent-Org-Override": "self-host"}),
+    ("call: a scoped agent key cannot set a recording policy (PYTHON_BUGS #13)",
+     {"method": "tools/call", "params": {
+         "name": "set_camera_recording_policy",
+         "arguments": {"camera_id": "cam-live", "continuous_24_7": False}}},
+     AGENT_SCOPED, {"X-Agent-Org-Override": "self-host"}),
 
     # ---- protocol ----------------------------------------------------
     ("an unknown method", {"method": "resources/list", "params": {}}, LIVE_KEY, None),

@@ -154,10 +154,10 @@ fn bounded_string(
         }
         Some(Value::String(s)) => {
             let length = s.chars().count();
-            if length < min {
-                errors.too_short(field, s, min);
-            } else if max.is_some_and(|max| length > max) {
-                errors.too_long(field, s, max.unwrap());
+            match max {
+                _ if length < min => errors.too_short(field, s, min),
+                Some(max) if length > max => errors.too_long(field, s, max),
+                _ => {}
             }
             s.clone()
         }

@@ -99,11 +99,7 @@ impl Broadcaster {
             inner.next_id += 1;
             let id = inner.next_id;
             let existing = inner.subscribers.entry(org_id.to_string()).or_default();
-            existing.push(Subscriber {
-                id,
-                tx: tx.clone(),
-                is_admin,
-            });
+            existing.push(Subscriber { id, tx, is_admin });
             let count = existing.len();
             tracing::info!(
                 broadcaster = name,
@@ -113,14 +109,13 @@ impl Broadcaster {
                 cap,
                 "SSE subscriber added"
             );
-            Some((rx, id, tx))
+            Some((rx, id))
         })
-        .map(|(rx, id, keepalive)| Subscription {
+        .map(|(rx, id)| Subscription {
             rx,
             broadcaster: self,
             org_id: org_id.to_string(),
             id,
-            keepalive,
         })
     }
 
@@ -185,20 +180,19 @@ pub struct Subscription<'a> {
     broadcaster: &'a Broadcaster,
     org_id: String,
     id: u64,
-    /// A sender kept alive alongside the receiver, so the channel does
-    /// not close when the broadcaster drops this subscriber for being
-    /// slow. Python's queue has no closed state, so its generator goes
-    /// on emitting keepalives to a queue nobody feeds; holding this
-    /// reproduces that rather than ending the response early. See
-    /// `PYTHON_BUGS.md` #11 — the behaviour is wrong in both stacks, and
-    /// is meant to be fixed in one place, deliberately.
-    #[allow(dead_code)]
-    keepalive: mpsc::Sender<String>,
 }
 
 impl Subscription<'_> {
-    /// The next event, or `None` only once this subscription has been
-    /// dropped — which cannot happen while `recv` borrows it.
+    /// The next event, or `None` once the broadcaster has let go of this
+    /// subscriber — dropped for falling behind, or cleared. The stream
+    /// then ENDS, and the browser's EventSource reconnects with a fresh
+    /// subscription.
+    ///
+    /// It used to stay open: the subscription held a spare sender so
+    /// the channel could never close, which reproduced the Python, whose
+    /// queue had no closed state. A subscriber dropped for being slow got
+    /// keepalives and nothing else until the tab was reloaded — the bell
+    /// silently dead. PYTHON_BUGS.md #11.
     pub async fn recv(&mut self) -> Option<String> {
         self.rx.recv().await
     }
@@ -232,8 +226,8 @@ pub fn stream_response(
             // intermediary times the connection out.
             let frame = match tokio::time::timeout(KEEPALIVE, subscription.recv()).await {
                 Ok(Some(event)) => format!("data: {event}\n\n"),
-                // Unreachable while the subscription holds its own
-                // sender — see the `keepalive` field above.
+                // Let go by the broadcaster: end the response so the
+                // client reconnects. See `Subscription::recv`.
                 Ok(None) => return None,
                 Err(_) => ": keepalive\n\n".to_string(),
             };
@@ -270,24 +264,16 @@ mod tests {
     use std::time::Duration;
 
     /// A broadcaster of its own per test. Sharing one static made a
-    /// parallel run clear another test's subscribers mid-await, and
-    /// because a dropped subscriber still holds its sender, the waiting
-    /// `recv` never returned — the deadlock the `keepalive` field
-    /// exists to reproduce, reached by accident.
+    /// parallel run clear another test's subscribers mid-await.
     fn broadcaster() -> Broadcaster {
         Broadcaster::new("test")
     }
 
     /// The next event, or `None` if none arrives promptly.
     ///
-    /// **Every read in these tests goes through this.** A bare
-    /// `recv().await` cannot fail here, only hang: the subscription
-    /// holds its own sender on purpose, so a subscriber the broadcaster
-    /// has dropped waits forever rather than seeing the channel close.
-    /// `cargo test` has no timeout, so one such await stalls the whole
-    /// run — which is exactly what happened, and it took a mutation
-    /// run wedged for twenty minutes to show it. Bounded, the same
-    /// case fails in fifty milliseconds and names itself.
+    /// Every read goes through this, bounded: `cargo test` has no timeout
+    /// of its own, and a `recv().await` that hangs stalls the whole run
+    /// instead of failing one case by name.
     async fn next(sub: &mut Subscription<'_>) -> Option<String> {
         tokio::time::timeout(Duration::from_millis(50), sub.recv())
             .await
@@ -356,10 +342,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_dropped_subscriber_idles_rather_than_ending() {
-        // Python's queue has no closed state, so a subscriber the
-        // broadcaster gave up on goes on waiting rather than having its
-        // response ended. Reproduced deliberately — PYTHON_BUGS #11.
+    async fn a_dropped_subscriber_drains_what_it_had_and_then_ends() {
+        // PYTHON_BUGS #11, closed: a subscriber the broadcaster gave up on
+        // used to idle forever on a channel nobody fed. Ending lets the
+        // browser's EventSource reconnect and resubscribe.
         let b = broadcaster();
         let mut slow = b.subscribe("org_a", false, 10).unwrap();
         for i in 0..=QUEUE_DEPTH {
@@ -375,8 +361,10 @@ mod tests {
         for _ in 0..QUEUE_DEPTH {
             assert!(next(&mut slow).await.is_some());
         }
-        // Then it idles forever instead of returning None.
-        assert!(idle(&mut slow).await, "the stream ended instead of idling");
+        // Then the channel is CLOSED — `recv` answers `None` at once,
+        // rather than the timeout firing on a stream that never ends.
+        let ended = tokio::time::timeout(Duration::from_millis(50), slow.recv()).await;
+        assert_eq!(ended, Ok(None), "the stream should end, not idle");
     }
 
     #[tokio::test]

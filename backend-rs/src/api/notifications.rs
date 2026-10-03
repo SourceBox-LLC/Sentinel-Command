@@ -155,7 +155,7 @@ pub async fn list_notifications(
     let limit = q.int("limit", 50, 1, 200);
     let offset = q.int("offset", 0, 0, 1_000_000);
     // `le=720` with no lower bound in the Python signature.
-    let hours = q.big_int("hours", PyInt::Small(168), None, Some(720));
+    let hours = q.big_int("hours", PyInt::Small(168), Some(0), Some(720));
     q.finish()?;
 
     let (last_viewed, cleared_at) =

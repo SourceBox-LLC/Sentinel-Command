@@ -133,7 +133,7 @@ pub async fn motion_stats(
     request: Request,
 ) -> Result<axum::Json<Value>, ApiError> {
     let mut q = Query::parse(request.uri().query());
-    let hours = q.big_int("hours", PyInt::Small(24), None, Some(168));
+    let hours = q.big_int("hours", PyInt::Small(24), Some(0), Some(168));
     q.finish()?;
 
     let since = python_window_start(hours, 3_600)?;

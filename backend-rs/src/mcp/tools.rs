@@ -149,6 +149,17 @@ fn int_or(args: &Map<String, Value>, key: &str, default: i64) -> i64 {
 // Cameras, nodes and groups
 // ---------------------------------------------------------------------
 
+/// An optional `camera_id` argument, with `""` meaning absent.
+///
+/// One reading for every tool. The Python had three
+/// (PYTHON_BUGS.md #14): `create_incident` stored `''` where every other
+/// camera-less incident holds NULL, `add_observation` looked the empty
+/// string up and refused it, and `get_stream_logs` treated it as no
+/// filter at all.
+fn opt_camera_id(args: &Map<String, Value>) -> Option<String> {
+    opt_str(args, "camera_id").filter(|c| !c.is_empty())
+}
+
 pub async fn list_cameras(state: &AppState, org_id: &str) -> ToolResult {
     // Ordered, which the Python was not: two outer joins leave the row
     // order to the planner, and it moved between two calls a second apart
@@ -408,7 +419,7 @@ pub async fn get_stream_logs(
 ) -> ToolResult {
     // `if camera_id:` — an empty string is falsy, so it is no filter
     // at all rather than a filter that matches nothing.
-    let camera_id = opt_str(args, "camera_id").filter(|c| !c.is_empty());
+    let camera_id = opt_camera_id(args);
     let limit = int_or(args, "limit", 50);
     // The same row the audit route serves, so the two agree on the
     // shape a client sees.
@@ -580,7 +591,7 @@ pub async fn list_incidents(
 ) -> ToolResult {
     let status = opt_str(args, "status");
     let severity = opt_str(args, "severity");
-    let camera_id = opt_str(args, "camera_id");
+    let camera_id = opt_camera_id(args);
     if let Some(status) = &status {
         if !INCIDENT_STATUSES.contains(&status.as_str()) {
             return Err(format!(
@@ -675,7 +686,7 @@ pub async fn create_incident(
     let title = req_str(args, "title");
     let summary = req_str(args, "summary");
     let severity = opt_str(args, "severity").unwrap_or_else(|| "medium".to_string());
-    let camera_id = opt_str(args, "camera_id");
+    let camera_id = opt_camera_id(args);
 
     // Validated BEFORE auth in the Python, so these refusals happen
     // whatever the key's plan or budget.
@@ -792,7 +803,7 @@ pub async fn add_observation(
 ) -> ToolResult {
     let incident_id = int_or(args, "incident_id", 0);
     let text = req_str(args, "text");
-    let camera_id = opt_str(args, "camera_id");
+    let camera_id = opt_camera_id(args);
 
     if text.trim().is_empty() {
         return Err("text is required".to_string());

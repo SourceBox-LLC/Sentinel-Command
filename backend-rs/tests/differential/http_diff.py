@@ -908,10 +908,11 @@ def check_coverage():
 #     milliseconds apart. A timestamp from the last few minutes is
 #     therefore compared as "recent", on both sides; the fixture's are
 #     hours to months old and are still compared exactly.
-#   * one engine. PostgreSQL refuses a NUL byte in a text parameter and
-#     the request is a 500; SQLite stores NUL like any other byte and
-#     answers the question. The reference's 500 is the engine's, not the
-#     route's, so those cases are asserted in that shape and set aside.
+#   * one engine. A NUL byte in the URL used to reach the database, where
+#     PostgreSQL refused it (a 500) and SQLite stored it. Both builds now
+#     refuse it at the edge with a 400, so those cases compare like any
+#     other; the set-aside below is kept only so a regression names
+#     itself instead of reading as an ordinary difference.
 DIALECT = bool(os.environ.get("DIALECT_SQLITE_DB"))
 _ISO = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$")
 

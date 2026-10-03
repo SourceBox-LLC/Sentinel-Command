@@ -614,6 +614,9 @@ pub fn build_router(state: AppState) -> Router {
         // FastAPI's envelope on the 405s axum's method fallback produces.
         // Inside the header layers so those still see the final response.
         .layer(axum::middleware::from_fn(method_not_allowed_body))
+        // A NUL byte in the path or query is refused before any handler
+        // can bind it — see `refuse_nul_bytes`.
+        .layer(axum::middleware::from_fn(refuse_nul_bytes))
         // CORS for routes Rust answers itself.
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -706,6 +709,31 @@ fn served_spa(
 /// `expected_divergences.md`.
 async fn head_not_allowed() -> axum::http::StatusCode {
     axum::http::StatusCode::METHOD_NOT_ALLOWED
+}
+
+/// A `%00` anywhere in the path or query is a 400, for every route.
+///
+/// PostgreSQL refuses a NUL byte in a text value, so a request that
+/// carried one into a query was a 500 — an alert for what is only a
+/// malformed URL — while the SQLite build stored it and answered. A NUL
+/// can only reach a URL percent-encoded, so checking the raw text here
+/// covers every handler at once and makes the two builds agree.
+async fn refuse_nul_bytes(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let has_nul = |text: &str| {
+        text.as_bytes()
+            .windows(3)
+            .any(|w| w[0] == b'%' && w[1] == b'0' && w[2] == b'0')
+    };
+    let uri = request.uri();
+    if has_nul(uri.path()) || uri.query().is_some_and(has_nul) {
+        use axum::response::IntoResponse;
+        return crate::error::ApiError::bad_request("Invalid request: the URL contains a NUL byte")
+            .into_response();
+    }
+    next.run(request).await
 }
 
 /// Give a bodyless 405 the envelope FastAPI would have sent.

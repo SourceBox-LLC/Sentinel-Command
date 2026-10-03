@@ -219,6 +219,9 @@ pub(crate) async fn record_node_register_error(pool: &crate::db::Pool, id: i32, 
 // POST /api/cameras/{camera_id}/codec
 // ---------------------------------------------------------------------
 
+/// The `video_codec` / `audio_codec` column width.
+const CODEC_MAX_CHARS: usize = 50;
+
 /// `sanitize_video_codec`: upgrade a suspicious H.264 level.
 ///
 /// Older CameraNode builds wrote `level_idc=0` for the Pi's hardware
@@ -311,48 +314,33 @@ pub async fn report_camera_codec(
     if !pyrepr::truthy(&video) {
         return Err(ApiError::bad_request("video_codec is required"));
     }
-    // `len(x) > 64 or "\n" in x or "\r" in x`, short-circuiting, with
-    // Python's TypeError for a value that has no length.
-    let bad_format = |v: &Value| -> Result<bool, ApiError> {
-        let Some(n) = pyrepr::len(v) else {
-            return Err(ApiError::internal("codec value has no len()"));
-        };
-        if n > 64 {
-            return Ok(true);
-        }
-        Ok(pyrepr::contains_str(v, "\n").unwrap_or(false)
-            || pyrepr::contains_str(v, "\r").unwrap_or(false))
+    // A codec is a string of at most the column's 50 characters with no
+    // line break — it is written into an HLS `CODECS` attribute verbatim.
+    //
+    // The Python allowed 64 (PYTHON_BUGS.md #3), so 51-64 characters
+    // passed and then failed the column: a 500 on PostgreSQL, silently
+    // stored on SQLite. A value with no length, or not a string at all,
+    // was a TypeError and a 500 too. All of it is the caller's mistake,
+    // so all of it is a 400 now, and SQLite and PostgreSQL agree.
+    let valid = |v: &Value| -> Option<String> {
+        let Value::String(s) = v else { return None };
+        (s.chars().count() <= CODEC_MAX_CHARS && !s.contains(['\n', '\r'])).then(|| s.clone())
     };
-    if bad_format(&video)? {
+    let Some(video) = valid(&video) else {
         return Err(ApiError::bad_request("Invalid video_codec format"));
-    }
-    if pyrepr::truthy(&audio) && bad_format(&audio)? {
-        return Err(ApiError::bad_request("Invalid audio_codec format"));
-    }
-
-    let Value::String(video) = video else {
-        // `codec.startswith` on a list or dict: AttributeError.
-        return Err(ApiError::internal("video_codec is not a string"));
     };
     let video = sanitize_video_codec(&video);
 
     let audio = match audio {
         a if !pyrepr::truthy(&a) => "mp4a.40.2".to_string(),
-        Value::String(s) => s,
-        // DELIBERATE DIVERGENCE. A list or dict that passes the checks
-        // above is stored by Python as psycopg adapts it — `["a", "b"]`
-        // becomes the text `{a,b}` — in a column whose value is written
-        // into an HLS `CODECS` attribute, where the comma corrupts the
-        // playlist. It also slips past the length and newline checks,
-        // which only inspect the list's own length and elements. Rust
-        // refuses rather than reproduce that; no CameraNode sends it.
-        _ => return Err(ApiError::internal("audio_codec is not a string")),
+        a => match valid(&a) {
+            Some(s) => s,
+            None => return Err(ApiError::bad_request("Invalid audio_codec format")),
+        },
     };
 
     let now = now_naive();
     let mut tx = crate::db::begin_write(&state.pool).await?;
-    // A codec over the column's 50 characters (the check above allows
-    // 64) is a Postgres error and a 500, on both stacks.
     sqlx::query(
         "UPDATE cameras
             SET video_codec = $1, audio_codec = $2, codec_detected_at = $3, updated_at = $3

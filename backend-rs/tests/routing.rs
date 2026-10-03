@@ -365,3 +365,23 @@ async fn mcp_is_not_restricted_to_a_localhost_host_header() {
         assert_ne!(status, 403, "Host: {host} → {text}");
     }
 }
+
+/// A NUL byte in the URL is the caller's error on every route, not a
+/// 500 from PostgreSQL refusing to bind it.
+#[tokio::test]
+async fn a_nul_byte_in_the_url_is_a_400_everywhere() {
+    let (_dir, app) = app().await;
+    for path in [
+        "/api/cameras/cam%00live",
+        "/api/audit-logs?username=%00",
+        "/api/health?x=a%00b",
+    ] {
+        let (status, _, body) = send(app, with("GET", path, &[])).await;
+        assert_eq!(status, 400, "{path}: {body}");
+        assert!(body.contains("NUL"), "{path}: {body}");
+    }
+    // `%000` is a NUL followed by a 0; `%2500` is a literal "%00", which
+    // must NOT be refused.
+    let (status, _, _) = send(app, with("GET", "/api/health?x=%2500", &[])).await;
+    assert_ne!(status, 400);
+}

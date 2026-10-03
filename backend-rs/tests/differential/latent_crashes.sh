@@ -87,14 +87,10 @@ fi
 psql -c "DELETE FROM camera_groups WHERE name = 'probe'" >/dev/null
 
 echo
-echo "4. An out-of-range path integer reaches the query and Postgres"
-echo "   rejects it: incident_id is unbounded in python, the column is"
-echo "   Integer, so anything past int32 is a DataError rather than a 404."
-echo "   Rust answered 422 here until the port reproduced it instead —"
-echo "   the value is one FastAPI accepts, so refusing it early was a"
-echo "   divergence, not a fix. Both 500 now; the read differential"
-echo "   sends the values on either side of the boundary."
-check "GET /api/incidents/99999999999999" "/api/incidents/99999999999999" 500 500
+echo "4. An out-of-range path integer. Python 500s (Postgres refuses it at"
+echo "   the query); Rust reproduced that while both served, and now"
+echo "   answers 422 — PYTHON_BUGS #8."
+check "GET /api/incidents/99999999999999" "/api/incidents/99999999999999" 422 500
 
 echo
 if (( fails )); then

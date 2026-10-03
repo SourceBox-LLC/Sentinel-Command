@@ -1134,22 +1134,31 @@ pub fn path_int(name: &str, raw: &str) -> Result<PyInt, ApiError> {
 /// Narrow an integer to the `integer` column it is about to be compared
 /// against or written to.
 ///
-/// SQLAlchemy types a bind parameter from the column, so psycopg sends
-/// an `integer` and Postgres refuses anything that does not fit —
-/// `NumericValueOutOfRange`, which nothing catches, so the request is a
-/// 500. It is emphatically not a miss: raw psycopg would send a bigint
-/// and Postgres would compare the two happily and find no row, and a
-/// port that bound it that way would answer 404 where the service
-/// answers 500.
+/// Out of range is the CALLER's error, a 422. It used to be a 500, on
+/// purpose: SQLAlchemy typed the bind from the column, PostgreSQL refused
+/// the value with `NumericValueOutOfRange`, nothing caught it, and the
+/// port reproduced that so the two stacks agreed (PYTHON_BUGS.md #8). An
+/// id that cannot fit the column cannot name a row, and a 500 for a
+/// mistyped URL is a page to an operator about nothing.
 ///
 /// Called at the point the value reaches the database, not where it is
-/// parsed, because everything Python checks in between — the rate limit,
-/// the body — still comes first.
+/// parsed, so everything checked in between — the rate limit, the body —
+/// still comes first.
 pub fn int4(value: PyInt) -> Result<i32, ApiError> {
     value
         .small()
         .and_then(|v| i32::try_from(v).ok())
-        .ok_or_else(|| ApiError::internal("integer out of range"))
+        .ok_or_else(|| {
+            let msg = "Input should be between -2147483648 and 2147483647";
+            ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                json!({
+                    "error": "validation_failed",
+                    "message": msg,
+                    "errors": [{"type": "int_range", "msg": msg}],
+                }),
+            )
+        })
 }
 
 #[cfg(test)]
@@ -1330,7 +1339,7 @@ mod tests {
             int4(path_int("id", "99999999999999").unwrap())
                 .unwrap_err()
                 .status,
-            StatusCode::INTERNAL_SERVER_ERROR
+            StatusCode::UNPROCESSABLE_ENTITY
         );
         assert_eq!(
             int4(path_int("id", "-2147483648").unwrap()).unwrap(),

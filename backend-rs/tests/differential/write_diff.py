@@ -532,18 +532,12 @@ EXPECTED_DIVERGENCES = {
 
 # In a dialect run the pair is two builds of the same Rust, so the list
 # above — Python-vs-Rust decisions — is simply not about them, and every
-# entry would be reported STALE. What differs there is the ENGINE, and
-# that has its own list:
-#
-#   * a 55-character codec. The column is VARCHAR(50). PostgreSQL
-#     enforces the length and the route is a 500 (as it was under the
-#     Python, on PostgreSQL); SQLite treats a declared length as
-#     documentation and stores it. The Python tier on SQLite stored it
-#     too. Neither build is wrong about its own database.
+# entry would be reported STALE. The engines themselves now agree on
+# every write case: the one difference that was listed here, a 55-
+# character codec that PostgreSQL refused and SQLite stored, went when
+# the codec check was tightened to the column width (PYTHON_BUGS #3).
 if SQLITE_DB:
-    EXPECTED_DIVERGENCES = {
-        "codec: video 55 chars overflows the column",
-    }
+    EXPECTED_DIVERGENCES = set()
 
 # And one about how ids are handed out. A full reset deletes the org's
 # audit rows and then writes one saying so. PostgreSQL's sequence never

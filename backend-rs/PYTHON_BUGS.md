@@ -69,6 +69,8 @@ passes validation and 500s on commit with
 `value too long for type character varying(50)`. The port matches this
 (same column, same error) rather than tightening it.
 
+**Closed in the Rust, 2026-10-03**, once the Python was gone and there was nothing left to agree with: the codec check is the column's 50 characters, and a non-string codec is a 400 rather than a TypeError's 500 (`api/node_writes.rs`, `CODEC_MAX_CHARS`). SQLite and PostgreSQL now give the same answer.
+
 ## 4. `jsonable_encoder` missing in the 422 handler
 
 Every custom Pydantic validator 500s instead of returning its 422.
@@ -100,6 +102,8 @@ happily. The same shape reaches `camera_groups.id` through
 through the key revoke routes, and `sentinel_runs.tool_call_count` and
 `incidents.id` through the agent's run-complete body. A `ge=0` /
 `le=<int32>` on each would turn all of them into 422s.
+
+**Closed in the Rust, 2026-10-03**, once the Python was gone and there was nothing left to agree with: `query::int4` answers an out-of-range id with a 422. `latent_crashes.sh` case 4 now expects 422 from Rust.
 
 ## 9. `has_permission` is a substring test when `org_permissions` is a string
 
@@ -138,6 +142,8 @@ where Rust is required to 500 in exactly the same places — porting the
 fault deliberately, because the whole method rests on the two stacks
 agreeing. Case 1 has no harness — it is a concurrency property, not a
 response.
+
+**Closed in the Rust, 2026-10-03**, once the Python was gone and there was nothing left to agree with: every `hours` / `days` window has a floor of 0, so a negative one is the same 422 any other out-of-range parameter gets, and the overflow path is unreachable.
 
 ## 11. An SSE subscriber dropped for being slow keeps a live, dead stream
 
@@ -180,6 +186,8 @@ channel open, because in Rust the drop would otherwise end the response
 by itself. Fixing it here first would mean the two stacks disagree, and
 the whole method rests on them agreeing. It should be fixed once, on
 `master`, with a test — and then the `keepalive` field comes out.
+
+**Closed in the Rust, 2026-10-03**, once the Python was gone and there was nothing left to agree with: the subscription no longer holds a spare sender. A subscriber dropped for falling behind drains what it had queued, its stream ends, and the browser's EventSource reconnects with a fresh one (`sse.rs`, pinned by `a_dropped_subscriber_drains_what_it_had_and_then_ends`).
 
 ## 12. `settings` allows duplicate `(org_id, key)` rows, and every read of one picks arbitrarily
 
@@ -283,6 +291,8 @@ reproduced, it is pinned by a differential case that asserts the
 CURRENT behaviour, and that case is marked so it fails loudly when
 master is fixed — which is the signal to change both together.
 
+**Closed in the Rust, 2026-10-03**, once the Python was gone and there was nothing left to agree with: `mcp::auth::lookup_allowed` recognises a scoped `osa_` key and returns the agent allowlist for it, exactly as for the shared key. `tests/mcp_scope_db.rs` asserts it on both databases and fails against the old lookup; `mcp_diff.py` now expects the allowlist and a refused `set_camera_recording_policy` for the scoped key.
+
 ## 14. Three MCP tools validate the same `camera_id` three different ways
 
 Severity: **low** — a cosmetic inconsistency, not a security or data
@@ -319,6 +329,8 @@ an empty-`camera_id` case for each, with a comment on each pair saying
 which way it goes and why. The pairs were not chosen for coverage — I had
 written the Rust with the falsy reading applied uniformly, and the cases
 exist because writing them down is what showed the three tools disagree.
+
+**Closed in the Rust, 2026-10-03**, once the Python was gone and there was nothing left to agree with: one reading everywhere — an empty `camera_id` is absent (`mcp::tools::opt_camera_id`). `create_incident` stores NULL, `add_observation` accepts it, `list_incidents` and `get_stream_logs` do not filter on it.
 
 ## 15. The dashboard document ships with no `X-Request-Id`
 
@@ -470,6 +482,8 @@ until fix (1) or (2) lands.
 rejects the batch before the push, with a comment pointing here. The two
 stacks have to agree while both are serving, and this is the single most
 important thing in that file to fix on master.
+
+**Closed in the Rust, 2026-10-03**, once the Python was gone and there was nothing left to agree with: a NULL cursor sorts and compares as the epoch, so such a row is pushed on the first pass and again whenever it is next updated; no table is skipped. Every Rust insert into the four tables sets `updated_at`, so only rows the Python wrote can be NULL.
 
 ## 17. A new user's first page load can be a 500
 

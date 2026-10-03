@@ -83,8 +83,10 @@ cargo run                            # http://localhost:8000
 
 # Tests — no database needed; the DB-gated ones skip themselves
 cargo test
-# With one, so they do not skip:
-TEST_DATABASE_URL=postgresql://cc:cc@127.0.0.1:15434/cc cargo test
+# With one, so they do not skip. Its OWN database: these tests insert
+# rows, and sharing one with a running differential harness corrupts the
+# harness's fixture mid-case:
+TEST_DATABASE_URL=postgresql://cc:cc@127.0.0.1:15434/cc_unit cargo test
 # The SQLite build — its DB-gated tests always run, on a fresh file:
 cargo test --features sqlite
 
