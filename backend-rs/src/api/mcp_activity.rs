@@ -118,7 +118,7 @@ pub async fn list_mcp_logs(
         "SELECT id, org_id, tool_name, key_name, status, duration_ms, args_summary, \
                 error, timestamp \
            FROM mcp_activity_logs{where_sql} \
-          ORDER BY timestamp DESC LIMIT {limit} OFFSET {offset}"
+          ORDER BY timestamp DESC NULLS FIRST LIMIT {limit} OFFSET {offset}"
     );
     let mut pq = sqlx::query_as::<_, McpActivityLogRow>(&page_sql).bind(&user.org_id);
     if let Some(ref t) = tool_name {
@@ -154,7 +154,7 @@ fn csv_export(
 ) -> Result<Response, ApiError> {
     let sql = format!(
         "SELECT timestamp, tool_name, key_name, status, duration_ms, args_summary, error \
-           FROM mcp_activity_logs{where_sql} ORDER BY timestamp DESC LIMIT 50000"
+           FROM mcp_activity_logs{where_sql} ORDER BY timestamp DESC NULLS FIRST LIMIT 50000"
     );
     let rows = crate::csv_export::stream_rows(state.pool.clone(), sql, binds, |row| {
         use sqlx::Row;
@@ -245,7 +245,7 @@ pub async fn mcp_log_stats(
     let by_day: Vec<(Option<NaiveDate>, i64)> = sqlx::query_as(
         "SELECT date(timestamp) AS date, COUNT(id) AS count FROM mcp_activity_logs \
           WHERE org_id = $1 AND timestamp >= $2 \
-          GROUP BY date(timestamp) ORDER BY date(timestamp) DESC",
+          GROUP BY date(timestamp) ORDER BY date(timestamp) DESC NULLS FIRST",
     )
     .bind(&user.org_id)
     .bind(since)

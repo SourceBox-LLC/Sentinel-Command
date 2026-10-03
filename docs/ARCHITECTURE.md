@@ -89,7 +89,7 @@ A `readonly` MCP key is intersected with the read-tool set **in middleware**, so
 
 **Hosted — Postgres.** Three databases on the single `sentinel-postgres` cluster: `sentinel_command`, `sentinel_license`, `sentinel_sync`. Isolation is by *role*, not by cluster — each service's role owns exactly one database, `CONNECT` is revoked from `PUBLIC`, and none is a superuser. One cluster rather than three was a deliberate cost decision; roles supply the isolation separate clusters would have charged for.
 
-**Self-hosted — Postgres too, since the Rust rewrite.** The same codebase, and that is the point: the Python tier branched on the URL scheme and supported SQLite for self-hosting, which is the one behaviour the rewrite did not carry over. A self-hosted install now needs a Postgres container; the binary refuses a `sqlite://` URL at startup rather than failing obscurely inside the pool. The CI matrix that used to be "sqlite | postgres" is "no database | postgres" for the same reason. See AGENTS.md › Configuration for why it is a slice of its own.
+**Self-hosted — SQLite or Postgres.** The same code on either: the database driver is chosen when the binary is built (`backend-rs/src/db.rs`), the image ships both builds, and `DATABASE_URL` decides which runs. SQLite is one file and nothing to operate, which suits one site; Postgres is there for anyone who already runs it. The SQLite build was verified against the Postgres build on the same case lists the port was verified with — see `backend-rs/tests/differential/README.md` › "The dialect differential". CI runs three legs: no database, postgres, sqlite.
 
 Schema changes are sqlx migrations embedded at compile time; the first one adopts exactly what the Python's `create_all()` + `sync_schema()` sweep had already built in production, taken from `pg_dump --schema-only`. [ADR 0001](adr/0001-sync-schema-vs-alembic.md) is the history that led there.
 
@@ -100,7 +100,7 @@ Backups: nightly `pg_dump` for `sentinel_command` and `sentinel_license`, with r
 | | Hosted | Self-hosted |
 | --- | ------ | ----------- |
 | Auth | Clerk | Local admin |
-| Database | Postgres | SQLite |
+| Database | Postgres | SQLite (default) or Postgres |
 | Cameras, recording, motion, MCP | Plan-limited | **Free and unrestricted** |
 | Sentinel AI | Plan-limited | Unlocked by licence key |
 | Agent | `agent` process group | Bundled; the `sentinel-agent` binary |

@@ -95,7 +95,7 @@ const KEY_SELECT: &str = "SELECT id, name, created_at, last_used_at, revoked, \
 async fn list_keys(state: &AppState, org_id: &str, kind: &str) -> Result<Json<Value>, ApiError> {
     let rows: Vec<KeyRow> = sqlx::query_as(&format!(
         "{KEY_SELECT} WHERE org_id = $1 AND revoked = false AND kind = $2 \
-         ORDER BY created_at DESC"
+         ORDER BY created_at DESC NULLS FIRST, id DESC"
     ))
     .bind(org_id)
     .bind(kind)

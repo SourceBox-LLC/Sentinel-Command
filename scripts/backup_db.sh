@@ -66,7 +66,7 @@ PG_URL="${PG_URL/postgres+psycopg:\/\//postgresql://}"
 # found" would just send them off installing a client they don't need.
 case "$PG_URL" in
   postgresql://*|postgres://*) ;;
-  *) die "DATABASE_URL is not a Postgres URL (got \"${PG_URL%%://*}://...\"). This script is for the hosted Postgres deployment; a self-hosted SQLite install has no equivalent backup job — see docs/runbooks/DISASTER_RECOVERY.md." ;;
+  *) die "DATABASE_URL is not a Postgres URL (got \"${PG_URL%%://*}://...\"). This script is pg_dump. A SQLite install is one file: copy it with the service stopped, or run sqlite3 <file> \".backup out.db\" — see docs/runbooks/DISASTER_RECOVERY.md." ;;
 esac
 
 command -v pg_dump >/dev/null 2>&1 || die "pg_dump not found on PATH"

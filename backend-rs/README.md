@@ -67,17 +67,36 @@ refuse with exit 2 and the command that runs them against the parent
 commit. `tests/differential/README.md` § "After the cut" has the whole
 table.
 
+## Two databases
+
+PostgreSQL by default; SQLite with `--features sqlite`. One driver per
+BUILD, not per process (`src/db.rs` says why), so the query sites are
+written once and compiled for each, and the image carries both binaries.
+`sentinel-command` replaces itself with `sentinel-command-sqlite` when
+`DATABASE_URL` is a `sqlite://` URL.
+
+```bash
+cargo run                                   # PostgreSQL, DATABASE_URL=postgresql://…
+DATABASE_URL=sqlite:///./sentinel.db cargo run --features sqlite
+cargo test --features sqlite                # tests/*_db.rs always run here
+```
+
+Writing SQL for both:
+
+* `$1` placeholders work in both; so do `RETURNING`, `ON CONFLICT`,
+  `FILTER (WHERE …)` and `NULLS LAST`.
+* `CAST(x AS TEXT)`, never `x::text`. `LIMIT n OFFSET m`, in that order.
+* A list is `format!("id {}", db::any(1))` with `.bind(db::list(&ids))`.
+* Case-insensitive match is `db::ILIKE`, always with `ESCAPE '\\'`.
+* No alias on the table in `UPDATE … RETURNING`.
+* Bind times from Rust (`now_naive()`); neither `now()` nor `interval`.
+* Give every aggregate an `ORDER BY`. The two engines group differently.
+
+`tests/differential/dialect_run.sh` is what holds the SQLite build to the
+PostgreSQL one; run it after touching a query.
+
 ## What this tier does NOT do
 
-* **SQLite.** The Python branched on the `DATABASE_URL` scheme and gave
-  self-hosted installs SQLite, with `sqlite:///./sentinel.db` as the
-  documented default. sqlx here is built with the `postgres` feature
-  only, so `config::unsupported_database_url` refuses a non-Postgres URL
-  at startup with a sentence that says what to do — rather than letting
-  the pool time out after ten seconds on a URL it was never going to
-  open. Porting it means a dialect layer over 266 query sites plus a
-  migration derived from `pg_dump`: a slice of its own, and the one
-  thing the Python did that nothing here does.
 * **Every LLM provider LiteLLM knew.** The agent speaks three wires —
   Ollama, Anthropic, and OpenAI Chat Completions (which, with
   `LLM_API_BASE`, reaches any compatible endpoint). Another provider

@@ -1483,3 +1483,49 @@ starts, the scenario fails.
 
 `mutations/agent.json` is the spec that proves the harness can fail.
 
+
+## The dialect differential
+
+SQLite came back after the cut, as a second BUILD of the same Rust
+(`--features sqlite`). The question that raises is narrower than the
+port's — does the same code behave the same on the other database? — so
+its reference is the PostgreSQL build, which is here, rather than the
+Python, which is not.
+
+    tests/differential/dialect_run.sh [read|write|mcp|ws|hls|sse|all]
+    tests/differential/dialect_loops.sh      # the seven loop bodies
+    tests/differential/dialect_email.sh      # the email worker
+    tests/differential/dialect_restore.sh    # the cloud mirror, four ways
+
+`dialect_run.sh` reuses the case lists unchanged: the PostgreSQL build is
+on :8000 ("rust" in the output) and the SQLite build on :8001
+("python"). The fixture is PostgreSQL's and stays so — it is applied
+there and copied row for row into the SQLite file (`dialect.py`), and the
+SQLite tier's table snapshot is rendered the way `json_agg` would, so one
+fixture and one comparison serve both.
+
+| | |
+| --- | --- |
+| read | 590/590 (two NUL-byte cases set aside: PostgreSQL refuses NUL in text, SQLite stores it) |
+| write | 729/729, response and table contents |
+| MCP · WS · HLS · SSE | 150/150 · 20/20 · 49/49 · 29/29 |
+| loop bodies | 7/7, plus the 288 rows the sync pushed, compared by value |
+| email worker | 21/21 |
+| mirror round trip | 4/4 — pushed from either, restored into either |
+
+Three engine differences are named in the harnesses, each in both
+directions so it cannot quietly widen:
+
+* **VARCHAR length.** SQLite stores a 55-character codec in a
+  `VARCHAR(50)`; PostgreSQL refuses it (`write_diff.py`).
+* **Id reuse.** An `INTEGER PRIMARY KEY` hands back ids freed by a
+  delete; a sequence never does. Compared without the id where a case
+  deletes and rewrites (`ID_BLIND`).
+* **NUL in text**, above.
+
+What it found that was not about SQLite at all: a nanosecond clock that
+PostgreSQL had been silently trimming, three unordered aggregates, the
+restore order (PYTHON_BUGS #20), and — on a later run, as a flake —
+NULL sort order, which the engines put at opposite ends. Every ORDER BY
+over a nullable column now says where NULLs go, and
+`db::order_by_tests` refuses one that does not.

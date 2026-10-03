@@ -157,7 +157,7 @@ pub async fn list_cameras(
     let cameras: Vec<CameraRow> = sqlx::query_as(
         "SELECT camera_id, name, status, last_seen, video_codec, audio_codec,
                 continuous_24_7, scheduled_recording, node_id AS node_pk
-           FROM cameras WHERE org_id = $1 ORDER BY created_at ASC",
+           FROM cameras WHERE org_id = $1 ORDER BY created_at ASC NULLS LAST, id ASC",
     )
     .bind(&user.org_id)
     .fetch_all(&state.pool)

@@ -180,7 +180,7 @@ pub async fn list_notifications(
     let page_sql = format!(
         "SELECT id, kind, audience, title, body, severity, link, camera_id, node_id, \
                 meta_json, created_at FROM notifications{where_sql} \
-         ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"
+         ORDER BY created_at DESC NULLS FIRST LIMIT {limit} OFFSET {offset}"
     );
     let mut pq = sqlx::query_as::<_, NotificationRow>(&page_sql)
         .bind(&user.org_id)

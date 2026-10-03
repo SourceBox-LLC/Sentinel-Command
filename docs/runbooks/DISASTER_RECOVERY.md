@@ -360,14 +360,17 @@ their own hardware, with no Fly volume, no S3 bucket, and no backup cron.
 Their recovery story is the **cloud data-sync tier**, and it's a different
 procedure.
 
-> Note the asymmetry this creates: the `pg_dump`-based scripts above are
-> hosted-only — but since the Rust rewrite a **self-hosted install is
-> also on Postgres**, so they now apply there too. That is the one
-> behaviour the rewrite did not carry over: the Python tier supported a
-> SQLite file for self-hosting and the Rust tier refuses a `sqlite://`
-> URL at startup (see AGENTS.md › Configuration). A self-hoster restoring
-> an old SQLite database needs the last Python release, or a migration
-> into Postgres.
+> A self-hosted install is on SQLite (the default) or on Postgres. The
+> `pg_dump`-based scripts above apply to a self-hosted **Postgres**
+> install as they do to the hosted one. A **SQLite** install is one file:
+> back it up by copying `sentinel.db` with the service stopped, or live
+> with `sqlite3 sentinel.db ".backup out.db"` (which is safe under WAL;
+> a plain `cp` of a live database is not). `scripts/backup_db.sh` refuses
+> a `sqlite://` URL and says so.
+>
+> A `sentinel.db` created by the last Python release opens as it is: the
+> SQLite migration is the schema those models produced, and every
+> statement in it is `IF NOT EXISTS`.
 >
 > The `pg_dump` scripts reach a compose-run database the same way they
 > reach any other, which is worth writing down because it is the backup

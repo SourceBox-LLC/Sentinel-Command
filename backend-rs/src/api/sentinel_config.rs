@@ -498,7 +498,7 @@ pub async fn list_runs(
         .small()
         .ok_or_else(|| ApiError::internal("bigint out of range"))?;
     let list_sql =
-        format!("{RUN_SELECT}{filters} ORDER BY triggered_at DESC LIMIT {limit} OFFSET {offset}");
+        format!("{RUN_SELECT}{filters} ORDER BY triggered_at DESC NULLS FIRST LIMIT {limit} OFFSET {offset}");
     let rows: Vec<SentinelRunRow> = bind_filters!(sqlx::query_as(&list_sql))
         .fetch_all(&state.pool)
         .await?;

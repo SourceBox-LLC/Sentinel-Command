@@ -1,12 +1,11 @@
 # Self-hosted Sentinel Command Center: the dashboard, its database, and —
 # optionally — the Sentinel AI agent.
 #
-# This exists because the Rust tier is PostgreSQL-only. The Python it
-# replaced defaulted to a SQLite file, so self-hosting used to be "run the
-# binary"; porting that would mean a dialect layer over 266 query sites,
-# which is a project rather than a flag (see AGENTS.md › Configuration).
-# Making Postgres a non-event is the cheaper half of the same goal, and
-# this file is it: one command, one volume per concern, nothing to tune.
+# The PostgreSQL way to self-host. For one site with a handful of nodes
+# the smaller answer is docker-compose.sqlite.yml — one container, one
+# file, no database service. This one is for when you already run
+# Postgres, want its tooling, or expect many nodes writing at once:
+# one command, one volume per concern, nothing to tune.
 #
 # Quick start:
 #

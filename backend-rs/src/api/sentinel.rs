@@ -205,7 +205,7 @@ pub async fn list_pending_runs(
     let rows: Vec<SentinelRunRow> = if agent.scoped {
         sqlx::query_as(&format!(
             "{RUN_SELECT} WHERE outcome = 'pending' AND org_id = $1
-              ORDER BY triggered_at ASC LIMIT $2"
+              ORDER BY triggered_at ASC NULLS LAST LIMIT $2"
         ))
         .bind(agent.org_id.as_deref().unwrap_or_default())
         .bind(limit)
@@ -214,7 +214,7 @@ pub async fn list_pending_runs(
     } else {
         sqlx::query_as(&format!(
             "{RUN_SELECT} WHERE outcome = 'pending'
-              ORDER BY triggered_at ASC LIMIT $1"
+              ORDER BY triggered_at ASC NULLS LAST LIMIT $1"
         ))
         .bind(limit)
         .fetch_all(&state.pool)
@@ -551,7 +551,7 @@ pub async fn list_agent_keys(
         "SELECT id, name, key_last4, created_at, created_by, last_used_at, revoked
            FROM sentinel_agent_keys
           WHERE org_id = $1 AND revoked = false
-          ORDER BY created_at DESC",
+          ORDER BY created_at DESC NULLS FIRST, id DESC",
     )
     .bind(&user.org_id)
     .fetch_all(&state.pool)

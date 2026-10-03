@@ -134,7 +134,7 @@ pub async fn list_stream_logs(
     let page_sql = format!(
         "SELECT id, user_id, user_email, org_id, camera_id, node_id, ip_address, accessed_at \
          FROM stream_access_logs{where_sql} \
-         ORDER BY accessed_at DESC LIMIT {limit} OFFSET {offset}"
+         ORDER BY accessed_at DESC NULLS FIRST LIMIT {limit} OFFSET {offset}"
     );
     let mut pq = sqlx::query_as::<_, StreamAccessLogRow>(&page_sql).bind(&user.org_id);
     if let Some(ref c) = camera_id {
@@ -167,7 +167,7 @@ fn csv_export(
 ) -> Result<Response, ApiError> {
     let sql = format!(
         "SELECT accessed_at, camera_id, node_id, user_email, user_id, ip_address \
-           FROM stream_access_logs{where_sql} ORDER BY accessed_at DESC LIMIT 50000"
+           FROM stream_access_logs{where_sql} ORDER BY accessed_at DESC NULLS FIRST LIMIT 50000"
     );
     let rows = crate::csv_export::stream_rows(state.pool.clone(), sql, binds, |row| {
         use sqlx::Row;
@@ -252,7 +252,7 @@ pub async fn stream_log_stats(
     let by_day: Vec<(Option<NaiveDate>, i64)> = sqlx::query_as(
         "SELECT date(accessed_at) AS date, COUNT(id) AS count FROM stream_access_logs \
           WHERE org_id = $1 AND accessed_at >= $2 \
-          GROUP BY date(accessed_at) ORDER BY date(accessed_at) DESC",
+          GROUP BY date(accessed_at) ORDER BY date(accessed_at) DESC NULLS FIRST",
     )
     .bind(&user.org_id)
     .bind(since)

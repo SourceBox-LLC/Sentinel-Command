@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Sentinel Command Center — cloud dashboard for managing and viewing security cameras under the **Sentinel by SourceBox** product brand. Rust (axum) backend + React 19 frontend with Clerk authentication. There is no Python in this repository: the backend was FastAPI and the AI agent was a LiteLLM worker until the rewrite; see [Repository layout](#repository-layout--one-app-two-process-groups). Live video is streamed through an in-memory segment cache — **no Tigris, no S3, no presigned URLs in the live path**.
+Sentinel Command Center — cloud dashboard for managing and viewing security cameras under the **Sentinel by SourceBox** product brand. Rust (axum) backend + React 19 frontend with Clerk authentication, on PostgreSQL (hosted) or SQLite (self-hosted default). There is no Python in this repository: the backend was FastAPI and the AI agent was a LiteLLM worker until the rewrite; see [Repository layout](#repository-layout--one-app-two-process-groups). Live video is streamed through an in-memory segment cache — **no Tigris, no S3, no presigned URLs in the live path**.
 
 > **Brand-history note for grep-discoverability:** the product has carried three names — `OpenSentry` (early), `SourceBox Sentry` (mid), and `Sentinel by SourceBox` (current, from May 2026 onward). The `Sentinel AI` name is reserved specifically for the AI-agent feature. Both GitHub repos were renamed in May 2026: Command Center `OpenSentry-Command` → `Sentinel-Command`, and CameraNode `opensentry-cloud-node` → `Sentinel-CameraNode` (note the deliberate "CameraNode" — the repo name now describes the artifact more literally, while the binary, install paths, and product UI keep saying "CameraNode"). GitHub auto-redirects the old URLs, so any hardcoded reference in a release artifact / cached doc / external bookmark continues to resolve. Identifiers preserved verbatim across the rebrands (do **not** rename these without a migration plan): the env-var prefix `SOURCEBOX_SENTRY_*`, the Windows install path `C:\ProgramData\SourceBoxSentry\`, and the production hostname `sentinel-command.com` (tied to the Fly app, decoupled from the repo rename).
 
@@ -65,7 +65,7 @@ Five rules follow, and breaking any of them breaks a deploy:
 1. **One `Cargo.toml` builds both binaries, so a dependency change is a change to both.** `rig-core` and `rig-reqwest` are the agent's alone and are pre-1.0: a 0.x minor is a breaking release, the wire shapes they produce are pinned only by the agent differential (which CI cannot run — it needs the deleted Python), and so Dependabot is told to leave their minors alone (`.github/dependabot.yml`). Move them by hand, with `agent_run.sh`.
 2. **`[[mounts]]` must stay scoped to `processes = ["app"]`.** Unscoped, it applies to every group and the agent machine fails to boot fighting for the volume's single attachment slot.
 3. **`[processes]` overrides the Dockerfile `CMD`.** The `app` command in `fly.toml` must stay in sync with that `CMD`. Both are now `/usr/local/bin/sentinel-command`, with no arguments — uvicorn's flags are gone, and `fly.toml` records why each one was not replaced rather than leaving that to be rediscovered. The `agent` command is `/usr/local/bin/sentinel-agent`.
-4. **The required checks are named, so renaming a CI job hangs every PR.** `master` still requires `Backend tests (sqlite)`, `Backend tests (postgres)` and `Frontend audit + build` by exact name. `deploy.yml` on this branch now produces `Backend tests (no database)`, `Backend tests (postgres)` and `Frontend audit + build` — the sqlite leg is gone, because the Rust tier is Postgres-only, and there is no agent job because the agent is in the crate the backend legs already test. **Branch protection has to be updated in the same breath as the merge**: GitHub reports *no status at all* for a check that never runs, so the PR waits forever on it and it presents as a stuck check rather than a config error. See the ⚠️ note at the top of `deploy.yml`.
+4. **The required checks are named, so renaming a CI job hangs every PR.** `master` requires `Backend tests (sqlite)`, `Backend tests (postgres)` and `Frontend audit + build` by exact name, and `deploy.yml` produces all three (plus `Backend tests (no database)`). The sqlite leg builds `--features sqlite` — a different binary — and runs the DB-gated tests on a fresh file. There is no agent job: the agent is in the crate the backend legs already test. GitHub reports *no status at all* for a check that never runs, so renaming one leaves every PR waiting on it, presenting as a stuck check rather than a config error.
 5. **CI path filtering is asymmetric.** `push` is filtered (docs and Markdown only); `pull_request` is **never** filtered. The required checks are named above, and GitHub reports *no status at all* for a workflow a path filter skipped — so a filtered PR trigger would hang every PR that missed it, presenting as a stuck check rather than a config error.
 
 The agent runs as a separate **process group** — its own machine, kept warm rather than scaled to zero. Both choices are deliberate and both have non-obvious reasons: memory contention with the segment cache, and a boot time that lost a race with Fly's proxy. The second reason belonged to the Python agent and no longer holds, but scale-to-zero has not been switched on, because that race can only be observed in production. Neither is restated here; see [docs/SENTINEL_AGENT.md](docs/SENTINEL_AGENT.md) for the agent's side and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#deployed-services-flyio) for how it compares to the services that *do* sleep.
@@ -85,8 +85,10 @@ cargo run                            # http://localhost:8000
 cargo test
 # With one, so they do not skip:
 TEST_DATABASE_URL=postgresql://cc:cc@127.0.0.1:15434/cc cargo test
+# The SQLite build — its DB-gated tests always run, on a fresh file:
+cargo test --features sqlite
 
-cargo clippy --all-targets           # kept at zero warnings
+cargo clippy --all-targets           # kept at zero warnings, both builds
 
 # Frontend
 cd frontend
@@ -112,11 +114,11 @@ of `$` and Compose interpolates `.env` values, so unquoted
 reason nothing explains. Verified both ways; the compose file says so at
 the top.
 
-That file exists because the Rust tier needs Postgres (see Configuration),
-so "run the binary" is no longer the whole story for a self-hoster. It
-brings up Postgres with a healthcheck the app waits on, a volume for each,
-and the dashboard — and the hash step runs the image's own tool, so the one
-credential this mode cannot start without needs no toolchain to produce.
+`docker-compose.sqlite.yml` is the smaller alternative: one container, the
+database a file on its volume, no Postgres at all — the shape the Python
+tier's self-hosting had. Same commands with `-f docker-compose.sqlite.yml`.
+The hash step runs the image's own tool in both, so the one credential
+this mode cannot start without needs no toolchain to produce.
 
 Without Docker, the same thing by hand:
 
@@ -126,8 +128,8 @@ cargo run --bin sentinel-hash-password    # prints LOCAL_ADMIN_PASSWORD_HASH
 # or, non-interactively: echo -n 'secret' | … --stdin
 # Set in the environment: AUTH_PROVIDER=local, APP_SECRET_KEY=<random 32+ bytes>,
 # LOCAL_ADMIN_USERNAME, LOCAL_ADMIN_PASSWORD_HASH (from above),
-# LOCAL_ADMIN_EMAIL, and DATABASE_URL for a Postgres you run yourself
-cargo run
+# LOCAL_ADMIN_EMAIL. DATABASE_URL may be left unset: sqlite:///./sentinel.db
+cargo run --features sqlite        # or plain `cargo run` with a postgresql:// URL
 
 # Set in frontend/.env: VITE_AUTH_PROVIDER=local (VITE_CLERK_PUBLISHABLE_KEY not needed)
 cd frontend && npm run dev
@@ -154,7 +156,7 @@ See Authentication → "Local auth (self-hosted)" below for what this mode does 
 
 ## Configuration
 
-Backend config is loaded from environment variables (see `backend-rs/.env.example`; it moved there with the rewrite, because `backend/` is the agent now).
+Backend config is loaded from environment variables (see `backend-rs/.env.example`).
 
 **Required (`AUTH_PROVIDER=clerk`, the default):**
 - `CLERK_SECRET_KEY` / `CLERK_PUBLISHABLE_KEY` — Clerk auth
@@ -164,29 +166,33 @@ Backend config is loaded from environment variables (see `backend-rs/.env.exampl
 
 **Optional:**
 - `CLERK_WEBHOOK_SECRET` — Svix signature for Clerk subscription + organizationMembership webhooks
-- `DATABASE_URL` — **required, and it must be PostgreSQL.** `postgresql://…`
-  or `postgres://…`; a `postgresql+psycopg://` URL is accepted and the
-  SQLAlchemy driver suffix stripped, so the existing Fly secret works
-  unchanged (`config.rs::normalize_database_url`).
+- `DATABASE_URL` — `postgresql://…` / `postgres://…`, or `sqlite:///path`
+  (SQLAlchemy's spelling, which the Python tier documented: three slashes
+  relative, four absolute). **Unset, it is `sqlite:///./sentinel.db`** —
+  the Python tier's default, kept. A `postgresql+psycopg://` URL has its
+  driver suffix stripped, so the existing Fly secret works unchanged
+  (`config.rs::normalize_database_url`).
   - **Hosted production** runs the shared `sentinel-postgres` cluster — one cluster, one database per service (`sentinel_command`, `sentinel_license`, `sentinel_sync`). Set as a Fly *secret*, not in `fly.toml`, because it carries a password. **The roles are hardened**, which is not Fly's default: `fly postgres attach` creates every role `SUPERUSER`, which would let any one service's credential read and write the others' databases. Each database is instead owned by its own role, `CONNECT` is revoked from `PUBLIC`, and the roles are `NOSUPERUSER` — verified: all six cross-database connection attempts are refused while each service still reaches its own. **Any future `fly postgres attach` recreates a superuser role and must be re-hardened** (see `docs/runbooks/DISASTER_RECOVERY.md`). A pooled `PgPool` (10 connections, 10s acquire timeout), not a fresh connection per request, because the database is across a network.
-  - **SQLite is not supported, and the Python tier supported it.** This is
-    the one behaviour the Rust rewrite did not carry over. `app/core/database.py`
-    branched on the URL scheme and gave self-hosted installs SQLite with
-    WAL, `synchronous=NORMAL` and a 30s `busy_timeout`; `sqlite:///./sentinel.db`
-    was the documented default. The Rust tier builds `sqlx` with the
-    `postgres` feature only, so a self-hosted install needs Postgres —
-    `docker run -d -e POSTGRES_PASSWORD=… postgres:16-alpine` is enough.
-    `config.rs::unsupported_database_url` refuses a non-Postgres URL at
-    startup with that sentence, rather than letting the pool time out
-    after ten seconds on a URL it was never going to open.
-    - Why it is a slice of its own and not a flag: 266 query sites use
-      `$n` placeholders (SQLite wants `?`), plus `ILIKE`, `RETURNING`, and
-      a migration taken from `pg_dump`. Doing it properly means a dialect
-      layer and a second differential axis, not a feature flag.
-    - The dialect-portability rules the Python lived by are therefore
-      moot *in this repo* and still apply to the two sibling services.
-      They were: a Boolean `server_default` must be `text("false")` and
-      not `"0"`, and each `ADD COLUMN` needs its own transaction.
+  - **SQLite** — the self-hosted default, as it was under the Python tier.
+    The driver is chosen at BUILD time (`--features sqlite`, `src/db.rs`
+    says why), the image ships both builds, and `sentinel-command` replaces
+    itself with `sentinel-command-sqlite` for a `sqlite://` URL — so the
+    choice is the URL and nothing else. Same pragmas the Python set: WAL,
+    `synchronous=NORMAL`, 30 s `busy_timeout`, foreign keys on. The schema
+    (`migrations-sqlite/`) is what the Python models produced on SQLite, so
+    a `sentinel.db` from the last Python release opens as it is — checked
+    by creating one with those models and serving it.
+    - Held to the PostgreSQL build by `tests/differential/dialect_*.sh`:
+      reads 590, writes 729 (with table contents), MCP 150, WS 20, HLS 49,
+      SSE 29, the seven loop bodies, the email worker 21, and a four-way
+      cloud-mirror round trip.
+    - Writing SQL for both is a short list of rules — `backend-rs/README.md`
+      › "Two databases". The two that bite: `CAST()` not `::`, and every
+      ORDER BY over a nullable column says `NULLS LAST`/`NULLS FIRST`,
+      because the engines sort NULL at opposite ends (a unit test enforces it).
+    - Hosted production stays on PostgreSQL. A hosted machine with no
+      `DATABASE_URL` would start on an empty file, which is why it is a
+      Fly secret that must stay set.
 - `FRONTEND_URL` — extra CORS origin (must have scheme, no trailing slash)
 - `REDIS_URL` — shared rate-limiter storage (the Python used it through slowapi; `ratelimit.rs` uses the same keys, so counters survive the rewrite). Without it, per-process in-memory counters (single-VM safe; multi-VM round-robins around the limit). Currently in production via Upstash on Fly.
 - `SEGMENT_CACHE_MAX_PER_CAMERA` — segments cached in memory per camera (default **60**, ~60s — CameraNode emits 1-second segments)
@@ -303,7 +309,11 @@ backend-rs/                       # Command Center AND the agent. One crate, fou
 │                                 # were read from disk under backend/app/
 │                                 # and the deletion shipped an image with
 │                                 # none of them, silently, for one commit.
-├── migrations/                   # embedded by sqlx::migrate! at compile time
+├── migrations/                   # PostgreSQL schema, embedded at compile time
+├── migrations-sqlite/            # SQLite schema — the Python models' own, read
+│                                 # back out of sqlite_master. Same 21 tables.
+├── src/db.rs                     # which database this build opens; the few
+│                                 # helpers that differ (any/list, ILIKE)
 ├── examples/                     # probe pairs for code with no HTTP surface
 └── tests/
     ├── differential/             # how the port was verified. Needs the Python,
@@ -314,11 +324,13 @@ backend-rs/                       # Command Center AND the agent. One crate, fou
     │                             # the agent's, with fake_llm.py as the
     │                             # scripted model.
     ├── agent_contract.rs         # the agent's /complete body vs. the handler
-    └── *_db.rs                   # integration tests, gated on TEST_DATABASE_URL
+    └── *_db.rs                   # integration tests: Postgres when TEST_DATABASE_URL
+                                  # is set; always, on a file, under --features sqlite
 
 scripts/                          # served from SCRIPTS_DIR, or run by an operator
 ├── install.sh  mcp-setup.sh  mcp-setup.ps1
-└── backup_db.sh  restore_db.sh   # need pg_dump; hence postgresql-client-18
+└── backup_db.sh  restore_db.sh   # PostgreSQL only (pg_dump; hence
+                                  # postgresql-client-18). SQLite: copy the file
 
 docs/                             # runbooks + ADRs, unchanged by the rewrite
 frontend/                         # React 19, unchanged by the rewrite
@@ -329,7 +341,7 @@ frontend/                         # React 19, unchanged by the rewrite
 ### Request flow
 
 ```
-Browser ──Clerk JWT──→ axum ──SQL──→ PostgreSQL
+Browser ──Clerk JWT──→ axum ──SQL──→ PostgreSQL | SQLite
                           ↕
 CameraNode ──X-Node-API-Key──→ axum ──RAM──→ in-memory segment cache
           ──WebSocket──────→                   + per-org motion/notification broadcasters
@@ -876,7 +888,7 @@ check-in, the data sync and the plan reconcile to schedule:
 
 **Error handling:** Two layers. New endpoints return `error.rs::ApiError` for a structured envelope (`{detail: {error, message, ...extras}}`); the frontend's `services/api.js::parseErrorBody` reads `e.message` for toasts and `e.code` for branching. Older endpoints still use bare `HTTPException(detail="...")` and the frontend parser handles both shapes plus the rate-limit handler's top-level `{error, message, ...}` shape, so call sites never see `[object Object]`. Query and body validation failures are normalised into the same 422 envelope by `query.rs`, which reproduces FastAPI's `loc`/`msg`/`ctx` shape down to the order parameters are reported in. The envelope is REST-only — MCP tools at `/mcp/` return a tool error, because the JSON-RPC error shape is fixed by the protocol.
 
-**Database access:** a pooled `PgPool` on `AppState`, with runtime-checked
+**Database access:** a pooled `db::Pool` on `AppState` — PostgreSQL or SQLite by build, with runtime-checked
 queries (`sqlx::query*`) rather than the compile-time macros, so a build needs
 no live database.
 
@@ -914,7 +926,7 @@ keyed camera → filename → (bytes, timestamp). One process owns it. Backend n
 ## Key Dependencies
 
 - `axum` / `tokio` / `hyper` — the web framework and runtime
-- `sqlx` — Postgres (runtime-checked queries, so a build needs no live database), with the migrations embedded at compile time
+- `sqlx` — PostgreSQL, or SQLite under `--features sqlite` (runtime-checked queries, so a build needs no live database), with the migrations embedded at compile time
 - `rmcp` — the Model Context Protocol, both ends: the server Command
   Center mounts (replaced `fastmcp`) and the client the agent connects
   with (replaced the Python SDK). Pinned to `3.5` because `"0.9"`

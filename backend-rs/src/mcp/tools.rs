@@ -416,7 +416,7 @@ pub async fn get_stream_logs(
         "SELECT id, user_id, user_email, org_id, camera_id, node_id, ip_address, accessed_at
            FROM stream_access_logs
           WHERE org_id = $1 AND (CAST($2 AS TEXT) IS NULL OR camera_id = $2)
-          ORDER BY accessed_at DESC
+          ORDER BY accessed_at DESC NULLS FIRST
           LIMIT $3",
     )
     .bind(org_id)
@@ -449,7 +449,7 @@ pub async fn get_stream_stats(
     // whatever the planner returns, and the SPA sorts what it renders.
     let by_camera: Vec<(Option<String>, i64)> = sqlx::query_as(
         "SELECT camera_id, COUNT(id) FROM stream_access_logs
-          WHERE org_id = $1 AND accessed_at >= $2 GROUP BY camera_id ORDER BY camera_id",
+          WHERE org_id = $1 AND accessed_at >= $2 GROUP BY camera_id ORDER BY camera_id NULLS LAST",
     )
     .bind(org_id)
     .bind(cutoff)
@@ -460,7 +460,7 @@ pub async fn get_stream_stats(
     let by_user: Vec<(Option<String>, Option<String>, i64)> = sqlx::query_as(
         "SELECT user_id, user_email, COUNT(id) FROM stream_access_logs
           WHERE org_id = $1 AND accessed_at >= $2 GROUP BY user_id, user_email
-          ORDER BY user_id, user_email",
+          ORDER BY user_id NULLS LAST, user_email NULLS LAST",
     )
     .bind(org_id)
     .bind(cutoff)
@@ -614,7 +614,7 @@ pub async fn list_incidents(
         .map_err(db_error)?;
 
     let rows: Vec<crate::api::incidents::IncidentRow> = sqlx::query_as(&format!(
-        "{} {filters} ORDER BY i.created_at DESC LIMIT $6 OFFSET $5",
+        "{} {filters} ORDER BY i.created_at DESC NULLS FIRST LIMIT $6 OFFSET $5",
         crate::api::incidents::INCIDENT_SELECT
     ))
     .bind(org_id)
@@ -1037,7 +1037,7 @@ async fn owned_incident(
 async fn evidence_for(state: &AppState, incident_id: i64) -> Result<Vec<Value>, String> {
     let rows: Vec<crate::api::incidents::EvidenceRow> = sqlx::query_as(
         "SELECT id, incident_id, kind, text, camera_id, data_mime, timestamp
-           FROM incident_evidence WHERE incident_id = $1 ORDER BY timestamp",
+           FROM incident_evidence WHERE incident_id = $1 ORDER BY timestamp NULLS LAST",
     )
     .bind(incident_id as i32)
     .fetch_all(&state.pool)

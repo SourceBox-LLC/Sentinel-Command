@@ -215,7 +215,7 @@ async fn push_table(
                     {JSON_OBJECT}({projection}) AS data
                FROM {table} t
               WHERE (CAST($1 AS TIMESTAMP) IS NULL OR t.\"{cursor}\" > $1)
-              ORDER BY t.\"{cursor}\" ASC, t.id ASC
+              ORDER BY t.\"{cursor}\" ASC NULLS LAST, t.id ASC
               LIMIT {BATCH_SIZE}",
             cursor = spec.cursor,
             table = spec.table,

@@ -374,3 +374,92 @@ mod sibling_tests {
         );
     }
 }
+
+// ── NULL ordering ────────────────────────────────────────────────────
+//
+// PostgreSQL sorts NULL as the LARGEST value: last ascending, first
+// descending. SQLite sorts it as the smallest. Most timestamp columns
+// here are nullable (the schema is the Python models', which declared
+// few NOT NULLs), so every ORDER BY over one spells PostgreSQL's
+// placement out — `NULLS LAST` ascending, `NULLS FIRST` descending —
+// which both engines accept and which changes nothing on PostgreSQL.
+// Held by `order_by_tests::every_nullable_sort_key_says_where_nulls_go`.
+
+#[cfg(test)]
+mod order_by_tests {
+    /// Every ORDER BY key in the crate either cannot be NULL or says
+    /// where NULLs go. Found the hard way: one list ordered by a nullable
+    /// `created_at` came back in a different order from each engine, and
+    /// only on the run where the fixture happened to tie.
+    #[test]
+    fn every_nullable_sort_key_says_where_nulls_go() {
+        // Keys that are a primary key, an aggregate or a catalog column.
+        const NEVER_NULL: &[&str] = &[
+            "id",
+            "c.id",
+            "t.id",
+            "cid",
+            "a.attnum",
+            "ordinal_position",
+            "COUNT(id)",
+            "1",
+        ];
+        let mut bad = Vec::new();
+        for path in source_files(concat!(env!("CARGO_MANIFEST_DIR"), "/src")) {
+            let text = std::fs::read_to_string(&path).unwrap();
+            for (n, line) in text.lines().enumerate() {
+                let code = line.trim_start();
+                if code.starts_with("//") {
+                    continue;
+                }
+                let Some(at) = line.find("ORDER BY ") else {
+                    continue;
+                };
+                // An escaped quote is part of the SQL, not its end.
+                let rest = line[at + 9..].replace("\\\"", "");
+                let clause = rest
+                    .split(['"', '`'])
+                    .next()
+                    .unwrap_or("")
+                    .split(" LIMIT ")
+                    .next()
+                    .unwrap_or("");
+                for term in clause.split(',') {
+                    let term = term.trim().trim_end_matches('\\').trim();
+                    if term.is_empty() || term.starts_with('{') {
+                        continue;
+                    }
+                    let key = term
+                        .trim_end_matches(" ASC")
+                        .trim_end_matches(" DESC")
+                        .trim();
+                    if NEVER_NULL.contains(&key) || term.contains("NULLS") {
+                        continue;
+                    }
+                    bad.push(format!("{}:{}: {term}", path.display(), n + 1));
+                }
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "ORDER BY keys with no NULLS placement:\n{}",
+            bad.join("\n")
+        );
+    }
+
+    fn source_files(dir: &str) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        let mut stack = vec![std::path::PathBuf::from(dir)];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    out.push(path);
+                }
+            }
+        }
+        out
+    }
+}

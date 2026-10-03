@@ -99,7 +99,7 @@ pub async fn list_motion_events(
     let page_sql = format!(
         "SELECT id, org_id, camera_id, node_id, score, segment_seq, timestamp \
          FROM motion_events{where_sql} \
-         ORDER BY timestamp DESC LIMIT {limit} OFFSET {offset}"
+         ORDER BY timestamp DESC NULLS FIRST LIMIT {limit} OFFSET {offset}"
     );
     let mut pq = sqlx::query_as::<_, MotionEventRow>(&page_sql)
         .bind(&user.org_id)
@@ -152,7 +152,7 @@ pub async fn motion_stats(
         "SELECT camera_id, COUNT(id) AS count, MAX(score) AS peak_score, \
                 MAX(timestamp) AS latest \
            FROM motion_events WHERE org_id = $1 AND timestamp >= $2 \
-          GROUP BY camera_id ORDER BY camera_id",
+          GROUP BY camera_id ORDER BY camera_id NULLS LAST",
     )
     .bind(&user.org_id)
     .bind(since)

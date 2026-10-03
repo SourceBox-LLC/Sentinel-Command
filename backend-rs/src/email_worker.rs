@@ -130,7 +130,7 @@ pub async fn run_one_tick(ctx: &EmailContext<'_>) -> Result<TickSummary, sqlx::E
         "SELECT id, org_id, recipient_email, subject, body_text, body_html, kind, attempts
            FROM email_outbox
           WHERE status = 'pending'
-          ORDER BY created_at
+          ORDER BY created_at NULLS LAST, id
           LIMIT $1",
     )
     .bind(ctx.config.email_worker_batch_size)

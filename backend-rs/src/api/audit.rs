@@ -129,7 +129,7 @@ pub async fn list_audit_logs(
     // is no path by which a caller's string reaches this format!.
     let page_sql = format!(
         "SELECT id, timestamp, event, ip_address, username, details \
-         FROM audit_log{where_sql} ORDER BY timestamp DESC LIMIT {limit} OFFSET {offset}"
+         FROM audit_log{where_sql} ORDER BY timestamp DESC NULLS FIRST LIMIT {limit} OFFSET {offset}"
     );
     let mut page_q = sqlx::query_as::<_, AuditLogRow>(&page_sql).bind(&user.org_id);
     if let Some(ref e) = event {
@@ -165,7 +165,7 @@ fn csv_export(
 ) -> Result<Response, ApiError> {
     let sql = format!(
         "SELECT timestamp, event, username, user_id, ip_address, details \
-           FROM audit_log{where_sql} ORDER BY timestamp DESC LIMIT 50000"
+           FROM audit_log{where_sql} ORDER BY timestamp DESC NULLS FIRST LIMIT 50000"
     );
     let rows = crate::csv_export::stream_rows(state.pool.clone(), sql, binds, |row| {
         use sqlx::Row;

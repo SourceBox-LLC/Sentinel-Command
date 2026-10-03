@@ -109,7 +109,7 @@ async fn evidence_for(pool: &crate::db::Pool, incident_id: i32) -> Result<Vec<Va
     // Never selects `data`.
     let rows: Vec<EvidenceRow> = sqlx::query_as(
         "SELECT id, incident_id, kind, text, camera_id, data_mime, timestamp \
-           FROM incident_evidence WHERE incident_id = $1 ORDER BY timestamp",
+           FROM incident_evidence WHERE incident_id = $1 ORDER BY timestamp NULLS LAST",
     )
     .bind(incident_id)
     .fetch_all(pool)
@@ -353,7 +353,7 @@ pub async fn list_incidents(
     let total: i64 = cq.fetch_one(&state.pool).await?;
 
     let page_sql = format!(
-        "{INCIDENT_SELECT}{where_sql} ORDER BY i.created_at DESC LIMIT {limit} OFFSET {offset}"
+        "{INCIDENT_SELECT}{where_sql} ORDER BY i.created_at DESC NULLS FIRST LIMIT {limit} OFFSET {offset}"
     );
     let mut pq = sqlx::query_as::<_, IncidentRow>(&page_sql).bind(&user.org_id);
     for v in [&status, &severity, &camera_id].into_iter().flatten() {

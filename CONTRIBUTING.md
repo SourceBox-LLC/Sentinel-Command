@@ -56,7 +56,8 @@ To just *run* it, rather than develop on it, use the repo's
 For development, with the frontend on its own dev server:
 
 ```bash
-# Backend — needs PostgreSQL (SQLite is not supported; see AGENTS.md).
+# Backend — PostgreSQL here; or skip the container and run
+# `DATABASE_URL=sqlite:///./sentinel.db cargo run --features sqlite`.
 # `cp backend-rs/.env.example backend-rs/.env` for the full variable list.
 docker run -d --name sentinel-pg -p 5432:5432 \
     -e POSTGRES_USER=sentinel -e POSTGRES_PASSWORD=sentinel \
