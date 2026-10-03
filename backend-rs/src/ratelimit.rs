@@ -147,7 +147,17 @@ impl Limiter {
                         // its own storage is unreachable converts a
                         // Redis blip into a full outage, which is a
                         // worse failure than briefly unlimited reads.
-                        tracing::error!(error = %err, "rate limiter storage unavailable; allowing");
+                        // Once a minute at error, the rest at debug. Every
+                        // `error!` is a Sentry event, and this sits in
+                        // front of every segment push: a Redis outage
+                        // logged per request is an event per camera per
+                        // second, burning the quota that the alerts
+                        // which matter come out of.
+                        if storage_error_is_due() {
+                            tracing::error!(error = %err, "rate limiter storage unavailable; allowing");
+                        } else {
+                            tracing::debug!(error = %err, "rate limiter storage unavailable; allowing");
+                        }
                         true
                     }
                 }
@@ -189,6 +199,22 @@ impl Limiter {
             }
         }
     }
+}
+
+/// Whether a storage failure should be logged at error level now: the
+/// first one, then at most one a minute.
+fn storage_error_is_due() -> bool {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    // Seconds since START, plus one so that 0 can mean "never".
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let now = START.get_or_init(Instant::now).elapsed().as_secs() + 1;
+    let last = LAST.load(Ordering::Relaxed);
+    if last != 0 && now - last < 60 {
+        return false;
+    }
+    LAST.compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+        .is_ok()
 }
 
 /// Which bucket a request counts against.
