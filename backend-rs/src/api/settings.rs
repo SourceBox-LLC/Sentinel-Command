@@ -173,6 +173,7 @@ pub async fn full_reset(
     let mut tx = crate::db::begin_write(&state.pool).await?;
     let counts = crate::api::gdpr::delete_org_data(&mut tx, &user.org_id).await?;
     tx.commit().await?;
+    crate::hls::invalidate_auth_cache();
 
     let lookup = |table: &str| {
         counts

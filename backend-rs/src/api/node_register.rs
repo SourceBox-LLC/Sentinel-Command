@@ -311,6 +311,8 @@ pub async fn register_node(
             .bind(existing_id)
             .execute(&state.pool)
             .await?;
+            // The name is what a plan-limit 402 reports.
+            crate::hls::invalidate_auth_cache();
             if video_codec.is_some() {
                 sqlx::query(
                     "UPDATE cameras SET video_codec = $1, audio_codec = $2, updated_at = $3
@@ -406,6 +408,7 @@ pub async fn register_node(
             .bind(stale_id)
             .execute(&state.pool)
             .await?;
+        crate::hls::invalidate_auth_cache();
     }
 
     // Safety net for a missed subscription webhook. Idempotent, so the

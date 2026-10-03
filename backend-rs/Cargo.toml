@@ -86,16 +86,10 @@ rig-core = { version = "0.43", default-features = false, features = ["reqwest", 
 # Only for `shared()`: the transport `agent::llm::RepairingHttp` wraps.
 rig-reqwest = "0.43"
 
-# The strangler proxy, and outbound calls to Clerk / Resend.
+# Outbound calls: Clerk, Resend, GitHub releases, the licence and sync
+# services. (hyper, hyper-util and http-body-util were here for the
+# strangler proxy, which went with the Python; nothing used them since.)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
-# The proxy uses hyper directly rather than reqwest: reqwest builds a
-# `Url`, which applies RFC 3986 dot-segment removal, so `/a/../b` reached
-# Python as `/b` and `/a/./b` as `/a/b`. Python performs no such
-# normalisation, so the two stacks answered different routes for the same
-# request. hyper lets the URI through byte for byte.
-hyper = { version = "1", features = ["client", "http1"] }
-hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
-http-body-util = "0.1"
 bytes = "1"
 
 # `secrets.token_hex` for the API keys this service mints. Already in
@@ -133,7 +127,6 @@ minijinja = { version = "2.24.0", features = ["loader"] }
 sentry = { version = "0.49", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls", "tower", "tower-http", "tracing"] }
 
 [dev-dependencies]
-http-body-util = "0.1"
 jiff-tzdb = "0.1.8"
 
 [profile.release]

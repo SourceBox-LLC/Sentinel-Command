@@ -426,6 +426,8 @@ pub async fn rotate_api_key(
     .bind(id)
     .execute(&state.pool)
     .await?;
+    // The old key must stop working now, not when a cache entry ages out.
+    crate::hls::invalidate_auth_cache();
 
     write_audit(
         &state.pool,
@@ -741,6 +743,8 @@ pub async fn delete_node(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    // A deleted node's key and cameras must not authenticate from cache.
+    crate::hls::invalidate_auth_cache();
 
     write_audit(
         &state.pool,

@@ -608,6 +608,9 @@ pub async fn enforce_camera_cap(
     }
 
     if changed {
+        // A camera that just went over (or back under) the cap must see
+        // its 402 change on the next push, not after a cache entry ages.
+        crate::hls::invalidate_auth_cache();
         tracing::info!(
             org_id, plan = %plan_slug, cap,
             enabled = enabled.len(), disabled = disabled.len(),

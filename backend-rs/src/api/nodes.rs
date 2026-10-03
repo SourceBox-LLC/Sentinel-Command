@@ -360,6 +360,7 @@ pub async fn decommission_self(
         .bind(node_pk)
         .execute(&state.pool)
         .await?;
+    crate::hls::invalidate_auth_cache();
 
     // Nobody is acting but the node itself, which is why the row names
     // it as the user and says who initiated it: a node disappearing is

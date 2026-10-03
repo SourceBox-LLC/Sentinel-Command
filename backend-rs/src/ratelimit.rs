@@ -35,11 +35,33 @@ use crate::app::AppState;
 /// rather than corrected.
 const RETRY_AFTER_SECONDS: u64 = 60;
 
+/// How long a Redis round trip may take before the limiter gives up and
+/// allows the request. The limiter sits in front of every segment push;
+/// a Redis that hangs must cost each request this long, not forever.
+/// Upstash answers in single-digit milliseconds from the same region.
+const REDIS_RESPONSE_TIMEOUT: Duration = Duration::from_millis(250);
+
+/// How long boot waits to reach Redis before falling back to in-process
+/// counters. Without it an unreachable Redis held startup before the port
+/// was bound — a deploy that never became healthy.
+const REDIS_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// The in-process store sweeps expired buckets at most this often. It
+/// used to sweep on EVERY request once it held 10k buckets, which is a
+/// full-map walk per request exactly when something is spraying it.
+const MEMORY_SWEEP_EVERY: Duration = Duration::from_secs(10);
+
 /// Counter storage.
 pub enum Store {
     Redis(redis::aio::ConnectionManager),
     /// Fixed-window counters held in this process only.
-    Memory(Mutex<HashMap<String, (u32, Instant)>>),
+    Memory(Mutex<MemoryCounters>),
+}
+
+#[derive(Default)]
+pub struct MemoryCounters {
+    buckets: HashMap<String, (u32, Instant)>,
+    last_sweep: Option<Instant>,
 }
 
 pub struct Limiter {
@@ -54,11 +76,26 @@ impl Limiter {
                  hold across multiple machines; set REDIS_URL in production to close this gap."
             );
             return Self {
-                store: Store::Memory(Mutex::new(HashMap::new())),
+                store: Store::Memory(Mutex::new(MemoryCounters::default())),
             };
         }
         match redis::Client::open(redis_url) {
-            Ok(client) => match redis::aio::ConnectionManager::new(client).await {
+            Ok(client) => match tokio::time::timeout(
+                REDIS_CONNECT_TIMEOUT,
+                redis::aio::ConnectionManager::new_with_config(
+                    client,
+                    redis::aio::ConnectionManagerConfig::new()
+                        .set_connection_timeout(REDIS_CONNECT_TIMEOUT)
+                        .set_response_timeout(REDIS_RESPONSE_TIMEOUT),
+                ),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(redis::RedisError::from((
+                    redis::ErrorKind::IoError,
+                    "timed out connecting",
+                )))
+            }) {
                 Ok(conn) => {
                     tracing::info!("rate limiter using redis storage");
                     return Self {
@@ -74,7 +111,7 @@ impl Limiter {
         // down. The limit still applies, just per-process.
         tracing::warn!("falling back to in-process rate-limit counters");
         Self {
-            store: Store::Memory(Mutex::new(HashMap::new())),
+            store: Store::Memory(Mutex::new(MemoryCounters::default())),
         }
     }
 
@@ -116,12 +153,18 @@ impl Limiter {
                 }
             }
             Store::Memory(map) => {
-                let mut map = match map.lock() {
+                let mut counters = match map.lock() {
                     Ok(m) => m,
                     Err(poisoned) => poisoned.into_inner(),
                 };
                 let now = Instant::now();
-                let entry = map.entry(bucket.to_string()).or_insert((0, now));
+                let entry = match counters.buckets.get_mut(bucket) {
+                    Some(entry) => entry,
+                    None => counters
+                        .buckets
+                        .entry(bucket.to_string())
+                        .or_insert((0, now)),
+                };
                 if now.duration_since(entry.1) >= window {
                     *entry = (0, now);
                 }
@@ -129,9 +172,18 @@ impl Limiter {
                 let allowed = entry.0 <= limit;
 
                 // Opportunistic sweep so a long-lived process does not
-                // accumulate one entry per tenant per route forever.
-                if map.len() > 10_000 {
-                    map.retain(|_, (_, started)| now.duration_since(*started) < window);
+                // accumulate one entry per tenant per route forever —
+                // throttled, so a full map is not walked per request.
+                let due = counters
+                    .last_sweep
+                    .is_none_or(|at| now.duration_since(at) >= MEMORY_SWEEP_EVERY);
+                if counters.buckets.len() > 10_000 && due {
+                    counters.last_sweep = Some(now);
+                    // The longest window any route uses is an hour, so
+                    // nothing older can still be counting.
+                    counters.buckets.retain(|_, (_, started)| {
+                        now.duration_since(*started) < Duration::from_secs(3600)
+                    });
                 }
                 allowed
             }
@@ -452,7 +504,7 @@ mod tests {
     #[tokio::test]
     async fn the_counter_allows_exactly_the_limit_then_rejects() {
         let limiter = Limiter {
-            store: Store::Memory(Mutex::new(HashMap::new())),
+            store: Store::Memory(Mutex::new(MemoryCounters::default())),
         };
         let minute = Duration::from_secs(60);
         for i in 1..=5 {
@@ -470,7 +522,7 @@ mod tests {
     #[tokio::test]
     async fn buckets_do_not_interfere() {
         let limiter = Limiter {
-            store: Store::Memory(Mutex::new(HashMap::new())),
+            store: Store::Memory(Mutex::new(MemoryCounters::default())),
         };
         let minute = Duration::from_secs(60);
         for _ in 0..5 {
@@ -500,7 +552,7 @@ mod tests {
         // the budget. The window is part of the bucket key so the two
         // can never share a counter either.
         let limiter = Limiter {
-            store: Store::Memory(Mutex::new(HashMap::new())),
+            store: Store::Memory(Mutex::new(MemoryCounters::default())),
         };
         let hour = Duration::from_secs(3600);
         for _ in 0..3 {

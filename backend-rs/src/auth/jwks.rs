@@ -60,6 +60,10 @@ struct Cached {
 }
 
 pub struct JwksCache {
+    inner: Arc<Inner>,
+}
+
+struct Inner {
     url: String,
     http: reqwest::Client,
     cached: RwLock<Option<Cached>>,
@@ -74,64 +78,100 @@ pub enum JwksError {
     UnknownKey(String),
     #[error("jwks fetch failed: {0}")]
     Fetch(String),
+    /// Refused without trying: a fetch ran less than
+    /// `MIN_FORCED_REFRESH_INTERVAL` ago.
+    #[error("jwks fetch failed: rate limited")]
+    RateLimited,
 }
 
 impl JwksCache {
     pub fn new(issuer: &str, http: reqwest::Client) -> Self {
         Self {
-            url: format!("{}/.well-known/jwks.json", issuer.trim_end_matches('/')),
-            http,
-            cached: RwLock::new(None),
-            // Far enough in the past that the first forced refresh is
-            // never rate-limited. `checked_sub` because `Instant` is
-            // monotonic from boot on Linux, so plain subtraction panics
-            // if the process starts within 10s of boot — which is
-            // exactly what happens on a Fly machine cold start.
-            fetch_lock: Mutex::new(
-                Instant::now()
-                    .checked_sub(MIN_FORCED_REFRESH_INTERVAL)
-                    .unwrap_or_else(Instant::now),
-            ),
+            inner: Arc::new(Inner {
+                url: format!("{}/.well-known/jwks.json", issuer.trim_end_matches('/')),
+                http,
+                cached: RwLock::new(None),
+                // Far enough in the past that the first forced refresh is
+                // never rate-limited. `checked_sub` because `Instant` is
+                // monotonic from boot on Linux, so plain subtraction panics
+                // if the process starts within 10s of boot — which is
+                // exactly what happens on a Fly machine cold start.
+                fetch_lock: Mutex::new(
+                    Instant::now()
+                        .checked_sub(MIN_FORCED_REFRESH_INTERVAL)
+                        .unwrap_or_else(Instant::now),
+                ),
+            }),
         }
     }
 
-    /// The decoding key for `kid`, fetching only if it is not already
-    /// held or the cache has aged out.
+    /// The decoding key for `kid`.
+    ///
+    /// Only an UNKNOWN `kid` waits on Clerk. A known key whose set has
+    /// aged past `REFRESH_AFTER` is returned at once and the refresh runs
+    /// behind it — the rule this module's header states. It used to run
+    /// inline: every five minutes, the next request (and every request
+    /// queued behind it on the fetch lock) waited on a round trip to
+    /// Clerk, up to its 5 s timeout when Clerk was slow.
     pub async fn key_for(&self, kid: &str) -> Result<Arc<DecodingKey>, JwksError> {
-        if let Some(cached) = self.cached.read().await.as_ref() {
-            if let Some(key) = cached.keys.get(kid) {
-                if cached.fetched_at.elapsed() < REFRESH_AFTER {
-                    return Ok(Arc::clone(key));
-                }
+        let held = {
+            let cached = self.inner.cached.read().await;
+            cached.as_ref().and_then(|cached| {
+                cached
+                    .keys
+                    .get(kid)
+                    .map(|key| (Arc::clone(key), cached.fetched_at.elapsed() < REFRESH_AFTER))
+            })
+        };
+        match held {
+            Some((key, true)) => return Ok(key),
+            Some((key, false)) => {
+                self.refresh_in_background();
+                return Ok(key);
             }
+            None => {}
         }
 
-        // Either the key is unknown or the cache is stale. Both are
-        // handled the same way — try a refresh, then look again.
-        match self.refresh().await {
-            Ok(()) => {}
-            Err(err) => {
-                // A failed refresh must not invalidate keys we hold: a
-                // Clerk outage would otherwise sign every tenant out.
-                if let Some(cached) = self.cached.read().await.as_ref() {
-                    if let Some(key) = cached.keys.get(kid) {
-                        tracing::warn!(
-                            error = %err,
-                            "jwks refresh failed; serving the stale key set"
-                        );
-                        return Ok(Arc::clone(key));
-                    }
-                }
-                return Err(err);
+        if let Err(err) = self.inner.refresh().await {
+            // Another task may have filled the key in while this one was
+            // refused (a refresh in flight, or the forced-refresh limit).
+            if let Some(key) = self.inner.held(kid).await {
+                return Ok(key);
             }
+            return Err(err);
         }
+        self.inner
+            .held(kid)
+            .await
+            .ok_or_else(|| JwksError::UnknownKey(kid.to_string()))
+    }
 
+    /// Start a refresh unless one is already running. Its failure only
+    /// logs: the keys already held keep working, which is the point — a
+    /// Clerk outage must not sign every tenant out.
+    fn refresh_in_background(&self) {
+        let inner = Arc::clone(&self.inner);
+        tokio::spawn(async move {
+            if inner.fetch_lock.try_lock().is_err() {
+                return; // someone is already fetching
+            }
+            match inner.refresh().await {
+                Ok(()) | Err(JwksError::RateLimited) => {}
+                Err(err) => {
+                    tracing::warn!(error = %err, "jwks refresh failed; serving the stale key set");
+                }
+            }
+        });
+    }
+}
+
+impl Inner {
+    async fn held(&self, kid: &str) -> Option<Arc<DecodingKey>> {
         self.cached
             .read()
             .await
             .as_ref()
             .and_then(|c| c.keys.get(kid).map(Arc::clone))
-            .ok_or_else(|| JwksError::UnknownKey(kid.to_string()))
     }
 
     async fn refresh(&self) -> Result<(), JwksError> {
@@ -145,7 +185,7 @@ impl JwksCache {
             }
         }
         if last_fetch.elapsed() < MIN_FORCED_REFRESH_INTERVAL {
-            return Err(JwksError::Fetch("rate limited".into()));
+            return Err(JwksError::RateLimited);
         }
         *last_fetch = Instant::now();
 
@@ -199,5 +239,45 @@ impl JwksCache {
             fetched_at: Instant::now(),
         });
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stale key set must not make a request wait on Clerk. The server
+    /// here accepts the connection and never answers — the slow-Clerk
+    /// case — and the held key still has to come back at once.
+    #[tokio::test]
+    async fn a_held_key_is_served_at_once_when_the_set_is_stale() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                held.push(socket); // never answer
+            }
+        });
+
+        let cache = JwksCache::new(&format!("http://{addr}"), reqwest::Client::new());
+        let stale = Instant::now()
+            .checked_sub(REFRESH_AFTER + Duration::from_secs(1))
+            .expect("the test machine has been up longer than five minutes");
+        *cache.inner.cached.write().await = Some(Cached {
+            keys: HashMap::from([(
+                "kid-1".to_string(),
+                Arc::new(DecodingKey::from_secret(b"placeholder")),
+            )]),
+            fetched_at: stale,
+        });
+
+        let started = Instant::now();
+        cache.key_for("kid-1").await.expect("the held key");
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "waited {:?} on a refresh that should run behind the request",
+            started.elapsed()
+        );
     }
 }

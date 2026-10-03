@@ -31,7 +31,8 @@
 //! camera.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -74,9 +75,126 @@ struct ViewerUsage {
     cached: HashMap<(String, String), i64>,
 }
 
+// ── the auth cache ───────────────────────────────────────────────────
+//
+// The live path's per-request database work, held for a few seconds.
+//
+// A CameraNode pushes a segment and a playlist every second per camera,
+// and each push used to cost two queries — "which node has this key",
+// "does that node own this camera" — before a byte was cached. A viewer
+// costs one more per segment ("does this org have this camera"). On the
+// hosted deployment the database is across a network, so that was three
+// to five round trips per camera per second spent re-learning facts that
+// change a handful of times a month. The plan for the rewrite named this
+// as the one inefficiency in the Python not to carry over; it was
+// carried over, and this is the fix.
+//
+// Correctness rests on two rules:
+//
+// * **Only positive answers are cached.** A new node or camera works on
+//   its first push; nothing is ever refused from cache.
+// * **Every write that changes a cached fact calls
+//   [`invalidate_auth_cache`] AFTER it commits**, and a reader tags what
+//   it caches with the generation it saw BEFORE it queried. A lookup that
+//   raced a key rotation therefore cannot re-cache the old key: its tag
+//   is stale by the time it tries, and the entry is dropped. The sites:
+//   key rotation, node delete and decommission, the GDPR reset, stale-
+//   camera removal and rename on register, and `enforce_camera_cap`.
+//
+// The TTL is the backstop for a write this process did not make — an
+// operator in `psql`. `AUTH_CACHE_SECONDS=0` turns caching off.
+
+static AUTH_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Forget every cached auth answer. Call after the write has committed.
+pub fn invalidate_auth_cache() {
+    AUTH_GENERATION.fetch_add(1, Ordering::AcqRel);
+}
+
+/// The generation to tag a lookup with. Read it BEFORE the query.
+pub fn auth_generation() -> u64 {
+    AUTH_GENERATION.load(Ordering::Acquire)
+}
+
+fn auth_ttl() -> Duration {
+    static TTL: OnceLock<Duration> = OnceLock::new();
+    *TTL.get_or_init(|| {
+        let secs = std::env::var("AUTH_CACHE_SECONDS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(10);
+        Duration::from_secs(secs)
+    })
+}
+
+/// A cap, not an LRU: past it the map is simply emptied. Entries are a
+/// few seconds old at most, so the cost is one round of re-learning.
+const AUTH_CACHE_MAX_ENTRIES: usize = 10_000;
+
+/// The node a push key belongs to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushNode {
+    pub pk: i32,
+    pub org_id: String,
+    pub node_id: String,
+}
+
+/// What a push needs to know about the camera it names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushCamera {
+    pub name: String,
+    pub disabled_by_plan: bool,
+}
+
+#[derive(Default)]
+struct AuthCache {
+    generation: u64,
+    /// `sha256(key)` → node.
+    nodes: HashMap<String, (PushNode, Instant)>,
+    /// `(node pk, camera_id)` → camera.
+    cameras: HashMap<(i32, String), (PushCamera, Instant)>,
+    /// `(org_id, camera_id)` the org can view.
+    viewable: HashMap<(String, String), Instant>,
+}
+
+impl AuthCache {
+    /// Empty the maps if anything was invalidated since they were filled.
+    fn sync(&mut self) {
+        let now = auth_generation();
+        if self.generation != now {
+            self.nodes.clear();
+            self.cameras.clear();
+            self.viewable.clear();
+            self.generation = now;
+        }
+    }
+}
+
+fn fresh(at: Instant) -> bool {
+    at.elapsed() < auth_ttl()
+}
+
+/// Insert unless the world moved on since `seen` was read.
+fn put<K: std::hash::Hash + Eq, V>(
+    map: &mut HashMap<K, V>,
+    current: u64,
+    seen: u64,
+    key: K,
+    value: V,
+) {
+    if seen != current || auth_ttl().is_zero() {
+        return;
+    }
+    if map.len() >= AUTH_CACHE_MAX_ENTRIES {
+        map.clear();
+    }
+    map.insert(key, value);
+}
+
 /// Everything `hls.py` holds at module level.
 #[derive(Default)]
 pub struct HlsCache {
+    auth: Mutex<AuthCache>,
     segments: Mutex<SegmentStore>,
     playlists: Mutex<HashMap<String, (String, Instant)>>,
     playlist_updates: Mutex<HashMap<String, u64>>,
@@ -101,6 +219,73 @@ impl HlsCache {
         Self::default()
     }
 
+    // ── auth ─────────────────────────────────────────────────────────
+
+    pub fn cached_push_node(&self, key_hash: &str) -> Option<PushNode> {
+        let mut auth = lock(&self.auth);
+        auth.sync();
+        auth.nodes
+            .get(key_hash)
+            .filter(|(_, at)| fresh(*at))
+            .map(|(node, _)| node.clone())
+    }
+
+    pub fn cache_push_node(&self, seen: u64, key_hash: &str, node: &PushNode) {
+        let mut auth = lock(&self.auth);
+        auth.sync();
+        let current = auth.generation;
+        put(
+            &mut auth.nodes,
+            current,
+            seen,
+            key_hash.to_string(),
+            (node.clone(), Instant::now()),
+        );
+    }
+
+    pub fn cached_push_camera(&self, node_pk: i32, camera_id: &str) -> Option<PushCamera> {
+        let mut auth = lock(&self.auth);
+        auth.sync();
+        auth.cameras
+            .get(&(node_pk, camera_id.to_string()))
+            .filter(|(_, at)| fresh(*at))
+            .map(|(camera, _)| camera.clone())
+    }
+
+    pub fn cache_push_camera(&self, seen: u64, node_pk: i32, camera_id: &str, camera: &PushCamera) {
+        let mut auth = lock(&self.auth);
+        auth.sync();
+        let current = auth.generation;
+        put(
+            &mut auth.cameras,
+            current,
+            seen,
+            (node_pk, camera_id.to_string()),
+            (camera.clone(), Instant::now()),
+        );
+    }
+
+    pub fn cached_viewable(&self, org_id: &str, camera_id: &str) -> bool {
+        let mut auth = lock(&self.auth);
+        auth.sync();
+        auth.viewable
+            .get(&(org_id.to_string(), camera_id.to_string()))
+            .is_some_and(|at| fresh(*at))
+    }
+
+    pub fn cache_viewable(&self, seen: u64, org_id: &str, camera_id: &str) {
+        let mut auth = lock(&self.auth);
+        auth.sync();
+        let current = auth.generation;
+        put(
+            &mut auth.viewable,
+            current,
+            seen,
+            (org_id.to_string(), camera_id.to_string()),
+            Instant::now(),
+        );
+    }
+
     // ── segments ─────────────────────────────────────────────────────
 
     /// Cache one pushed segment and run both eviction passes, as the
@@ -117,7 +302,7 @@ impl HlsCache {
         max_per_camera: usize,
         max_total_bytes: i64,
     ) -> usize {
-        let mut store = self.segments.lock().expect("segment cache poisoned");
+        let mut store = lock(&self.segments);
         let bucket = store.cameras.entry(camera_id.to_string()).or_default();
         // A re-push of the same filename overwrites, so the old size
         // comes off the total before the new one goes on. A flaky
@@ -136,7 +321,7 @@ impl HlsCache {
 
     /// One segment's bytes, or `None`.
     pub fn segment(&self, camera_id: &str, filename: &str) -> Option<Bytes> {
-        let store = self.segments.lock().expect("segment cache poisoned");
+        let store = lock(&self.segments);
         store
             .cameras
             .get(camera_id)
@@ -147,7 +332,7 @@ impl HlsCache {
     /// How many segments a camera has cached — for the one-shot
     /// diagnostic lines, which report it.
     pub fn segment_count(&self, camera_id: &str) -> usize {
-        let store = self.segments.lock().expect("segment cache poisoned");
+        let store = lock(&self.segments);
         store.cameras.get(camera_id).map_or(0, BTreeMap::len)
     }
 
@@ -158,43 +343,26 @@ impl HlsCache {
     /// Both are counts of CAMERAS, not of segments: the segment figure
     /// is how many cameras have a bucket, however full.
     pub fn cache_occupancy(&self) -> (usize, usize) {
-        let playlists = self
-            .playlists
-            .lock()
-            .expect("playlist cache poisoned")
-            .len();
-        let segments = self
-            .segments
-            .lock()
-            .expect("segment cache poisoned")
-            .cameras
-            .len();
+        let playlists = lock(&self.playlists).len();
+        let segments = lock(&self.segments).cameras.len();
         (playlists, segments)
     }
 
     /// `sum(_pending_viewer_seconds.values())` — seconds counted but
     /// not yet flushed to `org_monthly_usage`.
     pub fn pending_viewer_seconds(&self) -> i64 {
-        self.viewer
-            .lock()
-            .expect("viewer counter poisoned")
-            .pending
-            .values()
-            .sum()
+        lock(&self.viewer).pending.values().sum()
     }
 
     pub fn total_bytes(&self) -> i64 {
-        self.segments
-            .lock()
-            .expect("segment cache poisoned")
-            .byte_total
+        lock(&self.segments).byte_total
     }
 
     /// `snapshot_recent_segment_bytes`: the newest `count` segments,
     /// oldest first, taken under the lock so an eviction cannot run
     /// between choosing the filenames and reading them.
     pub fn snapshot_recent(&self, camera_id: &str, count: usize) -> Snapshot {
-        let store = self.segments.lock().expect("segment cache poisoned");
+        let store = lock(&self.segments);
         let Some(bucket) = store.cameras.get(camera_id).filter(|b| !b.is_empty()) else {
             return Snapshot::NoCamera;
         };
@@ -215,28 +383,16 @@ impl HlsCache {
     /// every cache. Called when a camera or its node goes away.
     pub fn cleanup_camera(&self, camera_id: &str) {
         {
-            let mut store = self.segments.lock().expect("segment cache poisoned");
+            let mut store = lock(&self.segments);
             if let Some(bucket) = store.cameras.remove(camera_id) {
                 let freed: i64 = bucket.values().map(|(body, _)| body.len() as i64).sum();
                 store.byte_total -= freed;
             }
         }
-        self.playlists
-            .lock()
-            .expect("playlist cache poisoned")
-            .remove(camera_id);
-        self.playlist_updates
-            .lock()
-            .expect("playlist counts poisoned")
-            .remove(camera_id);
-        self.first_playlist_logged
-            .lock()
-            .expect("log set poisoned")
-            .remove(camera_id);
-        self.first_stream_get_logged
-            .lock()
-            .expect("log set poisoned")
-            .remove(camera_id);
+        lock(&self.playlists).remove(camera_id);
+        lock(&self.playlist_updates).remove(camera_id);
+        lock(&self.first_playlist_logged).remove(camera_id);
+        lock(&self.first_stream_get_logged).remove(camera_id);
     }
 
     /// Age every one of a camera's segments, for tests that need the
@@ -244,7 +400,7 @@ impl HlsCache {
     /// minute, which is longer than any test should take.
     #[cfg(test)]
     fn backdate(&self, camera_id: &str, by: Duration) {
-        let mut store = self.segments.lock().expect("segment cache poisoned");
+        let mut store = lock(&self.segments);
         if let Some(bucket) = store.cameras.get_mut(camera_id) {
             for (_, ts) in bucket.values_mut() {
                 *ts -= by;
@@ -256,7 +412,7 @@ impl HlsCache {
     /// Python does on the same sweep.
     pub fn evict_stale_cameras(&self) {
         let stale: Vec<String> = {
-            let mut store = self.segments.lock().expect("segment cache poisoned");
+            let mut store = lock(&self.segments);
             let cutoff = Instant::now() - STALE_CAMERA_AGE;
             let stale: Vec<String> = store
                 .cameras
@@ -280,22 +436,10 @@ impl HlsCache {
             stale
         };
         for camera_id in &stale {
-            self.playlists
-                .lock()
-                .expect("playlist cache poisoned")
-                .remove(camera_id);
-            self.playlist_updates
-                .lock()
-                .expect("playlist counts poisoned")
-                .remove(camera_id);
-            self.first_playlist_logged
-                .lock()
-                .expect("log set poisoned")
-                .remove(camera_id);
-            self.first_stream_get_logged
-                .lock()
-                .expect("log set poisoned")
-                .remove(camera_id);
+            lock(&self.playlists).remove(camera_id);
+            lock(&self.playlist_updates).remove(camera_id);
+            lock(&self.first_playlist_logged).remove(camera_id);
+            lock(&self.first_stream_get_logged).remove(camera_id);
         }
     }
 
@@ -303,7 +447,7 @@ impl HlsCache {
     /// `CLEANUP_INTERVAL` pushes, and a background loop runs on a timer.
     pub fn evict_caches(&self) {
         {
-            let mut playlists = self.playlists.lock().expect("playlist cache poisoned");
+            let mut playlists = lock(&self.playlists);
             if playlists.len() > CACHE_MAX_CAMERAS {
                 let mut by_age: Vec<(String, Instant)> = playlists
                     .iter()
@@ -311,10 +455,7 @@ impl HlsCache {
                     .collect();
                 by_age.sort_by_key(|(_, ts)| *ts);
                 let drop_count = by_age.len() - CACHE_MAX_CAMERAS;
-                let mut counts = self
-                    .playlist_updates
-                    .lock()
-                    .expect("playlist counts poisoned");
+                let mut counts = lock(&self.playlist_updates);
                 for (camera_id, _) in by_age.into_iter().take(drop_count) {
                     playlists.remove(&camera_id);
                     counts.remove(&camera_id);
@@ -322,7 +463,7 @@ impl HlsCache {
             }
         }
         {
-            let mut logged = self.access_logged.lock().expect("access log poisoned");
+            let mut logged = lock(&self.access_logged);
             if logged.len() > ACCESS_LOG_MAX_ENTRIES {
                 let cutoff = Instant::now() - ACCESS_LOG_INTERVAL * 2;
                 logged.retain(|_, ts| *ts >= cutoff);
@@ -335,17 +476,14 @@ impl HlsCache {
 
     /// Cache the rewritten playlist a node pushed.
     pub fn set_playlist(&self, camera_id: &str, playlist: String) {
-        self.playlists
-            .lock()
-            .expect("playlist cache poisoned")
-            .insert(camera_id.to_string(), (playlist, Instant::now()));
+        lock(&self.playlists).insert(camera_id.to_string(), (playlist, Instant::now()));
     }
 
     /// The cached playlist and its age, whether or not it is still
     /// fresh — the caller decides, because the miss path logs whether
     /// there was one at all.
     pub fn playlist(&self, camera_id: &str) -> Option<(String, Duration)> {
-        let playlists = self.playlists.lock().expect("playlist cache poisoned");
+        let playlists = lock(&self.playlists);
         playlists
             .get(camera_id)
             .map(|(text, ts)| (text.clone(), ts.elapsed()))
@@ -353,10 +491,7 @@ impl HlsCache {
 
     /// Count this playlist push and say whether the sweep is due.
     pub fn bump_playlist_count(&self, camera_id: &str, interval: u64) -> bool {
-        let mut counts = self
-            .playlist_updates
-            .lock()
-            .expect("playlist counts poisoned");
+        let mut counts = lock(&self.playlist_updates);
         let count = counts.entry(camera_id.to_string()).or_insert(0);
         *count += 1;
         interval != 0 && (*count).is_multiple_of(interval)
@@ -366,18 +501,12 @@ impl HlsCache {
     /// the process started — the flag is set as a side effect, because
     /// that is what makes the log one line rather than one per second.
     pub fn first_playlist_push(&self, camera_id: &str) -> bool {
-        self.first_playlist_logged
-            .lock()
-            .expect("log set poisoned")
-            .insert(camera_id.to_string())
+        lock(&self.first_playlist_logged).insert(camera_id.to_string())
     }
 
     /// The same, for the first `stream.m3u8` fetch.
     pub fn first_stream_get(&self, camera_id: &str) -> bool {
-        self.first_stream_get_logged
-            .lock()
-            .expect("log set poisoned")
-            .insert(camera_id.to_string())
+        lock(&self.first_stream_get_logged).insert(camera_id.to_string())
     }
 
     // ── stream access logging ────────────────────────────────────────
@@ -385,7 +514,7 @@ impl HlsCache {
     /// Whether a stream-access row is due for this user and camera, and
     /// stamp it if so.
     pub fn access_log_due(&self, user_id: &str, camera_id: &str) -> bool {
-        let mut logged = self.access_logged.lock().expect("access log poisoned");
+        let mut logged = lock(&self.access_logged);
         let key = (user_id.to_string(), camera_id.to_string());
         let now = Instant::now();
         match logged.get(&key) {
@@ -402,7 +531,7 @@ impl HlsCache {
     /// `record_viewer_second` — one per segment actually served.
     pub fn record_viewer_second(&self, org_id: &str) {
         let key = (org_id.to_string(), current_year_month());
-        let mut viewer = self.viewer.lock().expect("viewer usage poisoned");
+        let mut viewer = lock(&self.viewer);
         *viewer.pending.entry(key).or_insert(0) += 1;
     }
 
@@ -410,7 +539,7 @@ impl HlsCache {
     /// month.
     fn cached_viewer_seconds(&self, org_id: &str) -> Option<i64> {
         let key = (org_id.to_string(), current_year_month());
-        let viewer = self.viewer.lock().expect("viewer usage poisoned");
+        let viewer = lock(&self.viewer);
         viewer
             .cached
             .get(&key)
@@ -419,7 +548,7 @@ impl HlsCache {
 
     fn store_cached_viewer_seconds(&self, org_id: &str, seconds: i64) -> i64 {
         let key = (org_id.to_string(), current_year_month());
-        let mut viewer = self.viewer.lock().expect("viewer usage poisoned");
+        let mut viewer = lock(&self.viewer);
         viewer.cached.insert(key.clone(), seconds);
         seconds + viewer.pending.get(&key).copied().unwrap_or(0)
     }
@@ -458,7 +587,7 @@ impl HlsCache {
     /// them through an outage.
     pub async fn flush_viewer_usage(&self, pool: &crate::db::Pool) -> usize {
         let snapshot: Vec<((String, String), i64)> = {
-            let mut viewer = self.viewer.lock().expect("viewer usage poisoned");
+            let mut viewer = lock(&self.viewer);
             if viewer.pending.is_empty() {
                 return 0;
             }
@@ -487,7 +616,7 @@ impl HlsCache {
 
             match updated {
                 Ok(Some((total,))) => {
-                    let mut viewer = self.viewer.lock().expect("viewer usage poisoned");
+                    let mut viewer = lock(&self.viewer);
                     viewer.cached.insert((org_id, year_month), i64::from(total));
                 }
                 Ok(None) => {}
@@ -536,6 +665,19 @@ pub fn spawn_loops(state: crate::app::AppState) {
             evictor.hls.evict_caches();
         }
     });
+}
+
+/// Take a lock, through poisoning.
+///
+/// Every critical section here is a few map operations with no code that
+/// can panic halfway through an invariant, so a poisoned lock means a
+/// panic happened somewhere ELSE while it was held — and the data is as
+/// good as it was. `expect` would turn that one panic into every later
+/// request panicking: all live video, for every org, until a restart.
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn interval_from_env(name: &str, default_secs: u64) -> Duration {
@@ -636,6 +778,79 @@ fn recompute_bytes(store: &SegmentStore) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The generation is process-wide, so tests that invalidate it run
+    /// one at a time — otherwise one test's invalidation empties
+    /// another's cache mid-assertion.
+    static AUTH_TESTS: Mutex<()> = Mutex::new(());
+
+    fn node(pk: i32) -> PushNode {
+        PushNode {
+            pk,
+            org_id: "org".into(),
+            node_id: format!("node-{pk}"),
+        }
+    }
+
+    /// A key looked up once is answered from memory, and a rotation
+    /// (any invalidation) takes it back out at once.
+    #[test]
+    fn a_cached_push_key_is_forgotten_the_moment_it_is_invalidated() {
+        let _serial = lock(&AUTH_TESTS);
+        let cache = HlsCache::new();
+        let seen = auth_generation();
+        cache.cache_push_node(seen, "hash-a", &node(1));
+        assert_eq!(cache.cached_push_node("hash-a"), Some(node(1)));
+        invalidate_auth_cache();
+        assert_eq!(cache.cached_push_node("hash-a"), None);
+    }
+
+    /// The race the generation tag exists for: a lookup reads the OLD
+    /// key, a rotation commits and invalidates, and only then does the
+    /// lookup try to cache what it read. It must not stick.
+    #[test]
+    fn a_lookup_that_raced_an_invalidation_is_not_cached() {
+        let _serial = lock(&AUTH_TESTS);
+        let cache = HlsCache::new();
+        let seen = auth_generation();
+        invalidate_auth_cache(); // the rotation lands mid-lookup
+        cache.cache_push_node(seen, "hash-old", &node(2));
+        assert_eq!(cache.cached_push_node("hash-old"), None);
+
+        cache.cache_push_camera(
+            seen,
+            2,
+            "cam",
+            &PushCamera {
+                name: "Driveway".into(),
+                disabled_by_plan: false,
+            },
+        );
+        assert_eq!(cache.cached_push_camera(2, "cam"), None);
+        cache.cache_viewable(seen, "org", "cam");
+        assert!(!cache.cached_viewable("org", "cam"));
+    }
+
+    /// A plan-cap flip has to reach the next push.
+    #[test]
+    fn a_camera_entry_carries_its_plan_flag_until_invalidated() {
+        let _serial = lock(&AUTH_TESTS);
+        let cache = HlsCache::new();
+        let camera = PushCamera {
+            name: "Gate".into(),
+            disabled_by_plan: false,
+        };
+        cache.cache_push_camera(auth_generation(), 3, "gate", &camera);
+        assert_eq!(cache.cached_push_camera(3, "gate"), Some(camera));
+        assert_eq!(cache.cached_push_camera(3, "other"), None);
+        assert_eq!(
+            cache.cached_push_camera(4, "gate"),
+            None,
+            "another node's camera"
+        );
+        invalidate_auth_cache();
+        assert_eq!(cache.cached_push_camera(3, "gate"), None);
+    }
 
     fn seg(n: u32, size: usize) -> (String, Bytes) {
         (format!("segment_{n:05}.ts"), Bytes::from(vec![b'x'; size]))

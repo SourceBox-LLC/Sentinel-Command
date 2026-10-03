@@ -361,15 +361,32 @@ impl ConnectionManager {
         // half-closed and the receive loop had not noticed. Evict it
         // and say so, rather than letting the caller wait out the
         // timeout on a socket that will never answer.
-        if sender.send(frame).await.is_err() {
-            self.forget_pending(&correlation_id);
-            self.disconnect(node_id, connection_id);
-            return Err(CommandError::SendFailed {
-                node: node_id.to_string(),
-            });
+        //
+        // The send is inside the deadline too. The queue is bounded, so
+        // a node that has stopped READING its socket fills it, and an
+        // unbounded `send().await` then waited for room forever — the
+        // command's timeout never started, and the HTTP request or MCP
+        // call behind it hung with it.
+        let deadline = tokio::time::Instant::now() + timeout;
+        match tokio::time::timeout_at(deadline, sender.send(frame)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => {
+                self.forget_pending(&correlation_id);
+                self.disconnect(node_id, connection_id);
+                return Err(CommandError::SendFailed {
+                    node: node_id.to_string(),
+                });
+            }
+            Err(_) => {
+                self.forget_pending(&correlation_id);
+                return Err(CommandError::Timeout {
+                    node: node_id.to_string(),
+                    command: command.to_string(),
+                });
+            }
         }
 
-        let outcome = match tokio::time::timeout(timeout, answer_rx).await {
+        let outcome = match tokio::time::timeout_at(deadline, answer_rx).await {
             Ok(Ok(value)) => Ok(value),
             // The sender was dropped: the node reconnected or went away.
             Ok(Err(_)) => Err(CommandError::Disconnected {
@@ -537,6 +554,35 @@ mod tests {
         assert_eq!(issued.await.unwrap().unwrap(), json!({"ok": true}));
         // The pending map does not leak.
         assert_eq!(M.pending_count(), 0);
+    }
+
+    /// A node that has stopped reading its socket fills its queue. A
+    /// command to it must still give up at its deadline, not wait for
+    /// room that will never come.
+    #[tokio::test]
+    async fn a_command_to_a_node_that_stopped_reading_times_out() {
+        static M: ConnectionManager = ConnectionManager::new();
+        // Held, never read from: the writer is wedged.
+        let _registration = M.connect("node-wedged");
+        for i in 0..32 {
+            assert!(M.send_frame("node-wedged", format!("filler {i}")).await);
+        }
+
+        let started = std::time::Instant::now();
+        let outcome = M
+            .send_command(
+                "node-wedged",
+                "take_snapshot",
+                json!({}),
+                Duration::from_millis(200),
+            )
+            .await;
+        assert!(
+            matches!(outcome, Err(CommandError::Timeout { .. })),
+            "{outcome:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(M.pending_count(), 0, "a timed-out command must not linger");
     }
 
     /// Python's registry is a dict, so the order is the order they

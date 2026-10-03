@@ -182,27 +182,65 @@ async fn resolve_push_target(
     let Some(key) = headers.get("x-node-api-key") else {
         return Err(ApiError::unauthorized("Missing API key"));
     };
-    let node: Option<(i32, String, String)> =
-        sqlx::query_as("SELECT id, org_id, node_id FROM camera_nodes WHERE api_key_hash = $1")
-            .bind(crate::api::node_writes::node_key_hash(key.as_bytes()))
+    let key_hash = crate::api::node_writes::node_key_hash(key.as_bytes());
+    // See the note on the auth cache in `hls.rs`: two queries per push
+    // per second per camera, answered from memory between changes.
+    let node = match state.hls.cached_push_node(&key_hash) {
+        Some(node) => node,
+        None => {
+            let seen = crate::hls::auth_generation();
+            let row: Option<(i32, String, String)> = sqlx::query_as(
+                "SELECT id, org_id, node_id FROM camera_nodes WHERE api_key_hash = $1",
+            )
+            .bind(&key_hash)
             .fetch_optional(&state.pool)
             .await?;
-    let Some((node_pk, org_id, node_id)) = node else {
-        return Err(ApiError::unauthorized("Invalid API key"));
+            let Some((pk, org_id, node_id)) = row else {
+                return Err(ApiError::unauthorized("Invalid API key"));
+            };
+            let node = crate::hls::PushNode {
+                pk,
+                org_id,
+                node_id,
+            };
+            state.hls.cache_push_node(seen, &key_hash, &node);
+            node
+        }
     };
 
-    let camera: Option<(String, bool)> = sqlx::query_as(
-        "SELECT name, disabled_by_plan FROM cameras \
-          WHERE camera_id = $1 AND node_id = $2 AND org_id = $3",
-    )
-    .bind(camera_id)
-    .bind(node_pk)
-    .bind(&org_id)
-    .fetch_optional(&state.pool)
-    .await?;
-    let Some((camera_name, disabled_by_plan)) = camera else {
-        return Err(ApiError::not_found("Camera not found"));
+    let camera = match state.hls.cached_push_camera(node.pk, camera_id) {
+        Some(camera) => camera,
+        None => {
+            let seen = crate::hls::auth_generation();
+            let row: Option<(String, bool)> = sqlx::query_as(
+                "SELECT name, disabled_by_plan FROM cameras \
+                  WHERE camera_id = $1 AND node_id = $2 AND org_id = $3",
+            )
+            .bind(camera_id)
+            .bind(node.pk)
+            .bind(&node.org_id)
+            .fetch_optional(&state.pool)
+            .await?;
+            let Some((name, disabled_by_plan)) = row else {
+                return Err(ApiError::not_found("Camera not found"));
+            };
+            let camera = crate::hls::PushCamera {
+                name,
+                disabled_by_plan,
+            };
+            state
+                .hls
+                .cache_push_camera(seen, node.pk, camera_id, &camera);
+            camera
+        }
     };
+    let crate::hls::PushNode {
+        org_id, node_id, ..
+    } = node;
+    let crate::hls::PushCamera {
+        name: camera_name,
+        disabled_by_plan,
+    } = camera;
 
     Ok(PushTarget {
         org_id,
@@ -338,14 +376,20 @@ pub async fn get_hls_segment(
     // means Starlette's router never matched this route at all and the
     // answer is its 404, not the handler's 400.
     let filename = path_segment(&filename)?;
-    let exists: Option<(i32,)> =
-        sqlx::query_as("SELECT id FROM cameras WHERE camera_id = $1 AND org_id = $2")
-            .bind(camera_id)
-            .bind(&user.org_id)
-            .fetch_optional(&state.pool)
-            .await?;
-    if exists.is_none() {
-        return Err(ApiError::not_found("Camera not found"));
+    // Once per viewer per segment, so answered from the auth cache
+    // between changes — see `hls.rs`.
+    if !state.hls.cached_viewable(&user.org_id, camera_id) {
+        let seen = crate::hls::auth_generation();
+        let exists: Option<(i32,)> =
+            sqlx::query_as("SELECT id FROM cameras WHERE camera_id = $1 AND org_id = $2")
+                .bind(camera_id)
+                .bind(&user.org_id)
+                .fetch_optional(&state.pool)
+                .await?;
+        if exists.is_none() {
+            return Err(ApiError::not_found("Camera not found"));
+        }
+        state.hls.cache_viewable(seen, &user.org_id, camera_id);
     }
     if !segment_filename_re().is_match(filename) {
         return Err(ApiError::bad_request("Invalid segment filename"));
