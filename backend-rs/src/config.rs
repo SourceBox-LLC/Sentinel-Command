@@ -48,11 +48,14 @@ pub struct Config {
     /// which is a different refusal from an ineligible plan.
     pub sentinel_license_key: Option<String>,
     /// `SENTINEL_LICENSE_SERVICE_URL` — the sibling service the
-    /// check-in loop talks to. Only the READ half of the licence
-    /// contract existed in the port until the loops slice; this is what
-    /// the write half posts to.
+    /// check-in loop talks to. Defaults to the hosted service, as the
+    /// Python's did: a self-hoster sets `SENTINEL_LICENSE_KEY` and
+    /// nothing else (the compose file passes only the key), so an empty
+    /// default would leave every licensed install permanently locked out
+    /// of Sentinel AI, failing as "service unreachable".
     pub sentinel_license_service_url: String,
-    /// `SENTINEL_SYNC_SERVICE_URL` — the mirror's destination.
+    /// `SENTINEL_SYNC_SERVICE_URL` — the mirror's destination, defaulted
+    /// to the hosted service for the same reason.
     pub sentinel_sync_service_url: String,
     /// Fleet-wide kill switch for agent dispatch.
     pub sentinel_dispatch_enabled: bool,
@@ -120,6 +123,9 @@ pub struct Config {
     pub frontend_url: String,
     /// Comma-separated extra CORS origins.
     pub cors_allowed_origins: String,
+    /// `API_DOCS_ENABLED` — whether `/api-docs`, `/api-redoc` and
+    /// `/api/openapi.json` are served. See [`api_docs_enabled`].
+    pub api_docs_enabled: bool,
 }
 
 impl Config {
@@ -154,6 +160,24 @@ impl Config {
     pub fn is_clerk_configured(&self) -> bool {
         !self.clerk_secret_key.is_empty() && !self.clerk_publishable_key.is_empty()
     }
+}
+
+pub const DEFAULT_LICENSE_SERVICE_URL: &str = "https://sentinel-license.fly.dev";
+pub const DEFAULT_SYNC_SERVICE_URL: &str = "https://sentinel-sync.fly.dev";
+
+/// Whether the API documentation is served: OFF on Fly, ON anywhere
+/// else, and `API_DOCS_ENABLED` overrides either way.
+///
+/// The Python's hardening, carried over. With the docs on, the schema is
+/// a free map of every admin, webhook, MCP and agent-key route — not a
+/// vulnerability, since every sensitive route still checks auth, but a
+/// poor default for a security product. `FLY_APP_NAME` is what says
+/// "production" because Fly sets it on every machine and nothing else
+/// does, so neither environment needs configuring.
+pub fn api_docs_enabled(explicit: Option<&str>, fly_app_name: Option<&str>) -> bool {
+    let on_fly = fly_app_name.is_some_and(|name| !name.is_empty());
+    let value = explicit.unwrap_or(if on_fly { "false" } else { "true" });
+    matches!(value.to_lowercase().as_str(), "1" | "true" | "yes")
 }
 
 fn var_or(key: &str, default: &str) -> String {
@@ -205,8 +229,14 @@ impl Config {
             sentinel_license_key: std::env::var("SENTINEL_LICENSE_KEY")
                 .ok()
                 .filter(|v| !v.is_empty()),
-            sentinel_license_service_url: var_or("SENTINEL_LICENSE_SERVICE_URL", ""),
-            sentinel_sync_service_url: var_or("SENTINEL_SYNC_SERVICE_URL", ""),
+            sentinel_license_service_url: var_or(
+                "SENTINEL_LICENSE_SERVICE_URL",
+                DEFAULT_LICENSE_SERVICE_URL,
+            ),
+            sentinel_sync_service_url: var_or(
+                "SENTINEL_SYNC_SERVICE_URL",
+                DEFAULT_SYNC_SERVICE_URL,
+            ),
             // Python reads this as `.lower() == "true"`, so anything
             // else — including "1" — is false.
             sentinel_dispatch_enabled: var_or("SENTINEL_DISPATCH_ENABLED", "true").to_lowercase()
@@ -266,6 +296,10 @@ impl Config {
             cors_allowed_origins: var_or(
                 "CORS_ALLOWED_ORIGINS",
                 "https://app.sentinel-command.com",
+            ),
+            api_docs_enabled: api_docs_enabled(
+                env::var("API_DOCS_ENABLED").ok().as_deref(),
+                env::var("FLY_APP_NAME").ok().as_deref(),
             ),
         }
     }
@@ -396,6 +430,7 @@ mod tests {
             email_max_attempts: 3,
             frontend_url: String::new(),
             cors_allowed_origins: String::new(),
+            api_docs_enabled: true,
         }
     }
 
@@ -488,5 +523,22 @@ mod tests {
         ] {
             assert_eq!(normalize_database_url(url), url);
         }
+    }
+
+    #[test]
+    fn api_docs_are_off_on_fly_and_on_elsewhere_unless_overridden() {
+        assert!(api_docs_enabled(None, None));
+        assert!(
+            api_docs_enabled(None, Some("")),
+            "an empty FLY_APP_NAME is not Fly"
+        );
+        assert!(!api_docs_enabled(None, Some("sentinel-command")));
+        assert!(api_docs_enabled(Some("TRUE"), Some("sentinel-command")));
+        assert!(api_docs_enabled(Some("yes"), Some("sentinel-command")));
+        assert!(!api_docs_enabled(Some("0"), None));
+        assert!(
+            !api_docs_enabled(Some(""), None),
+            "set but empty is not a yes"
+        );
     }
 }

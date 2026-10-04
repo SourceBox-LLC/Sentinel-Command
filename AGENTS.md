@@ -211,7 +211,8 @@ Backend config is loaded from environment variables (see `backend-rs/.env.exampl
 - `SENTINEL_AGENT_WEBHOOK_URL` — where Command Center fires the wakeup. Now an **internal** address: `http://sentinel-command.flycast:8080/wakeup`, the `agent` process group of this same app over 6PN. Hitting a Fly *service* is what auto-starts the stopped agent machine — a bare 6PN connection to a stopped machine just fails — so the webhook both wakes the worker and delivers the work. Unset means no webhook is sent; a self-hosted agent instead polls, so this is only needed for the push topology.
 - `SENTINEL_DISPATCH_ENABLED` — kill switch for creating new runs. Turn it off to stop dispatch without touching plans or licences.
 - `SENTINEL_GLOBAL_MONTHLY_RUN_CAP` — a fleet-wide ceiling on runs per month, on top of the per-plan caps. Backstop against a runaway loop billing you across every org at once.
-- `SENTINEL_LICENSE_SERVICE_URL` / `SENTINEL_SYNC_SERVICE_URL` — the sibling services. See `docs/runbooks/DISASTER_RECOVERY.md` for how they fit together.
+- `SENTINEL_LICENSE_SERVICE_URL` / `SENTINEL_SYNC_SERVICE_URL` — the sibling services, defaulting to the hosted `https://sentinel-license.fly.dev` / `https://sentinel-sync.fly.dev` (the compose files pass only `SENTINEL_LICENSE_KEY`, so a self-hoster never sets these). See `docs/runbooks/DISASTER_RECOVERY.md` for how they fit together.
+- `API_DOCS_ENABLED` — serve `/api-docs`, `/api-redoc` and `/api/openapi.json`. Default: off on Fly (`FLY_APP_NAME` set), on elsewhere.
 
 **Node versions:**
 - `MIN_SUPPORTED_NODE_VERSION` — CameraNodes below this are refused. `LATEST_NODE_VERSION` (above) is the cold-boot fallback for the "update available" check.
@@ -711,7 +712,7 @@ because a reader comparing the two stacks needs the correspondence.
 **Top-level** (registered in `app.rs`):
 - `GET /api/health` — minimal liveness for load balancers: `{"status": "healthy", "version": "2.1.2"}` (no auth)
 - `GET /api/health/detailed` — verbose status for status-page polling and on-call diagnostics: `{status, version, uptime_seconds, started_at, time, checks: {database: {status, latency_ms}, hls_cache: {playlists_cached, segment_cameras}, viewer_usage: {pending_writes, status}, sse: {subscriber_orgs, subscriber_total}}}`. Public on purpose — every value is metric-shaped, never an org/camera/user identifier (pinned by a privacy regression test in `api/health.rs`).
-- API docs: `/api-docs` (Swagger), `/api-redoc` (ReDoc), OpenAPI at `/api/openapi.json` — FastAPI's own document, harvested and compiled in, held in step with the route table by `tests/differential/openapi_drift.py`. `/docs` is the React `DocsPage`.
+- API docs: `/api-docs` (Swagger), `/api-redoc` (ReDoc), OpenAPI at `/api/openapi.json` — FastAPI's own document, harvested and compiled in, held in step with the route table by `tests/differential/openapi_drift.py`. `/docs` is the React `DocsPage`. **Off in production**: unregistered when `FLY_APP_NAME` is set, so all three answer the API 404, as they did under the Python, on everywhere else; `API_DOCS_ENABLED` overrides either way.
 
 ## MCP Server
 

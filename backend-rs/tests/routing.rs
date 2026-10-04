@@ -73,7 +73,13 @@ async fn build() -> (std::path::PathBuf, axum::Router) {
     std::env::set_var("AUTH_PROVIDER", "local");
     std::env::set_var("APP_SECRET_KEY", "x".repeat(32));
 
-    let config = Config::from_env();
+    let router = router_for(Config::from_env()).await;
+    (dir, router)
+}
+
+/// The router over `config`. Callers other than `build` must await
+/// `app()` first, so the environment `Config::from_env` reads is set.
+async fn router_for(config: Config) -> axum::Router {
     // Lazy: nothing here reaches a handler, and requiring a live
     // Postgres would put these cases behind an env var.
     let pool = sentinel_command::db::PoolOptions::new()
@@ -94,7 +100,7 @@ async fn build() -> (std::path::PathBuf, axum::Router) {
         started_at: Instant::now(),
         started_at_wall: chrono::Utc::now(),
     };
-    (dir, build_router(state))
+    build_router(state)
 }
 
 async fn send(
@@ -384,4 +390,28 @@ async fn a_nul_byte_in_the_url_is_a_400_everywhere() {
     // must NOT be refused.
     let (status, _, _) = send(app, with("GET", "/api/health?x=%2500", &[])).await;
     assert_ne!(status, 400);
+}
+
+/// The API docs are served where they are enabled (the shared router:
+/// no `FLY_APP_NAME` here) and simply ABSENT where they are not, which is
+/// what FastAPI's `docs_url=None` produced in production. Absent means
+/// the API 404 for all three, not just the schema: `/api-docs` and
+/// `/api-redoc` begin with `/api`, which the SPA fallback never serves
+/// the React document for — the Python's pass-through matched the same
+/// bare prefix.
+#[tokio::test]
+async fn the_api_docs_are_unregistered_when_disabled() {
+    let (_, enabled) = app().await;
+    let (status, _, body) = send(enabled, get("/api/openapi.json")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("\"openapi\""), "{body:.80}");
+
+    let mut config = Config::from_env();
+    config.api_docs_enabled = false;
+    let disabled = router_for(config).await;
+    for path in ["/api/openapi.json", "/api-docs", "/api-redoc"] {
+        let (status, _, body) = send(&disabled, get(path)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(body, r#"{"detail":"Not Found"}"#, "{path}");
+    }
 }

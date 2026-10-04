@@ -591,21 +591,28 @@ pub fn build_router(state: AppState) -> Router {
             );
     }
 
+    // ---- the API documentation surface ---------------------------------
+    // The last four routes Python answered. The schema is FastAPI's own,
+    // harvested and compiled in rather than rewritten — see api/docs.rs
+    // for why that is the honest option and what keeps the snapshot from
+    // going stale. OFF in production (`config::api_docs_enabled`): not
+    // registering them is what turns them off, exactly as FastAPI's
+    // `docs_url=None` did: all three then answer the API 404, because
+    // the SPA fallback's `/api` pass-through covers `/api-docs` too.
+    if state.config.api_docs_enabled {
+        router = router
+            .route(
+                "/api/openapi.json",
+                served(axum::routing::get(api::docs::openapi_json)),
+            )
+            .route(
+                "/api-docs",
+                served(axum::routing::get(api::docs::swagger_ui)),
+            )
+            .route("/api-redoc", served(axum::routing::get(api::docs::redoc)));
+    }
+
     router
-        // ---- the API documentation surface -----------------------------
-        // The last four routes Python answered. The schema is FastAPI's
-        // own, harvested and compiled in rather than rewritten — see
-        // api/docs.rs for why that is the honest option and what keeps
-        // the snapshot from going stale.
-        .route(
-            "/api/openapi.json",
-            served(axum::routing::get(api::docs::openapi_json)),
-        )
-        .route(
-            "/api-docs",
-            served(axum::routing::get(api::docs::swagger_ui)),
-        )
-        .route("/api-redoc", served(axum::routing::get(api::docs::redoc)))
         // ---- the SPA ---------------------------------------------------
         // Deliberately last. `spa::fallback` serves the React document
         // and the files beside it, and answers the router's 404 for the
