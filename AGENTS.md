@@ -605,7 +605,7 @@ because a reader comparing the two stacks needs the correspondence.
 - `POST /settings/timezone` — set the org's IANA timezone for scheduled-recording-window interpretation (admin, 30/min)
 - `GET /settings/notifications` — read inbox + email toggle prefs (view)
 - `POST /settings/notifications` — update inbox + email toggle prefs (admin, 30/min)
-- `GET /settings/motion-ingestion` — read motion-event ingestion toggle (admin)
+- `GET /settings/motion-ingestion` — read motion-event ingestion toggle (view)
 - `POST /settings/motion-ingestion` — toggle motion-event ingestion org-wide (admin, 30/min)
 - `GET /audit-logs` — audit logs (admin, 120/min)
 - `POST /settings/danger/wipe-logs` — selectively delete stream + MCP activity logs while keeping the org running (admin + **Pro/Pro Plus**, 5/hour).  Operator-convenience feature, *not* a right-to-erasure obligation.
@@ -677,7 +677,7 @@ because a reader comparing the two stacks needs the correspondence.
 - `GET /` — paginated inbox, newest first; applies audience filter (view)
 - `GET /unread-count` — cheap count for the bell badge (capped at 99) (view)
 - `POST /mark-viewed` — bump `last_viewed_at` to now (view)
-- `POST /clear-all` — empty the inbox for this org (admin)
+- `POST /clear-all` — hide everything up to now from the caller's own inbox (a per-user cursor; deletes nothing, other members unaffected) (view)
 - `POST /request-admin-promotion` — member-initiated admin-access request; fires the `member_promotion_requested` notification kind to org admins (view)
 - `GET /stream` — SSE stream for the bell; audience filter applied server-side (view)
 - `GET /email/preferences` — read the org's per-kind email toggles (view)
@@ -697,15 +697,15 @@ because a reader comparing the two stacks needs the correspondence.
 **api/sentinel.rs** (prefix `/api/sentinel`):
 - `GET /config` — read the org's Sentinel AI config + plan-aware `monthly_cap` + `plan_gated` flag (view; always 200 — non-eligible orgs get a read-only payload for the upgrade banner)
 - `PATCH /config` — partial update of Sentinel config (admin + Pro/Pro Plus; 402 otherwise)
-- `GET /runs` — list recent runs + stats (admin)
-- `GET /runs/{run_id}` — single run with full tool trace (admin)
+- `GET /runs` — list recent runs + stats (view)
+- `GET /runs/{run_id}` — single run with full tool trace (view)
 - `POST /runs/manual` — operator "Run now"; skips schedule + scope gates but cap-enforced (admin + Pro/Pro Plus; 429 at cap)
 - `GET /runs/pending` — service-to-service.  Agent polls this on wakeup to drain runs across all orgs (FIFO).  Auth: `X-Sentinel-Agent-Key` header.
 - `POST /runs/{run_id}/start` — service-to-service.  Agent claims a pending run (`pending → running`).  Idempotent.
 - `POST /runs/{run_id}/complete` — service-to-service.  Agent posts terminal outcome (`incident` / `no_action` / `error`) + full tool trace.  Cross-checks `incident_id` belongs to the run's org.  Idempotent on terminal rows.
 
 **api/clerk_webhook.rs + api/resend_webhook.rs** (prefix `/api/webhooks`):
-- `POST /clerk` — Clerk subscription + organizationMembership events (Svix signature when `CLERK_WEBHOOK_SECRET` is set; 120/min)
+- `POST /clerk` — Clerk subscription + organizationMembership events (Svix-signed with `CLERK_WEBHOOK_SECRET`; refused when it is unset; 120/min)
 - `POST /resend` — Resend bounce / complaint / unsubscribe webhooks (Svix signature when `RESEND_WEBHOOK_SECRET` is set); writes to `EmailSuppression` so subsequent sends short-circuit before the API call
 
 **Top-level** (registered in `app.rs`):
@@ -799,7 +799,7 @@ Two endpoints, both Svix-signed (signature verification mandatory in production)
 
 ### `POST /api/webhooks/clerk` — Clerk events
 
-- Verifies signature with Svix when `CLERK_WEBHOOK_SECRET` is set; accepts unsigned JSON otherwise (dev mode)
+- Verifies the Svix signature with `CLERK_WEBHOOK_SECRET`. **Unset, every delivery is refused** (400 "Webhook processing unavailable") — not accepted unsigned, which would let anyone forge `organization.deleted` and wipe an org. Checked against the running service.
 - Dedup via `ProcessedWebhook(svix_msg_id)` so retries are idempotent
 
 **Subscription lifecycle:**
