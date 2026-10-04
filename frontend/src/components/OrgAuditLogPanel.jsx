@@ -5,6 +5,7 @@ import {
   downloadOrgAuditLogsCsv,
 } from "../services/api"
 import { useToasts } from "../hooks/useToasts.jsx"
+import { parseServerDate } from "../utils/time.js"
 
 /*
  * Organization Audit Log panel.
@@ -281,7 +282,7 @@ export default function OrgAuditLogPanel() {
                 {logs.map((log) => (
                   <tr key={log.id}>
                     <td className="timestamp">
-                      {new Date(log.timestamp).toLocaleString()}
+                      {parseServerDate(log.timestamp).toLocaleString()}
                     </td>
                     <td><code>{formatEvent(log.event)}</code></td>
                     <td className="user-id">

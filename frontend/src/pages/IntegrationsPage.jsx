@@ -6,6 +6,7 @@ import {
   revokeIntegrationKey,
 } from "../services/api"
 import { useToasts } from "../hooks/useToasts.jsx"
+import { parseServerDate } from "../utils/time.js"
 
 // The user pastes this into the Home Assistant integration's config flow,
 // alongside a key generated below.
@@ -169,9 +170,9 @@ function IntegrationsPage() {
                   <span className="mcp-key-name">{k.name}</span>
                 </div>
                 <span className="mcp-key-meta">
-                  Created {new Date(k.created_at).toLocaleDateString()}
+                  Created {parseServerDate(k.created_at).toLocaleDateString()}
                   {k.last_used_at && (
-                    <> — Last used {new Date(k.last_used_at).toLocaleDateString()}</>
+                    <> — Last used {parseServerDate(k.last_used_at).toLocaleDateString()}</>
                   )}
                 </span>
               </div>

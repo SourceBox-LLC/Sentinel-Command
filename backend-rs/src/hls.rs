@@ -153,8 +153,9 @@ struct AuthCache {
     nodes: HashMap<String, (PushNode, Instant)>,
     /// `(node pk, camera_id)` → camera.
     cameras: HashMap<(i32, String), (PushCamera, Instant)>,
-    /// `(org_id, camera_id)` the org can view.
-    viewable: HashMap<(String, String), Instant>,
+    /// `(org_id, camera_id)` the org can view → the public id of the
+    /// node it is on.
+    viewable: HashMap<(String, String), (String, Instant)>,
 }
 
 impl AuthCache {
@@ -265,15 +266,17 @@ impl HlsCache {
         );
     }
 
-    pub fn cached_viewable(&self, org_id: &str, camera_id: &str) -> bool {
+    /// The public id of the node a viewable camera is on, if cached.
+    pub fn cached_viewable(&self, org_id: &str, camera_id: &str) -> Option<String> {
         let mut auth = lock(&self.auth);
         auth.sync();
         auth.viewable
             .get(&(org_id.to_string(), camera_id.to_string()))
-            .is_some_and(|at| fresh(*at))
+            .filter(|(_, at)| fresh(*at))
+            .map(|(node_id, _)| node_id.clone())
     }
 
-    pub fn cache_viewable(&self, seen: u64, org_id: &str, camera_id: &str) {
+    pub fn cache_viewable(&self, seen: u64, org_id: &str, camera_id: &str, node_id: &str) {
         let mut auth = lock(&self.auth);
         auth.sync();
         let current = auth.generation;
@@ -282,7 +285,7 @@ impl HlsCache {
             current,
             seen,
             (org_id.to_string(), camera_id.to_string()),
-            Instant::now(),
+            (node_id.to_string(), Instant::now()),
         );
     }
 
@@ -827,8 +830,8 @@ mod tests {
             },
         );
         assert_eq!(cache.cached_push_camera(2, "cam"), None);
-        cache.cache_viewable(seen, "org", "cam");
-        assert!(!cache.cached_viewable("org", "cam"));
+        cache.cache_viewable(seen, "org", "cam", "node-1");
+        assert_eq!(cache.cached_viewable("org", "cam"), None);
     }
 
     /// A plan-cap flip has to reach the next push.

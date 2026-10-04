@@ -250,6 +250,41 @@ async fn resolve_push_target(
     })
 }
 
+/// The public id of the node a camera this org can view is on — the
+/// check both viewer routes make before serving anything. Each runs about
+/// once a second per viewer, so the answer comes from the auth cache
+/// between changes (see `hls.rs`).
+///
+/// 404 "Camera not found" for a camera that is not this org's, and
+/// "Camera node not found" for one that has no node.
+async fn viewable_camera_node(
+    state: &AppState,
+    org_id: &str,
+    camera_id: &str,
+) -> Result<String, ApiError> {
+    if let Some(node_id) = state.hls.cached_viewable(org_id, camera_id) {
+        return Ok(node_id);
+    }
+    let seen = crate::hls::auth_generation();
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT n.node_id FROM cameras c LEFT JOIN camera_nodes n ON n.id = c.node_id \
+          WHERE c.camera_id = $1 AND c.org_id = $2",
+    )
+    .bind(camera_id)
+    .bind(org_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    let Some((node_id,)) = row else {
+        return Err(ApiError::not_found("Camera not found"));
+    };
+    // `if not camera.node_id` — a camera with no node has no stream.
+    let Some(node_id) = node_id.filter(|id| !id.is_empty()) else {
+        return Err(ApiError::not_found("Camera node not found"));
+    };
+    state.hls.cache_viewable(seen, org_id, camera_id, &node_id);
+    Ok(node_id)
+}
+
 /// `GET /api/cameras/{camera_id}/stream.m3u8`.
 pub async fn get_hls_playlist(
     State(state): State<AppState>,
@@ -259,24 +294,13 @@ pub async fn get_hls_playlist(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let camera_id = path_segment(&camera_id)?;
-    let camera: Option<(Option<i32>,)> =
-        sqlx::query_as("SELECT node_id FROM cameras WHERE camera_id = $1 AND org_id = $2")
-            .bind(camera_id)
-            .bind(&user.org_id)
-            .fetch_optional(&state.pool)
-            .await?;
-    let Some((node_id,)) = camera else {
-        return Err(ApiError::not_found("Camera not found"));
-    };
-    // `if not camera.node_id` — a camera with no node has no stream.
-    let Some(node_id) = node_id.filter(|id| *id != 0) else {
-        return Err(ApiError::not_found("Camera node not found"));
-    };
+    let node_id = viewable_camera_node(&state, &user.org_id, camera_id).await?;
 
     // This route is polled about once a second per viewer, so the log
     // self-throttles to one row per user and camera per five minutes.
-    // The node_id written is the integer foreign key as a string, which
-    // is what `str(camera.node_id)` produces.
+    // The node_id written is the node's PUBLIC id. The Python wrote
+    // `str(camera.node_id)` — the integer foreign key — so the audit log
+    // named nodes "2" and "7" where every other screen says `2a11bf2b`.
     if state.hls.access_log_due(&user.user_id, camera_id) {
         let user_agent: String = headers
             .get(header::USER_AGENT)
@@ -296,7 +320,7 @@ pub async fn get_hls_playlist(
         .bind(&user.email)
         .bind(&user.org_id)
         .bind(camera_id)
-        .bind(node_id.to_string())
+        .bind(&node_id)
         .bind(peer.ip().to_string())
         .bind(&user_agent)
         .bind(now_naive())
@@ -378,19 +402,7 @@ pub async fn get_hls_segment(
     let filename = path_segment(&filename)?;
     // Once per viewer per segment, so answered from the auth cache
     // between changes — see `hls.rs`.
-    if !state.hls.cached_viewable(&user.org_id, camera_id) {
-        let seen = crate::hls::auth_generation();
-        let exists: Option<(i32,)> =
-            sqlx::query_as("SELECT id FROM cameras WHERE camera_id = $1 AND org_id = $2")
-                .bind(camera_id)
-                .bind(&user.org_id)
-                .fetch_optional(&state.pool)
-                .await?;
-        if exists.is_none() {
-            return Err(ApiError::not_found("Camera not found"));
-        }
-        state.hls.cache_viewable(seen, &user.org_id, camera_id);
-    }
+    viewable_camera_node(&state, &user.org_id, camera_id).await?;
     if !segment_filename_re().is_match(filename) {
         return Err(ApiError::bad_request("Invalid segment filename"));
     }

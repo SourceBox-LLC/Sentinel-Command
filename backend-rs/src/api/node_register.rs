@@ -699,11 +699,23 @@ pub async fn node_heartbeat(
     // The badge plan is read straight from the Setting rather than
     // resolved: heartbeats are every ~30s per node, and resolving would
     // call Clerk for every free org.
-    let cached_plan = crate::settings::get(&state.pool, &node.org_id, "org_plan", Some("free_org"))
-        .await
-        .unwrap_or_default()
-        .filter(|p| !p.is_empty())
-        .unwrap_or_else(|| "free_org".to_string());
+    //
+    // A self-hosted install has no such Setting — its plan is decided by
+    // the auth mode, in `resolve_org_plan`'s first line — so reading the
+    // Setting alone told every self-hosted node it was on the FREE plan,
+    // and CameraNode's status bar said so, while registration (which does
+    // resolve) said `self_host`. Found by running a real CameraNode
+    // against a self-hosted Command Center. The same short-circuit here,
+    // which costs nothing.
+    let cached_plan = if state.config.is_local_auth() {
+        "self_host".to_string()
+    } else {
+        crate::settings::get(&state.pool, &node.org_id, "org_plan", Some("free_org"))
+            .await
+            .unwrap_or_default()
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| "free_org".to_string())
+    };
 
     #[derive(sqlx::FromRow)]
     struct RecordingRow {

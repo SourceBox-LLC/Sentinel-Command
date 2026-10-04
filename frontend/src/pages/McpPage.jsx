@@ -11,6 +11,7 @@ import { useToasts } from "../hooks/useToasts.jsx"
 import { usePlanInfo } from "../hooks/usePlanInfo.jsx"
 import UpgradeModal from "../components/UpgradeModal.jsx"
 import HelpTooltip from "../components/HelpTooltip.jsx"
+import { parseServerDate } from "../utils/time.js"
 
 // Trailing slash is intentional: FastAPI mounts the MCP app at "/mcp"
 // with internal path="/", so requests to "/mcp" 307-redirect to "/mcp/".
@@ -939,8 +940,8 @@ function McpPage() {
                             </span>
                           </div>
                           <span className="mcp-key-meta">
-                            Created {new Date(k.created_at).toLocaleDateString()}
-                            {k.last_used_at && <> — Last used {new Date(k.last_used_at).toLocaleDateString()}</>}
+                            Created {parseServerDate(k.created_at).toLocaleDateString()}
+                            {k.last_used_at && <> — Last used {parseServerDate(k.last_used_at).toLocaleDateString()}</>}
                           </span>
                         </div>
                         <button
@@ -1070,9 +1071,9 @@ function McpPage() {
                           )}
                         </div>
                         <span className="text-muted">
-                          Created {new Date(k.created_at).toLocaleDateString()}
+                          Created {parseServerDate(k.created_at).toLocaleDateString()}
                           {k.last_used_at
-                            ? ` · Last used ${new Date(k.last_used_at).toLocaleDateString()}`
+                            ? ` · Last used ${parseServerDate(k.last_used_at).toLocaleDateString()}`
                             : " · Never used"}
                         </span>
                       </div>

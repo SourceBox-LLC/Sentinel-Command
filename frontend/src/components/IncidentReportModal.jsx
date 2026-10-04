@@ -14,6 +14,7 @@ import {
 } from "../services/api"
 import { useToasts } from "../hooks/useToasts.jsx"
 import { useSharedToken } from "../hooks/useSharedToken.jsx"
+import { parseServerDate } from "../utils/time.js"
 
 const SEVERITY_LABELS = {
   low: "Low",
@@ -32,7 +33,7 @@ const STATUS_LABELS = {
 function formatAbsolute(iso) {
   if (!iso) return "—"
   try {
-    return new Date(iso).toLocaleString()
+    return parseServerDate(iso).toLocaleString()
   } catch {
     return iso
   }
@@ -40,7 +41,7 @@ function formatAbsolute(iso) {
 
 function formatRelative(iso) {
   if (!iso) return ""
-  const ts = new Date(iso).getTime()
+  const ts = parseServerDate(iso).getTime()
   const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000))
   if (diffSec < 60) return "just now"
   if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`

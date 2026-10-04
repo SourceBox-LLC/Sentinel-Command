@@ -14,6 +14,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { useAuth } from "../auth/index.jsx"
 import { getMotionEvents, getMotionStats, getCameras } from "../services/api"
+import { parseServerDate } from "../utils/time.js"
 
 const PAGE_SIZE = 50
 
@@ -182,7 +183,7 @@ function MotionEventsPanel() {
                   <tr key={e.id}>
                     <td>
                       {e.timestamp
-                        ? new Date(e.timestamp + "Z").toLocaleString()
+                        ? parseServerDate(e.timestamp).toLocaleString()
                         : "—"}
                     </td>
                     <td>{cameraName(e.camera_id)}</td>
