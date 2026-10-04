@@ -59,7 +59,7 @@ The rule:
 - **Reference docs state a value once.** Whichever doc owns the subject owns the number. `AGENTS.md` owns Command Center's internals; `SENTINEL_AGENT.md` owns the agent's; `ARCHITECTURE.md` owns facts that only make sense *across* services (like the Fly proxy's bind budget, which is why two services scale to zero and two don't). Everything else links.
 - **ARCHITECTURE.md carries structure, not values.** Relationships change rarely; numbers drift constantly. If you're about to add a figure there, check whether the doc that owns the subject should carry it instead.
 - **Operational docs may inline a value** where stopping to look it up would make them unusable. `LAUNCH_HANDOFF.md` saying "kill a CameraNode for >90s" is correct; it's an instruction, not a specification.
-- **Prefer pointing at code.** A value with a good comment beside it (`fly.toml`'s `[env]` block, `plans.py`) is more durable than the same value copied into prose, because the next person to change it is already looking at it.
+- **Prefer pointing at code.** A value with a good comment beside it (`fly.toml`'s `[env]` block, `plans.rs`) is more durable than the same value copied into prose, because the next person to change it is already looking at it.
 
 ## Writing new docs
 

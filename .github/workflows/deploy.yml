@@ -164,21 +164,16 @@ jobs:
         working-directory: backend-rs
         run: cargo clippy --all-targets ${{ matrix.cargo_features }} -- -D warnings
 
-      # The Rust half of the dependency-scan parity this repo keeps on
-      # three sides: pip-audit for Python, npm audit for the frontend, and
-      # — until now — nothing at all for the backend, because the backend
-      # became Rust and the gate did not follow it.
-      #
-      # `cargo audit` scans Cargo.lock against the RustSec advisory DB and
-      # exits non-zero on any finding, matching pip-audit's `--strict`.
+      # The backend's dependency scan, beside `npm audit` for the
+      # frontend. `cargo audit` scans Cargo.lock against the RustSec
+      # advisory DB and exits non-zero on any finding.
       #
       # RUSTSEC-2023-0071 (`rsa` 0.9.10, Marvin timing sidechannel) is
       # ignored and has to be: there is NO fixed version, and the crate is
       # not in this build. It arrives through `sqlx-mysql`, an optional
       # sqlx dependency we never enable — `cargo tree -i rsa` prints
       # nothing, so it is in the lockfile and not in the binary. Revisit
-      # if a fix ships or if the mysql feature is ever turned on. Same
-      # convention as the pip-audit `--ignore-vuln` note above: a waiver
+      # if a fix ships or if the mysql feature is ever turned on. A waiver
       # names the advisory and says why.
       #
       # Only on one leg — the advisory DB does not change between them.
@@ -288,7 +283,7 @@ jobs:
         run: npm test
 
       # Build now so a syntax or type error fails CI here rather than
-      # mid-deploy.  Catches the same class of bug as backend pytest.
+      # mid-deploy.  Catches the same class of bug as the backend's cargo test.
       - name: Build production bundle
         working-directory: frontend
         run: npm run build

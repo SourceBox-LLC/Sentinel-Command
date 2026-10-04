@@ -1366,7 +1366,7 @@ everything in this directory. What that did to each kind of harness:
 
 | | after the cut | what holds the invariant now |
 | --- | --- | --- |
-| `*_run.sh` + `*_diff.py` (12 pairs) | cannot run — nothing on :8001 | the Rust test suite; `tests/routing.rs` for the router's 404/405 |
+| `*_run.sh` + `*_diff.py` (12 pairs) | cannot run — nothing on :8001 | the Rust test suite; `tests/routing.rs` for the router's 404/405, `tests/loops_db.rs` for the loop bodies `loops_run.sh` compared |
 | the seven static checkers¹ | refuse, exit 2 | the same suite, plus the code they were holding in step is now single-sourced |
 | `openapi_drift.py` | still runs | itself — it was written for this world |
 | `agent_contract.py` | **gone** | `tests/agent_contract.rs`: both sides are one crate now, so the agent's body is produced by calling the function rather than by parsing Python |

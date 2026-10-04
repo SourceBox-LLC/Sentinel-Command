@@ -68,15 +68,15 @@ specific issue ID (e.g. `OPENSENTRY-COMMAND-1`).
 - A code path with no test coverage was hit by real production data.
   (Example: `OPENSENTRY-COMMAND-1` — `_log_cleanup_loop` chained
   `.union()` calls hit a CompoundSelect that has no `.union()`. Fix:
-  `union(a, b, c, ...)` function form. Tests now in
-  `backend/tests/test_log_cleanup_union.py` + `test_log_cleanup.py`.)
+  `union(a, b, c, ...)` function form. That was the Python; the Rust
+  `loops::run_log_cleanup` is covered by `backend-rs/tests/loops_db.rs`.)
 - An external dependency (Clerk, Fly database) is degraded.
 - A recent deploy introduced a regression. Check `git log master --since=24.hours`.
 
 **Fix paths.**
-- **Hotfix and roll forward.** If the failing code is in Python or
-  JS, write a regression test in `backend/tests/` or
-  `frontend/tests/` first, then fix, then push to master. CI deploys
+- **Hotfix and roll forward.** If the failing code is in Rust or
+  JS, write a regression test beside it (`backend-rs/src/**`,
+  `backend-rs/tests/`) or in `frontend/tests/` first, then fix, then push to master. CI deploys
   via GitHub Actions; do **not** `fly deploy` directly — the pipeline
   is `.github/workflows/deploy.yml` ("Test & Deploy"), which gates on
   the backend suite, `npm audit`, and the frontend build before it

@@ -189,8 +189,8 @@ not outstanding work.
 **To switch.**
 1. Buy a domain (e.g. `sentry.sourceboxlabs.com`).
 2. Add a Fly cert via `fly certs add`.
-3. Update `cors_origins` in `app/main.py` to include the new
-   domain.
+3. Add the new origin to the `CORS_ALLOWED_ORIGINS` env var on Fly
+   (comma-separated; read by `backend-rs/src/cors.rs`).
 4. Update `FRONTEND_URL` env var on Fly.
 5. Update Clerk's allowed origins to include the new domain.
 6. Update `install.sh` (Linux/macOS) so it points at the new base URL
@@ -207,7 +207,7 @@ not outstanding work.
 `SENTRY_DSN` is set in Fly secrets via the Sentry extension
 (`fly ext sentry create -a sentinel-command` provisioned a sponsored
 Team plan and auto-injected the DSN). `SENTRY_TRACES_SAMPLE_RATE=0.1`
-keeps us inside the free-tier event budget. `app/core/sentry.py::init_sentry()`
+keeps us inside the free-tier event budget. `backend-rs/src/sentry.rs::init()`
 no-ops gracefully when DSN is absent (local dev), so no extra config
 needed there. Email alerting confirmed firing — you've received at
 least one Sentry alert email (`OPENSENTRY-COMMAND-1`).
@@ -300,7 +300,7 @@ tests both.
    docker run -d --name pgdrill -e POSTGRES_PASSWORD=drill \
      -e POSTGRES_DB=drill -p 15499:5432 postgres:18-alpine
    DATABASE_URL=postgresql://postgres:drill@127.0.0.1:15499/drill \
-     bash backend/scripts/restore_db.sh <dump> --yes
+     bash scripts/restore_db.sh <dump> --yes
    ```
    Sanity-check key tables have rows: `Camera`, `CameraNode`,
    `Setting`, `Notification`.

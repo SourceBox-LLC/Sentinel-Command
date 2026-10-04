@@ -152,7 +152,7 @@ for:
    back and the one that covers "the cluster is gone". Check them with
    `fly volumes list -a sentinel-postgres` and
    `fly volumes snapshots list <volume-id>`.
-2. **`backend/scripts/backup_db.sh` — the portable secondary.** Runs
+2. **`scripts/backup_db.sh` — the portable secondary.** Runs
    `pg_dump --format=custom` (compressed; restorable *selectively* with
    `pg_restore`, not just all-or-nothing), verifies the result by
    reading its table of contents back with `pg_restore --list`,
@@ -203,9 +203,8 @@ for:
 A scheduled GitHub Action runs daily (09:17 UTC, plus manual
 `workflow_dispatch`):
 
-1. Executes `bash /app/scripts/backup_db.sh` on the Fly machine (note:
-   the Dockerfile copies `backend/` to `/app/`, so scripts live at
-   `/app/scripts/`, **not** `/app/backend/scripts/`). It runs *on the
+1. Executes `bash /app/scripts/backup_db.sh` on the Fly machine (the
+   Dockerfile copies the repo's `scripts/` to `/app/scripts/`). It runs *on the
    machine* so `DATABASE_URL` never has to be copied into GitHub
    secrets. Dumps land in `/data/backups` with 14-day pruning.
 2. **Off-platform copy** — if the `BACKUP_ENCRYPTION_KEY` repo secret is
@@ -239,7 +238,7 @@ change one workflow, change the other.
 
 ## Restore procedure
 
-`backend/scripts/restore_db.sh` makes this executable. It **verifies the
+`scripts/restore_db.sh` makes this executable. It **verifies the
 dump is readable before touching anything**, dumps the current database
 to a `pre-restore-<stamp>.dump` rollback point, then restores with
 `pg_restore --clean --if-exists`.
@@ -467,12 +466,12 @@ the half that a snapshot restore can't prove.
 
    ```bash
    DATABASE_URL=postgresql://postgres:drill@127.0.0.1:15499/drill \
-     bash backend/scripts/restore_db.sh <dump> --yes
+     bash scripts/restore_db.sh <dump> --yes
    ```
 
 4. Verify content, not just table count: row counts on a core table, and
    that Boolean columns still carry `default false` (the dialect trap
-   that `test_dialect_portability.py` guards):
+   that ADR 0001's 2026-09-07 update describes):
 
    ```bash
    psql postgresql://postgres:drill@127.0.0.1:15499/drill -c \
