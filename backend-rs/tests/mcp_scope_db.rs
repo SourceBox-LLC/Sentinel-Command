@@ -401,3 +401,68 @@ async fn concurrent_node_creates_cannot_overshoot_the_plan_cap() {
         .await
         .unwrap();
 }
+
+/// A recording window that starts and ends at the same minute never
+/// records, so neither the REST route nor the MCP tool will store one.
+#[tokio::test]
+async fn an_empty_recording_window_is_refused_on_both_paths() {
+    use tower::ServiceExt;
+    let Some(state) = state().await else { return };
+    let org = state.config.local_org_id.clone();
+    let camera = format!("emptywin-{}", uuid::Uuid::new_v4().simple());
+    sqlx::query(
+        "INSERT INTO cameras (camera_id, org_id, name, disabled_by_plan, continuous_24_7,
+                              scheduled_recording, created_at, updated_at)
+         VALUES ($1, $2, 'Gate', false, false, false, $3, $3)",
+    )
+    .bind(&camera)
+    .bind(&org)
+    .bind(chrono::Utc::now().naive_utc())
+    .execute(&state.pool)
+    .await
+    .unwrap();
+    let token = sentinel_command::auth::local::issue_token(&"x".repeat(32), &org).unwrap();
+    let patch =
+        |body: &'static str| {
+            let mut request = axum::http::Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/cameras/{camera}/recording-settings"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap();
+            request.extensions_mut().insert(axum::extract::ConnectInfo(
+                std::net::SocketAddr::from(([127, 0, 0, 1], 9)),
+            ));
+            sentinel_command::app::build_router(state.clone()).oneshot(request)
+        };
+    let status =
+        patch(r#"{"scheduled_recording":true,"scheduled_start":"08:00","scheduled_end":"08:00"}"#)
+            .await
+            .unwrap()
+            .status();
+    assert_eq!(status, axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+
+    let mut args = serde_json::Map::new();
+    args.insert("camera_id".into(), serde_json::json!(camera));
+    args.insert("scheduled_recording".into(), serde_json::json!(true));
+    args.insert("scheduled_start".into(), serde_json::json!("22:00"));
+    args.insert("scheduled_end".into(), serde_json::json!("22:00"));
+    let refused =
+        sentinel_command::mcp::tools::set_camera_recording_policy(&state, &org, &args).await;
+    assert!(refused.is_err(), "{refused:?}");
+
+    // A real window still saves, through either path.
+    let status =
+        patch(r#"{"scheduled_recording":true,"scheduled_start":"22:00","scheduled_end":"06:00"}"#)
+            .await
+            .unwrap()
+            .status();
+    assert_eq!(status, axum::http::StatusCode::OK);
+
+    sqlx::query("DELETE FROM cameras WHERE camera_id = $1")
+        .bind(&camera)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+}

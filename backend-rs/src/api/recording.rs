@@ -167,6 +167,18 @@ pub async fn update_recording_policy(
         None => current.3.clone(),
     };
 
+    // A window from a time to the same time contains no minute at all —
+    // the heartbeat's `[start, end)` check is false all day — so a camera
+    // set to 08:00–08:00 silently never recorded. Refused, like the
+    // mode conflict above, on the state the row would end up in.
+    if next_scheduled && next_start.is_some() && next_start == next_end {
+        return Err(ApiError::new(
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "scheduled_start and scheduled_end must differ — a window that \
+             starts and ends at the same time never records.",
+        ));
+    }
+
     let unchanged = next_continuous == current.0
         && next_scheduled == current.1
         && next_start == current.2

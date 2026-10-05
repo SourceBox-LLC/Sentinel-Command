@@ -39,6 +39,10 @@ pub struct SyncTableSpec {
     /// `notifications` has no `updated_at` at all.
     pub cursor: &'static str,
     pub reconcile_deletes: bool,
+    /// The primary key is text (a uuid hex), not an integer. The page
+    /// key's tiebreak compares ids in their own type, as the ORDER BY
+    /// does — compared as text, integer ids order 10 before 9.
+    pub text_id: bool,
 }
 
 /// The nine tables, in Python's order. The order matters only for which
@@ -48,46 +52,55 @@ pub const SYNC_TABLES: [SyncTableSpec; 9] = [
         table: "cameras",
         cursor: "updated_at",
         reconcile_deletes: true,
+        text_id: false,
     },
     SyncTableSpec {
         table: "camera_groups",
         cursor: "updated_at",
         reconcile_deletes: true,
+        text_id: false,
     },
     SyncTableSpec {
         table: "camera_nodes",
         cursor: "updated_at",
         reconcile_deletes: true,
+        text_id: false,
     },
     SyncTableSpec {
         table: "incidents",
         cursor: "updated_at",
         reconcile_deletes: false,
+        text_id: false,
     },
     SyncTableSpec {
         table: "incident_evidence",
         cursor: "timestamp",
         reconcile_deletes: false,
+        text_id: false,
     },
     SyncTableSpec {
         table: "motion_events",
         cursor: "timestamp",
         reconcile_deletes: false,
+        text_id: false,
     },
     SyncTableSpec {
         table: "sentinel_config",
         cursor: "updated_at",
         reconcile_deletes: false,
+        text_id: false,
     },
     SyncTableSpec {
         table: "sentinel_runs",
         cursor: "updated_at",
         reconcile_deletes: false,
+        text_id: true,
     },
     SyncTableSpec {
         table: "notifications",
         cursor: "created_at",
         reconcile_deletes: false,
+        text_id: false,
     },
 ];
 
@@ -115,6 +128,13 @@ pub fn denied_columns(table: &str) -> &'static [&'static str] {
 /// `sentinel_sync_cursor_<table>`.
 pub fn cursor_setting_key(table: &str) -> String {
     format!("sentinel_sync_cursor_{table}")
+}
+
+/// The id of the last row pushed at the cursor's timestamp — the second
+/// half of the page key. Absent for a cursor written before it existed,
+/// which then behaves as it always did.
+pub fn cursor_id_setting_key(table: &str) -> String {
+    format!("sentinel_sync_cursor_id_{table}")
 }
 
 /// What one push cycle did, per table.
@@ -187,6 +207,19 @@ async fn push_table(
             .flatten()
             .filter(|raw| !raw.is_empty())
             .and_then(|raw| crate::pydatetime::fromisoformat(&raw).ok().map(|t| t.naive));
+    let cursor_id_key = cursor_id_setting_key(spec.table);
+    let mut cursor_id: Option<String> =
+        crate::settings::get(&state.pool, org, &cursor_id_key, Some(""))
+            .await
+            .ok()
+            .flatten()
+            .filter(|raw| !raw.is_empty());
+    // Rows younger than this are left for the next cycle. A row is
+    // stamped when its statement runs and visible only when its
+    // transaction commits; pushing right up to "now" let a push advance
+    // past a row stamped earlier but committed later, and that row was
+    // never pushed at all.
+    let settled = crate::models::now_naive() - chrono::Duration::seconds(SETTLE_SECONDS);
 
     // The projection, built from the live column list minus the denied
     // ones. Naming the allowed columns rather than selecting the row and
@@ -206,8 +239,11 @@ async fn push_table(
     let mut total = 0;
     let mut batches = 0;
     loop {
-        // Ordered by (cursor, id) so paging is stable, and filtered
-        // strictly greater so a row is never pushed twice.
+        // Paged by the key (cursor, id), in that order, and filtered past
+        // the last key pushed. Filtering on the timestamp alone lost rows:
+        // a full batch ending at T left any further rows stamped T behind
+        // a `> T` that could never reach them — and bulk updates (the
+        // offline sweep, a plan's camera cap) stamp many rows with one T.
         // A row whose cursor column is NULL sorts and compares as the
         // epoch: it is pushed on the first pass and again when it is next
         // updated, like any other row. See the note on PYTHON_BUGS #16
@@ -219,11 +255,16 @@ async fn push_table(
                     {effective} AS cursor_raw,
                     {JSON_OBJECT}({projection}) AS data
                FROM {table} t
-              WHERE (CAST($1 AS TIMESTAMP) IS NULL OR {effective} > $1)
-              ORDER BY {effective} ASC, t.id ASC
+              WHERE (CAST($1 AS TIMESTAMP) IS NULL
+                     OR {key} > $1
+                     OR ({key} = $1 AND t.id > {id_param}))
+                AND {key} < $3
+              ORDER BY {key} ASC, t.id ASC
               LIMIT {BATCH_SIZE}",
             table = spec.table,
             cursor_iso = cursor_iso_sql(&effective),
+            key = cursor_cmp_sql(&effective),
+            id_param = if spec.text_id { "$2" } else { ID_PARAM_INT },
         );
         let rows: Vec<(
             String,
@@ -232,6 +273,8 @@ async fn push_table(
             serde_json::Value,
         )> = sqlx::query_as(&sql)
             .bind(cursor_param(cursor))
+            .bind(cursor_id.clone())
+            .bind(cursor_param(Some(settled)))
             .fetch_all(&state.pool)
             .await?;
         if rows.is_empty() {
@@ -309,9 +352,15 @@ async fn push_table(
             break;
         };
         cursor = rows.last().and_then(|(_, _, raw, _)| *raw);
+        cursor_id = rows.last().map(|(id, _, _, _)| id.clone());
         crate::settings::set(&state.pool, org, &cursor_key, &last_iso)
             .await
             .ok();
+        if let Some(id) = &cursor_id {
+            crate::settings::set(&state.pool, org, &cursor_id_key, id)
+                .await
+                .ok();
+        }
 
         if count < BATCH_SIZE {
             break;
@@ -362,6 +411,32 @@ fn cursor_iso_sql(cursor: &str) -> String {
     )
 }
 
+/// How long a row must have existed before it is pushed. See `push_table`.
+const SETTLE_SECONDS: i64 = 10;
+
+/// The page key's timestamp half, as compared and ordered. PostgreSQL
+/// compares the timestamp itself.
+#[cfg(not(feature = "sqlite"))]
+fn cursor_cmp_sql(effective: &str) -> String {
+    effective.to_string()
+}
+
+/// SQLite compares text, and one instant can be stored as `…:07.12`,
+/// `…:07.120000` or `…:07.120000000` — equal instants, unequal text, so
+/// the tiebreak's `=` would miss them. Compared (and ordered) in one
+/// normalised spelling instead: the 26 characters `cursor_iso_sql`
+/// produces, against a parameter bound the same way.
+#[cfg(feature = "sqlite")]
+fn cursor_cmp_sql(effective: &str) -> String {
+    cursor_iso_sql(effective)
+}
+
+/// The id tiebreak's parameter, cast to the integer the column holds.
+#[cfg(not(feature = "sqlite"))]
+const ID_PARAM_INT: &str = "CAST($2 AS BIGINT)";
+#[cfg(feature = "sqlite")]
+const ID_PARAM_INT: &str = "CAST($2 AS INTEGER)";
+
 /// The cursor as bound for `t."cursor" > $1`.
 #[cfg(not(feature = "sqlite"))]
 fn cursor_param(cursor: Option<chrono::NaiveDateTime>) -> Option<chrono::NaiveDateTime> {
@@ -378,7 +453,8 @@ fn cursor_param(cursor: Option<chrono::NaiveDateTime>) -> Option<chrono::NaiveDa
 /// same instant and correctly against every other.
 #[cfg(feature = "sqlite")]
 fn cursor_param(cursor: Option<chrono::NaiveDateTime>) -> Option<String> {
-    cursor.map(|at| at.format("%F %T%.6f").to_string())
+    // The normalised spelling `cursor_cmp_sql` compares against.
+    cursor.map(|at| at.format("%FT%T%.6f").to_string())
 }
 
 /// One column as a JSON value.

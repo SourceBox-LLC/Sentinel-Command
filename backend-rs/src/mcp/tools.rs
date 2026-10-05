@@ -322,9 +322,9 @@ pub async fn set_camera_recording_policy(
     // window check would silently ignore the schedule. An agent that
     // wants to switch modes has to pass the OFF for the old one in the
     // same call, which is also what the REST route requires.
-    let current: (Option<bool>, Option<bool>) = sqlx::query_as(
-        "SELECT continuous_24_7, scheduled_recording FROM cameras
-          WHERE camera_id = $1 AND org_id = $2",
+    let current: RecordingPolicy = sqlx::query_as(
+        "SELECT continuous_24_7, scheduled_recording, scheduled_start, scheduled_end
+           FROM cameras WHERE camera_id = $1 AND org_id = $2",
     )
     .bind(&camera_id)
     .bind(org_id)
@@ -337,6 +337,22 @@ pub async fn set_camera_recording_policy(
         return Err(
             "continuous_24_7 and scheduled_recording can't both be true. \
                     Pass one as false in the same call to switch."
+                .to_string(),
+        );
+    }
+
+    // An equal start and end is a window with no minute in it: the
+    // camera would never record. Judged on what the row will hold —
+    // given values, else stored ones; "" clears.
+    let next = |given: &Option<String>, stored: &Option<String>| match given {
+        Some(value) => empty_to_null(value).map(str::to_string),
+        None => stored.clone(),
+    };
+    let (next_start, next_end) = (next(&start, &current.2), next(&end, &current.3));
+    if next_scheduled && next_start.is_some() && next_start == next_end {
+        return Err(
+            "scheduled_start and scheduled_end must differ — a window that starts \
+                    and ends at the same time never records."
                 .to_string(),
         );
     }
