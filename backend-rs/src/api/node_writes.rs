@@ -104,7 +104,7 @@ pub async fn validate_node(
     };
 
     if node_key_hash(&key) != stored_hash {
-        record_node_register_error(
+        record_bad_key_attempt(
             &state.pool,
             id,
             "Invalid API key — rotate the key in Settings and re-run the installer.",
@@ -116,6 +116,35 @@ pub async fn validate_node(
     Ok(Json(
         json!({ "success": true, "node_id": node_id, "name": name }),
     ))
+}
+
+/// Record a refused key on a node — but only one that has never
+/// connected.
+///
+/// The key check is the thing that failed, so nothing here proves the
+/// caller is the node's owner: anyone who knows a node id (it prefixes
+/// every camera id) can send a wrong key for it. On a node that has
+/// never connected the note is what the operator needs — the installer
+/// was given the wrong key — and its advice, rotate and re-install,
+/// costs nothing. On a node that is already working the same note,
+/// shown with a Rotate button, was a stranger telling another org's
+/// admin to break it. So it is written only while `last_seen` is NULL.
+pub(crate) async fn record_bad_key_attempt(pool: &crate::db::Pool, id: i32, reason: &str) {
+    let reason: String = reason.chars().take(500).collect();
+    let now = now_naive();
+    if let Err(err) = sqlx::query(
+        "UPDATE camera_nodes
+            SET last_register_error = $1, last_register_error_at = $2, updated_at = $2
+          WHERE id = $3 AND last_seen IS NULL",
+    )
+    .bind(reason)
+    .bind(now)
+    .bind(id)
+    .execute(pool)
+    .await
+    {
+        tracing::error!(error = %err, node = id, "failed to persist last_register_error");
+    }
 }
 
 /// Persist why a node is stuck in `pending`, so the dashboard can show

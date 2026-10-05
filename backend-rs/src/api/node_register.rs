@@ -213,7 +213,7 @@ pub async fn register_node(
     };
 
     if node.api_key_hash != api_key_hash {
-        crate::api::node_writes::record_node_register_error(
+        crate::api::node_writes::record_bad_key_attempt(
             &state.pool,
             node.id,
             "Invalid API key during registration — rotate the key in Settings and re-run the installer.",
