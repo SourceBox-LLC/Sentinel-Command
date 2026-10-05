@@ -95,15 +95,22 @@ impl ServerHandler for SentinelMcp {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        let allowed = match headers_of(&context) {
-            Some(headers) => crate::mcp::auth::lookup_allowed(&self.state, &headers).await,
-            None => None,
-        };
+        let headers = headers_of(&context).unwrap_or_default();
+        let allowed = crate::mcp::auth::lookup_allowed(&self.state, &headers).await;
+        // An unrecognised key is refused here, not shown the catalog.
+        // FastMCP listed every tool to any caller — no key, a typo, a
+        // revoked key — and refused only the call, so a client with a
+        // dead key reported itself connected with 23 tools and failed on
+        // first use. `None` is also what a failed lookup returns, so the
+        // resolver decides: it fails closed on that same error, and
+        // answers with the message a refused call already gets.
+        if allowed.is_none() {
+            if let Err(err) = crate::mcp::auth::resolve(&self.state, &headers).await {
+                return Err(ErrorData::invalid_request(err.0, None));
+            }
+        }
         let tools = crate::mcp::scope::TOOL_DESCRIPTIONS
             .iter()
-            // `None` means the middleware did not recognise the key and
-            // leaves the decision to the tool — so the catalog is
-            // unfiltered rather than empty.
             .filter(|(name, _)| allowed.as_ref().is_none_or(|set| set.contains(name)))
             .map(|(name, description)| build_tool(name, description))
             .collect();

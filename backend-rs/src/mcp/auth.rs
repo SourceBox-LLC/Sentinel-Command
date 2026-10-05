@@ -110,9 +110,9 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// by and to gate `tools/call` on, or `None` to defer.
 ///
 /// `None` is not "no access". It means the middleware did not
-/// recognise the token and leaves the decision to the tool's own auth,
-/// which is why an unknown key sees every tool listed and is refused
-/// only when it calls one.
+/// recognise the token and leaves the decision to `resolve`: a call is
+/// refused by it, and so is `tools/list` (`server.rs`), which under the
+/// Python showed an unknown key the whole catalog.
 ///
 /// **Every agent credential gets the agent allowlist** — the shared key
 /// and a scoped per-org `osa_` key alike. The Python consulted only the

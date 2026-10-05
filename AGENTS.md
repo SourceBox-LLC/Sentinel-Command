@@ -732,7 +732,7 @@ The scope gate (`mcp/scope.rs`, applied by `mcp/server.rs`) runs before every `l
 1. Extracts the Bearer token from the request headers
 2. SHA-256-hashes the key and looks up the matching `McpApiKey` row
 3. Computes the allowed-tool frozenset from `scope_mode` + `scope_tools`
-4. Filters `list_tools` responses and returns a tool error on disallowed `call_tool` invocations
+4. Filters `list_tools` responses and returns a tool error on disallowed `call_tool` invocations. A key it does not recognise — none, mistyped, revoked — is refused `list_tools` outright (a JSON-RPC error, not an HTTP 401, which would send clients into OAuth discovery); FastMCP had listed the whole catalog to it
 
 Scope modes:
 - `"all"` (default; NULL also treated as "all" for legacy rows) → every tool

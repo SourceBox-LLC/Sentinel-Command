@@ -466,3 +466,81 @@ async fn an_empty_recording_window_is_refused_on_both_paths() {
         .await
         .unwrap();
 }
+
+/// `tools/list` is refused to a key nothing recognises — no key, a
+/// typo, a revoked one — rather than answered with the whole catalog.
+/// A client holding a dead key used to report 23 tools and fail only on
+/// first use; it now fails at connect, with the message a call gets.
+#[tokio::test]
+async fn tools_list_refuses_an_unrecognised_or_revoked_key() {
+    use tower::ServiceExt;
+    let Some(state) = state().await else { return };
+    let token = format!("osa_list_test_{}", uuid::Uuid::new_v4().simple());
+    let hash = sha256_hex(&token);
+    sqlx::query(
+        "INSERT INTO sentinel_agent_keys (org_id, key_hash, key_last4, name, created_at, revoked)
+         VALUES ('list-test-org', $1, 'test', 'list test', $2, false)",
+    )
+    .bind(&hash)
+    .bind(chrono::Utc::now().naive_utc())
+    .execute(&state.pool)
+    .await
+    .unwrap();
+
+    let list = |auth: Option<String>| {
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#;
+        let mut request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/mcp/")
+            .header("host", "sentinel-command.com")
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("content-length", body.len().to_string());
+        if let Some(auth) = auth {
+            request = request.header("authorization", format!("Bearer {auth}"));
+        }
+        let mut request = request.body(axum::body::Body::from(body)).unwrap();
+        request.extensions_mut().insert(axum::extract::ConnectInfo(
+            std::net::SocketAddr::from(([127, 0, 0, 1], 9)),
+        ));
+        let app = sentinel_command::app::build_router(state.clone());
+        async move {
+            let response = app.oneshot(request).await.unwrap();
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            serde_json::from_slice::<serde_json::Value>(&bytes)
+                .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&bytes)))
+        }
+    };
+
+    let listed = list(Some(token.clone())).await;
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a live key is listed its tools: {listed}"))
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert_eq!(names.len(), scope::agent_allowed_tools().len(), "{names:?}");
+
+    sqlx::query("UPDATE sentinel_agent_keys SET revoked = true WHERE key_hash = $1")
+        .bind(&hash)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    for auth in [Some(token.clone()), Some("not-a-key".to_string()), None] {
+        let refused = list(auth.clone()).await;
+        assert!(refused.get("result").is_none(), "{auth:?} was listed: {refused}");
+        let message = refused["error"]["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("Unauthorized") || message.contains("Authorization"),
+            "{auth:?}: {refused}"
+        );
+    }
+
+    sqlx::query("DELETE FROM sentinel_agent_keys WHERE key_hash = $1")
+        .bind(&hash)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+}
