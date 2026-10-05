@@ -580,6 +580,18 @@ impl HlsCache {
 
     // ── viewer hours ─────────────────────────────────────────────────
 
+    /// Forget everything held in memory about an org's viewer usage —
+    /// the pending seconds and the cached total.
+    ///
+    /// Called after an org's data is erased. Without it, seconds watched
+    /// just before the erasure were flushed a minute AFTER it, recreating
+    /// an `org_monthly_usage` row for an org that had just been wiped.
+    pub fn forget_org_viewer_usage(&self, org_id: &str) {
+        let mut viewer = lock(&self.viewer);
+        viewer.pending.retain(|(org, _), _| org != org_id);
+        viewer.cached.retain(|(org, _), _| org != org_id);
+    }
+
     /// `record_viewer_second` — one per segment actually served.
     pub fn record_viewer_second(&self, org_id: &str) {
         let key = (org_id.to_string(), current_year_month());
@@ -1111,5 +1123,21 @@ mod tests {
                 "segment_100000.ts"
             ]
         );
+    }
+
+    /// Seconds watched just before an org is erased must not be flushed
+    /// back afterwards, recreating its usage row.
+    #[test]
+    fn forgetting_an_org_drops_its_pending_viewer_seconds_only() {
+        let cache = HlsCache::new();
+        cache.record_viewer_second("erased");
+        cache.record_viewer_second("kept");
+        cache.forget_org_viewer_usage("erased");
+        let pending: Vec<String> = lock(&cache.viewer)
+            .pending
+            .keys()
+            .map(|(org, _)| org.clone())
+            .collect();
+        assert_eq!(pending, vec!["kept".to_string()]);
     }
 }

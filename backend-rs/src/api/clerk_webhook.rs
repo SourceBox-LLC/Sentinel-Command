@@ -550,6 +550,7 @@ async fn dispatch(
                 let counts = crate::api::gdpr::delete_org_data(&mut tx, &org_id).await?;
                 tx.commit().await?;
                 crate::hls::invalidate_auth_cache();
+                state.hls.forget_org_viewer_usage(&org_id);
                 tracing::info!(
                     org_id,
                     cameras = cameras.len(),
