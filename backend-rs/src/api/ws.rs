@@ -550,6 +550,19 @@ async fn serve_node(
                 let Ok(data) = serde_json::from_str::<Value>(&text) else {
                     continue;
                 };
+                // A NUL in any string would reach PostgreSQL in the
+                // heartbeat's UPDATE and fail it — the node's status
+                // stops updating, for a reason nothing reports. Refused
+                // here, with a reason, as the REST decoder does.
+                if crate::query::nul_location(&data, &mut Vec::new()).is_some() {
+                    let refusal = json!({
+                        "type": "error",
+                        "id": data.get("id").cloned().unwrap_or(Value::Null),
+                        "payload": {"detail": "Message must not contain a NUL (\\u0000) character"},
+                    });
+                    let _ = sink.send(Message::Text(refusal.to_string().into())).await;
+                    continue;
+                }
 
                 // Per-node message limit. An over-limit message is
                 // answered with an error and the socket stays open:

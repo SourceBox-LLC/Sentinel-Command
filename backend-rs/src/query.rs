@@ -418,7 +418,7 @@ pub fn decode_json_body(bytes: &[u8]) -> Result<Option<Value>, ApiError> {
 /// refused here instead, before auth runs, like the `refuse_nul_bytes`
 /// layer does for paths and query strings. A key counts as much as a
 /// value: some bodies are stored whole.
-fn nul_location(value: &Value, loc: &mut Vec<Value>) -> Option<Vec<Value>> {
+pub(crate) fn nul_location(value: &Value, loc: &mut Vec<Value>) -> Option<Vec<Value>> {
     match value {
         Value::String(s) if s.contains('\0') => Some(loc.clone()),
         Value::Array(items) => items.iter().enumerate().find_map(|(i, item)| {

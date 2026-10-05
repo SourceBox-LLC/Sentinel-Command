@@ -266,20 +266,28 @@ async fn persist_event(pool: &crate::db::Pool, event: &McpEvent) {
         tracing::error!("[Activity] event timestamp out of range");
         return;
     };
+    // PostgreSQL text cannot hold NUL, so a call whose arguments carried
+    // one failed this INSERT and went unaudited — a way for any MCP
+    // client to keep a call out of the log. Written with the NUL spelled
+    // out instead, so the row exists and shows what was sent.
+    let visible = |text: &str| text.replace('\0', "\\u0000");
+    let tool_name = visible(&event.tool_name);
+    let args_summary = event.args_summary.as_deref().map(visible);
+    let error = event.error.as_deref().map(visible);
     let result = sqlx::query(
         "INSERT INTO mcp_activity_logs
             (org_id, tool_name, key_name, status, duration_ms, args_summary, error, timestamp)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
     .bind(&event.org_id)
-    .bind(&event.tool_name)
+    .bind(&tool_name)
     .bind(&event.key_name)
     .bind(&event.status)
     // `int(duration) if duration else None` — a zero-millisecond call
     // is falsy and stores NULL, not 0.
     .bind(event.duration_ms.filter(|d| *d != 0).map(|d| d as i32))
-    .bind(&event.args_summary)
-    .bind(&event.error)
+    .bind(&args_summary)
+    .bind(&error)
     .bind(stamped.naive_utc())
     .execute(pool)
     .await;
@@ -530,5 +538,32 @@ mod tests {
         assert_eq!(stats["recent_event_count"], 0);
         assert!(tracker.active_sessions("nobody", 1000.0).is_empty());
         assert!(tracker.recent_events("nobody", 50).is_empty());
+    }
+
+    /// A call whose arguments carried a NUL used to fail its audit
+    /// INSERT on PostgreSQL and go unlogged. It is stored, NUL spelled out.
+    #[tokio::test]
+    async fn an_event_with_a_nul_in_its_arguments_is_still_audited() {
+        let Some(pool) = crate::db::test_pool(2).await else {
+            return;
+        };
+        let org = format!("nul-audit-{}", uuid::Uuid::new_v4().simple());
+        let mut ev = event(&org, "k", "create_incident", "error", 1_790_000_000.0);
+        ev.args_summary = Some("title=a\0b".into());
+        ev.error = Some("bad\0".into());
+        persist_event(&pool, &ev).await;
+        let stored: Option<String> =
+            sqlx::query_scalar("SELECT args_summary FROM mcp_activity_logs WHERE org_id = $1")
+                .bind(&org)
+                .fetch_optional(&pool)
+                .await
+                .unwrap()
+                .flatten();
+        assert_eq!(stored.as_deref(), Some("title=a\\u0000b"));
+        sqlx::query("DELETE FROM mcp_activity_logs WHERE org_id = $1")
+            .bind(&org)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }

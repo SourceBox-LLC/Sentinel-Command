@@ -154,7 +154,17 @@ impl ServerHandler for SentinelMcp {
             }
         };
 
-        let outcome = self.dispatch(&name, &principal, &args).await;
+        // A NUL anywhere in the arguments is refused before any tool
+        // runs. PostgreSQL text cannot hold one, so a tool that stored an
+        // argument failed on the INSERT and answered with its generic
+        // database message — "Authentication error" — which describes
+        // nothing the caller did. The REST decoder refuses NUL the same
+        // way.
+        let outcome = if args.values().any(carries_nul) {
+            Err("Arguments must not contain a NUL (\\u0000) character.".to_string())
+        } else {
+            self.dispatch(&name, &principal, &args).await
+        };
         match outcome {
             Ok(output) => {
                 self.log(
@@ -654,5 +664,30 @@ mod tests {
         let object = success("get_system_status", ToolOutput::Json(json!({})));
         assert_eq!(object.content.len(), 1);
         assert_eq!(object.structured_content, Some(json!({})));
+    }
+}
+
+/// Whether a NUL character appears in any string or key in `value`.
+fn carries_nul(value: &Value) -> bool {
+    match value {
+        Value::String(s) => s.contains('\0'),
+        Value::Array(items) => items.iter().any(carries_nul),
+        Value::Object(map) => map.iter().any(|(k, v)| k.contains('\0') || carries_nul(v)),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod nul_tests {
+    use super::*;
+
+    #[test]
+    fn a_nul_is_found_wherever_it_is() {
+        assert!(carries_nul(&json!("a\0")));
+        assert!(carries_nul(&json!([1, {"x": ["\0"]}])));
+        assert!(carries_nul(&json!({"k\0": 1})));
+        assert!(!carries_nul(
+            &json!({"title": "fine", "n": 3, "list": ["ok"]})
+        ));
     }
 }
