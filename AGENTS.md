@@ -336,7 +336,12 @@ scripts/                          # served from SCRIPTS_DIR, or run by an operat
                                   # postgresql-client-18). SQLite: copy the file
 
 docs/                             # runbooks + ADRs, unchanged by the rewrite
-frontend/                         # React 19, unchanged by the rewrite
+frontend/                         # React 19. pages/SentinelPage.jsx (/sentinel)
+                                  # is Sentinel AI's only UI: config, Run now,
+                                  # run history. It was lost in July with the
+                                  # marketing pages and restored; without it a
+                                  # fresh org never runs Sentinel, because the
+                                  # config row is created by its first read.
 ```
 
 ## Architecture

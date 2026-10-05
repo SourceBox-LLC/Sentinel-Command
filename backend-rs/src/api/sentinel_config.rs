@@ -533,7 +533,11 @@ pub async fn list_runs(
 
     let runs_month = runs_used_this_month(&state, &user.org_id).await?;
     let plan = effective_plan_for_caps(&plan_ctx(&state), &user.org_id, true).await;
-    let cap = cap_for_plan(&plan);
+    // The same gate `GET /config` applies. Without it, a self-hosted
+    // install with no licence was told it had 500 runs this month by the
+    // one endpoint and 0 by the other, and the page showed both.
+    let (has_access, _) = resolve_sentinel_access(&state, &user.org_id).await?;
+    let cap = if has_access { cap_for_plan(&plan) } else { 0 };
 
     Ok(Json(json!({
         "runs": rows.iter().map(|r| r.to_json(false)).collect::<Vec<_>>(),

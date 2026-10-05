@@ -173,3 +173,43 @@ async fn key_creation_refuses_an_undeclared_field_and_honours_the_real_one() {
         .await
         .unwrap();
 }
+
+/// `GET /api/sentinel/runs` reports the cap the gate allows, as
+/// `GET /config` does: an unlicensed self-hosted install has 0 runs, not
+/// the 500 its plan nominally carries.
+#[tokio::test]
+async fn an_unlicensed_install_has_no_monthly_runs_on_either_endpoint() {
+    use tower::ServiceExt;
+    let Some(state) = state().await else { return };
+    let token =
+        sentinel_command::auth::local::issue_token(&"x".repeat(32), &state.config.local_org_id)
+            .unwrap();
+    for path in ["/api/sentinel/config", "/api/sentinel/runs"] {
+        let mut request = axum::http::Request::builder()
+            .uri(path)
+            .header("authorization", format!("Bearer {token}"))
+            .body(axum::body::Body::empty())
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                [127, 0, 0, 1],
+                9,
+            ))));
+        let response = sentinel_command::app::build_router(state.clone())
+            .oneshot(request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK, "{path}");
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let cap = if path.ends_with("config") {
+            &body["monthly_cap"]
+        } else {
+            &body["stats"]["monthly_cap"]
+        };
+        assert_eq!(cap, 0, "{path}: {body}");
+    }
+}

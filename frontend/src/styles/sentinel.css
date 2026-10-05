@@ -1,0 +1,1749 @@
+/* Sentinel AI page (pages/SentinelPage.jsx). Restored with the page from
+ * before the July visual overhaul removed both; rules use the shared
+ * design tokens in index.css, all of which still exist. */
+
+/* ── Sentinel control page (v3 — tabbed dashboard) ─────────────────
+   Service-management UI for the autonomous agent. Three-tab layout
+   (Overview / Configure / History) with a compact persistent header
+   and a slide-in run-detail drawer. All state is local React only. */
+
+.sentinel-page-v3 {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 1.25rem 1.5rem 4rem;
+}
+
+/* Loading + empty states (slice 1 — most orgs land on the page with
+   an empty run history because the agent service isn't yet wired up,
+   and may briefly see "Loading…" while config + cameras + runs
+   stream in independently). */
+.sentinel-loading-state {
+    padding: 4rem 1rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.sentinel-empty-state {
+    padding: 2.25rem 1.5rem;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.sentinel-empty-state-strong {
+    margin: 0 0 0.4rem;
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.sentinel-empty-state-sub {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.55;
+    max-width: 440px;
+    margin: 0 auto;
+}
+
+.sentinel-empty-state a {
+    color: var(--accent-purple);
+    text-decoration: none;
+}
+
+.sentinel-empty-state h2 {
+    margin: 0 0 0.6rem;
+    color: var(--text-primary);
+    font-size: 1.15rem;
+}
+
+.sentinel-empty-state p {
+    max-width: 480px;
+    margin: 0 auto;
+    line-height: 1.6;
+    font-size: 0.9rem;
+}
+
+.sentinel-empty-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 1.5rem;
+}
+
+.sentinel-empty-state a:hover {
+    text-decoration: underline;
+}
+
+/* Plan-gate banner — only shown to non-Pro-Plus orgs. The page still
+   renders fully behind it; toggles are disabled and PATCH attempts
+   return 402 (which our optimistic-update handler rolls back). */
+.sentinel-plan-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.85rem 1.1rem;
+    margin-bottom: 1rem;
+    background: linear-gradient(90deg,
+        rgba(168, 85, 247, 0.10) 0%,
+        rgba(59, 130, 246, 0.08) 100%);
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    border-radius: 10px;
+    flex-wrap: wrap;
+}
+
+.sentinel-plan-banner-pill {
+    padding: 0.22rem 0.6rem;
+    background: rgba(168, 85, 247, 0.25);
+    color: #c084fc;
+    border-radius: 4px;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    flex-shrink: 0;
+}
+
+.sentinel-plan-banner-text {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    flex: 1;
+    min-width: 240px;
+}
+
+.sentinel-plan-banner-text strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.sentinel-plan-banner-cta {
+    flex-shrink: 0;
+    padding: 0.45rem 0.95rem;
+    background: var(--accent-purple);
+    color: #ffffff;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: filter 0.15s;
+}
+
+.sentinel-plan-banner-cta:hover {
+    filter: brightness(1.1);
+}
+
+/* Disabled "Run now" button (slice 1: still mocked, slice 4 wires
+   real dispatch). Shows a tooltip via the title attribute. */
+.sentinel-run-now-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-muted);
+    border-color: var(--border-color);
+}
+
+.sentinel-run-now-btn:disabled span {
+    color: var(--text-muted);
+}
+
+/* ── compact persistent header ──────────────────────────────────── */
+.sentinel-compact-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    padding: 0.85rem 1.25rem;
+    margin-bottom: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px 12px 0 0;
+    border-bottom: none;
+    flex-wrap: wrap;
+}
+
+.sentinel-compact-left {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex: 1;
+    min-width: 240px;
+}
+
+.sentinel-compact-right {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+}
+
+.sentinel-compact-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.sentinel-compact-status-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: var(--accent-green);
+}
+
+.sentinel-compact-divider {
+    width: 1px;
+    height: 28px;
+    background: var(--border-color);
+    flex-shrink: 0;
+}
+
+.sentinel-compact-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+    /* min-width:0 propagates from the flex parent so the text-overflow:
+       ellipsis on the sub line can clip the layout instead of just the
+       paint. Without it the nowrap'd "Last: …" line forces the parent
+       grid item to its intrinsic content width and overflows mobile. */
+    flex: 1;
+}
+
+.sentinel-compact-summary-line {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.sentinel-compact-summary-strong {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.sentinel-compact-summary-meta {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.sentinel-compact-summary-sub {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    /* No fixed max-width — the parent's flex: 1 + min-width: 0 chain
+       lets this expand to whatever the row has available and ellipsis
+       cleanly when the row gets narrow. */
+}
+
+.sentinel-run-now-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 1.1rem;
+    background: rgba(168, 85, 247, 0.15);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.4);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.sentinel-run-now-btn:hover:not(:disabled) {
+    background: rgba(168, 85, 247, 0.25);
+    border-color: rgba(168, 85, 247, 0.6);
+}
+
+.sentinel-run-now-btn span {
+    font-size: 0.65rem;
+    color: #c084fc;
+}
+
+/* ── tabs ───────────────────────────────────────────────────────── */
+.sentinel-tabs {
+    display: flex;
+    gap: 0;
+    padding: 0 1.25rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-top: none;
+    border-radius: 0;
+}
+
+.sentinel-tab {
+    padding: 0.85rem 1rem;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    margin-bottom: -1px;
+}
+
+.sentinel-tab:hover {
+    color: var(--text-secondary);
+}
+
+.sentinel-tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--accent-purple);
+}
+
+.sentinel-tab-panel {
+    background: rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--border-color);
+    border-top: none;
+    border-radius: 0 0 12px 12px;
+    padding: 1.5rem;
+    min-height: 60vh;
+}
+
+/* ── shared dot indicators ──────────────────────────────────────── */
+.sentinel-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.sentinel-dot-active {
+    background: var(--accent-green);
+    box-shadow: 0 0 10px rgba(34, 197, 94, 0.55);
+}
+
+.sentinel-dot-paused {
+    background: var(--text-muted);
+    box-shadow: none;
+}
+
+.sentinel-dot-pulse.sentinel-dot-active {
+    animation: sentinel-dot-pulse 2s ease-in-out infinite;
+}
+
+/* ── shared trigger pill (used in timeline + table) ─────────────── */
+.sentinel-trigger-pill {
+    display: inline-block;
+    padding: 0.18rem 0.55rem;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary);
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: lowercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    line-height: 1.5;
+}
+
+.sentinel-trigger-pill-motion {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+}
+
+.sentinel-trigger-pill-manual {
+    background: rgba(168, 85, 247, 0.15);
+    color: #c084fc;
+}
+
+.sentinel-trigger-pill-scheduled {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+}
+
+.sentinel-trigger-pill-incident_opened {
+    background: rgba(34, 197, 94, 0.12);
+    color: var(--accent-green);
+}
+
+/* ── shared outcome chip ────────────────────────────────────────── */
+.sentinel-outcome-chip {
+    display: inline-block;
+    padding: 0.18rem 0.55rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    white-space: nowrap;
+    line-height: 1.5;
+}
+
+.sentinel-outcome-chip-incident {
+    background: rgba(34, 197, 94, 0.12);
+    color: var(--accent-green);
+}
+
+.sentinel-outcome-chip-incident.sentinel-severity-medium {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+}
+
+.sentinel-outcome-chip-incident.sentinel-severity-high {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+}
+
+/* critical became reachable when /complete started accepting it —
+   without this rule the MOST urgent runs rendered with the default
+   (green, low-looking) chip. */
+.sentinel-outcome-chip-incident.sentinel-severity-critical {
+    background: rgba(220, 38, 38, 0.28);
+    color: #fca5a5;
+    box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.55);
+}
+
+.sentinel-outcome-chip-noop {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-muted);
+}
+
+.sentinel-outcome-chip-error {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+}
+
+/* Pending = run created, not yet picked up by the agent. Slow blue
+   pulse so the operator can tell it's actively in the queue without
+   competing with the active-armed pulse on the hero. */
+.sentinel-outcome-chip-pending {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+}
+
+/* Running = agent has claimed the run and is investigating.  Same
+   accent as pending but slightly brighter — visually adjacent so
+   pending → running feels like the same lane. */
+.sentinel-outcome-chip-running {
+    background: rgba(59, 130, 246, 0.22);
+    color: #93c5fd;
+}
+
+/* ── overview tab ───────────────────────────────────────────────── */
+.sentinel-overview-grid {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 1.25rem;
+}
+
+.sentinel-overview-main {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    min-width: 0;
+}
+
+.sentinel-overview-side {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+/* armed hero */
+.sentinel-armed-hero {
+    position: relative;
+    padding: 1.75rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.sentinel-armed-hero.armed {
+    border-color: rgba(34, 197, 94, 0.35);
+}
+
+.sentinel-armed-hero-bg {
+    position: absolute;
+    inset: 0;
+    background:
+        radial-gradient(600px 200px at 80% 100%, rgba(34, 197, 94, 0.10), transparent 60%),
+        radial-gradient(400px 200px at 20% 0%, rgba(168, 85, 247, 0.06), transparent 60%);
+    pointer-events: none;
+}
+
+.sentinel-armed-hero.paused .sentinel-armed-hero-bg {
+    background:
+        radial-gradient(600px 200px at 80% 100%, rgba(255, 255, 255, 0.04), transparent 60%);
+}
+
+.sentinel-armed-hero-content {
+    position: relative;
+    z-index: 1;
+}
+
+.sentinel-armed-pill-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.85rem;
+}
+
+.sentinel-armed-pill {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: var(--accent-green);
+}
+
+.sentinel-armed-hero.paused .sentinel-armed-pill {
+    color: var(--text-muted);
+}
+
+.sentinel-armed-headline {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0 0 0.5rem;
+    letter-spacing: -0.01em;
+}
+
+.sentinel-armed-sub {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.sentinel-armed-sub strong {
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+/* shared panel (used in overview + configure) */
+.sentinel-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1.25rem;
+}
+
+.sentinel-panel-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.4rem;
+}
+
+.sentinel-panel-header h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.sentinel-panel-meta {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.sentinel-panel-desc {
+    margin: 0 0 1rem;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    line-height: 1.55;
+}
+
+/* timeline */
+.sentinel-timeline {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.sentinel-timeline-row {
+    display: grid;
+    grid-template-columns: 90px 24px 1fr;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background 0.15s;
+}
+
+.sentinel-timeline-row:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.sentinel-timeline-when {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    padding-top: 4px;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.sentinel-timeline-line {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.sentinel-timeline-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    border: 2px solid var(--bg-card);
+    box-shadow: 0 0 0 1px var(--text-muted);
+    flex-shrink: 0;
+    margin-top: 4px;
+    z-index: 1;
+}
+
+.sentinel-timeline-dot-incident.sentinel-severity-low {
+    background: var(--accent-green);
+    box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.6), 0 0 8px rgba(34, 197, 94, 0.4);
+}
+
+.sentinel-timeline-dot-incident.sentinel-severity-medium {
+    background: #f59e0b;
+    box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.6), 0 0 8px rgba(245, 158, 11, 0.4);
+}
+
+.sentinel-timeline-dot-incident.sentinel-severity-high {
+    background: #ef4444;
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.6), 0 0 10px rgba(239, 68, 68, 0.5);
+}
+
+.sentinel-timeline-dot-incident.sentinel-severity-critical {
+    background: #dc2626;
+    box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.7), 0 0 14px rgba(220, 38, 38, 0.65);
+    animation: sentinel-critical-pulse 1.6s ease-in-out infinite;
+}
+
+.sentinel-timeline-dot-noop {
+    background: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
+.sentinel-timeline-dot-error {
+    background: #ef4444;
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.6);
+}
+
+.sentinel-timeline-dot-pending {
+    background: #3b82f6;
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.6), 0 0 6px rgba(59, 130, 246, 0.4);
+    animation: sentinel-pending-pulse 2.4s ease-in-out infinite;
+}
+
+.sentinel-timeline-dot-running {
+    background: #60a5fa;
+    box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.7), 0 0 10px rgba(96, 165, 250, 0.55);
+    animation: sentinel-pending-pulse 1.6s ease-in-out infinite;
+}
+
+/* Muted summary text for pending/running placeholder lines in the
+   timeline ("Waiting for the agent to pick this up"). Italic to
+   set it apart from real summaries the agent will fill in. */
+.sentinel-timeline-summary-muted {
+    font-style: italic;
+    opacity: 0.75;
+}
+
+.sentinel-timeline-connector {
+    width: 2px;
+    flex: 1;
+    background: rgba(255, 255, 255, 0.06);
+    margin-top: 2px;
+}
+
+.sentinel-timeline-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    min-width: 0;
+}
+
+.sentinel-timeline-row1 {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.sentinel-timeline-camera {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.sentinel-timeline-tools {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.sentinel-timeline-row2 {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.sentinel-timeline-summary {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+    flex: 1;
+    min-width: 200px;
+}
+
+/* side stats */
+.sentinel-stat-card {
+    padding: 1rem 1.1rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+}
+
+.sentinel-stat-card-incidents {
+    border-color: rgba(34, 197, 94, 0.25);
+}
+
+.sentinel-stat-card-value {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+
+.sentinel-stat-card-incidents .sentinel-stat-card-value {
+    color: var(--accent-green);
+}
+
+.sentinel-stat-card-label {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 0.3rem;
+}
+
+/* allowance widget */
+.sentinel-allowance-widget {
+    padding: 1rem 1.1rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    margin-top: 0.5rem;
+}
+
+.sentinel-allowance-widget-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.6rem;
+}
+
+.sentinel-allowance-widget-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.sentinel-allowance-widget-pill {
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: #c084fc;
+    padding: 0.15rem 0.45rem;
+    background: rgba(168, 85, 247, 0.15);
+    border-radius: 4px;
+}
+
+.sentinel-allowance-widget-meter {
+    height: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+}
+
+.sentinel-allowance-widget-meter-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-green), var(--accent-purple));
+    border-radius: 999px;
+    transition: width 0.4s ease;
+}
+
+.sentinel-allowance-widget-text {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.sentinel-allowance-widget-text strong {
+    color: var(--text-primary);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.sentinel-allowance-widget-help {
+    margin: 0.4rem 0 0;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    line-height: 1.45;
+}
+
+/* ── configure tab ──────────────────────────────────────────────── */
+.sentinel-configure {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.sentinel-trigger-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.sentinel-trigger-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.sentinel-trigger-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.85rem 1rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    cursor: pointer;
+    gap: 1rem;
+}
+
+.sentinel-trigger-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.sentinel-trigger-label {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.sentinel-trigger-desc {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+.sentinel-trigger-extras {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    padding: 0.85rem 1rem 1rem;
+    margin: -2px 0 4px;
+    background: rgba(168, 85, 247, 0.04);
+    border: 1px solid rgba(168, 85, 247, 0.15);
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+}
+
+.sentinel-trigger-extra {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.sentinel-trigger-extra > label {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.sentinel-trigger-cooldown {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.sentinel-trigger-cooldown input {
+    width: 70px;
+    padding: 0.4rem 0.5rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+}
+
+.sentinel-trigger-cooldown span {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.sentinel-trigger-extra-help {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+/* schedule */
+.sentinel-schedule-radio-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.sentinel-schedule-radio {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.65rem;
+    padding: 0.85rem 1rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.sentinel-schedule-radio:hover {
+    border-color: rgba(168, 85, 247, 0.3);
+}
+
+.sentinel-schedule-radio.active {
+    border-color: rgba(168, 85, 247, 0.5);
+    background: rgba(168, 85, 247, 0.06);
+}
+
+.sentinel-schedule-radio input[type="radio"] {
+    margin-top: 2px;
+    accent-color: var(--accent-purple);
+}
+
+.sentinel-schedule-radio-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+}
+
+.sentinel-schedule-radio-label {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.sentinel-schedule-radio-desc {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+.sentinel-schedule-window {
+    padding: 1.1rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    margin-bottom: 1rem;
+}
+
+.sentinel-schedule-window-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+.sentinel-schedule-time {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.sentinel-schedule-time label {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.sentinel-schedule-time input {
+    padding: 0.4rem 0.6rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    color-scheme: dark;
+}
+
+.sentinel-schedule-tz {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-bottom: 0.4rem;
+}
+
+.sentinel-schedule-days {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.sentinel-schedule-days-label {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.sentinel-schedule-days-chips {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+
+.sentinel-day-chip {
+    padding: 0.35rem 0.75rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.sentinel-day-chip:hover {
+    border-color: rgba(168, 85, 247, 0.3);
+    color: var(--text-secondary);
+}
+
+.sentinel-day-chip.active {
+    background: rgba(168, 85, 247, 0.18);
+    border-color: rgba(168, 85, 247, 0.5);
+    color: #c084fc;
+}
+
+/* weekly schedule grid */
+.sentinel-week-grid {
+    margin: 0 0 1rem;
+    padding: 1rem 1.1rem;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+}
+
+.sentinel-week-grid-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+}
+
+.sentinel-week-grid-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.sentinel-week-grid-meta {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.sentinel-week-grid-table {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.sentinel-week-grid-hours {
+    display: grid;
+    grid-template-columns: 36px 1fr;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+/* The hour labels live in a flex row inside the second grid column so
+   they spread evenly across the width of the cells row below. The
+   first <span> is a spacer matching the day-label column. */
+.sentinel-week-grid-hour-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0 2px;
+}
+
+.sentinel-week-grid-hour-label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.sentinel-week-grid-row {
+    display: grid;
+    grid-template-columns: 36px 1fr;
+    gap: 8px;
+    align-items: center;
+}
+
+.sentinel-week-grid-day-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-align: right;
+    font-weight: 500;
+}
+
+.sentinel-week-grid-cells {
+    display: grid;
+    grid-template-columns: repeat(24, 1fr);
+    gap: 2px;
+}
+
+.sentinel-week-grid-cell {
+    height: 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 2px;
+    transition: background 0.15s;
+}
+
+.sentinel-week-grid-cell.active {
+    background: rgba(34, 197, 94, 0.45);
+    box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.6);
+}
+
+.sentinel-week-grid-cell:hover {
+    background: rgba(255, 255, 255, 0.10);
+}
+
+.sentinel-week-grid-cell.active:hover {
+    background: rgba(34, 197, 94, 0.65);
+}
+
+.sentinel-schedule-cron-toggle {
+    margin-top: 0.5rem;
+}
+
+.sentinel-link-button {
+    background: none;
+    border: none;
+    color: var(--accent-purple);
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 0;
+}
+
+.sentinel-link-button:hover {
+    text-decoration: underline;
+}
+
+.sentinel-schedule-cron {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding-top: 0.75rem;
+    margin-top: 0.5rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.sentinel-schedule-cron label {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.sentinel-schedule-cron input {
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.85rem;
+    width: 100%;
+    max-width: 300px;
+}
+
+.sentinel-help-text {
+    margin: 0.25rem 0 0;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+/* camera scope */
+.sentinel-scope-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+}
+
+.sentinel-scope-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.7rem 0.95rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.sentinel-scope-row-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.sentinel-scope-row-name {
+    font-size: 0.88rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.sentinel-scope-row-loc {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+/* ── history tab ────────────────────────────────────────────────── */
+.sentinel-history-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.sentinel-history-search {
+    flex: 1;
+    min-width: 240px;
+    padding: 0.55rem 0.85rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+}
+
+.sentinel-history-search:focus {
+    outline: none;
+    border-color: rgba(168, 85, 247, 0.4);
+}
+
+.sentinel-history-filters {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+
+.sentinel-history-filter-chip {
+    padding: 0.35rem 0.75rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.sentinel-history-filter-chip:hover {
+    color: var(--text-secondary);
+}
+
+.sentinel-history-filter-chip.active {
+    background: rgba(168, 85, 247, 0.18);
+    border-color: rgba(168, 85, 247, 0.4);
+    color: #c084fc;
+}
+
+.sentinel-history-table-wrap {
+    overflow-x: auto;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+}
+
+.sentinel-history-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 720px;
+}
+
+.sentinel-history-table thead th {
+    text-align: left;
+    padding: 0.6rem 0.85rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-color);
+    background: rgba(0, 0, 0, 0.15);
+}
+
+.sentinel-history-table tbody tr {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.sentinel-history-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.sentinel-history-table tbody tr:last-child {
+    border-bottom: none;
+}
+
+.sentinel-history-table tbody td {
+    padding: 0.7rem 0.85rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    vertical-align: middle;
+}
+
+.sentinel-history-when {
+    color: var(--text-muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.sentinel-history-camera {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.sentinel-history-tools {
+    text-align: center;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    width: 60px;
+}
+
+.sentinel-history-link-cell {
+    text-align: right;
+    width: 80px;
+}
+
+.sentinel-history-link {
+    font-size: 0.78rem;
+    color: var(--accent-purple);
+}
+
+.sentinel-history-empty {
+    padding: 2.5rem 1rem !important;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+/* ── run-detail drawer ──────────────────────────────────────────── */
+.sentinel-drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(3px);
+    z-index: 1000;
+    display: flex;
+    justify-content: flex-end;
+    animation: sentinel-fade-in 0.2s ease-out;
+}
+
+.sentinel-drawer {
+    width: 100%;
+    max-width: 560px;
+    height: 100%;
+    background: var(--bg-card);
+    border-left: 1px solid rgba(168, 85, 247, 0.3);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: sentinel-drawer-in 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.sentinel-drawer-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.5rem 1.5rem 1.25rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.sentinel-drawer-eyebrow {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.4rem;
+}
+
+.sentinel-drawer-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0 0 0.4rem;
+}
+
+.sentinel-drawer-meta {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.sentinel-drawer-close {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    width: 30px;
+    height: 30px;
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+
+.sentinel-drawer-close:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.sentinel-drawer-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.25rem 1.5rem 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.sentinel-drawer-section h3 {
+    margin: 0 0 0.6rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+}
+
+.sentinel-drawer-section-meta {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+}
+
+.sentinel-drawer-outcome {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.sentinel-drawer-link {
+    font-size: 0.85rem;
+    color: var(--accent-purple);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.sentinel-drawer-link:hover {
+    text-decoration: underline;
+}
+
+.sentinel-drawer-reasoning {
+    margin: 0;
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    padding: 0.85rem 1rem;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border-left: 3px solid rgba(168, 85, 247, 0.3);
+}
+
+.sentinel-tool-trace {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.sentinel-tool-trace-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.85rem;
+    padding: 0.6rem 0.85rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.sentinel-tool-trace-num {
+    width: 22px;
+    height: 22px;
+    background: rgba(168, 85, 247, 0.18);
+    color: #c084fc;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.72rem;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+
+.sentinel-tool-trace-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+}
+
+.sentinel-tool-trace-name {
+    background: transparent !important;
+    color: var(--accent-green) !important;
+    padding: 0 !important;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.sentinel-tool-trace-args {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+}
+
+.sentinel-tool-trace-args-empty {
+    font-style: italic;
+}
+
+.sentinel-tool-trace-arg-key {
+    color: var(--text-muted);
+}
+
+.sentinel-tool-trace-arg-val {
+    color: var(--text-secondary);
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    /* Long values (stream URLs, JSON args) must wrap instead of pushing
+       the fixed-width drawer horizontally. */
+    overflow-wrap: anywhere;
+}
+
+.sentinel-tool-trace-result {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    margin-top: 0.2rem;
+    overflow-wrap: anywhere;
+}
+
+/* ── manual run modal ───────────────────────────────────────────── */
+.sentinel-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1100;
+    padding: 1rem;
+    animation: sentinel-fade-in 0.2s ease-out;
+}
+
+.sentinel-modal {
+    width: 100%;
+    max-width: 520px;
+    background: var(--bg-card);
+    border: 1px solid rgba(168, 85, 247, 0.3);
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.sentinel-modal h3 {
+    margin: 0 0 0.5rem;
+    font-size: 1.1rem;
+    color: var(--text-primary);
+}
+
+.sentinel-modal-desc {
+    margin: 0 0 1rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    line-height: 1.55;
+}
+
+.sentinel-modal-input {
+    width: 100%;
+    padding: 0.75rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    resize: vertical;
+    min-height: 100px;
+}
+
+.sentinel-modal-input:focus {
+    outline: none;
+    border-color: rgba(168, 85, 247, 0.4);
+}
+
+.sentinel-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    margin-top: 1rem;
+}
+
+.sentinel-modal-btn-ghost,
+.sentinel-modal-btn-primary {
+    padding: 0.55rem 1.1rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: all 0.15s;
+}
+
+.sentinel-modal-btn-ghost {
+    background: transparent;
+    color: var(--text-secondary);
+    border-color: var(--border-color);
+}
+
+.sentinel-modal-btn-ghost:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.sentinel-modal-btn-primary {
+    background: var(--accent-purple);
+    color: #ffffff;
+    border-color: var(--accent-purple);
+}
+
+.sentinel-modal-btn-primary:hover {
+    filter: brightness(1.1);
+}
+
+.sentinel-modal-btn-primary:disabled,
+.sentinel-modal-btn-ghost:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+
+    .sentinel-page-v3 {
+        padding: 1rem 1rem 3rem;
+    }
+    .sentinel-compact-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .sentinel-compact-left {
+        min-width: 0;
+        flex-wrap: wrap;
+    }
+    .sentinel-compact-divider {
+        display: none;
+    }
+    .sentinel-compact-right {
+        justify-content: space-between;
+    }
+    /* On mobile let the sub line wrap rather than ellipsis-clip — at
+       narrow widths the user wants to see the full last-run summary
+       and there's room below for it to wrap onto a second line. */
+    .sentinel-compact-summary-sub {
+        white-space: normal;
+        line-height: 1.45;
+    }
+    .sentinel-tabs {
+        padding: 0 0.5rem;
+    }
+    .sentinel-tab {
+        padding: 0.7rem 0.85rem;
+        font-size: 0.8rem;
+    }
+    .sentinel-tab-panel {
+        padding: 1rem;
+    }
+    .sentinel-trigger-extras {
+        padding: 0.75rem 0.85rem 0.85rem;
+    }
+    .sentinel-schedule-radio-row {
+        grid-template-columns: 1fr;
+    }
+    .sentinel-scope-grid {
+        grid-template-columns: 1fr;
+    }
+    .sentinel-history-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .sentinel-timeline-row {
+        grid-template-columns: 70px 18px 1fr;
+        gap: 0.5rem;
+    }
+    .sentinel-timeline-when {
+        font-size: 0.7rem;
+    }
+    .sentinel-week-grid-cell {
+        height: 10px;
+    }
+    .sentinel-drawer {
+        max-width: none;
+    }
+    .sentinel-modal {
+        padding: 1.25rem;
+    }
+}
+/* The reasoning is Markdown, rendered into blocks (utils/markdown.jsx);
+   keep the box's own padding as the only outer space. */
+.sentinel-drawer-reasoning > :first-child { margin-top: 0; }
+.sentinel-drawer-reasoning > :last-child { margin-bottom: 0; }
+.sentinel-drawer-reasoning p,
+.sentinel-drawer-reasoning ul,
+.sentinel-drawer-reasoning ol { margin: 0 0 0.6rem; }
+.sentinel-drawer-reasoning ul,
+.sentinel-drawer-reasoning ol { padding-left: 1.2rem; }
+.sentinel-drawer-reasoning strong { color: var(--text-primary); }
