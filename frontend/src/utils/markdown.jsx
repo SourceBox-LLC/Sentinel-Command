@@ -125,6 +125,10 @@ export function renderMarkdown(md) {
     blocks.push({ type: "code", content: codeBlock.join("\n") })
   }
 
+  // The reverse of the escape above, in reverse order.
+  const unescape = (s) =>
+    s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+
   // Inline formatting: **bold**, *italic*, `code`
   const inline = (s) =>
     s
@@ -155,7 +159,9 @@ export function renderMarkdown(md) {
       return renderList(b, i)
     }
     if (b.type === "code") {
-      return <pre key={i}><code>{b.content}</code></pre>
+      // React escapes text itself, so the pre-escaped source is undone
+      // here — otherwise `a < b` in a code block renders as `a &lt; b`.
+      return <pre key={i}><code>{unescape(b.content)}</code></pre>
     }
     return <p key={i} dangerouslySetInnerHTML={{ __html: inline(b.content) }} />
   })
