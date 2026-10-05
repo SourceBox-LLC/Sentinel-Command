@@ -229,6 +229,41 @@ pub async fn connect(url: &str, max_connections: u32) -> Result<Pool, sqlx::Erro
     }
 }
 
+/// Apply the embedded migrations, on a connection of their own with
+/// statement logging off.
+///
+/// Through the pool, the first boot of every fresh install opened with a
+/// WARN carrying the entire 30 KB schema: sqlx logs any statement over a
+/// second as "slow statement", with its full text, and creating 21 tables
+/// takes longer than that. The warning is worth keeping for queries that
+/// serve requests and worth nothing for a one-off schema bring-up.
+///
+/// An in-memory SQLite database exists only inside the pool, so that one
+/// case still migrates through it.
+pub async fn migrate(url: &str, pool: &Pool) -> Result<(), sqlx::migrate::MigrateError> {
+    use sqlx::{ConnectOptions, Connection};
+    #[cfg(not(feature = "sqlite"))]
+    let options = url
+        .parse::<sqlx::postgres::PgConnectOptions>()
+        .map_err(sqlx::migrate::MigrateError::from)?;
+    #[cfg(feature = "sqlite")]
+    let options = {
+        let path = sqlite_path(url);
+        if path == ":memory:" {
+            return MIGRATOR.run(pool).await;
+        }
+        sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&path)
+            .busy_timeout(std::time::Duration::from_secs(30))
+            .foreign_keys(true)
+    };
+    let _ = pool; // only the in-memory case needs it
+    let mut conn = options.disable_statement_logging().connect().await?;
+    let result = MIGRATOR.run(&mut conn).await;
+    let _ = conn.close().await;
+    result
+}
+
 #[cfg(test)]
 mod url_tests {
     use super::*;

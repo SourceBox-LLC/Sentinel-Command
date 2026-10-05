@@ -92,7 +92,12 @@ fn main() -> std::process::ExitCode {
         }
     };
 
-    println!("\nLOCAL_ADMIN_PASSWORD_HASH={hash}");
+    // Single-quoted, so the line can be pasted into `.env` as it stands.
+    // Compose interpolates `.env` values and an argon2 hash is full of
+    // `$`: unquoted, `$argon2id$v=19$m=65536` arrives as `=19=65536` and
+    // the login fails with nothing to say why. The quotes are `.env` and
+    // shell syntax, stripped by both; a PHC string never contains one.
+    println!("\nLOCAL_ADMIN_PASSWORD_HASH='{hash}'");
     std::process::ExitCode::SUCCESS
 }
 

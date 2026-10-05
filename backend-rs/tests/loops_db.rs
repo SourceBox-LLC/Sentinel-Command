@@ -151,7 +151,7 @@ async fn the_sweep_flips_only_stale_online_rows_and_announces_each() {
     sqlx::query(
         "INSERT INTO cameras (camera_id, org_id, name, node_id, status, last_seen, disabled_by_plan,
                               continuous_24_7, scheduled_recording, created_at, updated_at)
-         VALUES ($1, $2, 'Porch', $3, 'online', $4, false, false, false, $5, $5)",
+         VALUES ($1, $2, 'Porch', $3, 'streaming', $4, false, false, false, $5, $5)",
     )
     .bind(format!("{org}-cam"))
     .bind(&org)
@@ -161,6 +161,9 @@ async fn the_sweep_flips_only_stale_online_rows_and_announces_each() {
     .execute(&state.pool)
     .await
     .unwrap();
+    // `streaming`, which is what CameraNode actually reports — the
+    // Python's sweep matched only `online`, so no real camera ever
+    // flipped.
     let before = ago(Duration::seconds(1));
 
     let summary = loops::run_offline_sweep_with(&state, 90).await.unwrap();
@@ -552,5 +555,94 @@ async fn no_digest_is_sent_when_the_org_has_motion_email_off() {
         0,
         "the window still closes"
     );
+    forget(&state, &org).await;
+}
+
+// ---- coming back ---------------------------------------------------------
+
+async fn heartbeat(state: &AppState, node_id: &str, key: &str, cameras: serde_json::Value) {
+    use tower::ServiceExt;
+    let body = serde_json::json!({ "node_id": node_id, "cameras": cameras });
+    let mut request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/api/nodes/heartbeat")
+        .header("x-node-api-key", key)
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(body.to_string()))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            9,
+        ))));
+    let response = sentinel_command::app::build_router(state.clone())
+        .oneshot(request)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+}
+
+/// A node that went offline and comes back is announced, and so is each
+/// camera that went with it — reporting `streaming`, as CameraNode does.
+/// Before, the HTTP heartbeat and re-registration set `online` and said
+/// nothing, so "went offline" was the last word the inbox ever had.
+#[tokio::test]
+async fn a_node_and_camera_coming_back_from_offline_are_announced_once() {
+    let _serial = SERIAL.lock().await;
+    let Some(state) = state(|_| {}).await else {
+        return;
+    };
+    let org = org("back");
+    let node = format!("{org}-node");
+    let camera = format!("{org}-cam");
+    let key = format!("{org}-key");
+    let key_hash: String = {
+        use sha2::Digest;
+        sha2::Sha256::digest(key.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    };
+    exec!(
+        state,
+        "INSERT INTO camera_nodes (node_id, org_id, api_key_hash, name, status, last_seen, created_at, updated_at)
+         VALUES ($1, $2, $3, 'Shed', 'offline', $4, $4, $4)",
+        &node,
+        &org,
+        &key_hash,
+        &ago(Duration::minutes(10))
+    );
+    let pk: i32 = sqlx::query_scalar("SELECT id FROM camera_nodes WHERE node_id = $1")
+        .bind(&node)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO cameras (camera_id, org_id, name, node_id, status, last_seen, disabled_by_plan,
+                              continuous_24_7, scheduled_recording, created_at, updated_at)
+         VALUES ($1, $2, 'Shed Cam', $3, 'offline', $4, false, false, false, $4, $4)",
+    )
+    .bind(&camera)
+    .bind(&org)
+    .bind(pk)
+    .bind(ago(Duration::minutes(10)))
+    .execute(&state.pool)
+    .await
+    .unwrap();
+
+    let cameras = serde_json::json!([{ "camera_id": camera, "status": "streaming" }]);
+    heartbeat(&state, &node, &key, cameras.clone()).await;
+    // Already back: the second heartbeat has nothing to announce.
+    heartbeat(&state, &node, &key, cameras).await;
+
+    let announced: Vec<(String, String)> =
+        sqlx::query_as("SELECT kind, title FROM notifications WHERE org_id = $1 ORDER BY id")
+            .bind(&org)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap();
+    let kinds: Vec<&str> = announced.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(kinds, ["node_online", "camera_online"], "{announced:?}");
     forget(&state, &org).await;
 }

@@ -712,6 +712,34 @@ pub fn clear_transition_debounce() {
     }
 }
 
+/// Which transition, if any, a camera status change announces.
+///
+/// CameraNode reports a working camera as `streaming` (and passes
+/// through `starting`, `restarting`, `failed`, `error`), while the
+/// notifications only speak `online` / `offline`. Comparing the raw
+/// strings — what the Python did — meant a real camera was never
+/// announced at all: `streaming` is not `online`, so nothing went out
+/// when it came up, and the offline sweep, which looked for `online`,
+/// never flipped it when its node died.
+///
+/// So `online` and `streaming` are one state, and the rule is:
+///
+///   * going `offline` from anything else is announced;
+///   * coming back is announced only from `offline` — the state that was
+///     announced — so a node restart passing through `starting` does not
+///     tell everyone a camera that never left has "come online".
+pub fn camera_transition(previous: Option<&str>, new: &str) -> Option<&'static str> {
+    let is_offline = |status: Option<&str>| status == Some("offline");
+    let is_live = matches!(new, "online" | "streaming");
+    if new == "offline" && !is_offline(previous) {
+        Some("offline")
+    } else if is_live && is_offline(previous) {
+        Some("online")
+    } else {
+        None
+    }
+}
+
 /// `emit_camera_transition`. Audience `all` — every member cares when a
 /// camera drops.
 pub async fn emit_camera_transition(
@@ -802,6 +830,38 @@ pub async fn emit_node_transition(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn camera_transitions_speak_cameranodes_statuses() {
+        // A real camera is `streaming`; coming back from an announced
+        // outage is announced whichever word the node uses.
+        assert_eq!(
+            camera_transition(Some("offline"), "streaming"),
+            Some("online")
+        );
+        assert_eq!(camera_transition(Some("offline"), "online"), Some("online"));
+        // Going dark is announced from any state but dark.
+        for previous in [
+            Some("online"),
+            Some("streaming"),
+            Some("failed"),
+            Some("starting"),
+            None,
+        ] {
+            assert_eq!(
+                camera_transition(previous, "offline"),
+                Some("offline"),
+                "{previous:?}"
+            );
+        }
+        // Nothing to say: no change, or a restart passing through
+        // `starting` for a camera that never went offline.
+        assert_eq!(camera_transition(Some("offline"), "offline"), None);
+        assert_eq!(camera_transition(Some("online"), "streaming"), None);
+        assert_eq!(camera_transition(Some("starting"), "streaming"), None);
+        assert_eq!(camera_transition(Some("streaming"), "failed"), None);
+        assert_eq!(camera_transition(None, "streaming"), None);
+    }
 
     /// Every kind either has an inbox setting or deliberately does not,
     /// and the two maps agree about which is which.

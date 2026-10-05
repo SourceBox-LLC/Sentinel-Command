@@ -646,7 +646,7 @@ because a reader comparing the two stacks needs the correspondence.
 - `GET /{incident_id}/evidence/{evidence_id}/playlist.m3u8` — synthetic single-segment HLS playlist for in-dashboard clip playback (admin)
 
 **api/keys.rs** (prefix `/api/mcp`):
-- `POST /keys` — generate key; JSON body `{name, scopeMode, scopeTools?}`; returns plaintext `osc_...` once (admin + active billing)
+- `POST /keys` — generate key; JSON body `{name, scope_mode, scope_tools?}` (snake_case; any other field is a 422 rather than ignored, because an ignored `scope_mode` is a full-access key); returns plaintext `osc_...` once (admin + active billing)
 - `GET /tools` — live tool catalog with read/write kind (admin)
 - `GET /keys` — list MCP keys for the org (admin)
 - `DELETE /keys/{key_id}` — revoke (admin)
@@ -898,7 +898,7 @@ no live database.
 **In-memory segment cache:** live `.ts` segments live in `hls.rs`'s cache,
 keyed camera → filename → (bytes, timestamp). One process owns it. Backend never touches S3 for live video. Recordings and snapshots live on the CameraNode. Incident snapshots + clips are stored inline on `IncidentEvidence.data` (LargeBinary).
 
-**Codec detection:** CameraNode reports codec via `POST /api/cameras/{id}/codec` after the first segment. Stored on the Camera row and injected into HLS playlists as `#EXT-X-CODECS`.
+**Codec detection:** CameraNode reports codec via `POST /api/cameras/{id}/codec` after the first segment, stored on the Camera and CameraNode rows. It is **not** put in the playlist: `#EXT-X-CODECS` is only valid in a master playlist, so `api/hls.rs` strips any such line from what a node pushes rather than adding one.
 
 **Notification broadcaster:** `notifications.rs`'s broadcaster is a per-process pub/sub — SSE subscribers register per org + admin flag; `emit_camera_transition`, `emit_node_transition`, and motion event handlers write a `Notification` row then broadcast.
 

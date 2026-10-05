@@ -452,6 +452,18 @@ pub async fn create_mcp_key(
                 .filter(|name| !name.is_empty() && seen.insert(name.clone()))
                 .collect::<Vec<String>>()
         });
+    // Anything else is refused rather than ignored. The Python ignored
+    // it, and so did this port, which made the safe-looking request
+    // `{"scopeMode": "readonly"}` — the camelCase the docs once showed —
+    // mint a key with EVERY tool, write tools included: the one field
+    // that narrows a key is the one a typo silently drops.
+    if let Value::Object(fields) = &body {
+        for (field, value) in fields {
+            if !matches!(field.as_str(), "name" | "scope_mode" | "scope_tools") {
+                errors.extra_forbidden(field, value);
+            }
+        }
+    }
     errors.finish()?;
     rate.check().await?;
 

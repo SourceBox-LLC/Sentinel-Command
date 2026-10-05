@@ -51,11 +51,64 @@ struct NodeAuthRow {
     api_key_hash: String,
     local_ip: Option<String>,
     http_port: Option<i32>,
+    /// The status BEFORE this request, which is what decides whether
+    /// the node's return is announced. Read with the auth row because
+    /// both handlers overwrite it.
+    status: Option<String>,
 }
 
 const NODE_AUTH_SELECT: &str = "SELECT id, node_id, org_id, name, hostname, api_key_hash,
-                                       local_ip, http_port
+                                       local_ip, http_port, status
                                   FROM camera_nodes WHERE node_id = $1 LIMIT 1";
+
+/// A node is announced as back whenever it was not `online` — the rule
+/// the WebSocket heartbeat always had. Register and the HTTP heartbeat
+/// set `online` too and announced nothing, so a node that restarted
+/// (and re-registered before its socket's first heartbeat) came back in
+/// silence after a "went offline" notification.
+fn node_came_online(previous: Option<&str>) -> bool {
+    previous != Some("online")
+}
+
+impl NodeAuthRow {
+    fn display_name(&self) -> String {
+        match self.name.as_deref().filter(|n| !n.is_empty()) {
+            Some(name) => name.to_string(),
+            None => self.node_id.clone(),
+        }
+    }
+}
+
+/// Emit the node's own return first, then each camera's, as the WebSocket
+/// heartbeat does: the inbox renders by id, so the node reads first.
+async fn emit_transitions(
+    state: &AppState,
+    node: &NodeAuthRow,
+    node_online: bool,
+    cameras: &[(String, String, &'static str)],
+) {
+    if node_online {
+        crate::notifications::emit_node_transition(
+            state,
+            &node.org_id,
+            &node.node_id,
+            &node.display_name(),
+            "online",
+        )
+        .await;
+    }
+    for (camera_id, display, direction) in cameras {
+        crate::notifications::emit_camera_transition(
+            state,
+            &node.org_id,
+            camera_id,
+            display,
+            direction,
+            Some(&node.node_id),
+        )
+        .await;
+    }
+}
 
 /// `CameraReport`, in Pydantic's field-declaration order — which is the
 /// order its errors come out in.
@@ -223,11 +276,13 @@ pub async fn register_node(
 
     // `data.hostname or existing.hostname` — an empty string keeps the
     // stored value, because it is falsy.
-    let hostname = hostname.filter(|h| !h.is_empty()).or(node.hostname);
+    let hostname = hostname.filter(|h| !h.is_empty()).or(node.hostname.clone());
     let local_ip = if lan_streaming == Some(false) {
         None
     } else {
-        local_ip.filter(|ip| !ip.is_empty()).or(node.local_ip)
+        local_ip
+            .filter(|ip| !ip.is_empty())
+            .or(node.local_ip.clone())
     };
     let http_port = http_port
         .filter(|p| *p != 0)
@@ -279,6 +334,7 @@ pub async fn register_node(
     let mut camera_mapping: Map<String, Value> = Map::new();
     let mut new_camera_count: i64 = 0;
     let mut skipped_cameras: Vec<String> = Vec::new();
+    let mut camera_transitions: Vec<(String, String, &'static str)> = Vec::new();
 
     for cam in &cameras {
         let device_path = cam
@@ -294,14 +350,23 @@ pub async fn register_node(
         let camera_id = format!("{node_id}_{sanitized_device}");
         camera_mapping.insert(device_path.clone(), json!(camera_id));
 
-        let existing: Option<(i32, Option<String>)> =
-            sqlx::query_as("SELECT id, name FROM cameras WHERE camera_id = $1 LIMIT 1")
+        let existing: Option<(i32, Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT id, name, status FROM cameras WHERE camera_id = $1 LIMIT 1")
                 .bind(&camera_id)
                 .fetch_optional(&state.pool)
                 .await?;
 
-        if let Some((existing_id, existing_name)) = existing {
+        if let Some((existing_id, existing_name, previous_status)) = existing {
             let name = cam.name.clone().filter(|n| !n.is_empty()).or(existing_name);
+            if let Some(direction) =
+                crate::notifications::camera_transition(previous_status.as_deref(), "online")
+            {
+                let display = name
+                    .clone()
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or(camera_id.clone());
+                camera_transitions.push((camera_id.clone(), display, direction));
+            }
             sqlx::query(
                 "UPDATE cameras SET name = $1, last_seen = $2, status = 'online', updated_at = $2
                   WHERE id = $3",
@@ -419,6 +484,13 @@ pub async fn register_node(
         emit_plan_limit_notification(&state, &org_id, &plan, limits.max_cameras, &skipped_cameras)
             .await;
     }
+    emit_transitions(
+        &state,
+        &node,
+        node_came_online(node.status.as_deref()),
+        &camera_transitions,
+    )
+    .await;
 
     let plan_name = plans::get_plan_display_name(&plan);
     let mut response = json!({
@@ -644,10 +716,11 @@ pub async fn node_heartbeat(
         .await;
     }
 
+    let mut camera_transitions: Vec<(String, String, &'static str)> = Vec::new();
     if !camera_updates.is_empty() {
         let ids: Vec<String> = camera_updates.iter().map(|c| c.camera_id.clone()).collect();
-        let known: Vec<(String,)> = sqlx::query_as(&format!(
-            "SELECT camera_id FROM cameras WHERE camera_id {} AND node_id = $2",
+        let known: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(&format!(
+            "SELECT camera_id, status, name FROM cameras WHERE camera_id {} AND node_id = $2",
             crate::db::any(1)
         ))
         .bind(crate::db::list(&ids))
@@ -656,10 +729,25 @@ pub async fn node_heartbeat(
         .await?;
         // A camera named twice in one heartbeat is applied twice, in
         // order — the Python loops over the reports, not the rows.
+        // Updated as the loop goes, so a camera reported twice in one
+        // heartbeat compares against its own first report.
+        let mut known = known;
         for update in &camera_updates {
-            if !known.iter().any(|(id,)| *id == update.camera_id) {
+            let Some((_, previous_status, name)) =
+                known.iter_mut().find(|(id, ..)| *id == update.camera_id)
+            else {
                 continue;
+            };
+            if let Some(direction) =
+                crate::notifications::camera_transition(previous_status.as_deref(), &update.status)
+            {
+                let display = name
+                    .clone()
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| update.camera_id.clone());
+                camera_transitions.push((update.camera_id.clone(), display, direction));
             }
+            *previous_status = Some(update.status.clone());
             let last_error = if matches!(update.status.as_str(), "restarting" | "failed" | "error")
             {
                 update.last_error.clone()
@@ -679,6 +767,14 @@ pub async fn node_heartbeat(
             .await?;
         }
     }
+
+    emit_transitions(
+        &state,
+        &node,
+        node_came_online(node.status.as_deref()),
+        &camera_transitions,
+    )
+    .await;
 
     // The time-based past-due transition has no webhook behind it, so
     // the heartbeat is where "in grace" becomes "past grace". Gated on

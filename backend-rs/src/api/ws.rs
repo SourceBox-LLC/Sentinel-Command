@@ -357,12 +357,16 @@ pub async fn handle_heartbeat(
                 return ack;
             }
 
-            if previous_status != new_status && matches!(new_status, "online" | "offline") {
+            // See `camera_transition`: `streaming` is online, and only a
+            // return from an announced `offline` is announced.
+            if let Some(direction) =
+                crate::notifications::camera_transition(Some(previous_status), new_status)
+            {
                 transitions.push(Transition {
                     kind: "camera",
                     entity_id: camera_id.to_string(),
                     display_name: python_or(camera_name.as_deref(), camera_id),
-                    new_status: new_status.to_string(),
+                    new_status: direction.to_string(),
                     node_id: Some(node_id.to_string()),
                 });
             }

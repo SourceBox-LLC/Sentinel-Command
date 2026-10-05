@@ -662,6 +662,20 @@ impl BodyErrors {
         out
     }
 
+    /// A field the model does not declare — Pydantic's `extra="forbid"`.
+    ///
+    /// For a body where an ignored field would fail OPEN: a misspelt
+    /// `scopeMode` on key creation is a full-access key, not a refusal.
+    pub fn extra_forbidden(&mut self, field: &str, input: &Value) {
+        self.push(
+            "extra_forbidden",
+            field,
+            "Extra inputs are not permitted",
+            input.clone(),
+            None,
+        );
+    }
+
     /// A `Literal[...]` field that got something not in the list.
     ///
     /// Pydantic renders the options as a quoted, comma-separated list

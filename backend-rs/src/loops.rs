@@ -109,8 +109,13 @@ pub async fn run_offline_sweep_with(
         // cannot see `c` from RETURNING. The table's own name works in
         // both — including from inside the subquery, where it has to be
         // spelled out because both tables have a `node_id`.
+        // Any status but `offline`, not just `online`: CameraNode reports
+        // a working camera as `streaming` (or `starting`, `restarting`,
+        // `failed`), so the Python's `status = 'online'` matched no real
+        // camera, and a node that died took its cameras dark without one
+        // `camera_offline` notification.
         "UPDATE cameras SET status = 'offline', updated_at = $2
-          WHERE status = 'online' AND last_seen IS NOT NULL AND last_seen < $1
+          WHERE status <> 'offline' AND last_seen IS NOT NULL AND last_seen < $1
          RETURNING camera_id AS ident, org_id,
                    COALESCE(NULLIF(name, ''), camera_id) AS display,
                    (SELECT n.node_id FROM camera_nodes n WHERE n.id = cameras.node_id) AS parent",

@@ -95,3 +95,81 @@ async fn a_scoped_agent_key_gets_the_agent_allowlist_and_not_the_recording_tool(
         .await
         .unwrap();
 }
+
+async fn create_key(state: &AppState, body: &str) -> (axum::http::StatusCode, serde_json::Value) {
+    use tower::ServiceExt;
+    let token =
+        sentinel_command::auth::local::issue_token(&"x".repeat(32), &state.config.local_org_id)
+            .unwrap();
+    let mut request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/api/mcp/keys")
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(body.to_string()))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            9,
+        ))));
+    let response = sentinel_command::app::build_router(state.clone())
+        .oneshot(request)
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
+    )
+}
+
+/// A field the key-creation body does not declare is a 422, not ignored.
+/// Ignored, `{"scopeMode": "readonly"}` — the camelCase AGENTS.md once
+/// documented — minted a key with every tool, write tools included: the
+/// one field that narrows a key was the one silently dropped.
+#[tokio::test]
+async fn key_creation_refuses_an_undeclared_field_and_honours_the_real_one() {
+    let Some(state) = state().await else { return };
+
+    let (status, body) = create_key(&state, r#"{"name":"Agent","scopeMode":"readonly"}"#).await;
+    assert_eq!(
+        status,
+        axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+        "{body}"
+    );
+    assert_eq!(
+        body["detail"]["errors"][0]["type"], "extra_forbidden",
+        "{body}"
+    );
+    assert_eq!(
+        body["detail"]["errors"][0]["loc"],
+        serde_json::json!(["body", "scopeMode"])
+    );
+
+    let (status, body) = create_key(&state, r#"{"name":"Agent","scope_mode":"readonly"}"#).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+    assert_eq!(body["scope_mode"], "readonly", "{body}");
+    let raw = body["key"]
+        .as_str()
+        .expect("the plaintext key, shown once")
+        .to_string();
+    let allowed = auth::lookup_allowed(&state, &bearer(&raw))
+        .await
+        .expect("a fresh key is recognised");
+    assert!(allowed.contains("list_cameras"));
+    assert!(
+        !allowed.contains("create_incident"),
+        "read-only must not write"
+    );
+
+    sqlx::query("DELETE FROM mcp_api_keys WHERE key_hash = $1")
+        .bind(sha256_hex(&raw))
+        .execute(&state.pool)
+        .await
+        .unwrap();
+}

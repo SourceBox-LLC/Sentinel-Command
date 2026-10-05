@@ -70,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
     //
     // The SQLite build's schema is the same models seen through SQLite —
     // see migrations-sqlite/.
-    sentinel_command::db::MIGRATOR.run(&pool).await?;
+    sentinel_command::db::migrate(&config.database_url, &pool).await?;
 
     if config.clerk_issuer.is_none() && config.auth_provider == "clerk" {
         // Not fatal yet: nothing Rust serves is Clerk-gated until slice 1.
