@@ -49,6 +49,8 @@ services:
       LOCAL_ADMIN_PASSWORD_HASH: "${LOCAL_ADMIN_PASSWORD_HASH:?see the header — sentinel-hash-password}"
       LOCAL_ADMIN_EMAIL: "${LOCAL_ADMIN_EMAIL:?set LOCAL_ADMIN_EMAIL in .env}"
       FRONTEND_URL: "${FRONTEND_URL:-http://localhost:8000}"
+      # Only behind your own reverse proxy; see .env.example.
+      TRUST_PROXY_HEADERS: "${TRUST_PROXY_HEADERS:-}"
       SENTINEL_LICENSE_KEY: "${SENTINEL_LICENSE_KEY:-}"
       SENTINEL_AGENT_KEY: "${SENTINEL_AGENT_KEY:-}"
       SENTINEL_AGENT_MCP_KEY: "${SENTINEL_AGENT_MCP_KEY:-}"

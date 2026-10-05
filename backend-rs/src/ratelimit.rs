@@ -217,12 +217,72 @@ fn storage_error_is_due() -> bool {
         .is_ok()
 }
 
+/// Whether proxy headers name the client in this process — read once
+/// from `TRUST_PROXY_HEADERS` / `FLY_APP_NAME`. See
+/// [`crate::config::trust_proxy_headers`].
+pub fn proxy_headers_trusted() -> bool {
+    static TRUSTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TRUSTED.get_or_init(|| {
+        crate::config::trust_proxy_headers(
+            std::env::var("TRUST_PROXY_HEADERS").ok().as_deref(),
+            std::env::var("FLY_APP_NAME").ok().as_deref(),
+        )
+    })
+}
+
+/// The client's address: `Fly-Client-IP`, then the left-most
+/// `X-Forwarded-For` entry — but only when `trust_proxy` says a proxy
+/// put them there. Otherwise, and when neither is present, the TCP peer.
+pub fn client_ip(headers: &HeaderMap, peer: Option<&str>, trust_proxy: bool) -> Option<String> {
+    if trust_proxy {
+        if let Some(ip) = headers.get("fly-client-ip").and_then(|v| v.to_str().ok()) {
+            let ip = ip.trim();
+            if !ip.is_empty() {
+                return Some(ip.to_string());
+            }
+        }
+        // X-Forwarded-For is a chain appended at each hop; the left-most
+        // entry is the originating client.
+        if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+            if let Some(first) = xff.split(',').next() {
+                let first = first.trim();
+                if !first.is_empty() {
+                    return Some(first.to_string());
+                }
+            }
+        }
+    }
+    peer.map(str::to_string)
+}
+
 /// Which bucket a request counts against.
 ///
 /// Ported from `tenant_aware_key`. The order matters: a CameraNode gets
 /// its own bucket, an authenticated user shares one per organisation,
 /// and everything else falls back to the real client IP.
 pub fn tenant_key(headers: &HeaderMap, peer: Option<&str>) -> String {
+    tenant_key_with(headers, peer, false, proxy_headers_trusted())
+}
+
+/// [`tenant_key`], with the two decisions it reads from the process
+/// made explicit.
+///
+/// `ip_only` skips the credential buckets. They are read *unverified*,
+/// so a caller picks its own: a fresh `X-Node-API-Key`, or a token
+/// naming a fresh org, on every request and no limit is ever met. Where
+/// a credential is checked before anything happens that is harmless — a
+/// node key is not guessable — but the local login checks a password a
+/// person chose, and its limit is the only thing between that and an
+/// online guessing run. That route is limited per client address alone.
+pub fn tenant_key_with(
+    headers: &HeaderMap,
+    peer: Option<&str>,
+    ip_only: bool,
+    trust_proxy: bool,
+) -> String {
+    if ip_only {
+        return client_ip(headers, peer, trust_proxy).unwrap_or_else(|| "unknown".to_string());
+    }
     // CameraNodes — bucketed on a hash prefix, never the raw key.
     if let Some(node_key) = headers.get("x-node-api-key").and_then(|v| v.to_str().ok()) {
         let digest = Sha256::digest(node_key.as_bytes());
@@ -242,25 +302,7 @@ pub fn tenant_key(headers: &HeaderMap, peer: Option<&str>) -> String {
         }
     }
 
-    // Fly strips Fly-Client-IP from inbound requests before forwarding,
-    // so anything we see here was set by the proxy and can be trusted.
-    if let Some(ip) = headers.get("fly-client-ip").and_then(|v| v.to_str().ok()) {
-        let ip = ip.trim();
-        if !ip.is_empty() {
-            return ip.to_string();
-        }
-    }
-    // X-Forwarded-For is a chain appended at each hop; the left-most
-    // entry is the originating client.
-    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
-        if let Some(first) = xff.split(',').next() {
-            let first = first.trim();
-            if !first.is_empty() {
-                return first.to_string();
-            }
-        }
-    }
-    peer.unwrap_or("unknown").to_string()
+    client_ip(headers, peer, trust_proxy).unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Pull `org_id` out of a JWT payload without verifying the signature.
@@ -360,12 +402,14 @@ pub(crate) fn too_many_requests(limit: u32, window_secs: u64) -> Response {
 /// every limited route to both halves of that — refusals are free, and
 /// the limit still fires, so a handler that forgets to call `check()`
 /// fails there.
-pub struct RateLimit<const LIMIT: u32, const WINDOW_SECS: u64> {
+pub struct RateLimit<const LIMIT: u32, const WINDOW_SECS: u64, const IP_ONLY: bool = false> {
     limiter: std::sync::Arc<Limiter>,
     bucket: String,
 }
 
-impl<const LIMIT: u32, const WINDOW_SECS: u64> RateLimit<LIMIT, WINDOW_SECS> {
+impl<const LIMIT: u32, const WINDOW_SECS: u64, const IP_ONLY: bool>
+    RateLimit<LIMIT, WINDOW_SECS, IP_ONLY>
+{
     /// Spend one slot, or refuse with slowapi's 429.
     pub async fn check(&self) -> Result<(), crate::error::ApiError> {
         if self
@@ -384,6 +428,11 @@ impl<const LIMIT: u32, const WINDOW_SECS: u64> RateLimit<LIMIT, WINDOW_SECS> {
 /// `@limiter.limit("N/minute")`.
 pub type PerMinute<const N: u32> = RateLimit<N, 60>;
 
+/// `N/minute` per client address, whatever credentials the request
+/// carries. For a route whose limit stands between a caller and guessing
+/// a secret a person chose; see [`tenant_key_with`].
+pub type PerMinuteByIp<const N: u32> = RateLimit<N, 60, true>;
+
 /// `@limiter.limit("N/hour")`.
 ///
 /// Worth having as its own alias: a route limited at 30/hour that is
@@ -392,8 +441,8 @@ pub type PerMinute<const N: u32> = RateLimit<N, 60>;
 /// hour-scoped route it cannot account for.
 pub type PerHour<const N: u32> = RateLimit<N, 3600>;
 
-impl<const LIMIT: u32, const WINDOW_SECS: u64> FromRequestParts<AppState>
-    for RateLimit<LIMIT, WINDOW_SECS>
+impl<const LIMIT: u32, const WINDOW_SECS: u64, const IP_ONLY: bool> FromRequestParts<AppState>
+    for RateLimit<LIMIT, WINDOW_SECS, IP_ONLY>
 {
     type Rejection = std::convert::Infallible;
 
@@ -405,7 +454,12 @@ impl<const LIMIT: u32, const WINDOW_SECS: u64> FromRequestParts<AppState>
             .extensions
             .get::<ConnectInfo<std::net::SocketAddr>>()
             .map(|ci| ci.0.ip().to_string());
-        let tenant = tenant_key(&parts.headers, peer.as_deref());
+        let tenant = tenant_key_with(
+            &parts.headers,
+            peer.as_deref(),
+            IP_ONLY,
+            proxy_headers_trusted(),
+        );
 
         // Bucket per route as well as per tenant, matching slowapi's
         // per-endpoint limits. The matched path template is used rather
@@ -490,12 +544,14 @@ mod tests {
     #[test]
     fn an_unparseable_token_falls_back_to_the_client_ip() {
         for token in ["not-a-jwt", "a.b", "a.!!!.c", "a..c"] {
-            let key = tenant_key(
+            let key = tenant_key_with(
                 &headers(&[
                     ("authorization", &format!("Bearer {token}")),
                     ("fly-client-ip", "9.9.9.9"),
                 ]),
                 None,
+                false,
+                true,
             );
             assert_eq!(key, "9.9.9.9", "{token}");
         }
@@ -505,20 +561,51 @@ mod tests {
     fn fly_client_ip_beats_forwarded_for() {
         // Fly strips the former from inbound requests, so it is the only
         // one of the two we can trust.
-        let key = tenant_key(
+        let key = tenant_key_with(
             &headers(&[
                 ("fly-client-ip", "1.1.1.1"),
                 ("x-forwarded-for", "2.2.2.2, 3.3.3.3"),
             ]),
             None,
+            false,
+            true,
         );
         assert_eq!(key, "1.1.1.1");
     }
 
     #[test]
     fn forwarded_for_takes_the_left_most_entry() {
-        let key = tenant_key(&headers(&[("x-forwarded-for", "2.2.2.2, 3.3.3.3")]), None);
+        let key = tenant_key_with(
+            &headers(&[("x-forwarded-for", "2.2.2.2, 3.3.3.3")]),
+            None,
+            false,
+            true,
+        );
         assert_eq!(key, "2.2.2.2");
+    }
+
+    #[test]
+    fn untrusted_proxy_headers_are_ignored_for_the_peer() {
+        // Off Fly a caller can send either header; the peer is the client.
+        let spoofed = headers(&[("fly-client-ip", "1.1.1.1"), ("x-forwarded-for", "2.2.2.2")]);
+        assert_eq!(tenant_key_with(&spoofed, Some("10.0.0.1"), false, false), "10.0.0.1");
+        assert_eq!(client_ip(&spoofed, Some("10.0.0.1"), false).as_deref(), Some("10.0.0.1"));
+    }
+
+    #[test]
+    fn an_ip_only_limit_ignores_the_credentials_a_caller_chooses() {
+        // Each of these used to open a fresh bucket per request.
+        let token = "x.eyJvcmdfaWQiOiJvcmdfNDIifQ.y";
+        for pairs in [
+            vec![("x-node-api-key", "guess-1")],
+            vec![("authorization", format!("Bearer {token}").leak() as &str)],
+        ] {
+            assert_eq!(
+                tenant_key_with(&headers(&pairs), Some("10.0.0.1"), true, false),
+                "10.0.0.1",
+                "{pairs:?}"
+            );
+        }
     }
 
     #[test]

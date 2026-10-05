@@ -95,6 +95,8 @@ services:
       # this if you serve the dashboard from another host or port, because
       # it is also the CORS origin and the base of every email link.
       FRONTEND_URL: "${FRONTEND_URL:-http://localhost:8000}"
+      # Only behind your own reverse proxy; see .env.example.
+      TRUST_PROXY_HEADERS: "${TRUST_PROXY_HEADERS:-}"
       # Optional, all off unless set: Sentinel AI + the cloud mirror
       # (one licence key, two entitlements), email, error tracking.
       SENTINEL_LICENSE_KEY: "${SENTINEL_LICENSE_KEY:-}"

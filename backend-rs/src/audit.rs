@@ -43,23 +43,12 @@ fn truncate(s: &str, max: usize) -> String {
 ///
 /// Behind Fly's edge `request.client.host` is a proxy hop, and an audit
 /// trail that records the edge address instead of the source is useless
-/// for the forensics it exists to support.
+/// for the forensics it exists to support. Off Fly the proxy headers are
+/// the caller's own words and are not recorded as its address — see
+/// [`crate::config::trust_proxy_headers`].
 pub fn client_ip(headers: &HeaderMap, peer: Option<&str>) -> String {
-    if let Some(ip) = headers.get("fly-client-ip").and_then(|v| v.to_str().ok()) {
-        let ip = ip.trim();
-        if !ip.is_empty() {
-            return ip.to_string();
-        }
-    }
-    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
-        if let Some(first) = xff.split(',').next() {
-            let first = first.trim();
-            if !first.is_empty() {
-                return first.to_string();
-            }
-        }
-    }
-    peer.unwrap_or_default().to_string()
+    crate::ratelimit::client_ip(headers, peer, crate::ratelimit::proxy_headers_trusted())
+        .unwrap_or_default()
 }
 
 /// Serialise `details` the way `json.dumps` does.
@@ -358,12 +347,14 @@ mod tests {
     }
 
     #[test]
-    fn the_client_ip_prefers_the_header_fly_sets() {
+    fn the_client_ip_prefers_the_header_fly_sets_when_proxy_headers_are_trusted() {
+        use crate::ratelimit::client_ip as resolve;
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-for", "2.2.2.2, 3.3.3.3".parse().unwrap());
-        assert_eq!(client_ip(&h, Some("9.9.9.9")), "2.2.2.2");
+        assert_eq!(resolve(&h, Some("9.9.9.9"), true).as_deref(), Some("2.2.2.2"));
         h.insert("fly-client-ip", "1.1.1.1".parse().unwrap());
-        assert_eq!(client_ip(&h, Some("9.9.9.9")), "1.1.1.1");
+        assert_eq!(resolve(&h, Some("9.9.9.9"), true).as_deref(), Some("1.1.1.1"));
+        assert_eq!(resolve(&h, Some("9.9.9.9"), false).as_deref(), Some("9.9.9.9"));
     }
 
     #[test]

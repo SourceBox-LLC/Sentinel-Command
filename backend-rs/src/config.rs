@@ -180,6 +180,25 @@ pub fn api_docs_enabled(explicit: Option<&str>, fly_app_name: Option<&str>) -> b
     matches!(value.to_lowercase().as_str(), "1" | "true" | "yes")
 }
 
+/// Whether `Fly-Client-IP` and `X-Forwarded-For` name the client: YES on
+/// Fly, NO anywhere else, and `TRUST_PROXY_HEADERS` overrides either way.
+///
+/// Both are request headers, so a caller can send them. Fly's edge sets
+/// `Fly-Client-IP` and strips any copy the client sent, which is what
+/// makes it trustworthy there and only there. A self-hosted install
+/// reached directly had both taken at their word, so a login could
+/// claim a new address on every request and never meet its limit — the
+/// audit trail recorded the same fiction. Off Fly the TCP peer is the
+/// client. An install behind its own reverse proxy sets this to true,
+/// and that proxy must overwrite `X-Forwarded-For` rather than append.
+pub fn trust_proxy_headers(explicit: Option<&str>, fly_app_name: Option<&str>) -> bool {
+    let on_fly = fly_app_name.is_some_and(|name| !name.is_empty());
+    match explicit {
+        Some(value) => matches!(value.trim().to_lowercase().as_str(), "1" | "true" | "yes"),
+        None => on_fly,
+    }
+}
+
 fn var_or(key: &str, default: &str) -> String {
     env::var(key).unwrap_or_else(|_| default.to_string())
 }
@@ -540,5 +559,15 @@ mod tests {
             !api_docs_enabled(Some(""), None),
             "set but empty is not a yes"
         );
+    }
+
+    #[test]
+    fn proxy_headers_are_trusted_on_fly_and_only_by_choice_elsewhere() {
+        assert!(trust_proxy_headers(None, Some("sentinel-command")));
+        assert!(!trust_proxy_headers(None, None));
+        assert!(!trust_proxy_headers(None, Some("")));
+        assert!(trust_proxy_headers(Some("true"), None));
+        assert!(trust_proxy_headers(Some(" YES "), None));
+        assert!(!trust_proxy_headers(Some("false"), Some("sentinel-command")));
     }
 }

@@ -16,14 +16,14 @@ use crate::app::AppState;
 use crate::auth::local;
 use crate::error::ApiError;
 use crate::query::{BodyErrors, ModelBody};
-use crate::ratelimit::PerMinute;
+use crate::ratelimit::{PerMinute, PerMinuteByIp};
 
 const NOT_CONFIGURED: &str = "Local authentication not configured. Set APP_SECRET_KEY, \
                               LOCAL_ADMIN_USERNAME, and LOCAL_ADMIN_PASSWORD_HASH.";
 
 /// `POST /api/auth/local/login`.
 pub async fn login(
-    rate: PerMinute<10>,
+    rate: PerMinuteByIp<10>,
     State(state): State<AppState>,
     ModelBody((), body): ModelBody<()>,
 ) -> Result<Json<Value>, ApiError> {

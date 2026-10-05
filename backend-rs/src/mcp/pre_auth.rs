@@ -289,7 +289,12 @@ mod tests {
     #[test]
     fn the_bucket_is_the_tenant_not_the_connection() {
         let node = crate::ratelimit::tenant_key(&headers(&[("x-node-api-key", "k")]), None);
-        let ip = crate::ratelimit::tenant_key(&headers(&[("fly-client-ip", "1.1.1.1")]), None);
+        let ip = crate::ratelimit::tenant_key_with(
+            &headers(&[("fly-client-ip", "1.1.1.1")]),
+            None,
+            false,
+            true,
+        );
         assert_ne!(node, ip);
         assert_eq!(ip, "1.1.1.1");
     }

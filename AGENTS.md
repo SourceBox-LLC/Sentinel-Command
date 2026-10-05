@@ -196,6 +196,7 @@ Backend config is loaded from environment variables (see `backend-rs/.env.exampl
       `DATABASE_URL` would start on an empty file, which is why it is a
       Fly secret that must stay set.
 - `FRONTEND_URL` — extra CORS origin (must have scheme, no trailing slash)
+- `TRUST_PROXY_HEADERS` — take the client address from `Fly-Client-IP` / `X-Forwarded-For`. Default: on under Fly (`FLY_APP_NAME` set), whose edge sets the first and strips any copy a client sent; **off** elsewhere, where both are the caller's own claim and the TCP peer is used. A self-hoster behind their own reverse proxy turns it on. It decides the rate-limit bucket and the IP in the audit trail.
 - `REDIS_URL` — shared rate-limiter storage (the Python used it through slowapi; `ratelimit.rs` uses the same keys, so counters survive the rewrite). Without it, per-process in-memory counters (single-VM safe; multi-VM round-robins around the limit). Currently in production via Upstash on Fly.
 - `SEGMENT_CACHE_MAX_PER_CAMERA` — segments cached in memory per camera (default **60**, ~60s — CameraNode emits 1-second segments)
 - `SEGMENT_CACHE_MAX_TOTAL_BYTES` — global byte ceiling across all camera caches (default **384 MiB**, in both the Python and the Rust; this line said 2 GiB for a long time and was never true). When exceeded, `hls.rs` evicts oldest segments across ALL cameras until back under cap.
@@ -795,6 +796,15 @@ per-process counters), reproducing slowapi's buckets:
 - `POST /api/cameras/{id}/push-segment` — 1200/min
 - `POST /api/cameras/{id}/playlist` — 600/min
 - `POST /api/cameras/{id}/motion` — 120/min
+- `POST /api/auth/local/login` — 10/min **per client address only** (`PerMinuteByIp`)
+
+The tenant key reads credentials *unverified* — that is how a node or an
+org gets its own bucket. It also means a caller chooses its bucket: a fresh
+`X-Node-API-Key`, or a token naming a fresh org, on every request and no
+limit is met. Harmless where the credential is checked first and cannot be
+guessed; not on the local login, which checks a password a person chose.
+That route ignores credentials, and proxy headers count only when
+`TRUST_PROXY_HEADERS` says a proxy wrote them.
 
 HLS `GET` paths (`stream.m3u8`, `segment/{file}`) are not per-request rate limited — segment fetches are fast-path with no per-request DB work. They are however metered against the caller's monthly viewer-hour cap (see `Plan Enforcement` → Viewer-hours below): every served segment increments an in-memory counter, and the 429 kicks in when the counter exceeds `max_viewer_hours_per_month * 3600`.
 
