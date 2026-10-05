@@ -356,6 +356,15 @@ impl ConnectionManager {
                 node: node_id.to_string(),
             });
         };
+        // Removes the pending entry however this future ends — including
+        // being dropped mid-wait, when the HTTP client or MCP caller
+        // behind it goes away. Without it an abandoned command to a node
+        // that never answers stayed in the map until the node
+        // disconnected, one entry per abandoned call.
+        let _pending = PendingGuard {
+            manager: self,
+            correlation_id: &correlation_id,
+        };
 
         // A closed channel means the writer is gone: the socket was
         // half-closed and the receive loop had not noticed. Evict it
@@ -371,14 +380,12 @@ impl ConnectionManager {
         match tokio::time::timeout_at(deadline, sender.send(frame)).await {
             Ok(Ok(())) => {}
             Ok(Err(_)) => {
-                self.forget_pending(&correlation_id);
                 self.disconnect(node_id, connection_id);
                 return Err(CommandError::SendFailed {
                     node: node_id.to_string(),
                 });
             }
             Err(_) => {
-                self.forget_pending(&correlation_id);
                 return Err(CommandError::Timeout {
                     node: node_id.to_string(),
                     command: command.to_string(),
@@ -398,7 +405,6 @@ impl ConnectionManager {
                 command: command.to_string(),
             }),
         };
-        self.forget_pending(&correlation_id);
         outcome
     }
 
@@ -441,6 +447,18 @@ impl ConnectionManager {
     #[cfg(test)]
     fn pending_count(&self) -> usize {
         self.with(|inner| inner.pending.len())
+    }
+}
+
+/// Forgets a pending command when dropped. See `send_command`.
+struct PendingGuard<'a> {
+    manager: &'a ConnectionManager,
+    correlation_id: &'a str,
+}
+
+impl Drop for PendingGuard<'_> {
+    fn drop(&mut self) {
+        self.manager.forget_pending(self.correlation_id);
     }
 }
 
@@ -747,5 +765,23 @@ mod tests {
         M.resolve_command(&correlation, "node-b", json!({"stolen": true}));
         let err = issued.await.unwrap().unwrap_err();
         assert!(matches!(err, CommandError::Timeout { .. }), "{err:?}");
+    }
+
+    /// A caller that gives up mid-command — its future dropped, as when
+    /// the HTTP client behind it disconnects — leaves nothing pending.
+    #[tokio::test]
+    async fn an_abandoned_command_leaves_nothing_pending() {
+        let manager = ConnectionManager::new();
+        let _registration = manager.connect("node-abandon");
+        let call = manager.send_command(
+            "node-abandon",
+            "take_snapshot",
+            serde_json::json!({}),
+            Duration::from_secs(30),
+        );
+        // Long enough for the frame to be queued and the wait to begin,
+        // then dropped.
+        let _ = tokio::time::timeout(Duration::from_millis(50), call).await;
+        assert_eq!(manager.pending_count(), 0);
     }
 }

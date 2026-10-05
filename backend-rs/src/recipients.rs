@@ -315,7 +315,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_lookup_is_not_cached() {
-        clear_cache();
         let client = reqwest::Client::builder()
             .timeout(Duration::from_millis(200))
             .build()
@@ -329,23 +328,43 @@ mod tests {
         assert!(recipient_emails(&lookup, "org_x", "all").await.is_empty());
         // Nothing was written, so the next notification tries again
         // rather than being answered from a cached failure.
-        let cached = with_cache(|cache| cache.len());
+        // Counted for this org only: the cache is process-wide, and other
+        // tests run alongside this one.
+        let cached = with_cache(|cache| cache.keys().filter(|(org, _)| org == "org_x").count());
         assert_eq!(cached, 0);
     }
 
     #[test]
     fn invalidating_one_org_leaves_the_others() {
-        clear_cache();
+        // Org names of its own, and only those inspected: the cache is
+        // process-wide and other tests use it concurrently. Comparing the
+        // whole key set (and clearing the whole cache) made this flaky.
         let soon = Instant::now() + CACHE_TTL;
         with_cache(|cache| {
-            cache.insert(("org_a".into(), "all".into()), (soon, vec!["a@x".into()]));
-            cache.insert(("org_a".into(), "admin".into()), (soon, vec!["a@x".into()]));
-            cache.insert(("org_b".into(), "all".into()), (soon, vec!["b@x".into()]));
+            cache.insert(
+                ("inv_org_a".into(), "all".into()),
+                (soon, vec!["a@x".into()]),
+            );
+            cache.insert(
+                ("inv_org_a".into(), "admin".into()),
+                (soon, vec!["a@x".into()]),
+            );
+            cache.insert(
+                ("inv_org_b".into(), "all".into()),
+                (soon, vec!["b@x".into()]),
+            );
         });
-        invalidate_org("org_a");
+        invalidate_org("inv_org_a");
         // Both audiences of the named org go; the other org stays.
-        let keys = with_cache(|cache| cache.keys().cloned().collect::<Vec<_>>());
-        assert_eq!(keys, vec![("org_b".to_string(), "all".to_string())]);
-        clear_cache();
+        let mut keys = with_cache(|cache| {
+            cache
+                .keys()
+                .filter(|(org, _)| org.starts_with("inv_org_"))
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        keys.sort();
+        assert_eq!(keys, vec![("inv_org_b".to_string(), "all".to_string())]);
+        invalidate_org("inv_org_b");
     }
 }

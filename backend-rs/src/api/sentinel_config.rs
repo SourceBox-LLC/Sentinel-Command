@@ -492,11 +492,14 @@ pub async fn list_runs(
         .fetch_one(&state.pool)
         .await?;
 
-    // Python hands the offset straight to Postgres, which takes a
-    // bigint and nothing wider.
-    let offset = offset
-        .small()
-        .ok_or_else(|| ApiError::internal("bigint out of range"))?;
+    // Python handed the offset straight to Postgres, which takes a
+    // bigint and nothing wider — a 500. The caller's mistake: a 422.
+    let offset = offset.small().ok_or_else(|| {
+        ApiError::new(
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "offset is out of range",
+        )
+    })?;
     let list_sql =
         format!("{RUN_SELECT}{filters} ORDER BY triggered_at DESC NULLS FIRST LIMIT {limit} OFFSET {offset}");
     let rows: Vec<SentinelRunRow> = bind_filters!(sqlx::query_as(&list_sql))
@@ -557,18 +560,16 @@ pub async fn list_runs(
 /// `datetime.fromisoformat(since.replace("Z", "+00:00"))`, then
 /// `astimezone(UTC)` for an aware result.
 ///
-/// Python catches ValueError and answers 400. It does not catch the
-/// OverflowError that `astimezone` raises when the shifted value leaves
-/// the calendar, so that one stays a 500.
+/// Python caught ValueError and answered 400, but not the OverflowError
+/// `astimezone` raises when the shifted value leaves the calendar — a
+/// 500 for a date like `9999-12-31T23:59:59-23:59`. Both are the same
+/// 400 here.
 fn parse_since(raw: &str) -> Result<NaiveDateTime, ApiError> {
     crate::pydatetime::fromisoformat(&raw.replace('Z', "+00:00"))
         .and_then(crate::pydatetime::to_naive_utc)
         .map_err(|err| match err {
-            crate::pydatetime::PyDateError::Value => {
+            crate::pydatetime::PyDateError::Value | crate::pydatetime::PyDateError::Overflow => {
                 ApiError::bad_request("invalid `since` — expected ISO datetime")
-            }
-            crate::pydatetime::PyDateError::Overflow => {
-                ApiError::internal("date value out of range")
             }
         })
 }
@@ -576,10 +577,9 @@ fn parse_since(raw: &str) -> Result<NaiveDateTime, ApiError> {
 /// Midnight today in the org's configured timezone, as the naive UTC
 /// timestamp the `triggered_at` column is compared against.
 ///
-/// An unknown or malformed zone name falls back to UTC, because the
-/// Python catches exactly `ZoneInfoNotFoundError` and `ValueError`. A
-/// name that happens to be a *directory* of the tzdata package raises
-/// IsADirectoryError instead, which nothing catches — a 500.
+/// An unknown or malformed zone name falls back to UTC, as the Python's
+/// did — and so does a name that happens to be a *directory* of the
+/// tzdata package ("America"), which the Python let escape as a 500.
 async fn org_midnight_utc(state: &AppState, org_id: &str) -> Result<NaiveDateTime, ApiError> {
     let name = crate::settings::get(&state.pool, org_id, "timezone", Some("UTC"))
         .await?
@@ -600,10 +600,9 @@ async fn org_midnight_utc(state: &AppState, org_id: &str) -> Result<NaiveDateTim
 fn midnight_in_zone(name: &str, now: jiff::Timestamp) -> Result<NaiveDateTime, ApiError> {
     let tz = match crate::zoneinfo::load(name) {
         Ok(tz) => tz,
-        Err(crate::zoneinfo::LoadError::NotFound) => crate::zoneinfo::load("UTC")
-            .map_err(|_| ApiError::internal("no UTC zone on this machine"))?,
-        Err(crate::zoneinfo::LoadError::IsADirectory) => {
-            return Err(ApiError::internal("Is a directory"))
+        Err(crate::zoneinfo::LoadError::NotFound | crate::zoneinfo::LoadError::IsADirectory) => {
+            crate::zoneinfo::load("UTC")
+                .map_err(|_| ApiError::internal("no UTC zone on this machine"))?
         }
     };
     Ok(crate::zoneinfo::local_midnight_utc(&tz, now))
@@ -928,9 +927,9 @@ mod tests {
             assert_eq!(got, naive(want), "{zone} at {now}");
         }
 
-        // A directory of the tzdata package is the one name that is not
-        // a fallback: IsADirectoryError, which nothing catches.
-        let err = midnight_in_zone("America", "2026-05-07T15:00:00Z".parse().unwrap()).unwrap_err();
-        assert_eq!(err.status, axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        // A directory of the tzdata package falls back too. The Python
+        // let it escape as IsADirectoryError — a 500.
+        let got = midnight_in_zone("America", "2026-05-07T15:00:00Z".parse().unwrap()).unwrap();
+        assert_eq!(got, naive("2026-05-07 00:00:00"));
     }
 }

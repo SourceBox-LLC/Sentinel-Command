@@ -705,12 +705,16 @@ pub async fn post_run_complete(
         Some(v) => Some(int4(v)?),
         None => None,
     };
-    let tool_call_bind = i32::try_from(
-        tool_call_count
-            .max_zero()
-            .ok_or_else(|| ApiError::internal("integer out of range"))?,
-    )
-    .map_err(|_| ApiError::internal("integer out of range"))?;
+    // A count past the column's range was a 500 in the Python (the
+    // database refused it). It is the agent's mistake, so a 422.
+    let out_of_range = || {
+        ApiError::new(
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "tool_call_count is out of range",
+        )
+    };
+    let tool_call_bind = i32::try_from(tool_call_count.max_zero().ok_or_else(out_of_range)?)
+        .map_err(|_| out_of_range())?;
 
     sqlx::query(
         "UPDATE sentinel_runs

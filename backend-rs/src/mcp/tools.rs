@@ -261,7 +261,10 @@ pub async fn get_camera_recording_policy(
     .await
     .map_err(db_error)?;
     let Some((continuous, scheduled, start, end)) = row else {
-        return Ok(json!({ "error": "camera_not_found", "camera_id": camera_id }));
+        // An error result, not a success carrying an "error" key: the
+        // Python returned these dicts as successes, so a client — and the
+        // agent's run trace — recorded a failed call as a good one.
+        return Err(format!("Camera '{camera_id}' not found"));
     };
     Ok(json!({
         "camera_id": camera_id,
@@ -297,7 +300,10 @@ pub async fn set_camera_recording_policy(
             .await
             .map_err(db_error)?;
     if existing.is_none() {
-        return Ok(json!({ "error": "camera_not_found", "camera_id": camera_id }));
+        // An error result, not a success carrying an "error" key: the
+        // Python returned these dicts as successes, so a client — and the
+        // agent's run trace — recorded a failed call as a good one.
+        return Err(format!("Camera '{camera_id}' not found"));
     }
 
     // Validated before assignment, so a bad value from an agent never
@@ -305,12 +311,9 @@ pub async fn set_camera_recording_policy(
     for (label, value) in [("scheduled_start", &start), ("scheduled_end", &end)] {
         if let Some(value) = value {
             if !value.is_empty() && !is_hhmm(value) {
-                return Ok(json!({
-                    "error": "invalid_time_format",
-                    "field": label,
-                    "value": value,
-                    "expected": "HH:MM 24-hour, e.g. 08:30",
-                }));
+                return Err(format!(
+                    "{label} must be HH:MM 24-hour, e.g. 08:30 (got {value:?})"
+                ));
             }
         }
     }
@@ -331,11 +334,11 @@ pub async fn set_camera_recording_policy(
     let next_continuous = continuous.unwrap_or(current.0.unwrap_or(false));
     let next_scheduled = scheduled.unwrap_or(current.1.unwrap_or(false));
     if next_continuous && next_scheduled {
-        return Ok(json!({
-            "error": "modes_conflict",
-            "message": "continuous_24_7 and scheduled_recording can't both \
-        be true. Pass one as false in the same call to switch.",
-        }));
+        return Err(
+            "continuous_24_7 and scheduled_recording can't both be true. \
+                    Pass one as false in the same call to switch."
+                .to_string(),
+        );
     }
 
     let mut sets: Vec<String> = Vec::new();

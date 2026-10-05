@@ -36,15 +36,19 @@ pub async fn update_org_timezone(
     rate.check().await?;
     let body = parse_handler_json(&body)?;
 
-    // `(body.get("timezone") or "").strip()`: a falsy value becomes "",
-    // and a truthy non-string has no .strip() — AttributeError, a 500.
+    // `(body.get("timezone") or "").strip()`: a falsy value becomes "".
+    // A truthy non-string had no .strip() in the Python — an
+    // AttributeError, so a 500 for the caller's mistake. A 422 here.
     let raw = body.get("timezone").cloned().unwrap_or(Value::Null);
     let tz_name = if !pyrepr::truthy(&raw) {
         String::new()
     } else if let Value::String(s) = &raw {
         python_strip(s).to_string()
     } else {
-        return Err(ApiError::internal("timezone is not a string"));
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "`timezone` must be a string (IANA name like 'America/Los_Angeles' or 'UTC')",
+        ));
     };
 
     // Both refusals are HTTPException(422) with a plain string detail —

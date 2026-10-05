@@ -40,7 +40,8 @@ pub fn to_micros(at: NaiveDateTime) -> NaiveDateTime {
 /// Several routes take a `hours` or `days` window that Python caps on
 /// one side only, so a large negative value asks for a window reaching
 /// into the future — and past the year 9999 that a `datetime` stops at,
-/// where Python raises OverflowError and the request becomes a 500.
+/// where Python raised OverflowError and the request became a 500 (a 422
+/// here).
 /// `timedelta` gives out earlier still, at a magnitude of 10^9 days, and
 /// an integer too large for i64 never reaches it at all. chrono would
 /// answer all three happily (it reaches year 262143), and
@@ -51,7 +52,14 @@ pub fn python_window_start(
     n: crate::pyint::PyInt,
     unit_seconds: i64,
 ) -> Result<NaiveDateTime, ApiError> {
-    let overflow = || ApiError::internal("date value out of range");
+    // The Python raised OverflowError here and answered 500. It is a
+    // window the caller asked for, so it is the caller's 422.
+    let overflow = || {
+        ApiError::new(
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "time window is out of range",
+        )
+    };
     let n = n.small().ok_or_else(overflow)?;
 
     let shift = i128::from(n) * i128::from(unit_seconds) * 1_000_000;

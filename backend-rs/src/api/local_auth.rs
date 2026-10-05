@@ -64,8 +64,7 @@ pub async fn login(
 
     let token = local::issue_token(&state.config.app_secret_key, &state.config.local_org_id)
         .map_err(|err| {
-            tracing::error!(error = %err, "could not sign a local session token");
-            ApiError::internal("token signing failed")
+            ApiError::internal(format!("could not sign a local session token: {err}"))
         })?;
     Ok(Json(json!({ "token": token })))
 }
@@ -96,8 +95,7 @@ pub async fn refresh(
     }
     let fresh = local::issue_token(&state.config.app_secret_key, &state.config.local_org_id)
         .map_err(|err| {
-            tracing::error!(error = %err, "could not sign a local session token");
-            ApiError::internal("token signing failed")
+            ApiError::internal(format!("could not sign a local session token: {err}"))
         })?;
     Ok(Json(json!({ "token": fresh })))
 }

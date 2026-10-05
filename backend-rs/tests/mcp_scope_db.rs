@@ -213,3 +213,69 @@ async fn an_unlicensed_install_has_no_monthly_runs_on_either_endpoint() {
         assert_eq!(cap, 0, "{path}: {body}");
     }
 }
+
+/// A wrong-typed field in an incident PATCH is a 422 naming it. It used
+/// to empty the whole patch and answer 200 having changed nothing, so
+/// `{"severity": 5, "status": "resolved"}` resolved nothing.
+#[tokio::test]
+async fn an_incident_patch_with_a_wrong_typed_field_is_refused_not_ignored() {
+    use tower::ServiceExt;
+    let Some(state) = state().await else { return };
+    let org = state.config.local_org_id.clone();
+    let id: i32 = sqlx::query_scalar(
+        "INSERT INTO incidents (org_id, title, summary, report, severity, status, created_by, created_at, updated_at)
+         VALUES ($1, 'patch test', 's', '', 'low', 'open', 'test', $2, $2) RETURNING id",
+    )
+    .bind(&org)
+    .bind(chrono::Utc::now().naive_utc())
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    let token = sentinel_command::auth::local::issue_token(&"x".repeat(32), &org).unwrap();
+    let patch =
+        |body: &'static str| {
+            let mut request = axum::http::Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/incidents/{id}"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap();
+            request.extensions_mut().insert(axum::extract::ConnectInfo(
+                std::net::SocketAddr::from(([127, 0, 0, 1], 9)),
+            ));
+            sentinel_command::app::build_router(state.clone()).oneshot(request)
+        };
+
+    let response = patch(r#"{"severity": 5, "status": "resolved"}"#)
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        body["detail"]["errors"][0]["loc"],
+        serde_json::json!(["body", "severity"]),
+        "{body}"
+    );
+    let status: String = sqlx::query_scalar("SELECT status FROM incidents WHERE id = $1")
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "open", "nothing applied from a refused patch");
+
+    let response = patch(r#"{"status": "resolved"}"#).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    sqlx::query("DELETE FROM incidents WHERE id = $1")
+        .bind(id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+}

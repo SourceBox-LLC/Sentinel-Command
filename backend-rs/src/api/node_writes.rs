@@ -57,70 +57,6 @@ pub(crate) async fn body_bytes(request: Request) -> Result<axum::body::Bytes, Ap
 // POST /api/nodes/validate
 // ---------------------------------------------------------------------
 
-/// Whether psycopg can bind this list at all.
-///
-/// `validate` passes `node_id` straight to `filter_by`, so a JSON list
-/// becomes a Postgres array and the lookup simply matches nothing —
-/// unless psycopg cannot build the array, which is a 500. Measured
-/// against the running service:
-///
-/// * leaves of one scalar type, nulls anywhere: bound (`[1, 2]`,
-///   `["a", null]`, `[true]`);
-/// * leaves of two types, or any object: 500 (`[1, 1.5]`, `[true, 1]`,
-///   `[{"a": 1}]`);
-/// * ragged nesting: a 500 for numbers and booleans (`[[1], [2, 3]]`)
-///   but not for strings (`[["a"], "b"]` is a plain 404).
-fn psycopg_can_bind(items: &[Value]) -> bool {
-    #[derive(PartialEq, Clone, Copy)]
-    enum Leaf {
-        Str,
-        Int,
-        Float,
-        Bool,
-    }
-    fn walk(items: &[Value], kind: &mut Option<Leaf>, regular: &mut bool) -> bool {
-        let lists = items.iter().filter(|v| v.is_array()).count();
-        if lists != 0 && lists != items.len() {
-            *regular = false;
-        }
-        let lengths: Vec<usize> = items
-            .iter()
-            .filter_map(|v| v.as_array().map(Vec::len))
-            .collect();
-        if lengths.windows(2).any(|w| w[0] != w[1]) {
-            *regular = false;
-        }
-        for item in items {
-            let leaf = match item {
-                Value::Null => continue,
-                Value::Array(inner) => {
-                    if !walk(inner, kind, regular) {
-                        return false;
-                    }
-                    continue;
-                }
-                Value::Object(_) => return false,
-                Value::String(_) => Leaf::Str,
-                Value::Bool(_) => Leaf::Bool,
-                Value::Number(n) if n.is_f64() => Leaf::Float,
-                Value::Number(_) => Leaf::Int,
-            };
-            match kind {
-                None => *kind = Some(leaf),
-                Some(k) if *k != leaf => return false,
-                _ => {}
-            }
-        }
-        true
-    }
-    let mut kind = None;
-    let mut regular = true;
-    if !walk(items, &mut kind, &mut regular) {
-        return false;
-    }
-    regular || matches!(kind, None | Some(Leaf::Str))
-}
-
 pub async fn validate_node(
     rate: PerMinute<10>,
     State(state): State<AppState>,
@@ -140,31 +76,21 @@ pub async fn validate_node(
     let Ok(body) = serde_json::from_slice::<Value>(&bytes) else {
         return Err(ApiError::bad_request("Invalid JSON body"));
     };
-    // `body.get(...)` on anything but a dict raises AttributeError,
-    // which nothing catches.
+    // The Python called `.get` on whatever arrived and bound `node_id`
+    // to a varchar however it was typed, so a list body, a numeric id or
+    // an object id escaped as an unhandled exception — a 500 for the
+    // caller's mistake. They are 400s, beside the route's other 400s.
     let Some(map) = body.as_object() else {
-        return Err(ApiError::internal("validate body is not an object"));
+        return Err(ApiError::bad_request(
+            "Invalid JSON body: expected an object",
+        ));
     };
     let node_id = map.get("node_id").cloned().unwrap_or(Value::Null);
     if !pyrepr::truthy(&node_id) {
         return Err(ApiError::bad_request("node_id is required"));
     }
-
-    let node_id = match &node_id {
-        Value::String(s) => s.clone(),
-        Value::Array(items) => {
-            // Bound as an array, matches no node, 404s with Python's
-            // spelling of the list in the message.
-            if !psycopg_can_bind(items) {
-                return Err(ApiError::internal("node_id list could not be bound"));
-            }
-            return Err(ApiError::not_found(format!(
-                "Node '{}' not found",
-                pyrepr::str_value(&node_id)
-            )));
-        }
-        // A number or a dict against a varchar column: Postgres raises.
-        _ => return Err(ApiError::internal("node_id of an unbindable type")),
+    let Value::String(node_id) = node_id else {
+        return Err(ApiError::bad_request("node_id must be a string"));
     };
 
     let row: Option<(i32, String, String, String)> = sqlx::query_as(
@@ -790,29 +716,5 @@ mod tests {
             node_key_hash(b"test-node-key"),
             "f3702f9692e7bce4e7dc0b10fe460daf0bdc6c2c741d4c2fabcdb6df44dbb4c9"
         );
-    }
-
-    #[test]
-    fn psycopg_binds_one_leaf_type_and_rejects_ragged_non_strings() {
-        use serde_json::json;
-        // Each row measured against the running service: true means a
-        // 404 there, false a 500.
-        for (list, binds) in [
-            (json!([1, 2]), true),
-            (json!([true]), true),
-            (json!([1.5]), true),
-            (json!(["a", null]), true),
-            (json!([null, "a"]), true),
-            (json!([["a"], "b"]), true),
-            (json!([["a"], ["b"]]), true),
-            (json!([""]), true),
-            (json!([1, 1.5]), false),
-            (json!([true, 1]), false),
-            (json!([{"a": 1}]), false),
-            (json!([[1], [2, 3]]), false),
-            (json!(["a", 1]), false),
-        ] {
-            assert_eq!(psycopg_can_bind(list.as_array().unwrap()), binds, "{list}");
-        }
     }
 }

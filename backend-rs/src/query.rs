@@ -396,9 +396,49 @@ pub fn decode_json_body(bytes: &[u8]) -> Result<Option<Value>, ApiError> {
     // NaN and Infinity, a lone surrogate escape, an exponent past f64 —
     // none of which fits a serde_json::Value. Those are refused as
     // unparseable; see tests/differential/expected_divergences.md.
-    serde_json::from_str(text)
-        .map(Some)
-        .map_err(|_| ApiError::bad_request("There was an error parsing the body"))
+    let value: Value = serde_json::from_str(text)
+        .map_err(|_| ApiError::bad_request("There was an error parsing the body"))?;
+    if let Some(loc) = nul_location(&value, &mut vec![json!("body")]) {
+        return Err(validation_error(&[json!({
+            "type": "string_nul",
+            "loc": loc,
+            "msg": "Text must not contain a NUL (\\u0000) character",
+            "input": Value::Null,
+        })])
+        .unwrap_err());
+    }
+    Ok(Some(value))
+}
+
+/// Where the first NUL character in a body is, if it has one.
+///
+/// PostgreSQL text cannot hold one, so a `\u0000` that reaches an INSERT
+/// is refused by the database — a 500 for the caller's input, on every
+/// route that stores a name. (The Python had the same 500.) It is
+/// refused here instead, before auth runs, like the `refuse_nul_bytes`
+/// layer does for paths and query strings. A key counts as much as a
+/// value: some bodies are stored whole.
+fn nul_location(value: &Value, loc: &mut Vec<Value>) -> Option<Vec<Value>> {
+    match value {
+        Value::String(s) if s.contains('\0') => Some(loc.clone()),
+        Value::Array(items) => items.iter().enumerate().find_map(|(i, item)| {
+            loc.push(json!(i));
+            let found = nul_location(item, loc);
+            loc.pop();
+            found
+        }),
+        Value::Object(map) => map.iter().find_map(|(key, item)| {
+            loc.push(json!(key));
+            let found = if key.contains('\0') {
+                Some(loc.clone())
+            } else {
+                nul_location(item, loc)
+            };
+            loc.pop();
+            found
+        }),
+        _ => None,
+    }
 }
 
 /// The shape check for a declared model: after auth, unlike decoding.
@@ -471,19 +511,21 @@ where
     }
 }
 
-/// Read a body the way a handler does when it calls `await
-/// request.json()` itself rather than declaring a model.
+/// Read a body for a handler that validates its fields by hand.
 ///
-/// There is no validation layer in front of that call: malformed JSON
-/// raises `JSONDecodeError`, and anything but an object raises
-/// `AttributeError` at the first `.get` — both unhandled, so both are a
-/// bare 500. Returning FastAPI's 422 here, as `parse_body` does, would
-/// be a response Python never gives.
+/// The Python called `await request.json()` itself on these routes, so
+/// malformed JSON and a non-object body both escaped as unhandled
+/// exceptions — a bare 500 for what is the caller's mistake. They are
+/// the same 422 a declared-model route gives now: `json_invalid`,
+/// `missing` for an empty body, `model_attributes_type` for a list,
+/// string or number.
 pub fn parse_handler_json(bytes: &[u8]) -> Result<serde_json::Map<String, Value>, ApiError> {
-    match serde_json::from_slice::<Value>(bytes) {
-        Ok(Value::Object(map)) => Ok(map),
-        Ok(_) => Err(ApiError::internal("request body is not a JSON object")),
-        Err(_) => Err(ApiError::internal("request body is not valid JSON")),
+    match model_shape(decode_json_body(bytes)?)? {
+        Value::Object(map) => Ok(map),
+        // `model_shape` hands back nothing but an object.
+        other => Err(ApiError::bad_request(format!(
+            "expected a JSON object, got {other}"
+        ))),
     }
 }
 
@@ -1177,6 +1219,47 @@ pub fn int4(value: PyInt) -> Result<i32, ApiError> {
 
 #[cfg(test)]
 mod tests {
+
+    fn status_of(err: ApiError) -> axum::http::StatusCode {
+        use axum::response::IntoResponse;
+        err.into_response().status()
+    }
+
+    /// A handler that parses its own body answers bad input with a 422,
+    /// never the Python's bare 500.
+    #[test]
+    fn handler_json_refuses_bad_bodies_with_a_422() {
+        for bad in [&b"{"[..], b"", b"null", b"[]", b"\"s\"", b"1"] {
+            let err = parse_handler_json(bad).expect_err("refused");
+            assert_eq!(
+                status_of(err),
+                axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                "{bad:?}"
+            );
+        }
+        assert!(parse_handler_json(br#"{"a":1}"#).is_ok());
+    }
+
+    /// PostgreSQL text cannot hold NUL: refused at decode, with where.
+    #[test]
+    fn a_nul_anywhere_in_a_body_is_a_422_naming_where() {
+        for (body, loc) in [
+            (r#"{"name":"a\u0000b"}"#, json!(["body", "name"])),
+            (
+                r#"{"cams":[{"n":"ok"},{"n":"\u0000"}]}"#,
+                json!(["body", "cams", 1, "n"]),
+            ),
+            (r#"{"a\u0000":1}"#, json!(["body", "a\u{0}"])),
+        ] {
+            let err = decode_json_body(body.as_bytes()).expect_err(body);
+            assert_eq!(err.status, axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+            assert_eq!(err.detail["errors"][0]["loc"], loc, "{body}");
+        }
+        assert!(decode_json_body(br#"{"name":"fine \u00e9"}"#)
+            .unwrap()
+            .is_some());
+    }
+
     use super::*;
 
     #[test]

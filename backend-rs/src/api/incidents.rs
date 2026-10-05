@@ -15,7 +15,6 @@ use axum::http::HeaderValue;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::NaiveDateTime;
-use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::app::AppState;
@@ -503,8 +502,9 @@ pub async fn get_evidence_blob(
         // the Python's HTTP writer rather than sent, which surfaces as a
         // 500. Nothing in the API can set one — `data_mime` is written
         // only by the MCP capture tools — so this is a guard, not a path.
-        tracing::error!(media_type, "evidence data_mime is not a valid header value");
-        return Err(ApiError::internal("Internal Server Error"));
+        return Err(ApiError::internal(format!(
+            "evidence data_mime is not a valid header value: {media_type:?}"
+        )));
     };
 
     Ok(blob_response(content_type, data))
@@ -544,8 +544,9 @@ pub async fn get_evidence_playlist(
         // Python's `int(float("inf"))` raises OverflowError and
         // `int(float("nan"))` raises ValueError; either way the request
         // ends as an unhandled 500.
-        tracing::error!(duration, "clip duration is not representable");
-        return Err(ApiError::internal("Internal Server Error"));
+        return Err(ApiError::internal(format!(
+            "clip duration is not representable: {duration}"
+        )));
     };
 
     // An absolute segment URL, not a relative one: the playlist lives at
@@ -628,7 +629,7 @@ fn target_duration(duration: f64) -> Option<i64> {
     Some((truncated as i64).saturating_add(1).max(1))
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug)]
 pub struct IncidentPatch {
     status: Option<String>,
     severity: Option<String>,
@@ -643,7 +644,19 @@ pub async fn update_incident(
     Path(incident_id): Path<String>,
     ModelBody(RequireAdmin(user), body): ModelBody<RequireAdmin>,
 ) -> Result<Json<Value>, ApiError> {
-    let patch: IncidentPatch = serde_json::from_value(body).unwrap_or_default();
+    // Field by field, so a wrong-typed field is a 422 naming it. This was
+    // `from_value(...).unwrap_or_default()`: one field of the wrong type
+    // made the WHOLE patch empty, and the route answered 200 having
+    // changed nothing — `{"severity": 5, "status": "resolved"}` resolved
+    // nothing and said it had.
+    let mut errors = crate::query::BodyErrors::new();
+    let patch = IncidentPatch {
+        status: errors.optional_string(&body, "status", usize::MAX),
+        severity: errors.optional_string(&body, "severity", usize::MAX),
+        summary: errors.optional_string(&body, "summary", usize::MAX),
+        report: errors.optional_string(&body, "report", usize::MAX),
+    };
+    errors.finish()?;
     let incident_id = path_int("incident_id", &incident_id)?;
     rate.check().await?;
     let incident_id = int4(incident_id)?;

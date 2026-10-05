@@ -58,10 +58,59 @@ const ACCESS_LOG_MAX_ENTRIES: usize = 10_000;
 /// dropped entirely.
 const STALE_CAMERA_AGE: Duration = Duration::from_secs(60);
 
+/// A segment filename, ordered by its sequence number.
+///
+/// The cache is a `BTreeMap` so "oldest" and "newest" are its two ends.
+/// Keyed by the bare filename, that order was the STRING order, which
+/// matches the sequence only while every number has the same width:
+/// CameraNode writes `segment_%05d.ts`, so after `segment_99999.ts` —
+/// about 28 hours of continuous streaming at one-second segments — comes
+/// `segment_100000.ts`, which sorts first. From then on every new
+/// segment was the "oldest" and was evicted the moment it arrived
+/// (live video froze), and clips and agent snapshots took the newest
+/// segments from the wrong end. The Python sorted the same way.
+///
+/// Compared by the digits after `segment_` as a number of any width
+/// (length first, then value), with the full name as the tiebreak, so
+/// the order is total and a name with no digits still sorts somewhere.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SegmentName(String);
+
+impl SegmentName {
+    pub fn new(filename: &str) -> Self {
+        Self(filename.to_string())
+    }
+
+    fn sequence(&self) -> &str {
+        let digits = self.0.strip_prefix("segment_").unwrap_or(&self.0);
+        let end = digits
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(digits.len());
+        digits[..end].trim_start_matches('0')
+    }
+}
+
+impl Ord for SegmentName {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let (a, b) = (self.sequence(), other.sequence());
+        a.len()
+            .cmp(&b.len())
+            .then_with(|| a.cmp(b))
+            .then_with(|| self.0.cmp(&other.0))
+    }
+}
+
+impl PartialOrd for SegmentName {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 #[derive(Default)]
 struct SegmentStore {
-    /// `{camera_id: {filename: (bytes, monotonic)}}`.
-    cameras: HashMap<String, BTreeMap<String, (Bytes, Instant)>>,
+    /// `{camera_id: {filename: (bytes, monotonic)}}`, each camera's
+    /// segments in sequence order — see [`SegmentName`].
+    cameras: HashMap<String, BTreeMap<SegmentName, (Bytes, Instant)>>,
     /// `_segment_cache_byte_total`, kept in step at every insert and
     /// delete so the global cap check is O(1) on the push path.
     byte_total: i64,
@@ -310,7 +359,7 @@ impl HlsCache {
         // A re-push of the same filename overwrites, so the old size
         // comes off the total before the new one goes on. A flaky
         // network retry does exactly this.
-        let previous = bucket.insert(filename.to_string(), (body.clone(), Instant::now()));
+        let previous = bucket.insert(SegmentName::new(filename), (body.clone(), Instant::now()));
         let mut delta = body.len() as i64;
         if let Some((old, _)) = previous {
             delta -= old.len() as i64;
@@ -328,7 +377,7 @@ impl HlsCache {
         store
             .cameras
             .get(camera_id)
-            .and_then(|bucket| bucket.get(filename))
+            .and_then(|bucket| bucket.get(&SegmentName::new(filename)))
             .map(|(body, _)| body.clone())
     }
 
@@ -706,8 +755,8 @@ fn evict_per_camera(store: &mut SegmentStore, camera_id: &str, max_per_camera: u
         return;
     }
     let drop_count = bucket.len() - max_per_camera;
-    // Oldest by filename, which is how the sequence numbers sort.
-    let doomed: Vec<String> = bucket.keys().take(drop_count).cloned().collect();
+    // Oldest by sequence number — see `SegmentName`.
+    let doomed: Vec<SegmentName> = bucket.keys().take(drop_count).cloned().collect();
     for filename in doomed {
         if let Some((body, _)) = bucket.remove(&filename) {
             store.byte_total -= body.len() as i64;
@@ -729,7 +778,7 @@ fn evict_global_oldest(store: &mut SegmentStore, max_total_bytes: i64) -> usize 
     }
     let low_water = (max_total_bytes as f64 * 0.95) as i64;
 
-    let mut candidates: Vec<(Instant, String, String, i64)> = store
+    let mut candidates: Vec<(Instant, String, SegmentName, i64)> = store
         .cameras
         .iter()
         .flat_map(|(camera_id, bucket)| {
@@ -1008,5 +1057,59 @@ mod tests {
         // Another camera, or another user, is its own budget.
         assert!(cache.access_log_due("user", "other"));
         assert!(cache.access_log_due("other", "cam"));
+    }
+
+    /// Past `segment_99999.ts` the names grow a digit. Ordered as strings,
+    /// `segment_100000.ts` came first, so every new segment was evicted
+    /// as the oldest and live video froze about 28 hours into a stream.
+    #[test]
+    fn the_cache_keeps_the_newest_segments_across_the_six_digit_boundary() {
+        let cache = HlsCache::new();
+        for n in 99_998..100_003 {
+            cache.push_segment(
+                "cam",
+                &format!("segment_{n:05}.ts"),
+                Bytes::from(n.to_string()),
+                3,
+                i64::MAX,
+            );
+        }
+        // The three newest survive and the oldest went.
+        for n in 100_000..100_003 {
+            assert!(
+                cache.segment("cam", &format!("segment_{n}.ts")).is_some(),
+                "{n} evicted"
+            );
+        }
+        assert!(cache.segment("cam", "segment_99998.ts").is_none());
+        // And "the most recent two" are the two highest, oldest first.
+        let Snapshot::Segments(recent) = cache.snapshot_recent("cam", 2) else {
+            panic!("no segments");
+        };
+        assert_eq!(recent, vec![Bytes::from("100001"), Bytes::from("100002")]);
+    }
+
+    #[test]
+    fn segment_names_order_by_number_of_any_width() {
+        let mut names: Vec<SegmentName> = [
+            "segment_100000.ts",
+            "segment_00009.ts",
+            "segment_99999.ts",
+            "segment_10.ts",
+        ]
+        .iter()
+        .map(|n| SegmentName::new(n))
+        .collect();
+        names.sort();
+        let order: Vec<&str> = names.iter().map(|n| n.0.as_str()).collect();
+        assert_eq!(
+            order,
+            [
+                "segment_00009.ts",
+                "segment_10.ts",
+                "segment_99999.ts",
+                "segment_100000.ts"
+            ]
+        );
     }
 }

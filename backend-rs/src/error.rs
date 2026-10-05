@@ -115,6 +115,12 @@ impl IntoResponse for ApiError {
             return crate::ratelimit::too_many_requests(limit, window);
         }
         if self.opaque {
+            // The one place every 500 passes through, so the one place
+            // its cause is logged. `detail` was documented as "kept for
+            // the log" and nothing logged it: a 500 left a status line
+            // and no reason, in the log and in Sentry (where an ERROR is
+            // an event). The caller still sees nothing of it.
+            tracing::error!(detail = %self.detail, "request failed with a 500");
             // Byte-for-byte what Starlette emits for an unhandled
             // exception, down to the charset.
             return (
@@ -145,8 +151,8 @@ impl IntoResponse for ApiError {
 /// it goes to the log instead.
 impl From<sqlx::Error> for ApiError {
     fn from(err: sqlx::Error) -> Self {
-        tracing::error!(error = %err, "database error");
-        ApiError::internal("database error")
+        // Logged when the response is built, with the rest of the 500s.
+        ApiError::internal(format!("database error: {err}"))
     }
 }
 
