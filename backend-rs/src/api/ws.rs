@@ -20,7 +20,9 @@ use crate::app::AppState;
 use crate::models::now_naive;
 use crate::pyint::{python_int_of_json, PyInt};
 
-/// `_handle_motion_event`.
+/// `_handle_motion_event` — reached only from `POST
+/// /api/cameras/{id}/motion` (`api/hls.rs`), after its rate limit and
+/// the org's ingestion switch.
 ///
 /// Every failure is a silent return: a motion event is a report about
 /// something that already happened, and a node that sends a malformed
@@ -617,12 +619,14 @@ async fn serve_node(
                             );
                         }
                     }
-                    Some("event") => {
-                        let payload = data.get("payload").cloned().unwrap_or(json!({}));
-                        if data.get("command").and_then(Value::as_str) == Some("motion_detected") {
-                            handle_motion_event(&state, &node_id, &org_id, &payload).await;
-                        }
-                    }
+                    // No `event` arm. The Python accepted a `motion_detected`
+                    // event here that no CameraNode ever sent, and it
+                    // reached `handle_motion_event` without the checks
+                    // the HTTP route makes first — so a node could write
+                    // motion rows, inbox entries and Sentinel runs while
+                    // its org had motion ingestion switched off. Motion is
+                    // `POST /api/cameras/{id}/motion`; this is an unknown
+                    // message type, answered as one.
                     other => {
                         // `f"Unknown message type: {msg_type}"` over
                         // whatever `.get("type")` returned — which is
