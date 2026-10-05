@@ -404,9 +404,15 @@ pub async fn create_node(
     // The JWT's plan, not the effective plan: this matches the Python,
     // which reads `user.plan` here.
     let limits = plans::get_plan_limits(&user.plan);
+    // Count and insert under one per-org lock. Counted outside it, two
+    // creates at once (a double-clicked button, a retried request) both
+    // saw room and both inserted, one past the plan's cap — and nothing
+    // reconciles nodes the way enforce_camera_cap does cameras.
+    let mut tx = crate::db::begin_write(&state.pool).await?;
+    crate::db::lock_for_update(&mut tx, &format!("node-cap:{}", user.org_id)).await?;
     let (current,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM camera_nodes WHERE org_id = $1")
         .bind(&user.org_id)
-        .fetch_one(&state.pool)
+        .fetch_one(&mut *tx)
         .await?;
     if current >= limits.max_nodes {
         return Err(ApiError::forbidden(format!(
@@ -432,6 +438,10 @@ pub async fn create_node(
         // Columns SQLAlchemy fills from Python-side defaults are written
         // explicitly: http_port and both timestamps. The side-effect
         // snapshot compares every column of the new row.
+        // A savepoint per attempt: in PostgreSQL a failed statement
+        // aborts the whole transaction, so retrying after a collision
+        // needs something to roll back to.
+        let mut attempt_tx = sqlx::Acquire::begin(&mut tx).await?;
         let inserted = sqlx::query(
             "INSERT INTO camera_nodes
                 (node_id, org_id, name, api_key_hash, status, http_port, created_at, updated_at)
@@ -442,16 +452,18 @@ pub async fn create_node(
         .bind(&name)
         .bind(&api_key_hash)
         .bind(now)
-        .execute(&state.pool)
+        .execute(&mut *attempt_tx)
         .await;
         match inserted {
             Ok(_) => {
+                attempt_tx.commit().await?;
                 created = Some((node_id, name));
                 break;
             }
             // The unique constraint is the arbiter, not a pre-check
             // SELECT, which would race two concurrent creates.
             Err(sqlx::Error::Database(db)) if db.is_unique_violation() => {
+                attempt_tx.rollback().await?;
                 tracing::warn!(
                     node_id,
                     attempt = attempt + 1,
@@ -461,6 +473,7 @@ pub async fn create_node(
             Err(err) => return Err(err.into()),
         }
     }
+    tx.commit().await?;
     let Some((node_id, name)) = created else {
         tracing::error!("node creation failed after {NODE_ID_ATTEMPTS} id attempts");
         return Err(ApiError::new(

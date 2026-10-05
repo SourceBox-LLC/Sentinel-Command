@@ -668,6 +668,11 @@ pub async fn post_manual_run(
     let run_id = uuid::Uuid::new_v4().simple().to_string();
     let triggered_at = now_naive();
     let mut tx = crate::db::begin_write(&state.pool).await?;
+    crate::db::lock_for_update(
+        &mut tx,
+        &crate::sentinel_dispatch::run_cap_lock_key(&user.org_id),
+    )
+    .await?;
     sqlx::query(
         "INSERT INTO sentinel_runs
             (id, org_id, triggered_at, trigger_type, camera_id, tool_call_count, outcome,
@@ -682,8 +687,10 @@ pub async fn post_manual_run(
     .execute(&mut *tx)
     .await?;
     // Recount inside the transaction, after the insert is visible to
-    // it. The plain check above is a read-then-write race: two
-    // dispatchers at cap-1 both pass it and the org overshoots by one.
+    // it, and under the per-org lock taken above. The plain check above
+    // is a read-then-write race; the recount alone is too, on
+    // PostgreSQL, where a concurrent transaction's uncommitted row is
+    // invisible — two dispatchers at cap-1 both counted themselves in.
     let (used,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM sentinel_runs WHERE org_id = $1 AND triggered_at >= $2",
     )

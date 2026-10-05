@@ -476,6 +476,11 @@ pub async fn maybe_dispatch_for_notification(
 /// again *after* the insert, inside the same transaction, catches the
 /// second writer — it sees its own row. `false` means it lost that
 /// race, which the caller treats exactly like a closed gate.
+/// The lock key every capped run insert takes, motion and manual alike.
+pub(crate) fn run_cap_lock_key(org_id: &str) -> String {
+    format!("sentinel-run-cap:{org_id}")
+}
+
 async fn insert_run(
     state: &AppState,
     run_id: &str,
@@ -486,6 +491,12 @@ async fn insert_run(
 ) -> Result<bool, sqlx::Error> {
     let triggered_at: NaiveDateTime = now_naive();
     let mut tx = crate::db::begin_write(&state.pool).await?;
+    // Insert-then-recount is not enough on its own: under READ COMMITTED
+    // two concurrent transactions cannot see each other's uncommitted
+    // row, so both count themselves under the cap and both commit. The
+    // per-org lock (shared with the manual path) makes the second one
+    // count after the first commits.
+    crate::db::lock_for_update(&mut tx, &run_cap_lock_key(org_id)).await?;
     sqlx::query(
         "INSERT INTO sentinel_runs
             (id, org_id, triggered_at, trigger_type, camera_id, tool_call_count, outcome,
@@ -654,5 +665,77 @@ mod tests {
         ] {
             assert_eq!(refusal.as_str(), want);
         }
+    }
+
+    /// Ten dispatches at once with one run left under the cap: one
+    /// lands. Insert-then-recount alone let several through on
+    /// PostgreSQL, where each transaction's own row is the only
+    /// uncommitted one it can see.
+    #[tokio::test]
+    async fn concurrent_dispatches_cannot_overshoot_the_monthly_cap() {
+        let Some(pool) = crate::db::test_pool(12).await else {
+            return;
+        };
+        let config = crate::config::Config::from_env();
+        let http = reqwest::Client::new();
+        let state = AppState {
+            auth: std::sync::Arc::new(crate::auth::Authenticator::from_config(
+                &config,
+                http.clone(),
+            )),
+            cors: crate::cors::CorsConfig::from_env(&config.frontend_url, ""),
+            hls: std::sync::Arc::new(crate::hls::HlsCache::new()),
+            limiter: std::sync::Arc::new(crate::ratelimit::Limiter::from_env("").await),
+            http,
+            config: std::sync::Arc::new(config),
+            pool,
+            started_at: std::time::Instant::now(),
+            started_at_wall: chrono::Utc::now(),
+        };
+        // Warm the pool first. Opened lazily, the first transaction ran to
+        // completion while the rest were still connecting, and the race
+        // never happened — the test passed with the lock removed.
+        let warm = futures_util::future::join_all((0..10).map(|_| state.pool.acquire())).await;
+        drop(warm);
+        let org = format!("cap-race-{}", uuid::Uuid::new_v4().simple());
+        for _ in 0..2 {
+            assert!(insert_run(
+                &state,
+                &uuid::Uuid::new_v4().simple().to_string(),
+                &org,
+                "manual",
+                None,
+                3
+            )
+            .await
+            .unwrap());
+        }
+        let races = (0..10).map(|_| {
+            let state = state.clone();
+            let org = org.clone();
+            async move {
+                insert_run(
+                    &state,
+                    &uuid::Uuid::new_v4().simple().to_string(),
+                    &org,
+                    "manual",
+                    None,
+                    3,
+                )
+                .await
+                .unwrap()
+            }
+        });
+        let landed = futures_util::future::join_all(races)
+            .await
+            .into_iter()
+            .filter(|won| *won)
+            .count();
+        assert_eq!(landed, 1);
+        sqlx::query("DELETE FROM sentinel_runs WHERE org_id = $1")
+            .bind(&org)
+            .execute(&state.pool)
+            .await
+            .unwrap();
     }
 }

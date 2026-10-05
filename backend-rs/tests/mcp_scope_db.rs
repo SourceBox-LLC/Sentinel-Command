@@ -279,3 +279,125 @@ async fn an_incident_patch_with_a_wrong_typed_field_is_refused_not_ignored() {
         .await
         .unwrap();
 }
+
+/// Ten agents claiming one run at once: exactly one is told it won.
+/// The claim used to read `pending` and then write, so all ten read
+/// `pending` and all ten answered `claimed: true` — overlapping drains
+/// each ran the agent on the same run.
+#[tokio::test]
+async fn concurrent_claims_on_one_run_have_exactly_one_winner() {
+    use tower::ServiceExt;
+    let Some(base) = state().await else { return };
+    let mut config = (*base.config).clone();
+    config.sentinel_agent_key = Some("claim-race-secret".into());
+    let state = AppState {
+        config: std::sync::Arc::new(config),
+        ..base
+    };
+    let run_id = format!(
+        "claimrace{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..20]
+    );
+    sqlx::query(
+        "INSERT INTO sentinel_runs (id, org_id, triggered_at, trigger_type, tool_call_count, outcome)
+         VALUES ($1, 'claim-race-org', $2, 'manual', 0, 'pending')",
+    )
+    .bind(&run_id)
+    .bind(chrono::Utc::now().naive_utc())
+    .execute(&state.pool)
+    .await
+    .unwrap();
+
+    let claims = (0..10).map(|_| {
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri(format!("/api/sentinel/runs/{run_id}/start"))
+            .header("x-sentinel-agent-key", "claim-race-secret")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from("{}"))
+            .unwrap();
+        let router = sentinel_command::app::build_router(state.clone());
+        async move {
+            let response = router.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            body["claimed"] == serde_json::Value::Bool(true)
+        }
+    });
+    let winners = futures_util::future::join_all(claims)
+        .await
+        .into_iter()
+        .filter(|won| *won)
+        .count();
+    assert_eq!(winners, 1);
+
+    sqlx::query("DELETE FROM sentinel_runs WHERE id = $1")
+        .bind(&run_id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+}
+
+/// Five creates at once with one slot left under the plan's node cap:
+/// one succeeds. Counted outside a lock, all five saw room.
+#[tokio::test]
+async fn concurrent_node_creates_cannot_overshoot_the_plan_cap() {
+    use tower::ServiceExt;
+    let Some(state) = state().await else { return };
+    let org = "node-cap-race".to_string();
+    let cap = sentinel_command::plans::get_plan_limits("self_host").max_nodes;
+    sqlx::query("DELETE FROM camera_nodes WHERE org_id = $1")
+        .bind(&org)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    let mut tx = state.pool.begin().await.unwrap();
+    for i in 0..cap - 1 {
+        sqlx::query(
+            "INSERT INTO camera_nodes (node_id, org_id, api_key_hash, name, status, created_at, updated_at)
+             VALUES ($1, $2, $1, $1, 'pending', $3, $3)",
+        )
+        .bind(format!("ncr{i:05}"))
+        .bind(&org)
+        .bind(chrono::Utc::now().naive_utc())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+
+    let token = sentinel_command::auth::local::issue_token(&"x".repeat(32), &org).unwrap();
+    let creates =
+        (0..5).map(|i| {
+            let mut request = axum::http::Request::builder()
+                .method("POST")
+                .uri("/api/nodes")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(format!(r#"{{"name":"race {i}"}}"#)))
+                .unwrap();
+            request.extensions_mut().insert(axum::extract::ConnectInfo(
+                std::net::SocketAddr::from(([127, 0, 0, 1], 9)),
+            ));
+            let router = sentinel_command::app::build_router(state.clone());
+            async move { router.oneshot(request).await.unwrap().status() }
+        });
+    let statuses = futures_util::future::join_all(creates).await;
+    let created = statuses.iter().filter(|s| s.is_success()).count();
+    assert_eq!(created, 1, "{statuses:?}");
+    let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM camera_nodes WHERE org_id = $1")
+        .bind(&org)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(total, cap);
+
+    sqlx::query("DELETE FROM camera_nodes WHERE org_id = $1")
+        .bind(&org)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+}

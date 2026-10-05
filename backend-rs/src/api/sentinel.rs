@@ -593,20 +593,27 @@ pub async fn post_run_start(
         return Ok(Json(result));
     }
 
+    // The claim is the UPDATE, not the check above it. Read-then-write
+    // let every concurrent `/start` see `pending` and every one of them
+    // report `claimed: true` — measured: ten simultaneous claims, ten
+    // winners, so overlapping drains all ran the agent on one run. Only
+    // the request whose UPDATE still finds the row pending wins.
     let started = now_naive();
-    sqlx::query(
+    let won = sqlx::query(
         "UPDATE sentinel_runs SET outcome = 'running', started_at = $1, updated_at = $2
-          WHERE id = $3",
+          WHERE id = $3 AND outcome = 'pending'",
     )
     .bind(started)
     .bind(started)
     .bind(&row.id)
     .execute(&state.pool)
-    .await?;
+    .await?
+    .rows_affected()
+        == 1;
 
     let row = reload(&state, &row.id).await?;
     let mut result = row.to_json(false);
-    result["claimed"] = json!(true);
+    result["claimed"] = json!(won);
     Ok(Json(result))
 }
 
@@ -716,7 +723,7 @@ pub async fn post_run_complete(
     let tool_call_bind = i32::try_from(tool_call_count.max_zero().ok_or_else(out_of_range)?)
         .map_err(|_| out_of_range())?;
 
-    sqlx::query(
+    let completed = sqlx::query(
         "UPDATE sentinel_runs
             SET outcome = $1,
                 severity = $2,
@@ -727,7 +734,9 @@ pub async fn post_run_complete(
                 started_at = COALESCE(started_at, $7),
                 completed_at = $7,
                 updated_at = $7
-          WHERE id = $8",
+          WHERE id = $8
+            AND (outcome NOT IN ('incident', 'no_action', 'error')
+                 OR (outcome = 'error' AND $1 IN ('incident', 'no_action')))",
     )
     .bind(&outcome)
     .bind(if is_incident {
@@ -735,9 +744,8 @@ pub async fn post_run_complete(
     } else {
         None
     })
-    // Both of these are bigints on the way in, so a value too large for
-    // the `integer` column is the "integer out of range" Postgres raises
-    // for the Python too — a 500, not a silently clamped row.
+    // Both of these are bigints on the way in; a value too large for the
+    // `integer` column is refused above as a 422, not silently clamped.
     .bind(incident_bind)
     .bind(truncate_chars(&summary, 8000))
     .bind(tool_call_bind)
@@ -745,7 +753,16 @@ pub async fn post_run_complete(
     .bind(now)
     .bind(&row.id)
     .execute(&state.pool)
-    .await?;
+    .await?
+    .rows_affected();
+    // The terminal check above is repeated in the WHERE, because between
+    // that read and this write another `/complete` (or the reaper) can
+    // land: the one-way rule has to hold for whichever write is second.
+    // Zero rows means it lost — answered idempotently with what is
+    // stored, as the early return does.
+    if completed == 0 {
+        return Ok(Json(reload(&state, &row.id).await?.to_json(true)));
+    }
 
     let row = reload(&state, &row.id).await?;
     tracing::info!(

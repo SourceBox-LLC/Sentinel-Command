@@ -101,6 +101,25 @@ pub async fn begin_write(pool: &Pool) -> Result<Transaction<'static>, sqlx::Erro
     }
 }
 
+/// Serialise writers that share `key` for the rest of this transaction.
+///
+/// For check-then-insert under a cap: two requests that each count and
+/// then insert both see room, unless the count happens under a lock the
+/// other one waits on. PostgreSQL takes a transaction-scoped advisory
+/// lock on the key's hash, released at commit or rollback. SQLite needs
+/// nothing more — `begin_write` opened the transaction with `BEGIN
+/// IMMEDIATE`, which already admits one writer at a time.
+pub async fn lock_for_update(tx: &mut Transaction<'static>, key: &str) -> Result<(), sqlx::Error> {
+    if SQLITE {
+        return Ok(());
+    }
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind(key)
+        .execute(&mut **tx)
+        .await
+        .map(|_| ())
+}
+
 // ── Connecting ───────────────────────────────────────────────────────
 
 /// The schema, embedded at compile time — the one for this build.
