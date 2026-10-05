@@ -156,9 +156,8 @@ impl ServerHandler for SentinelMcp {
 
         // A NUL anywhere in the arguments is refused before any tool
         // runs. PostgreSQL text cannot hold one, so a tool that stored an
-        // argument failed on the INSERT and answered with its generic
-        // database message — "Authentication error" — which describes
-        // nothing the caller did. The REST decoder refuses NUL the same
+        // argument failed on the INSERT and answered with a generic
+        // database error that describes nothing the caller did. The REST decoder refuses NUL the same
         // way.
         let outcome = if args.values().any(carries_nul) {
             Err("Arguments must not contain a NUL (\\u0000) character.".to_string())

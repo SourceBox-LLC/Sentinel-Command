@@ -439,7 +439,9 @@ pub async fn get_stream_logs(
     // `if camera_id:` — an empty string is falsy, so it is no filter
     // at all rather than a filter that matches nothing.
     let camera_id = opt_camera_id(args);
-    let limit = int_or(args, "limit", 50);
+    // Clamped: a negative LIMIT reached the database, which refused it,
+    // and the caller's bad argument became a logged server error.
+    let limit = int_or(args, "limit", 50).clamp(0, 500);
     // The same row the audit route serves, so the two agree on the
     // shape a client sees.
     let rows: Vec<crate::api::stream_logs::StreamAccessLogRow> = sqlx::query_as(
@@ -592,7 +594,11 @@ async fn camera_row(
 /// database failure into this, and nothing more specific is surfaced.
 fn db_error(err: sqlx::Error) -> String {
     tracing::error!(error = %err, "mcp tool query failed");
-    "Authentication error".to_string()
+    // Not "Authentication error", which this used to say for every
+    // database failure in every tool. That was the Python's message for
+    // a failed KEY LOOKUP only (mcp/auth.rs keeps it there); on a tool it
+    // sent the caller looking at their credentials for a server fault.
+    "Internal error — the request could not be completed. Try again shortly.".to_string()
 }
 
 // ---------------------------------------------------------------------
@@ -627,8 +633,10 @@ pub async fn list_incidents(
             ));
         }
     }
-    let limit = int_or(args, "limit", 20);
-    let offset = int_or(args, "offset", 0);
+    // Clamped, as `get_stream_logs` is: a negative LIMIT or OFFSET
+    // reached the database as an error.
+    let limit = int_or(args, "limit", 20).clamp(0, 500);
+    let offset = int_or(args, "offset", 0).max(0);
 
     let filters = "WHERE i.org_id = $1
           AND (CAST($2 AS TEXT) IS NULL OR i.status = $2)
