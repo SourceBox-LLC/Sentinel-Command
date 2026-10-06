@@ -61,6 +61,23 @@ charges don't post, the dev-mode badge shows in the UI, and the
    (`CLERK_WEBHOOK_SECRET`). Test by upgrading a test org and
    confirming the `Setting(org_plan="pro")` row shows up.
 
+   **Subscribe it to every event the handler reads**, not just billing:
+   `organization.created`/`.deleted`, `organizationMembership.created`/
+   `.updated`/`.deleted`, `paymentAttempt.updated`, `subscription.*`
+   (`created`, `updated`, `active`, `pastDue`) and `subscriptionItem.*`
+   (`active`, `canceled`, `ended`, `freeTrialEnding`, `pastDue`).
+
+   > **2026-10-05:** the development instance's only endpoint still
+   > pointed at `https://opensentry-command.fly.dev/…` — a hostname that
+   > no longer resolves — and Svix had disabled it, so production had
+   > received no Clerk webhook since the rename: org deletions never ran
+   > the GDPR wipe, plan changes arrived only through the hourly
+   > reconcile, and the membership events were not subscribed at all.
+   > Repointed to the URL above, re-enabled, given the event list above,
+   > and proven by resending an `organization.deleted` for a test org:
+   > the signature verified and the org's rows were erased. Re-enabling
+   > does not replay what was missed while it was disabled.
+
 **Verification.** After the secret swap, sign out and sign back in.
 The dev-mode badge in the corner should disappear.
 
