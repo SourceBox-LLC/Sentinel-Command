@@ -1,0 +1,182 @@
+{
+ "_comment": "Mutations for the live video path: the caches, the four routes, and the UTF-8 decoder the playlist route puts on the wire. The scenario harness is the only one that can see cache behaviour; the unit harness carries the decoder corpus and the eviction policies.",
+ "restart_rust": true,
+ "env": {},
+ "harness": [
+  [
+   "tests/differential/hls_run.sh"
+  ],
+  [
+   "tests/differential/unit_run.sh"
+  ],
+  [
+   "tests/differential/ratelimit_order_run.sh",
+   "push-segment"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "segments are evicted newest-first",
+   "file": "src/hls.rs",
+   "old": "    let doomed: Vec<String> = bucket.keys().take(drop_count).cloned().collect();",
+   "new": "    let doomed: Vec<String> = bucket.keys().rev().take(drop_count).cloned().collect();"
+  },
+  {
+   "name": "the per-camera cap is off by one",
+   "file": "src/hls.rs",
+   "old": "    if bucket.len() <= max_per_camera {",
+   "new": "    if bucket.len() <= max_per_camera + 1 {"
+  },
+  {
+   "name": "a re-push double-counts its bytes",
+   "file": "src/hls.rs",
+   "old": "        let mut delta = body.len() as i64;\n        if let Some((old, _)) = previous {\n            delta -= old.len() as i64;\n        }",
+   "new": "        let delta = body.len() as i64;\n        let _ = previous;"
+  },
+  {
+   "name": "the global cap evicts newest-first",
+   "file": "src/hls.rs",
+   "old": "    candidates.sort();",
+   "new": "    candidates.sort();\n    candidates.reverse();"
+  },
+  {
+   "name": "the global cap evicts to exactly the cap",
+   "file": "src/hls.rs",
+   "old": "    let low_water = (max_total_bytes as f64 * 0.95) as i64;",
+   "new": "    let low_water = max_total_bytes;"
+  },
+  {
+   "name": "a snapshot takes the oldest segments",
+   "file": "src/hls.rs",
+   "old": "        let skip = bucket.len().saturating_sub(count);",
+   "new": "        let skip = 0;"
+  },
+  {
+   "name": "cleanup leaves the playlist behind",
+   "file": "src/hls.rs",
+   "old": "        self.playlists.lock().expect(\"playlist cache poisoned\").remove(camera_id);\n        self.playlist_updates",
+   "new": "        self.playlist_updates"
+  },
+  {
+   "name": "the access log has no throttle",
+   "file": "src/hls.rs",
+   "old": "            Some(last) if now.duration_since(*last) < ACCESS_LOG_INTERVAL => false,",
+   "new": "            Some(_) if false => false,"
+  },
+  {
+   "name": "a served segment is not counted",
+   "file": "src/hls.rs",
+   "old": "        *viewer.pending.entry(key).or_insert(0) += 1;",
+   "new": "        viewer.pending.entry(key).or_insert(0);"
+  },
+  {
+   "name": "the warm total ignores what is pending",
+   "file": "src/hls.rs",
+   "old": "        viewer\n            .cached\n            .get(&key)\n            .map(|total| total + viewer.pending.get(&key).copied().unwrap_or(0))",
+   "new": "        viewer.cached.get(&key).copied()"
+  },
+  {
+   "name": "a stale playlist is still served",
+   "file": "src/api/hls.rs",
+   "old": "fn playlist_is_fresh(age: std::time::Duration) -> bool {\n    age < crate::hls::PLAYLIST_CACHE_MAX_AGE\n}",
+   "new": "fn playlist_is_fresh(_age: std::time::Duration) -> bool {\n    true\n}"
+  },
+  {
+   "name": "the playlist loses its no-store headers",
+   "file": "src/api/hls.rs",
+   "old": "    headers.insert(\n        header::CACHE_CONTROL,\n        HeaderValue::from_static(\"no-store, no-cache, must-revalidate, max-age=0\"),\n    );",
+   "new": "    // no cache-control"
+  },
+  {
+   "name": "a segment is served as octet-stream",
+   "file": "src/api/hls.rs",
+   "old": "            (header::CONTENT_TYPE, \"video/mp2t\"),",
+   "new": "            (header::CONTENT_TYPE, \"application/octet-stream\"),"
+  },
+  {
+   "name": "the segment filename is not checked",
+   "file": "src/api/hls.rs",
+   "old": "    if !segment_filename_re().is_match(filename) {\n        return Err(ApiError::bad_request(\"Invalid segment filename\"));\n    }",
+   "new": ""
+  },
+  {
+   "name": "a percent-encoded slash reaches the handler",
+   "file": "src/api/hls.rs",
+   "old": "    let filename = path_segment(&filename)?;",
+   "new": "    let filename = filename.as_str();"
+  },
+  {
+   "name": "the push path ignores the camera's node",
+   "file": "src/api/hls.rs",
+   "old": "          WHERE camera_id = $1 AND node_id = $2 AND org_id = $3\",",
+   "new": "          WHERE camera_id = $1 AND $2 = $2 AND org_id = $3\","
+  },
+  {
+   "name": "a suspended camera can still push",
+   "file": "src/api/hls.rs",
+   "old": "    if target.disabled_by_plan {",
+   "new": "    if false {"
+  },
+  {
+   "name": "the declared length is not checked",
+   "file": "src/api/hls.rs",
+   "old": "        if declared_int > max_bytes as i64 {",
+   "new": "        if false {"
+  },
+  {
+   "name": "the body length is not checked",
+   "file": "src/api/hls.rs",
+   "old": "    if total > max_bytes {\n        return Err(too_large(format!(\"Body is {total} bytes; max is {max_bytes}\")));\n    }",
+   "new": ""
+  },
+  {
+   "name": "the rate limit is checked after the key",
+   "file": "src/api/hls.rs",
+   "old": "    rate.check().await?;\n    let camera_id = path_segment(&camera_id)?.to_string();\n\n    let mut query",
+   "new": "    let camera_id = path_segment(&camera_id)?.to_string();\n\n    let mut query"
+  },
+  {
+   "name": "the playlist is cached without rewriting",
+   "file": "src/api/hls.rs",
+   "old": "    let rewritten = rewrite_playlist(playlist);",
+   "new": "    let rewritten = playlist.to_string();"
+  },
+  {
+   "name": "a codecs line survives the rewrite",
+   "file": "src/api/hls.rs",
+   "old": "            if codecs_re().is_match(line) {\n                return String::new();\n            }",
+   "new": ""
+  },
+  {
+   "name": "a comment line is rewritten as a segment",
+   "file": "src/api/hls.rs",
+   "old": "            if !line.starts_with('#') {",
+   "new": "            if true {"
+  },
+  {
+   "name": "the sweep never runs",
+   "file": "src/api/hls.rs",
+   "old": "    if state.hls.bump_playlist_count(&camera_id, state.config.cleanup_interval) {\n        state.hls.evict_caches();\n    }",
+   "new": "",
+   "equivalent": "The opportunistic sweep changes nothing a run can observe: what it does \u2014 drop cameras idle for a minute, trim a playlist cache past five hundred entries \u2014 needs either sixty seconds or five hundred cameras, and the background loop performs the same sweep on its own timer regardless. The policy itself is pinned by the_stale_sweep_drops_a_camera_that_stopped_pushing, which backdates the clock instead of waiting on it."
+  },
+  {
+   "name": "a decode error names the wrong position",
+   "file": "src/pycodec.rs",
+   "old": "        format!(\n            \"'utf-8' codec can't decode byte 0x{:02x} in position {start}: {reason}\",\n            bytes[start]\n        )",
+   "new": "        format!(\n            \"'utf-8' codec can't decode byte 0x{:02x} in position {}: {reason}\",\n            bytes[start], start + 1\n        )"
+  },
+  {
+   "name": "a truncated sequence is called a bad continuation",
+   "file": "src/pycodec.rs",
+   "old": "                return Some((i, bytes.len(), TRUNCATED));",
+   "new": "                return Some((i, bytes.len(), CONTINUATION));"
+  },
+  {
+   "name": "surrogates decode",
+   "file": "src/pycodec.rs",
+   "old": "        0xed => (2, 0x80..=0x9f),",
+   "new": "        0xed => (2, 0x80..=0xbf),"
+  }
+ ]
+}

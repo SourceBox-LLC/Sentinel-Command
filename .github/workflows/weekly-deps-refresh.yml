@@ -2,8 +2,8 @@ name: Weekly dependency refresh
 
 # Proactively refresh the dependency locks within their existing semver
 # ranges, so a newly-disclosed CVE doesn't turn the Test & Deploy
-# pip-audit / npm-audit gate red out of nowhere. It has happened more than
-# once — see the [tool.uv] constraint comments in backend/pyproject.toml.
+# cargo-audit / npm-audit gate red out of nowhere. It has happened more
+# than once.
 #
 # This runs the SAME gates the deploy pipeline runs, then opens ONE PR with
 # the refreshed locks. deploy.yml only triggers on push-to-master, so the
@@ -12,9 +12,9 @@ name: Weekly dependency refresh
 # upgrade breaks a test, or a CVE has no fix yet) the run goes red and NO PR
 # is opened — that red run is the signal to look manually.
 #
-# Scope is lock-only and within-range: `uv lock --upgrade` respects the
-# floors in pyproject.toml and `npm update` stays inside the package.json
-# semver ranges. Major-version bumps stay deliberate and manual.
+# Scope is lock-only and within-range: `cargo update` respects the ranges
+# in Cargo.toml and `npm update` stays inside the package.json semver
+# ranges. Major-version bumps stay deliberate and manual.
 #
 # One-time setup: Settings → Actions → General → Workflow permissions →
 # enable "Allow GitHub Actions to create and approve pull requests", or the
@@ -41,31 +41,49 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # ── Backend — uv lock --upgrade, then deploy.yml's backend gates ──
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
-      - name: Set up Python
-        run: uv python install 3.12
-      - name: Upgrade backend lock (within pyproject constraints)
-        working-directory: backend
-        run: uv lock --upgrade
-      - name: Install backend deps
-        working-directory: backend
-        run: uv sync --extra dev
-      # Gate parity with deploy.yml: ruff floats (>=0.6.0), so a lock
-      # refresh can pull a ruff release whose rules changed.  Without
-      # this step the weekly PR verifies green, merges, and the
-      # post-merge deploy goes red on the ruff gate — the exact
-      # "red out of nowhere" failure this workflow exists to prevent.
-      - name: Lint with ruff
-        working-directory: backend
-        run: uv run ruff check
-      - name: Backend dependency scan (pip-audit --strict)
-        working-directory: backend
-        run: uv run pip-audit --strict
+      # ── Backend and agent (Rust, one crate) — cargo update, then
+      #    deploy.yml's Rust gates ──
+      #
+      # This section did not exist until the backend stopped being Python,
+      # and its absence was the same shape of gap as the missing
+      # `cargo audit`: the workflow's whole purpose is that a CVE
+      # disclosed on Sunday does not turn the deploy red on Monday, and it
+      # was watching a dependency tree that no longer builds the service.
+      #
+      # `cargo update` is lock-only and respects the semver ranges in
+      # Cargo.toml, exactly as `npm update` does for package.json. The
+      # Sentinel AI agent is a binary in this same crate, so this one
+      # section covers what used to need a second, Python one.
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend-rs
+      - name: Upgrade the backend's lock (within Cargo.toml ranges)
+        working-directory: backend-rs
+        run: cargo update
+      - name: Lint (clippy)
+        working-directory: backend-rs
+        run: cargo clippy --all-targets -- -D warnings
       - name: Backend tests
-        working-directory: backend
-        run: uv run pytest -q
+        working-directory: backend-rs
+        run: cargo test --all-targets
+      # The other driver is a different build; a lock refresh that breaks
+      # only sqlx's SQLite side would otherwise pass here and fail the
+      # deploy.
+      - name: Backend tests (sqlite build)
+        working-directory: backend-rs
+        run: cargo test --all-targets --features sqlite
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      # See the waiver note in deploy.yml for why this advisory is ignored.
+      - name: Backend dependency scan (cargo audit)
+        working-directory: backend-rs
+        run: cargo audit --ignore RUSTSEC-2023-0071
 
       # ── Frontend — npm update, then deploy.yml's frontend gates ──
       - uses: actions/setup-node@v7
@@ -97,7 +115,7 @@ jobs:
         uses: peter-evans/create-pull-request@v8
         with:
           add-paths: |
-            backend/uv.lock
+            backend-rs/Cargo.lock
             frontend/package-lock.json
           branch: deps/weekly-refresh
           delete-branch: true
@@ -105,15 +123,16 @@ jobs:
           title: "chore(deps): weekly dependency lock refresh"
           labels: dependencies
           body: |
-            Automated weekly refresh of `backend/uv.lock` and
+            Automated weekly refresh of `backend-rs/Cargo.lock` and
             `frontend/package-lock.json`, bounded to the existing semver
-            ranges (`uv lock --upgrade` + `npm update`).
+            ranges (`cargo update` + `npm update`).
 
             Every deploy gate passed in the refresh run **before** this PR
             was opened:
 
-            - `pip-audit --strict` — backend advisory scan
-            - `pytest` — backend suite
+            - `cargo audit` — backend advisory scan (RustSec)
+            - `cargo clippy -D warnings` + `cargo test` — backend and
+              agent suite
             - `npm audit --audit-level=high --omit=dev` — frontend
             - `vitest` + production build — frontend
 

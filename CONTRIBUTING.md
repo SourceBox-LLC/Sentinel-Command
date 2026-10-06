@@ -39,17 +39,35 @@ Sentinel has two main components:
 
 | Component | Language | Repository |
 |-----------|----------|------------|
-| **Command Center** | Python (FastAPI) + React | [Sentinel-Command](https://github.com/SourceBox-LLC/Sentinel-Command) |
+| **Command Center** | Rust (axum) + React | [Sentinel-Command](https://github.com/SourceBox-LLC/Sentinel-Command) |
 | **CameraNode** | Rust | [Sentinel-CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode) |
+
+The backend was Python (FastAPI) and the AI agent a Python worker until
+both were rewritten in Rust; they are two binaries from one crate,
+`backend-rs/`, and there is no Python left. If you are looking for a file
+that used to be under `backend/app/`, its counterpart is named in
+[AGENTS.md › API Routes](AGENTS.md#api-routes); the agent's is
+`backend-rs/src/agent/`.
 
 ### Command Center
 
+To just *run* it, rather than develop on it, use the repo's
+`docker-compose.yml` — see [AGENTS.md › Build & Run](AGENTS.md#build--run).
+For development, with the frontend on its own dev server:
+
 ```bash
-# Backend
-cd backend
-cp .env.example .env
-uv sync
-uv run python start.py       # http://localhost:8000
+# Backend — PostgreSQL here; or skip the container and run
+# `DATABASE_URL=sqlite:///./sentinel.db cargo run --features sqlite`.
+# `cp backend-rs/.env.example backend-rs/.env` for the full variable list.
+docker run -d --name sentinel-pg -p 5432:5432 \
+    -e POSTGRES_USER=sentinel -e POSTGRES_PASSWORD=sentinel \
+    -e POSTGRES_DB=sentinel postgres:16-alpine
+cd backend-rs
+DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5432/sentinel \
+    cargo run                 # http://localhost:8000
+
+cargo test                    # DB-gated tests skip without TEST_DATABASE_URL
+cargo clippy --all-targets    # kept at zero warnings
 
 # Frontend
 cd frontend

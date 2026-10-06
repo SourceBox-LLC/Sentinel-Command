@@ -1,0 +1,102 @@
+# Self-hosted Sentinel Command Center on SQLite: one container, one file.
+#
+# The smallest way to run it. No database service — the dashboard keeps
+# everything in /data/sentinel.db on a named volume, which is how the
+# Python tier ran self-hosted before the rewrite.
+#
+#   cp backend-rs/.env.example .env      # as for docker-compose.yml:
+#   openssl rand -hex 32                 #   → APP_SECRET_KEY
+#   docker compose -f docker-compose.sqlite.yml run --rm app sentinel-hash-password
+#                                        #   → LOCAL_ADMIN_PASSWORD_HASH (single-quoted!)
+#   docker compose -f docker-compose.sqlite.yml up -d
+#   # http://localhost:8000
+#
+# Which to choose. SQLite is right for one household or one site: a
+# handful of nodes, one writer at a time, backups by copying a file.
+# docker-compose.yml (PostgreSQL) is right when you already run Postgres,
+# want its tooling, or expect many nodes heartbeating at once — SQLite
+# has a single writer, and the background sweeps queue behind each other
+# rather than running side by side.
+#
+# The image holds both builds. `sentinel-command` reads DATABASE_URL and
+# hands over to `sentinel-command-sqlite` for a sqlite:// URL, so the
+# command is the same in both files and only the URL differs.
+#
+# Backup: stop the container and copy the volume's sentinel.db (with its
+# -wal and -shm files if present), or copy it live with
+# `sqlite3 sentinel.db ".backup out.db"` (the sqlite3 CLI is not in the image;
+# run it on the host against the volume). scripts/backup_db.sh is the
+# PostgreSQL job and says so if pointed here.
+#
+# Moving to PostgreSQL later: there is no converter in this repository.
+# With the cloud-sync licence, `sentinel-restore-from-cloud` restores the
+# mirror into either database.
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        AUTH_PROVIDER: local
+    restart: unless-stopped
+    environment:
+      AUTH_PROVIDER: local
+      # Four slashes: an absolute path, in SQLAlchemy's spelling, which is
+      # the one the Python tier documented and this one still reads.
+      DATABASE_URL: "sqlite:////data/sentinel.db"
+      APP_SECRET_KEY: "${APP_SECRET_KEY:?set APP_SECRET_KEY in .env, e.g. openssl rand -hex 32}"
+      LOCAL_ADMIN_USERNAME: "${LOCAL_ADMIN_USERNAME:?set LOCAL_ADMIN_USERNAME in .env}"
+      LOCAL_ADMIN_PASSWORD_HASH: "${LOCAL_ADMIN_PASSWORD_HASH:?see the header — sentinel-hash-password}"
+      LOCAL_ADMIN_EMAIL: "${LOCAL_ADMIN_EMAIL:?set LOCAL_ADMIN_EMAIL in .env}"
+      FRONTEND_URL: "${FRONTEND_URL:-http://localhost:8000}"
+      # Only behind your own reverse proxy; see .env.example.
+      TRUST_PROXY_HEADERS: "${TRUST_PROXY_HEADERS:-}"
+      SENTINEL_LICENSE_KEY: "${SENTINEL_LICENSE_KEY:-}"
+      SENTINEL_AGENT_KEY: "${SENTINEL_AGENT_KEY:-}"
+      SENTINEL_AGENT_MCP_KEY: "${SENTINEL_AGENT_MCP_KEY:-}"
+      EMAIL_ENABLED: "${EMAIL_ENABLED:-false}"
+      RESEND_API_KEY: "${RESEND_API_KEY:-}"
+      SENTRY_DSN: "${SENTRY_DSN:-}"
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - app-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # Sentinel AI, off unless asked for (`--profile ai`). Same as in
+  # docker-compose.yml; see the notes there.
+  agent:
+    profiles: ["ai"]
+    build:
+      context: .
+      args:
+        AUTH_PROVIDER: local
+    command: ["sentinel-agent"]
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      AGENT_MODE: poll
+      OPENSENTRY_API_BASE: "http://app:8000"
+      SENTINEL_AGENT_KEY: "${SENTINEL_AGENT_KEY:-}"
+      OPENSENTRY_MCP_AGENT_KEY: "${SENTINEL_AGENT_MCP_KEY:-}"
+      LLM_MODEL: "${LLM_MODEL:-}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_API_BASE: "${LLM_API_BASE:-}"
+      OLLAMA_API_KEY: "${OLLAMA_API_KEY:-}"
+      SENTRY_DSN: "${SENTRY_DSN:-}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  app-data:

@@ -83,7 +83,7 @@ AI-agent incidents, MCP key audit, CameraNode disk, member audit);
 mechanism for volume control. Transport is Resend; integration lives
 in `app/core/email.py`, `app/core/email_worker.py`, `app/core/recipients.py`,
 `app/core/email_templates.py`, `app/core/email_unsubscribe.py`. 22
-Jinja2 templates in `app/templates/emails/`. Webhook-driven bounce/
+Jinja2 templates in `backend-rs/templates/emails/`, compiled into the binary. Webhook-driven bounce/
 complaint handling at `/api/webhooks/resend` writes to `EmailSuppression`.
 Sub-processor disclosure already in `SUB_PROCESSORS.md` + `DPA.md`.
 Marketing copy already swept across SecurityPage / PricingPage / FAQ /
@@ -176,7 +176,7 @@ There's no public status page yet.
 **State now.** Live and serving. `app.sentinel-command.com` (the app and
 API) holds a Fly-issued cert, valid to 2026-12-02; the apex
 `sentinel-command.com` (marketing site) is valid to 2026-12-07. CORS is
-hard-coded for that origin (`backend/app/main.py::cors_origins`).
+hard-coded for that origin (`backend-rs/src/cors.rs`).
 
 Note the split, because it has bitten the docs twice: **the API lives on
 `app.`, not the apex.** The apex has no `/api` and no `/docs`. Anything
@@ -189,8 +189,8 @@ not outstanding work.
 **To switch.**
 1. Buy a domain (e.g. `sentry.sourceboxlabs.com`).
 2. Add a Fly cert via `fly certs add`.
-3. Update `cors_origins` in `app/main.py` to include the new
-   domain.
+3. Add the new origin to the `CORS_ALLOWED_ORIGINS` env var on Fly
+   (comma-separated; read by `backend-rs/src/cors.rs`).
 4. Update `FRONTEND_URL` env var on Fly.
 5. Update Clerk's allowed origins to include the new domain.
 6. Update `install.sh` (Linux/macOS) so it points at the new base URL
@@ -207,7 +207,7 @@ not outstanding work.
 `SENTRY_DSN` is set in Fly secrets via the Sentry extension
 (`fly ext sentry create -a sentinel-command` provisioned a sponsored
 Team plan and auto-injected the DSN). `SENTRY_TRACES_SAMPLE_RATE=0.1`
-keeps us inside the free-tier event budget. `app/core/sentry.py::init_sentry()`
+keeps us inside the free-tier event budget. `backend-rs/src/sentry.rs::init()`
 no-ops gracefully when DSN is absent (local dev), so no extra config
 needed there. Email alerting confirmed firing — you've received at
 least one Sentry alert email (`OPENSENTRY-COMMAND-1`).
@@ -300,7 +300,7 @@ tests both.
    docker run -d --name pgdrill -e POSTGRES_PASSWORD=drill \
      -e POSTGRES_DB=drill -p 15499:5432 postgres:18-alpine
    DATABASE_URL=postgresql://postgres:drill@127.0.0.1:15499/drill \
-     bash backend/scripts/restore_db.sh <dump> --yes
+     bash scripts/restore_db.sh <dump> --yes
    ```
    Sanity-check key tables have rows: `Camera`, `CameraNode`,
    `Setting`, `Notification`.
@@ -443,7 +443,8 @@ a page.
 [X] Branch protection enabled on master (item 9)                      — done 2026-05-04
 [X] Support inbox configured and monitored (item 10)                 — done 2026-07-05 (ImprovMX: support@ + security@)
 [X] Resend signup + EMAIL_ENABLED=true + smoke test (item 2)         — done
-[ ] Run `cd backend && uv run pytest` — all green (450+ tests)
+[ ] Run `cd backend-rs && cargo test && cargo clippy --all-targets` — green,
+    zero warnings (420+ tests, the agent's included — same crate).
 [ ] Run `cd frontend && npm run build && npm audit --omit=dev` — both clean
 [ ] Browse the live site at 375px, 1024px, 1440px — nothing broken
 [ ] Hit /api/health/detailed — overall "healthy", DB latency < 50ms,
@@ -487,7 +488,7 @@ When all twelve check, ship the launch announcement.
   rate-limit audit caught + closed 7 missing-decorator endpoints
   including 3 SSE streams, 4 admin DB endpoints, the incident-
   evidence proxy, and a custom in-memory connect-throttle for
-  the WebSocket (slowapi only does HTTP).  Full first-touch UX
+  the WebSocket (the HTTP limiter does not cover an upgrade).  Full first-touch UX
   pass — welcome email on `organization.created`, Help link in
   authenticated nav, in-app CameraNode install widget that
   auto-creates a node + bakes credentials into the displayed

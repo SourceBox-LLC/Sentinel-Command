@@ -11,7 +11,7 @@ name: Scheduled DB Backup
 #   "no backup" — only "no off-platform copy".
 #
 # What it does:
-#   1. Runs backend/scripts/backup_db.sh ON the Fly machine (pg_dump
+#   1. Runs /app/scripts/backup_db.sh ON the Fly machine (pg_dump
 #      custom format -> pg_restore --list verification -> prune). The
 #      machine already holds DATABASE_URL, so the credential stays in
 #      Fly and is never copied into GitHub. Dumps land in /data/backups.
@@ -24,7 +24,7 @@ name: Scheduled DB Backup
 #   3. Prints the cluster's own snapshot list for visibility.
 #
 # Restore: see docs/runbooks/DISASTER_RECOVERY.md (includes the decrypt
-# one-liner and backend/scripts/restore_db.sh).
+# one-liner and scripts/restore_db.sh).
 #
 # (Before 2026-09 this backed up a SQLite file. The database moved to
 # Postgres; the workflow's shape is deliberately unchanged.)
@@ -95,7 +95,7 @@ jobs:
           # AES-256-CBC + PBKDF2. Decrypt with:
           #   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
           #     -in backup.dump.enc -out backup.dump -pass pass:<key>
-          # then restore with backend/scripts/restore_db.sh.
+          # then restore with scripts/restore_db.sh.
           openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
             -in backup.dump -out backup.dump.enc -pass env:BACKUP_KEY
           rm backup.dump

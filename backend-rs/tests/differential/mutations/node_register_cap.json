@@ -1,0 +1,42 @@
+{
+ "_comment": "The plan-cap half of registration, against the CLERK-mode pair. Under AUTH_PROVIDER=local \u2014 which the default tiers run \u2014 `resolve_org_plan` returns \"self_host\" before reading anything, its cap is 999, and nothing is ever skipped. All four of these mutations survived a full run of the register spec for that reason, with the cases that cover them passing. Splitting them out is not tidiness: the mutator restarts one pair per spec, and a spec spanning both would score half its mutations against an unmutated binary.",
+ "tier": "clerk",
+ "restart_rust": true,
+ "env": {
+  "DIFF_ONLY": "cap:",
+  "CASE_SET": "clerk"
+ },
+ "harness": [
+  [
+   "tests/differential/clerk_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "the plan-limit notice is not debounced",
+   "file": "src/api/node_register.rs",
+   "old": "            if (now - parsed.naive).num_seconds() < PLAN_LIMIT_THROTTLE_SECONDS {\n                return;\n            }",
+   "new": "            if false {\n                return;\n            }"
+  },
+  {
+   "name": "the skipped list is not capped at five",
+   "_why": "The body names the first five and counts the rest. Listing all of them turns a notification into a wall of camera names.",
+   "file": "src/api/node_register.rs",
+   "old": "    let head: Vec<String> = skipped.iter().take(5).cloned().collect();",
+   "new": "    let head: Vec<String> = skipped.to_vec();"
+  },
+  {
+   "name": "cameras over the cap are created anyway",
+   "file": "src/api/node_register.rs",
+   "old": "        if current_cameras + new_camera_count >= limits.max_cameras {",
+   "new": "        if false {"
+  },
+  {
+   "name": "the running count ignores what this request created",
+   "_why": "Without `new_camera_count` the cap is compared against the count taken before the loop, so a single register can create as many cameras as it reports \u2014 the cap holds against one camera at a time and not against a batch.",
+   "file": "src/api/node_register.rs",
+   "old": "        if current_cameras + new_camera_count >= limits.max_cameras {",
+   "new": "        if current_cameras >= limits.max_cameras {"
+  }
+ ]
+}

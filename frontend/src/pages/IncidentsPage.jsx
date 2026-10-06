@@ -5,6 +5,7 @@ import { useAuth, useOrganization } from "../auth/index.jsx"
 import { getIncidents, getIncidentCounts } from "../services/api"
 import IncidentReportModal from "../components/IncidentReportModal.jsx"
 import NewIncidentModal from "../components/NewIncidentModal.jsx"
+import { parseServerDate } from "../utils/time.js"
 
 const SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 }
 
@@ -30,7 +31,7 @@ function isAiAuthored(createdBy) {
 
 function isToday(iso) {
   if (!iso) return false
-  const d = new Date(iso)
+  const d = parseServerDate(iso)
   const now = new Date()
   return (
     d.getFullYear() === now.getFullYear() &&
@@ -41,13 +42,13 @@ function isToday(iso) {
 
 function relativeTime(iso) {
   if (!iso) return ""
-  const ts = new Date(iso).getTime()
+  const ts = parseServerDate(iso).getTime()
   const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000))
   if (diffSec < 60) return "just now"
   if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`
   if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`
   if (diffSec < 86400 * 30) return `${Math.floor(diffSec / 86400)}d ago`
-  return new Date(iso).toLocaleDateString()
+  return parseServerDate(iso).toLocaleDateString()
 }
 
 /**
@@ -107,7 +108,7 @@ export default function IncidentsPage() {
           const sa = SEVERITY_ORDER[a.severity] ?? 9
           const sb = SEVERITY_ORDER[b.severity] ?? 9
           if (sa !== sb) return sa - sb
-          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          return parseServerDate(b.created_at).getTime() - parseServerDate(a.created_at).getTime()
         })
         setIncidents(sorted)
         setIncidentCounts(countsData)
@@ -191,7 +192,7 @@ export default function IncidentsPage() {
         const sa = SEVERITY_ORDER[a.severity] ?? 9
         const sb = SEVERITY_ORDER[b.severity] ?? 9
         if (sa !== sb) return sa - sb
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        return parseServerDate(b.created_at).getTime() - parseServerDate(a.created_at).getTime()
       })
       setIncidents(sorted)
       setIncidentCounts(countsData)
@@ -413,7 +414,7 @@ export default function IncidentsPage() {
                       <span className="incidents-row-time">
                         {relativeTime(incident.created_at)}
                         <span className="incidents-row-time-abs">
-                          {new Date(incident.created_at).toLocaleString([], {
+                          {parseServerDate(incident.created_at).toLocaleString([], {
                             month: "short",
                             day: "numeric",
                             hour: "2-digit",

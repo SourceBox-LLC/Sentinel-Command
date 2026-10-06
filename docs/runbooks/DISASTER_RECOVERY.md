@@ -152,7 +152,7 @@ for:
    back and the one that covers "the cluster is gone". Check them with
    `fly volumes list -a sentinel-postgres` and
    `fly volumes snapshots list <volume-id>`.
-2. **`backend/scripts/backup_db.sh` — the portable secondary.** Runs
+2. **`scripts/backup_db.sh` — the portable secondary.** Runs
    `pg_dump --format=custom` (compressed; restorable *selectively* with
    `pg_restore`, not just all-or-nothing), verifies the result by
    reading its table of contents back with `pg_restore --list`,
@@ -203,9 +203,8 @@ for:
 A scheduled GitHub Action runs daily (09:17 UTC, plus manual
 `workflow_dispatch`):
 
-1. Executes `bash /app/scripts/backup_db.sh` on the Fly machine (note:
-   the Dockerfile copies `backend/` to `/app/`, so scripts live at
-   `/app/scripts/`, **not** `/app/backend/scripts/`). It runs *on the
+1. Executes `bash /app/scripts/backup_db.sh` on the Fly machine (the
+   Dockerfile copies the repo's `scripts/` to `/app/scripts/`). It runs *on the
    machine* so `DATABASE_URL` never has to be copied into GitHub
    secrets. Dumps land in `/data/backups` with 14-day pruning.
 2. **Off-platform copy** — if the `BACKUP_ENCRYPTION_KEY` repo secret is
@@ -239,7 +238,7 @@ change one workflow, change the other.
 
 ## Restore procedure
 
-`backend/scripts/restore_db.sh` makes this executable. It **verifies the
+`scripts/restore_db.sh` makes this executable. It **verifies the
 dump is readable before touching anything**, dumps the current database
 to a `pre-restore-<stamp>.dump` rollback point, then restores with
 `pg_restore --clean --if-exists`.
@@ -317,9 +316,9 @@ between its 30-minute pushes, so there is no redundancy left to trade
 away. The conclusion survives the reason changing, on stronger grounds:
 
 `sentinel_sync` holds a **mirror**, not a source of truth. Every row in
-it was pushed from a self-hosted operator's local SQLite, which remains
-authoritative, and `push_pending_changes` only advances its cursors on
-confirmed success. Losing this database entirely costs one sync cycle;
+it was pushed from a self-hosted operator's own database, which remains
+authoritative, and the push only advances its cursors on confirmed
+success. Losing this database entirely costs one sync cycle;
 the operators re-push. A dump job would be a second copy of data the
 cluster snapshot already holds, of data that is itself already a copy.
 
@@ -354,17 +353,30 @@ only in-flight HLS segments and the local copies of dumps.
 
 Everything above is about **this** hosted deployment — Postgres on a
 managed cluster, backed up by snapshots plus `backup_db.sh`. A
-self-hosted operator has none of that: they run **SQLite** (the
-`DATABASE_URL` default), on their own hardware, with no Fly volume, no
-S3 bucket, and no backup cron. Their recovery story is the **cloud
-data-sync tier**, and it's a different procedure.
+self-hosted operator has none of that: they run **their own Postgres** —
+the repo's `docker-compose.yml` brings one up beside the dashboard — on
+their own hardware, with no Fly volume, no S3 bucket, and no backup cron.
+Their recovery story is the **cloud data-sync tier**, and it's a different
+procedure.
 
-> Note the asymmetry this creates: the `pg_dump`-based scripts above are
-> hosted-only and do not apply to a self-hosted install. Since 2026-09
-> the Docker image no longer carries the `sqlite3` CLI either — nothing
-> in the hosted deployment reads a SQLite file any more. The Python
-> `sqlite3` module is stdlib and untouched, so a self-hosted run of this
-> same codebase works exactly as before.
+> A self-hosted install is on SQLite (the default) or on Postgres. The
+> `pg_dump`-based scripts above apply to a self-hosted **Postgres**
+> install as they do to the hosted one. A **SQLite** install is one file:
+> back it up by copying `sentinel.db` with the service stopped, or live
+> with `sqlite3 sentinel.db ".backup out.db"` (which is safe under WAL;
+> a plain `cp` of a live database is not). `scripts/backup_db.sh` refuses
+> a `sqlite://` URL and says so.
+>
+> A `sentinel.db` created by the last Python release opens as it is: the
+> SQLite migration is the schema those models produced, and every
+> statement in it is `IF NOT EXISTS`.
+>
+> The `pg_dump` scripts reach a compose-run database the same way they
+> reach any other, which is worth writing down because it is the backup
+> cron a self-hoster did not have before:
+>
+>     docker compose exec db pg_dump -U sentinel sentinel > backup.sql
+>     docker compose exec -T db psql -U sentinel sentinel < backup.sql
 
 **Who this applies to:** `AUTH_PROVIDER=local` installs whose licence
 has the data-sync entitlement (`sync_enabled`). Without that
@@ -387,19 +399,26 @@ values. Deliberately **not** mirrored:
 ### Procedure
 
 ```bash
-cd backend
+# `sentinel-restore-from-cloud` is a second binary shipped in the image
+# and built from the same crate, so it reads the same DATABASE_URL and
+# the same licence settings the app does. On a deployed machine it is on
+# PATH; from a checkout it is `cargo run --bin sentinel-restore-from-cloud --`.
 
 # 1. What's actually up there? Also the quickest way to confirm sync
 #    was working — do this BEFORE you need it, not during.
-uv run python scripts/restore_from_cloud.py --list
+sentinel-restore-from-cloud --list
 
 # 2. See what would be written, without touching the database.
-uv run python scripts/restore_from_cloud.py --dry-run
+sentinel-restore-from-cloud --dry-run
 
 # 3. Restore. Creates the schema itself, so this works on a machine
 #    that has never started the app.
-uv run python scripts/restore_from_cloud.py
+sentinel-restore-from-cloud
 ```
+
+> It replaced `backend/scripts/restore_from_cloud.py` when the web tier
+> was rewritten in Rust. Same flags, same non-destructive default, same
+> exit codes — and the same two things it cannot bring back.
 
 Then start the app and re-register each camera node to issue fresh API
 keys.
@@ -447,12 +466,12 @@ the half that a snapshot restore can't prove.
 
    ```bash
    DATABASE_URL=postgresql://postgres:drill@127.0.0.1:15499/drill \
-     bash backend/scripts/restore_db.sh <dump> --yes
+     bash scripts/restore_db.sh <dump> --yes
    ```
 
 4. Verify content, not just table count: row counts on a core table, and
    that Boolean columns still carry `default false` (the dialect trap
-   that `test_dialect_portability.py` guards):
+   that ADR 0001's 2026-09-07 update describes):
 
    ```bash
    psql postgresql://postgres:drill@127.0.0.1:15499/drill -c \

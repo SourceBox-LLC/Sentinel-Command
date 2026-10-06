@@ -1,0 +1,102 @@
+{
+ "_comment": "Mutations for src/plans.rs, scored by plan_run.sh. See mutate.py.",
+ "restart_rust": false,
+ "harness": [
+  [
+   "tests/differential/plan_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "a scheduled cancellation is not entitled",
+   "file": "src/plans.rs",
+   "old": "                if period_end > now {",
+   "new": "                if false {"
+  },
+  {
+   "name": "period_end is always read as seconds",
+   "file": "src/plans.rs",
+   "old": "    let seconds = if val > 1e12 { val / 1000.0 } else { val };",
+   "new": "    let seconds = val;"
+  },
+  {
+   "name": "period_end is always read as milliseconds",
+   "file": "src/plans.rs",
+   "old": "    let seconds = if val > 1e12 { val / 1000.0 } else { val };",
+   "new": "    let seconds = val / 1000.0;"
+  },
+  {
+   "name": "the last active item wins instead of the first",
+   "file": "src/plans.rs",
+   "old": "        if status == Some(\"active\") {\n            return Some(slug.to_string());\n        }",
+   "new": "        if status == Some(\"active\") {\n            entitled_canceled = Some(slug.to_string());\n            continue;\n        }"
+  },
+  {
+   "name": "a later canceled item overwrites an earlier one",
+   "file": "src/plans.rs",
+   "old": "        if status == Some(\"canceled\") && entitled_canceled.is_none() {",
+   "new": "        if status == Some(\"canceled\") {"
+  },
+  {
+   "name": "a cached paid plan still goes live",
+   "file": "src/plans.rs",
+   "old": "    if PAID_PLAN_SLUGS.contains(&cached.as_str()) {\n        return cached;\n    }",
+   "new": "    if false {\n        return cached;\n    }"
+  },
+  {
+   "name": "a failed lookup downgrades the org",
+   "file": "src/plans.rs",
+   "old": "        return non_empty_or_free(cached);\n    };",
+   "new": "        return \"free_org\".to_string();\n    };"
+  },
+  {
+   "name": "an empty slug is read as an entitlement",
+   "file": "src/plans.rs",
+   "old": "        let Some(slug) = slug.filter(|s| !s.is_empty()) else {",
+   "new": "        let Some(slug) = slug else {"
+  },
+  {
+   "name": "an unknown slug is renamed to free_org",
+   "file": "src/plans.rs",
+   "old": "            return Some(slug.to_string());",
+   "new": "            return Some(if [\"pro\",\"pro_plus\",\"self_host\",\"free_org\"].contains(&slug) { slug.to_string() } else { \"free_org\".to_string() });"
+  },
+  {
+   "name": "the grace window is measured in hours",
+   "file": "src/plans.rs",
+   "old": "    if age > chrono::Duration::days(PAYMENT_GRACE_DAYS) {",
+   "new": "    if age > chrono::Duration::hours(PAYMENT_GRACE_DAYS) {"
+  },
+  {
+   "name": "an unparseable past-due timestamp tightens caps",
+   "file": "src/plans.rs",
+   "old": "        return cache_effective(org_id, nominal);\n    };\n\n    let age =",
+   "new": "        return cache_effective(org_id, \"free_org\".to_string());\n    };\n\n    let age ="
+  },
+  {
+   "name": "a naive timestamp is not read as UTC",
+   "file": "src/plans.rs",
+   "old": "    chrono::NaiveDateTime::parse_from_str(&normalised, \"%Y-%m-%dT%H:%M:%S%.f\")\n        .ok()\n        .map(|naive| naive.and_utc())",
+   "new": "    None"
+  },
+  {
+   "name": "the past-due flag is ignored entirely",
+   "file": "src/plans.rs",
+   "old": "        == \"true\";\n    if !past_due {",
+   "new": "        == \"true\";\n    if true {"
+  },
+  {
+   "name": "unknown plans get pro limits instead of free",
+   "file": "src/plans.rs",
+   "old": "        _ => PlanLimits {\n            max_cameras: 5,",
+   "new": "        _ => PlanLimits {\n            max_cameras: 25,"
+  },
+  {
+   "name": "a past-due org with no timestamp is tightened",
+   "file": "src/plans.rs",
+   "old": "    if past_due_at.is_empty() {\n        // Flagged with no timestamp",
+   "new": "    if false {\n        // Flagged with no timestamp",
+   "equivalent": "removing the empty-string check sends \"\" to parse_past_due_at, which returns None, and the unparseable branch also keeps the nominal plan \u2014 Python's two branches coincide the same way (`if not past_due_at` vs `fromisoformat('')` raising ValueError). No input distinguishes them."
+  }
+ ]
+}

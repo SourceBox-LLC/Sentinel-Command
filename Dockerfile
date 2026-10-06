@@ -71,35 +71,111 @@ RUN if [ -n "$CLERK_PUBLISHABLE_KEY" ]; then \
       echo "Clerk key: no build arg set — falling back to committed .env.production"; \
     fi
 
+# The auth provider, which is ALSO a build-time constant.
+#
+# `frontend/src/auth/index.jsx` reads `import.meta.env.VITE_AUTH_PROVIDER`
+# once at module load, so the choice between Clerk's UI and the local
+# login page is baked into the bundle — setting AUTH_PROVIDER=local on the
+# container changes the backend and leaves the dashboard asking Clerk to
+# sign in a user the backend has never heard of.
+#
+# That is exactly what the first docker-compose.yml shipped. Its login was
+# "verified" with curl against the API, which the bundle is not involved
+# in; the page itself would have been a Clerk sign-in over a local-auth
+# server. Named without the VITE_ prefix for the reason given above, and
+# APPENDED, because the Clerk block may already have written this file.
+ARG AUTH_PROVIDER=""
+RUN if [ "$AUTH_PROVIDER" = "local" ]; then \
+      printf 'VITE_AUTH_PROVIDER=local\n' >> .env.production.local; \
+      echo "Auth provider: local (self-hosted bundle)"; \
+    else \
+      echo "Auth provider: clerk (default)"; \
+    fi
+
 # Build React app (outputs to /frontend/dist/)
 RUN npm run build
 
 # ============================================================
-# Stage 2: Backend Runtime (FastAPI)
+# Stage 2: Build the Rust binaries (web tier, agent, operator tools)
 # ============================================================
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+# Pinned to the toolchain this was developed and tested against rather
+# than `latest`: a compiler bump is a change to the artefact, and it
+# should be a deliberate one made when someone is watching.
+FROM rust:1.98-bookworm AS backend-builder
+
+WORKDIR /build
+
+# Manifests first, so a source-only change does not re-resolve and
+# re-download the dependency graph. `src/` is faked just deeply enough
+# for `cargo build` to have something to compile — the real sources
+# replace it on the next COPY and the dependency layer stays cached.
+COPY backend-rs/Cargo.toml backend-rs/Cargo.lock ./
+RUN mkdir -p src/bin \
+    && echo 'fn main() {}' > src/main.rs \
+    && echo '' > src/lib.rs \
+    && echo 'fn main() {}' > src/bin/hash_password.rs \
+    && echo 'fn main() {}' > src/bin/restore_from_cloud.rs \
+    && echo 'fn main() {}' > src/bin/agent.rs \
+    && cargo build --release 2>/dev/null || true
+
+# The real thing. `migrations/` and `assets/` are both compiled IN —
+# `sqlx::migrate!` embeds the SQL and `api/docs.rs` embeds the harvested
+# OpenAPI document — so they are build inputs, not runtime files, and
+# forgetting either is a compile error rather than a 500 in production.
+COPY backend-rs/src ./src
+COPY backend-rs/migrations ./migrations
+COPY backend-rs/migrations-sqlite ./migrations-sqlite
+COPY backend-rs/assets ./assets
+# The 46 email templates are `include_str!`d by src/email_templates.rs, so
+# they are a build input like the two above. They used to live under
+# backend/app/ and be read from disk at runtime, which is how the image
+# came to ship without them at all for one commit: no COPY, no error, and
+# every notification email failing at render time in production. Embedding
+# them makes a missing file a compile error instead.
+COPY backend-rs/templates ./templates
+COPY backend-rs/tests ./tests
+COPY backend-rs/examples ./examples
+# Touched so cargo does not trust the fake sources' timestamps.
+#
+# TWO builds, because the database driver is chosen at compile time
+# (src/db.rs): PostgreSQL, the default, and `--features sqlite`. Only the
+# two binaries that open the database differ — the agent and the password
+# tool are built once. Both builds write `target/release/sentinel-command`,
+# so the first is moved out of the way before the second runs.
+#
+# The second build recompiles this crate and sqlx's driver and reuses
+# everything else, so it costs far less than the first.
+RUN touch src/main.rs src/lib.rs && cargo build --release --locked \
+    && mkdir -p /out \
+    && for bin in sentinel-command sentinel-agent sentinel-hash-password sentinel-restore-from-cloud; do \
+         strip "target/release/$bin" && cp "target/release/$bin" /out/; \
+       done \
+    && cargo build --release --locked --features sqlite \
+         --bin sentinel-command --bin sentinel-restore-from-cloud \
+    && for bin in sentinel-command sentinel-restore-from-cloud; do \
+         strip "target/release/$bin" && cp "target/release/$bin" "/out/$bin-sqlite"; \
+       done
+
+# ============================================================
+# Stage 3: Runtime
+# ============================================================
+# Debian rather than a distroless or Alpine base for one concrete
+# reason, not habit: postgresql-client-18 is REQUIRED by
+# scripts/backup_db.sh and restore_db.sh and by every documented recovery
+# path in docs/runbooks/. Version 18 specifically, from PGDG rather than
+# Debian: pg_dump REFUSES to dump a server whose major version is newer
+# than its own, and bookworm ships client 15 against an 18.x server.
+# Verified directly against this cluster. Bump this pin whenever the
+# cluster's major version moves.
+#
+# There was a second reason until the agent was ported: the `agent`
+# process group was Python, so this was `uv:python3.12-bookworm-slim` and
+# carried an interpreter and 99 packages for that group alone. Both
+# groups are Rust binaries now and there is no Python in this image.
+FROM debian:bookworm-slim
 
 WORKDIR /app
 
-# Install system dependencies.
-#   curl               — health checks / debugging.
-#   postgresql-client  — REQUIRED by scripts/backup_db.sh + restore_db.sh
-#                        (pg_dump/pg_restore/psql) and by the ON_CALL
-#                        runbook's manual recovery commands. Without it
-#                        the scheduled backup workflow and every
-#                        documented recovery path fail on the live
-#                        machine.
-#
-# Version 18 specifically, from PGDG rather than Debian: pg_dump REFUSES
-# to dump a server whose major version is newer than its own ("aborting
-# because of server version mismatch"), and bookworm ships client 15
-# against our 18.x server. Verified directly — client 15 fails on this
-# exact server. Bump this pin whenever the cluster's major version moves.
-#
-# The sqlite3 CLI was here until 2026-09 for the SQLite-era backup
-# scripts. The hosted database is Postgres now and nothing in this image
-# reads a SQLite file; the Python sqlite3 module (stdlib, no apt package)
-# is untouched, so a self-hosted SQLite run of this codebase still works.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates gnupg \
     && install -d /usr/share/postgresql-common/pgdg \
@@ -112,43 +188,44 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get purge -y gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency files and install Python packages
-# Note: pyproject.toml goes to /app/pyproject.toml (not /app/backend/)
-# This ensures uv creates the venv at /app/.venv
-COPY backend/pyproject.toml backend/uv.lock* ./
-RUN uv sync --frozen --no-dev
+# ── The binaries ─────────────────────────────────────────────────────
+#
+# `sentinel-command` is the `app` process group and `sentinel-agent` the
+# `agent` one — Fly gives one image per app and differs the groups only
+# by command. The other two are operator tools, on PATH for
+# `fly ssh console -C …` and `docker compose run`.
+COPY --from=backend-builder /out/ /usr/local/bin/
+#
+# `-sqlite` twins of the two that open the database. Nobody has to name
+# them: `sentinel-command` looks at DATABASE_URL and, given a sqlite://
+# URL, replaces itself with `sentinel-command-sqlite` (and the reverse).
+# Which database is in use is a matter of that one variable, as it was
+# for the Python tier.
 
-# Copy backend application code to /app (so app module is at /app/app/)
-COPY backend ./
-
-# Copy frontend build output to /app/static (where main.py expects it)
-# main.py: static_dir = Path(__file__).parent.parent / "static"
-# __file__ = /app/app/main.py, parent = /app/app, parent.parent = /app
-# So static_dir = /app/static
+# The React build. `/app/static` is where SPA serving looks by default
+# (`STATIC_DIR`), the same path main.py used, so nothing about the
+# frontend deploy changed.
 COPY --from=frontend-builder /frontend/dist ./static
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
+# The operator shell scripts, and the two the install routes serve.
+# `SCRIPTS_DIR` defaults to /app/scripts, which is where these land —
+# `GET /install.sh` and `/mcp-setup.{sh,ps1}` read them off disk, so a
+# missing copy here is a 500 on the route a new CameraNode fetches
+# first.
+COPY scripts ./scripts
 
-# Expose FastAPI port
+ENV STATIC_DIR=/app/static
+ENV SCRIPTS_DIR=/app/scripts
+
 EXPOSE 8000
 
-# Run FastAPI directly using the venv created during build
-# Working directory is /app, so app.main:app resolves to /app/app/main.py
-# Note: uv sync creates .venv at /app/.venv
+# `[processes]` in fly.toml OVERRIDES this for both groups, so the `app`
+# command there must stay in sync with this line. The agent is
+# `/usr/local/bin/sentinel-agent`, from this same image. It is here for a plain
+# `docker run` and for anyone reading the image.
 #
-# --forwarded-allow-ips="*" tells uvicorn to trust the X-Forwarded-Proto
-# (and friends) header from any source. Required because we're behind
-# Fly's edge proxy: without this, uvicorn defaults to trusting only
-# 127.0.0.1, ignores the "https" forwarded scheme, and any FastAPI
-# redirect (e.g. /mcp -> /mcp/ for the mounted MCP app) is emitted as
-# http:// instead of https://. Strict HTTPS clients like mcp-remote
-# refuse the HTTPS->HTTP downgrade and the request fails with
-# "Unexpected content type: text/html". "*" is safe here because Fly's
-# private network ensures only their edge can reach this container.
-# --no-access-log: at 20 segment-pushes/s/node plus ~2 req/s per live
-# viewer, uvicorn's per-request access line is a measurable slice of the
-# single shared CPU and drowns the app's structured logs in Fly's
-# ingest. Request-id app logging (request_context.py) already covers
-# the forensic need.
-CMD ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-keep-alive", "65", "--forwarded-allow-ips=*", "--no-access-log"]
+# Note what is no longer needed: uvicorn's `--forwarded-allow-ips=*`,
+# which existed so the MCP mount redirect would emit https rather than
+# http behind Fly's edge. The Rust tier reads X-Forwarded-Proto directly
+# in `app.rs::mcp_redirect`, and there is no access log to disable.
+CMD ["/usr/local/bin/sentinel-command"]

@@ -1,0 +1,7 @@
+TRIGGER: the operator manually invoked a Sentinel run with a custom prompt.
+
+The operator's prompt appears verbatim below this brief. Treat it as the
+primary instruction. Use the tools as needed to fulfill what they asked.
+If they're vague ("check everything"), do a sensible sweep: list_cameras
+and view_camera on each in scope, then summarize. Only file an incident
+if you see something worth flagging.

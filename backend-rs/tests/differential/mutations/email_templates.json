@@ -1,0 +1,163 @@
+{
+ "_comment": "Mutations for the email template renderer. The Jinja templates themselves are shared with the Python — there is one copy on disk and both stacks load it — so what can drift is everything around them: which files escape, how they escape, and the two Python string methods minijinja does not have. The corpus in tests/fixtures/email_corpus.json is the only harness that can see any of it; the outbox rows these strings become are compared column by column by the write differential, so a render that differs by one entity is a real difference.",
+ "restart_rust": false,
+ "env": {},
+ "harness": [
+  [
+   "tests/differential/unit_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "the escaper escapes the slash",
+   "_why": "minijinja's own escaper does. Every dashboard link in an email is full of slashes.",
+   "file": "src/email_templates.rs",
+   "old": "            '\\'' => out.push_str(\"&#39;\"),\n            '\"' => out.push_str(\"&#34;\"),\n            _ => out.push(ch),",
+   "new": "            '\\'' => out.push_str(\"&#39;\"),\n            '\"' => out.push_str(\"&#34;\"),\n            '/' => out.push_str(\"&#x2f;\"),\n            _ => out.push(ch),"
+  },
+  {
+   "name": "the escaper writes the apostrophe in hex",
+   "file": "src/email_templates.rs",
+   "old": "            '\\'' => out.push_str(\"&#39;\"),",
+   "new": "            '\\'' => out.push_str(\"&#x27;\"),"
+  },
+  {
+   "name": "the escaper writes the quote as a named entity",
+   "file": "src/email_templates.rs",
+   "old": "            '\"' => out.push_str(\"&#34;\"),",
+   "new": "            '\"' => out.push_str(\"&quot;\"),"
+  },
+  {
+   "name": "the generic body escapes like markupsafe",
+   "_why": "The fallback body calls html.escape, not markupsafe.escape — the two disagree on the apostrophe and nothing else. Pins that they really are different functions.",
+   "file": "src/email_templates.rs",
+   "old": "            '\\'' => out.push_str(\"&#x27;\"),",
+   "new": "            '\\'' => out.push_str(\"&#39;\"),"
+  },
+  {
+   "name": "a safe value is escaped on output",
+   "file": "src/email_templates.rs",
+   "old": "    let text = if state.auto_escape() == AutoEscape::Html && !value.is_safe() {",
+   "new": "    let text = if state.auto_escape() == AutoEscape::Html {"
+  },
+  {
+   "name": "the escape filter escapes an already-escaped value",
+   "file": "src/email_templates.rs",
+   "old": "    if value.is_safe() {\n        value\n    } else {\n        JValue::from_safe_string(markupsafe_escape(&value.to_string()))\n    }",
+   "new": "    JValue::from_safe_string(markupsafe_escape(&value.to_string()))"
+  },
+  {
+   "name": "the text templates escape too",
+   "_why": "Autoescape is per file by the inner extension; a text body showing &amp; would be wrong.",
+   "file": "src/email_templates.rs",
+   "old": "        if name.contains(\".html.\") || name.ends_with(\".html\") {\n            AutoEscape::Html\n        } else {\n            AutoEscape::None\n        }",
+   "new": "        let _ = name;\n        AutoEscape::Html"
+  },
+  {
+   "name": "replace takes only the first occurrence",
+   "file": "src/email_templates.rs",
+   "old": "                _ => text.replace(old, new),",
+   "new": "                _ => text.replacen(old, new, 1),"
+  },
+  {
+   "name": "replace ignores its count",
+   "file": "src/email_templates.rs",
+   "old": "            Ok(JValue::from(match count {\n                Some(count) if count >= 0 => text.replacen(old, new, count as usize),\n                _ => text.replace(old, new),\n            }))",
+   "new": "            let _ = count;\n            Ok(JValue::from(text.replace(old, new)))"
+  },
+  {
+   "name": "split caps at the wrong number",
+   "_why": "Python's maxsplit counts splits; splitn counts fields.",
+   "file": "src/email_templates.rs",
+   "old": "                    text.splitn(max as usize + 1, sep).map(JValue::from).collect()",
+   "new": "                    text.splitn(max as usize, sep).map(JValue::from).collect()"
+  },
+  {
+   "name": "split drops its empty fields",
+   "file": "src/email_templates.rs",
+   "old": "                _ => text.split(sep).map(JValue::from).collect(),",
+   "new": "                _ => text.split(sep).filter(|part| !part.is_empty()).map(JValue::from).collect(),"
+  },
+  {
+   "name": "trim_blocks is off",
+   "file": "src/email_templates.rs",
+   "old": "    env.set_trim_blocks(true);",
+   "new": "    env.set_trim_blocks(false);"
+  },
+  {
+   "name": "lstrip_blocks is off",
+   "file": "src/email_templates.rs",
+   "old": "    env.set_lstrip_blocks(true);",
+   "new": "    env.set_lstrip_blocks(false);"
+  },
+  {
+   "name": "the subject keeps an embedded CRLF",
+   "_why": "A camera name is operator-controlled and an incident title is agent-written; an embedded \\r\\nBcc: is a header injection the day a provider forwards subjects to SMTP raw.",
+   "file": "src/email_templates.rs",
+   "old": "    let subject = subject.trim().replace('\\r', \"\").replace('\\n', \" \");",
+   "new": "    let subject = subject.trim().to_string();"
+  },
+  {
+   "name": "the subject is not trimmed",
+   "file": "src/email_templates.rs",
+   "old": "    let subject = subject.trim().replace('\\r', \"\").replace('\\n', \" \");",
+   "new": "    let subject = subject.replace('\\r', \"\").replace('\\n', \" \");"
+  },
+  {
+   "name": "the dashboard url keeps its trailing slash",
+   "file": "src/email_templates.rs",
+   "old": "    let dash = dashboard_url.trim_end_matches('/');",
+   "new": "    let dash = dashboard_url;"
+  },
+  {
+   "name": "meta is never parsed",
+   "file": "src/email_templates.rs",
+   "old": "        self.meta_json\n            .as_deref()\n            .filter(|raw| !raw.is_empty())",
+   "new": "        return Map::new();\n        #[allow(unreachable_code)]\n        self.meta_json\n            .as_deref()\n            .filter(|raw| !raw.is_empty())"
+  },
+  {
+   "name": "a meta blob that is not an object is used anyway",
+   "file": "src/email_templates.rs",
+   "old": "            .and_then(|value| match value {\n                Value::Object(map) => Some(map),\n                _ => None,\n            })",
+   "new": "            .and_then(|value| match value {\n                Value::Object(map) => Some(map),\n                other => Some(Map::from_iter([(\"value\".to_string(), other)])),\n            })",
+   "equivalent": "A list or a scalar reads as an empty mapping either way as far as the templates go — none of them reads a key called `value`, so wrapping the blob instead of dropping it changes no byte. The observable half of this branch is covered by `meta is never parsed`."
+  },
+  {
+   "name": "the warning colour is the healthy one",
+   "file": "src/email_templates.rs",
+   "old": "        \"warning\" => \"#f59e0b\",",
+   "new": "        \"warning\" => \"#22c55e\","
+  },
+  {
+   "name": "an error is not coloured like a critical",
+   "file": "src/email_templates.rs",
+   "old": "        \"critical\" | \"error\" => \"#ef4444\",",
+   "new": "        \"critical\" => \"#ef4444\","
+  },
+  {
+   "name": "the layout is skipped",
+   "file": "src/email_templates.rs",
+   "old": "    let body_html = render_or(\"_layout.html.j2\", layout_ctx, || body_inner.clone());",
+   "new": "    let _ = layout_ctx;\n    let body_html = body_inner.clone();"
+  },
+  {
+   "name": "the generic text body omits the link",
+   "file": "src/email_templates.rs",
+   "old": "    if let Some(link) = notif.link.as_deref().filter(|link| !link.is_empty()) {\n        parts.push(String::new());\n        parts.push(format!(\"Open: {dashboard_url}{link}\"));\n    }",
+   "new": "    let _ = dashboard_url;"
+  },
+  {
+   "name": "the generic text body links an empty path",
+   "_why": "Python tests `if notif.link`, so the empty string is as absent as None.",
+   "file": "src/email_templates.rs",
+   "old": "    if let Some(link) = notif.link.as_deref().filter(|link| !link.is_empty()) {",
+   "new": "    if let Some(link) = notif.link.as_deref() {"
+  },
+  {
+   "name": "the generic html body does not escape",
+   "file": "src/email_templates.rs",
+   "old": "        html_escape(&notif.title),\n        html_escape(&notif.body)",
+   "new": "        notif.title.clone(),\n        notif.body.clone()"
+  }
+ ]
+}

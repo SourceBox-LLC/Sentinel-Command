@@ -10,6 +10,7 @@ import UpgradeModal from "../components/UpgradeModal.jsx"
 import NodeStorageBar from "../components/NodeStorageBar.jsx"
 import CameraRecordingControls from "../components/CameraRecordingControls.jsx"
 import HelpTooltip from "../components/HelpTooltip.jsx"
+import { parseServerDate } from "../utils/time.js"
 
 // Module-level constant: ~418 IANA zone names.  Rebuilding this array
 // (and its 418 <option> children) inside render meant every re-render
@@ -43,7 +44,7 @@ const TIMEZONE_OPTIONS =
 
 function formatRelativeTime(dateString) {
   if (!dateString) return ""
-  const date = new Date(dateString)
+  const date = parseServerDate(dateString)
   const now = new Date()
   const diffMs = now - date
   const diffMins = Math.floor(diffMs / 60000)

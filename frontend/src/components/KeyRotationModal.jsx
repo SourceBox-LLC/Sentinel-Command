@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { parseServerDate } from "../utils/time.js"
 
 function KeyRotationModal({ isOpen, onClose, node, onRotate }) {
   const [loading, setLoading] = useState(false)
@@ -74,7 +75,7 @@ function KeyRotationModal({ isOpen, onClose, node, onRotate }) {
               {node?.key_rotated_at && (
                 <div className="info-row">
                   <span className="info-label">Last rotated:</span>
-                  <span className="info-value">{new Date(node.key_rotated_at).toLocaleString()}</span>
+                  <span className="info-value">{parseServerDate(node.key_rotated_at).toLocaleString()}</span>
                 </div>
               )}
             </div>

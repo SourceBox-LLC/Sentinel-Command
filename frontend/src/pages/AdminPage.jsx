@@ -9,6 +9,7 @@ import MotionEventsPanel from "../components/MotionEventsPanel.jsx"
 import AdminKpiStrip from "../components/AdminKpiStrip.jsx"
 import AdminTabs from "../components/AdminTabs.jsx"
 import { BarList, DailyActivityChart } from "../components/AdminCharts.jsx"
+import { parseServerDate } from "../utils/time.js"
 
 const API_URL = import.meta.env.VITE_API_URL || ""
 
@@ -513,7 +514,7 @@ function AdminPage() {
                   {logs.map(log => (
                     <tr key={log.id}>
                       <td className="timestamp">
-                        {new Date(log.accessed_at).toLocaleString()}
+                        {parseServerDate(log.accessed_at).toLocaleString()}
                       </td>
                       <td>{log.camera_id}</td>
                       <td className="user-id">{log.user_email || log.user_id.substring(0, 8) + "..."}</td>
@@ -763,7 +764,7 @@ function AdminPage() {
                     return (
                       <tr key={log.id} className={rowClass}>
                         <td className="timestamp">
-                          {new Date(log.timestamp).toLocaleString()}
+                          {parseServerDate(log.timestamp).toLocaleString()}
                         </td>
                         <td>
                           {isKeyEvent ? (

@@ -17,6 +17,7 @@ const TestHlsPage = lazy(() => import("./pages/TestHlsPage.jsx"))
 const McpPage = lazy(() => import("./pages/McpPage.jsx"))
 const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage.jsx"))
 const IncidentsPage = lazy(() => import("./pages/IncidentsPage.jsx"))
+const SentinelPage = lazy(() => import("./pages/SentinelPage.jsx"))
 const PricingPage = lazy(() => import("./pages/PricingPage.jsx"))
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage.jsx"))
 
@@ -217,6 +218,17 @@ function App() {
               <RequireAdmin>
                 <IncidentsPage />
               </RequireAdmin>
+            }
+          />
+          {/* Sentinel AI: view-level, like its API — members see the
+              configuration and run history; the page disables editing
+              and "Run now" for them, which the server refuses anyway. */}
+          <Route
+            path="/sentinel"
+            element={
+              <RequireOrg>
+                <SentinelPage />
+              </RequireOrg>
             }
           />
           <Route

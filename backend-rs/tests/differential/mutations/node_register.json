@@ -1,0 +1,216 @@
+{
+ "_comment": "Mutations for the CameraNode registration and heartbeat slice. These two routes carry more branching than anything ported so far \u2014 a version gate, a camera reconciliation, a debounced alert and a recording map \u2014 and none of it was ever compared before, because both were proxied: the differential was running Python against Python and scoring it green. The filter is this slice's own cases; a full sweep is 702 cases. The plan-cap half lives in node_register_cap.json, against the Clerk-mode pair, because it is unreachable under the local auth these tiers run.",
+ "restart_rust": true,
+ "env": {
+  "DIFF_ONLY": "register:|heartbeat:"
+ },
+ "harness": [
+  [
+   "tests/differential/write_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "the port default is dropped",
+   "_why": "`Field(8080, ...)` on an Optional[int] applies its default when the key is ABSENT, which is every register a node sends that does not mention a port. Treating absent as None leaves the column alone instead of setting 8080 \u2014 and this is exactly what the first run of this slice got wrong, on seventeen cases at once.",
+   "file": "src/api/node_register.rs",
+   "old": "    let http_port = match body.get(\"http_port\") {\n        None => Some(8080),",
+   "new": "    let http_port = match body.get(\"http_port\") {\n        None => None,"
+  },
+  {
+   "name": "the returned key is decoded as UTF-8",
+   "_why": "Starlette decodes header bytes as latin-1. `node_secret` hands the key back to the node, and a lossy UTF-8 decode replaces any high byte with U+FFFD \u2014 handing back a key that will not authenticate.",
+   "file": "src/api/node_register.rs",
+   "old": "    let api_key_text: String = key.iter().map(|&b| b as char).collect();",
+   "new": "    let api_key_text: String = String::from_utf8_lossy(&key).to_string();"
+  },
+  {
+   "name": "the version is persisted before the gate",
+   "_why": "The heartbeat raises out of the 426 with nothing committed, so the version columns it assigned roll back. Writing them first leaves a refused node looking like it reported successfully. Registration is the opposite \u2014 its error recorder commits \u2014 and a port that treats both the same is wrong on one of them.",
+   "file": "src/api/node_register.rs",
+   "old": "    // The version columns are written only once the gate passes.",
+   "new": "    sqlx::query(\n        \"UPDATE camera_nodes SET node_version = $1, version_checked_at = $2, updated_at = $2\n          WHERE id = $3\",\n    )\n    .bind(&stored_version)\n    .bind(now)\n    .bind(node.id)\n    .execute(&state.pool)\n    .await?;\n    // The version columns are written only once the gate passes."
+  },
+  {
+   "name": "an absent version stores 0.0.0",
+   "_why": "`version_check[\"parsed\"] if data.node_version else None`. A node too old to report a version must leave the column NULL, not claim to be running 0.0.0 \u2014 the dashboard tells those apart.",
+   "file": "src/api/node_register.rs",
+   "old": "    let stored_version = node_version.as_ref().map(|_| parsed.clone());",
+   "new": "    let stored_version = Some(parsed.clone());"
+  },
+  {
+   "name": "zero free bytes is treated as a full disk",
+   "_why": "CameraNode reports disk_free_bytes = 0 when it could not identify the disk, which Python's `not free_bytes` catches along with None. Reading it as a genuine zero alerts every containerised node that it is 100% full.",
+   "file": "src/api/node_register.rs",
+   "old": "    if free == 0 || total <= 0 {\n        return;\n    }",
+   "new": "    if total <= 0 {\n        return;\n    }"
+  },
+  {
+   "name": "the disk-low anchor is never cleared",
+   "_why": "Crossing back under the threshold clears the debounce so the next crossing alerts at once. Leaving it set means a node that recovers and fills again stays silent for up to six hours.",
+   "file": "src/api/node_register.rs",
+   "old": "        if let Err(err) = crate::settings::set(&state.pool, &node.org_id, &key, \"\").await {\n            tracing::error!(error = %err, \"failed to clear disk-low debounce\");\n        }\n        return;",
+   "new": "        return;"
+  },
+  {
+   "name": "the disk-low debounce is ignored",
+   "file": "src/api/node_register.rs",
+   "old": "            if (now - parsed.naive).num_seconds() < DISK_LOW_REEMIT_SECONDS {\n                return;\n            }",
+   "new": "            if false {\n                return;\n            }"
+  },
+  {
+   "name": "a malformed disk anchor blocks the alert",
+   "_why": "Python catches the ValueError and falls through to emit, then overwrites the bad value. Treating a parse failure as \"recently emitted\" would let one hand-edited row silence a node's disk alerts permanently.",
+   "file": "src/api/node_register.rs",
+   "old": "        if let Ok(parsed) = crate::pydatetime::fromisoformat(&last) {\n            if (now - parsed.naive).num_seconds() < DISK_LOW_REEMIT_SECONDS {\n                return;\n            }\n        }",
+   "new": "        let Ok(parsed) = crate::pydatetime::fromisoformat(&last) else { return };\n        if (now - parsed.naive).num_seconds() < DISK_LOW_REEMIT_SECONDS {\n            return;\n        }"
+  },
+  {
+   "name": "unreported cameras are left behind",
+   "_why": "A device that is unplugged, renamed, or re-sanitised leaves its old row and its segment cache forever.",
+   "file": "src/api/node_register.rs",
+   "old": "        if reported.contains(&stale_camera_id) {\n            continue;\n        }",
+   "new": "        if true {\n            continue;\n        }"
+  },
+  {
+   "name": "the stale camera's cache is kept",
+   "_why": "The row goes and the memory does not. Nothing in the database shows it, which is why this is worth a mutation of its own.",
+   "file": "src/api/node_register.rs",
+   "old": "        state.hls.cleanup_camera(&stale_camera_id);",
+   "new": "        let _ = &stale_camera_id;",
+   "equivalent": "The write differential snapshots tables, and the segment cache is memory. hls_run.sh covers the cache, but it has no registration case \u2014 the two harnesses do not meet here."
+  },
+  {
+   "name": "an empty capability list is stored as empty",
+   "_why": "`\",\".join(caps) if caps else \"streaming\"` \u2014 an empty list is falsy in Python and takes the default.",
+   "file": "src/api/node_register.rs",
+   "old": "            Some(caps) if !caps.is_empty() => caps.join(\",\"),",
+   "new": "            Some(caps) => caps.join(\",\"),"
+  },
+  {
+   "name": "lan_streaming=False does not clear the ip",
+   "_why": "A loopback-bound node whose local_ip survives hands Home Assistant a stream URL that refuses the connection.",
+   "file": "src/api/node_register.rs",
+   "old": "    let local_ip = if lan_streaming == Some(false) {\n        None\n    } else {\n        local_ip.filter(|ip| !ip.is_empty()).or(node.local_ip)\n    };",
+   "new": "    let local_ip = local_ip.filter(|ip| !ip.is_empty()).or(node.local_ip);"
+  },
+  {
+   "name": "an absent lan_streaming clears the ip",
+   "_why": "The tri-state matters: None is an old CameraNode that does not know the field, and must keep the legacy behaviour rather than be treated as False.",
+   "file": "src/api/node_register.rs",
+   "old": "    let local_ip = if lan_streaming == Some(false) {",
+   "new": "    let local_ip = if lan_streaming != Some(true) {"
+  },
+  {
+   "name": "the cap sweep is skipped on register",
+   "_why": "The safety net for an org whose subscription webhook never arrived. Without it their flags stay stale forever, because nothing else recomputes them.",
+   "file": "src/api/node_register.rs",
+   "old": "    plans::enforce_camera_cap(&ctx, &state.pool, &org_id).await?;",
+   "new": "    let _ = &ctx;"
+  },
+  {
+   "name": "the past-due sweep runs for everyone",
+   "_why": "Gating on the flag is what keeps the happy path free \u2014 but running it always is also observably different, because it recomputes caps on every heartbeat of every org.",
+   "file": "src/api/node_register.rs",
+   "old": "    if past_due {",
+   "new": "    if true {"
+  },
+  {
+   "name": "the past-due sweep never runs",
+   "file": "src/api/node_register.rs",
+   "old": "    if past_due {",
+   "new": "    if false {"
+  },
+  {
+   "name": "a healthy camera keeps its last error",
+   "_why": "A recovered camera that still shows why it failed an hour ago is worse than one showing nothing.",
+   "file": "src/api/node_register.rs",
+   "old": "            let last_error = if matches!(update.status.as_str(), \"restarting\" | \"failed\" | \"error\")\n            {\n                update.last_error.clone()\n            } else {\n                None\n            };",
+   "new": "            let last_error = update.last_error.clone();"
+  },
+  {
+   "name": "a camera on another node is updated",
+   "_why": "The node_id filter is the tenant boundary here: a node must not be able to mark another node's cameras failed by naming them.",
+   "file": "src/api/node_register.rs",
+   "old": "            if !known.iter().any(|(id,)| *id == update.camera_id) {\n                continue;\n            }",
+   "new": "            if false {\n                continue;\n            }",
+   "equivalent": "Defence in depth, and each layer alone is sufficient: the SELECT that builds `known` filters on node_id, and so does the UPDATE's own WHERE. Removing either one is unobservable \u2014 measured, both ways \u2014 so the mutation that carries this boundary is the one below, which removes both."
+  },
+  {
+   "name": "the badge plan is resolved instead of read",
+   "_why": "Heartbeats are every thirty seconds per node, and resolve_org_plan calls Clerk for any org whose cached slug is not paid. The Setting is deliberately authoritative here.",
+   "file": "src/api/node_register.rs",
+   "old": "    let cached_plan = crate::settings::get(&state.pool, &node.org_id, \"org_plan\", Some(\"free_org\"))\n        .await\n        .unwrap_or_default()\n        .filter(|p| !p.is_empty())\n        .unwrap_or_else(|| \"free_org\".to_string());",
+   "new": "    let cached_plan = plans::resolve_org_plan(&plan_ctx(&state), &node.org_id).await;"
+  },
+  {
+   "name": "disabled cameras are reported org-wide",
+   "_why": "Scoped to this node's cameras. A sibling node's suspended camera in the list tells this node to stop pushing a stream it does not own.",
+   "file": "src/api/node_register.rs",
+   "old": "           FROM cameras WHERE node_id = $1 ORDER BY id",
+   "new": "           FROM cameras WHERE org_id = (SELECT org_id FROM camera_nodes WHERE id = $1) ORDER BY id"
+  },
+  {
+   "name": "continuous recording is ignored",
+   "file": "src/api/node_register.rs",
+   "old": "    if continuous {\n        return true;\n    }",
+   "new": "    if false {\n        return true;\n    }"
+  },
+  {
+   "name": "a schedule with no times records always",
+   "file": "src/api/node_register.rs",
+   "old": "    let (Some(start), Some(end)) = (start, end) else {\n        return false;\n    };",
+   "new": "    let (Some(start), Some(end)) = (start, end) else {\n        return true;\n    };"
+  },
+  {
+   "name": "an unparseable window records always",
+   "_why": "Python's int() raises and the caller catches it, which means do-not-record. Recording on a parse failure is the failure mode that fills a disk.",
+   "file": "src/api/node_register.rs",
+   "old": "    let (Some(start_minutes), Some(end_minutes)) = (hhmm_minutes(start), hhmm_minutes(end)) else {\n        return false;\n    };",
+   "new": "    let (Some(start_minutes), Some(end_minutes)) = (hhmm_minutes(start), hhmm_minutes(end)) else {\n        return true;\n    };"
+  },
+  {
+   "name": "a bad timezone raises instead of falling back",
+   "_why": "An exception here would 500 every heartbeat for that org and stop its recording entirely, which is why Python falls back to UTC.",
+   "file": "src/api/node_register.rs",
+   "old": "            crate::zoneinfo::load(\"UTC\").unwrap_or(jiff::tz::TimeZone::UTC)",
+   "new": "            crate::zoneinfo::load(\"America/Los_Angeles\").unwrap_or(jiff::tz::TimeZone::UTC)"
+  },
+  {
+   "name": "the key check runs before validation",
+   "_why": "FastAPI validates the body before the handler body runs at all, so a request with no key AND a bad body answers 422, not 401. Checking the key first inverts that on every malformed request.",
+   "file": "src/api/node_register.rs",
+   "old": "    let cameras = parse_camera_reports(&mut errors, &body);",
+   "new": "    if key.is_empty() {\n        return Err(ApiError::unauthorized(\"API key required\"));\n    }\n    let cameras = parse_camera_reports(&mut errors, &body);"
+  },
+  {
+   "name": "nested errors report at the top level",
+   "_why": "The loc is what the SPA reads to highlight a field. `[\"body\", \"cameras\", 0, \"name\"]` and `[\"body\", \"name\"]` are different messages to a user and different summaries in the envelope.",
+   "file": "src/query.rs",
+   "old": "        full.extend_from_slice(&self.prefix);\n        full.extend_from_slice(loc);",
+   "new": "        full.extend_from_slice(loc);"
+  },
+  {
+   "name": "a non-object camera reports as dict_type",
+   "_why": "Pydantic distinguishes a model from a dict: a model would also accept an arbitrary object and read attributes off it, and says so.",
+   "file": "src/api/node_register.rs",
+   "old": "            errors.model_attributes_type_at(&[json!(\"cameras\"), json!(i)], item);\n            continue;\n        }\n        let report = errors.within",
+   "new": "            errors.dict_type_at(\"cameras\", i, item);\n            continue;\n        }\n        let report = errors.within"
+  },
+  {
+   "name": "the update does not scope to the node",
+   "_why": "This is the tenant boundary, not the pre-check above it. Without the node_id in the WHERE, a node can mark any camera in any org failed by naming it \u2014 the camera_id is the only other term, and it is global.",
+   "file": "src/api/node_register.rs",
+   "old": "                  WHERE camera_id = $4 AND node_id = $5\",",
+   "new": "                  WHERE camera_id = $4 AND $5 = $5\",",
+   "equivalent": "The other half of the same pair: the pre-check above filters to this node's cameras, so the UPDATE never runs for another node's row even with its WHERE clause gone."
+  },
+  {
+   "name": "neither layer scopes to the node",
+   "_why": "The tenant boundary itself. camera_id is globally unique but not node-scoped, so with both filters gone a node can mark any camera in any org failed by naming it. Spans both because either one alone holds the line.",
+   "file": "src/api/node_register.rs",
+   "old": "            \"SELECT camera_id FROM cameras WHERE camera_id = ANY($1) AND node_id = $2\",\n        )\n        .bind(&ids)\n        .bind(node.id)\n        .fetch_all(&state.pool)\n        .await?;\n        // A camera named twice in one heartbeat is applied twice, in\n        // order \u2014 the Python loops over the reports, not the rows.\n        for update in &camera_updates {\n            if !known.iter().any(|(id,)| *id == update.camera_id) {\n                continue;\n            }\n            let last_error = if matches!(update.status.as_str(), \"restarting\" | \"failed\" | \"error\")\n            {\n                update.last_error.clone()\n            } else {\n                None\n            };\n            sqlx::query(\n                \"UPDATE cameras SET status = $1, last_seen = $2, last_error = $3, updated_at = $2\n                  WHERE camera_id = $4 AND node_id = $5\",",
+   "new": "            \"SELECT camera_id FROM cameras WHERE camera_id = ANY($1) AND $2 = $2\",\n        )\n        .bind(&ids)\n        .bind(node.id)\n        .fetch_all(&state.pool)\n        .await?;\n        // A camera named twice in one heartbeat is applied twice, in\n        // order \u2014 the Python loops over the reports, not the rows.\n        for update in &camera_updates {\n            if !known.iter().any(|(id,)| *id == update.camera_id) {\n                continue;\n            }\n            let last_error = if matches!(update.status.as_str(), \"restarting\" | \"failed\" | \"error\")\n            {\n                update.last_error.clone()\n            } else {\n                None\n            };\n            sqlx::query(\n                \"UPDATE cameras SET status = $1, last_seen = $2, last_error = $3, updated_at = $2\n                  WHERE camera_id = $4 AND $5 = $5\","
+  }
+ ]
+}

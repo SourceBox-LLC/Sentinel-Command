@@ -1,0 +1,116 @@
+{
+ "_comment": "Mutations for the node-key routes, node create and wipe-logs. See mutate.py.",
+ "restart_rust": true,
+ "env": {
+  "DIFF_ONLY": "validate:|codec:|rotate|create node|wipe logs"
+ },
+ "harness": [
+  [
+   "tests/differential/write_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "node key hashed as raw bytes",
+   "file": "src/api/node_writes.rs",
+   "old": "    let decoded: String = header.iter().map(|&b| b as char).collect();\n    Sha256::digest(decoded.as_bytes())",
+   "new": "    Sha256::digest(header)"
+  },
+  {
+   "name": "validate does not record the failed key",
+   "file": "src/api/node_writes.rs",
+   "old": "        record_node_register_error(\n            &state.pool,\n            id,\n            \"Invalid API key \u2014 rotate the key in Settings and re-run the installer.\",\n        )\n        .await;",
+   "new": ""
+  },
+  {
+   "name": "validate treats 0 as a node id",
+   "file": "src/api/node_writes.rs",
+   "old": "    if !pyrepr::truthy(&node_id) {",
+   "new": "    if node_id.is_null() {"
+  },
+  {
+   "name": "a list node_id 500s",
+   "file": "src/api/node_writes.rs",
+   "old": "            if !psycopg_can_bind(items) {",
+   "new": "            if true {"
+  },
+  {
+   "name": "a list node_id message uses JSON spelling",
+   "file": "src/api/node_writes.rs",
+   "old": "                pyrepr::str_value(&node_id)",
+   "new": "                node_id.to_string()"
+  },
+  {
+   "name": "codec 500s on a non-object body",
+   "file": "src/api/node_writes.rs",
+   "old": "        Ok(Value::Object(map)) => map,\n        _ => return Err(ApiError::bad_request(\"Invalid request body\")),",
+   "new": "        Ok(Value::Object(map)) => map,\n        Ok(_) => return Err(ApiError::internal(\"x\")),\n        _ => return Err(ApiError::bad_request(\"Invalid request body\")),"
+  },
+  {
+   "name": "codec length counts bytes",
+   "file": "src/api/node_writes.rs",
+   "old": "        let Some(n) = pyrepr::len(v) else {",
+   "new": "        let Some(n) = v.as_str().map(str::len).or(pyrepr::len(v)) else {"
+  },
+  {
+   "name": "codec ignores a list holding a newline",
+   "file": "src/api/node_writes.rs",
+   "old": "        Ok(pyrepr::contains_str(v, \"\\n\").unwrap_or(false)",
+   "new": "        Ok(v.as_str().is_some_and(|s| s.contains('\\n'))"
+  },
+  {
+   "name": "the sanitiser never upgrades a negative level",
+   "file": "src/api/node_writes.rs",
+   "old": "    if value < 0x14 {",
+   "new": "    if (0..0x14).contains(&value) {"
+  },
+  {
+   "name": "the node inherits a codec it already has",
+   "file": "src/api/node_writes.rs",
+   "old": "    if node_video.as_deref().unwrap_or(\"\").is_empty() {",
+   "new": "    if true {"
+  },
+  {
+   "name": "an empty node codec is treated as set",
+   "file": "src/api/node_writes.rs",
+   "old": "    if node_video.as_deref().unwrap_or(\"\").is_empty() {",
+   "new": "    if node_video.is_none() {"
+  },
+  {
+   "name": "empty audio is stored rather than defaulted",
+   "file": "src/api/node_writes.rs",
+   "old": "        a if !pyrepr::truthy(&a) => \"mp4a.40.2\".to_string(),",
+   "new": "        Value::Null => \"mp4a.40.2\".to_string(),\n        Value::String(s) if s.is_empty() => s,\n        a if !pyrepr::truthy(&a) => \"mp4a.40.2\".to_string(),"
+  },
+  {
+   "name": "rotate stores the wrong hash",
+   "file": "src/api/node_writes.rs",
+   "old": "    .bind(node_key_hash(new_key.as_bytes()))\n    .bind(rotated_at)",
+   "new": "    .bind(node_key_hash(b\"not-the-key\"))\n    .bind(rotated_at)"
+  },
+  {
+   "name": "rotate is not org-scoped",
+   "file": "src/api/node_writes.rs",
+   "old": "sqlx::query_as(\"SELECT id, name FROM camera_nodes WHERE node_id = $1 AND org_id = $2 LIMIT 1\")",
+   "new": "sqlx::query_as(\"SELECT id, name FROM camera_nodes WHERE node_id = $1 AND $2 = $2 LIMIT 1\")"
+  },
+  {
+   "name": "create uses the empty name instead of the default",
+   "file": "src/api/node_writes.rs",
+   "old": "            .filter(|n| !n.is_empty())\n",
+   "new": ""
+  },
+  {
+   "name": "create writes no http_port",
+   "file": "src/api/node_writes.rs",
+   "old": "VALUES ($1, $2, $3, $4, 'pending', 8080, $5, $5)",
+   "new": "VALUES ($1, $2, $3, $4, 'pending', NULL, $5, $5)"
+  },
+  {
+   "name": "wipe deletes every org's logs",
+   "file": "src/api/node_writes.rs",
+   "old": "sqlx::query(\"DELETE FROM stream_access_logs WHERE org_id = $1\")",
+   "new": "sqlx::query(\"DELETE FROM stream_access_logs WHERE $1 = $1\")"
+  }
+ ]
+}

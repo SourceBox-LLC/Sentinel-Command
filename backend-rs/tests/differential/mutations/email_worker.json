@@ -1,0 +1,180 @@
+{
+ "_comment": "Mutations for the Resend transport and the outbox drain. Scored against email_run.sh, a probe pair rather than HTTP cases: the worker has no HTTP surface, and reaching it through the write differential would mean waiting on the very timer the harness pins out of the way everywhere else.",
+ "restart_rust": false,
+ "harness": [
+  [
+   "tests/differential/email_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "the tick is stamped only after a successful drain",
+   "file": "src/email_worker.rs",
+   "_why": "Stamped at the START so an empty outbox still counts as alive. Stamping later makes a healthy worker with nothing to send look wedged to the health probe, which is the one thing that probe exists to distinguish.",
+   "old": "    stamp_tick();\n\n    let mut summary = TickSummary::default();",
+   "new": "    let mut summary = TickSummary::default();"
+  },
+  {
+   "name": "stuck sending rows are never reclaimed",
+   "file": "src/email_worker.rs",
+   "_why": "A worker that died mid-send leaves the row wedged in `sending` forever, and nothing else in the system moves it.",
+   "old": "          WHERE status = 'sending' AND last_attempt_at < $1",
+   "new": "          WHERE status = 'sending' AND last_attempt_at < $1 AND false"
+  },
+  {
+   "name": "the reclaim window is ignored",
+   "file": "src/email_worker.rs",
+   "_why": "Sixty seconds gives a send in flight time to finish. Reclaiming immediately would put a row that is mid-send back in the queue and rely entirely on the idempotency key to stop a duplicate.",
+   "old": "    let cutoff = now_naive() - chrono::Duration::seconds(SENDING_RECLAIM_AGE_SECONDS);",
+   "new": "    let cutoff = now_naive() + chrono::Duration::seconds(SENDING_RECLAIM_AGE_SECONDS);"
+  },
+  {
+   "name": "the batch is not ordered by created_at",
+   "file": "src/email_worker.rs",
+   "_why": "Oldest first. Without the order, which mail goes out under a backlog is whatever the planner returns.",
+   "old": "          ORDER BY created_at\n          LIMIT $1",
+   "new": "          LIMIT $1"
+  },
+  {
+   "name": "the batch size is ignored",
+   "file": "src/email_worker.rs",
+   "_why": "The batch bounds how long one tick holds the loop. Draining everything turns a backlog into one very long tick.",
+   "old": "    .bind(ctx.config.email_worker_batch_size)",
+   "new": "    .bind(10_000i64)"
+  },
+  {
+   "name": "rows are not claimed before sending",
+   "file": "src/email_worker.rs",
+   "_why": "Flipping the batch to `sending` first is what stops a second worker picking up the same rows, and what the reclaim path keys on.",
+   "old": "    sqlx::query(\"UPDATE email_outbox SET status = 'sending', last_attempt_at = $1 WHERE id = ANY($2)\")",
+   "new": "    sqlx::query(\"SELECT $1::timestamp, $2::int[]\")"
+  },
+  {
+   "name": "the suppression list is not consulted",
+   "file": "src/email_worker.rs",
+   "_why": "Checked before the API call: it saves a round trip, and re-sending to an address Resend already suppressed is what dings a sender's reputation for every other kind of mail.",
+   "old": "    if let Some((reason,)) = suppressed {",
+   "new": "    if let Some((reason,)) = None::<(Option<String>,)> {\n        let _ = suppressed;"
+  },
+  {
+   "name": "suppression is matched case-sensitively",
+   "file": "src/email_worker.rs",
+   "_why": "Addresses are stored lowercased and arrive in whatever case the user typed. A case-sensitive match silently sends to an address that is on the list.",
+   "old": "            .bind(row.recipient_email.to_lowercase())",
+   "new": "            .bind(row.recipient_email.clone())"
+  },
+  {
+   "name": "the idempotency key includes the attempt",
+   "file": "src/email_worker.rs",
+   "_why": "Every retry of one row must share a key, or the idempotency buys nothing: a retry of an attempt that secretly succeeded delivers a second copy.",
+   "old": "    let idempotency_key = format!(\"outbox-{}\", row.id);",
+   "new": "    let idempotency_key = format!(\"outbox-{}-{}\", row.id, row.attempts);"
+  },
+  {
+   "name": "a skipped send is treated as a failure",
+   "file": "src/email_worker.rs",
+   "_why": "The kill switch being off is not an error. Treating it as one leaves every row retrying until it hits the cap and is marked permanently failed.",
+   "old": "    if result.skipped {",
+   "new": "    if false {",
+   "equivalent": "The two arms return the same thing. `send_email` reports a skipped send as ok=true with no message id, so falling through to the `result.ok` arm yields (\"sent\", None, None) either way. The branch is redundant in Python too \u2014 it is there to say what a skip MEANS, not to change what happens \u2014 and no case can tell the two apart."
+  },
+  {
+   "name": "a failure past the cap keeps retrying",
+   "file": "src/email_worker.rs",
+   "_why": "At the cap the worker stops. Without that, a permanently bad address is retried on every tick forever.",
+   "old": "            let give_up = i64::from(attempts) >= ctx.config.email_max_attempts;",
+   "new": "            let give_up = false;"
+  },
+  {
+   "name": "a failure below the cap is terminal",
+   "file": "src/email_worker.rs",
+   "_why": "The other direction: one transient Resend 500 would permanently fail a message that a retry would have delivered.",
+   "old": "            let give_up = i64::from(attempts) >= ctx.config.email_max_attempts;",
+   "new": "            let give_up = true;"
+  },
+  {
+   "name": "the attempt counter does not advance",
+   "file": "src/email_worker.rs",
+   "_why": "It is what the cap is measured against; frozen, the cap is never reached.",
+   "old": "    let attempts = row.attempts + 1;",
+   "new": "    let attempts = row.attempts;"
+  },
+  {
+   "name": "a mid-retry failure is logged",
+   "file": "src/email_worker.rs",
+   "_why": "The audit trail records outcomes, not attempts: a row that eventually succeeds after two failures should leave one `sent` line, not three.",
+   "old": "    if status == \"failed\" && terminal == \"pending\" {\n        return;\n    }",
+   "new": "    if false {\n        return;\n    }"
+  },
+  {
+   "name": "a sent row keeps its old error",
+   "file": "src/email_worker.rs",
+   "_why": "A row that failed and then succeeded must not keep the failure text beside its message id.",
+   "old": "                        resend_message_id = $3, error = NULL",
+   "new": "                        resend_message_id = $3"
+  },
+  {
+   "name": "the summary counts attempts rather than outcomes",
+   "file": "src/email_worker.rs",
+   "_why": "A mid-retry row is in neither bucket: it is counted in the tick it settles in. Counting it as failed double-counts a message that is going to be delivered.",
+   "old": "            \"sent\" => summary.sent += 1,",
+   "new": "            \"sent\" => summary.sent += 1,\n            \"pending\" => summary.failed += 1,"
+  },
+  {
+   "name": "the kill switch is ignored",
+   "file": "src/email.rs",
+   "_why": "Defence in depth: a row can reach the outbox while the switch is off, and the transport refuses it rather than trusting the producer to have checked.",
+   "old": "    if !config.email_enabled {",
+   "new": "    if false {"
+  },
+  {
+   "name": "an unconfigured transport is retried",
+   "file": "src/email.rs",
+   "_why": "A missing key is operator misconfiguration, not an outage \u2014 distinct from a 5xx precisely because retrying cannot fix it.",
+   "old": "            error: Some(\n                \"resend_unconfigured: RESEND_API_KEY or EMAIL_FROM_ADDRESS missing\".to_string(),\n            ),",
+   "new": "            error: Some(\"resend_transient\".to_string()),"
+  },
+  {
+   "name": "a missing message id is treated as success",
+   "file": "src/email.rs",
+   "_why": "Without an id the eventual bounce or complaint webhook cannot be matched back to this row, so the correlation is silently lost.",
+   "old": "        return EmailSendResult {\n            ok: false,\n            error: Some(\"resend_no_message_id\".to_string()),\n            ..Default::default()\n        };",
+   "new": "        return EmailSendResult {\n            ok: true,\n            error: Some(\"resend_no_message_id\".to_string()),\n            ..Default::default()\n        };"
+  },
+  {
+   "name": "the SDK's error class is not reproduced",
+   "file": "src/email.rs",
+   "_why": "The class name is stored verbatim in two tables. A generic string there loses the distinction between a validation error, a rate limit and an outage \u2014 which is what an operator triages on.",
+   "old": "fn sdk_error(code: i64, error_type: &str, message: &str) -> String {\n    format!(\"{}: {message}\", resend_error_class(code, error_type))",
+   "new": "fn sdk_error(code: i64, error_type: &str, message: &str) -> String {\n    let _ = resend_error_class(code, error_type);\n    format!(\"ResendError: {message}\")"
+  },
+  {
+   "name": "a successful status with a bad body is not downgraded to 500",
+   "file": "src/email.rs",
+   "_why": "The SDK keeps the status when it is 4xx or 5xx and substitutes 500 when it looked successful, which is why a 200 with an empty body is an ApplicationError and a 502 with HTML is a bare ResendError.",
+   "old": "    let error_code = if status >= 400 { status } else { 500 };",
+   "new": "    let error_code = status;"
+  },
+  {
+   "name": "the body's own statusCode is ignored",
+   "file": "src/email.rs",
+   "_why": "Resend has answered 200 with an error document. The body's statusCode is consulted precisely for that case.",
+   "old": "    let effective = if status >= 400 { Some(status) } else { body_status };",
+   "new": "    let effective = if status >= 400 { Some(status) } else { None };"
+  },
+  {
+   "name": "the content type is not checked",
+   "file": "src/email.rs",
+   "_why": "A CDN or proxy answering HTML is not a Resend error document, and parsing it as one would report whatever JSON fragment happened to be inside.",
+   "old": "    if !content_type.contains(\"application/json\") {",
+   "new": "    if false {"
+  },
+  {
+   "name": "the idempotency key is sent as a message header",
+   "file": "src/email.rs",
+   "_why": "It has to be an HTTP header to Resend. As a message header it becomes an SMTP header on the outgoing mail and Resend delivers a fresh copy on every retry \u2014 silently, which is what makes it worth a mutation.",
+   "old": "        .header(\"Idempotency-Key\", idempotency_key)",
+   "new": "        .header(\"X-Entity-Ref-ID\", idempotency_key)"
+  }
+ ]
+}

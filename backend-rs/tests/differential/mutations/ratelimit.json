@@ -1,0 +1,53 @@
+{
+ "_comment": "Mutations for rate-limit placement, scored by ratelimit_order.py. See mutate.py.",
+ "restart_rust": true,
+ "harness": [
+  [
+   "tests/differential/ratelimit_order_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "create group never checks its limit",
+   "file": "src/api/groups.rs",
+   "old": "    let icon_field = errors.optional_string(&body, \"icon\", 10);\n    errors.finish()?;\n    rate.check().await?;\n",
+   "new": "    let icon_field = errors.optional_string(&body, \"icon\", 10);\n    errors.finish()?;\n"
+  },
+  {
+   "name": "notifications spends before validating its body",
+   "file": "src/api/groups.rs",
+   "old": "    let node = errors.bool_with_default(&body, \"node_transition_notifications\", true);\n    errors.finish()?;\n    rate.check().await?;\n",
+   "new": "    let node = errors.bool_with_default(&body, \"node_transition_notifications\", true);\n    rate.check().await?;\n    errors.finish()?;\n"
+  },
+  {
+   "name": "login spends before validating its body",
+   "file": "src/api/local_auth.rs",
+   "old": "    let password = errors.required_string(&body, \"password\", usize::MAX);\n    errors.finish()?;\n    rate.check().await?;",
+   "new": "    let password = errors.required_string(&body, \"password\", usize::MAX);\n    rate.check().await?;\n    errors.finish()?;"
+  },
+  {
+   "name": "install.sh never checks its limit",
+   "file": "src/api/install.rs",
+   "old": "pub async fn install_sh(rate: PerMinute<30>, State(state): State<AppState>) -> Response {\n    if let Err(err) = rate.check().await {\n        return err.into_response();\n    }\n",
+   "new": "pub async fn install_sh(rate: PerMinute<30>, State(state): State<AppState>) -> Response {\n    let _ = &rate;\n"
+  },
+  {
+   "name": "group assign spends before its query is validated",
+   "file": "src/api/groups.rs",
+   "old": "        None => None,\n    };\n    q.finish()?;\n    rate.check().await?;\n",
+   "new": "        None => None,\n    };\n    rate.check().await?;\n    q.finish()?;\n"
+  },
+  {
+   "name": "evidence blob spends before its path is validated",
+   "file": "src/api/incidents.rs",
+   "old": "    let incident_id = path_int(\"incident_id\", &incident_id)?;\n    let evidence_id = path_int(\"evidence_id\", &evidence_id)?;\n    rate.check().await?;\n",
+   "new": "    rate.check().await?;\n    let incident_id = path_int(\"incident_id\", &incident_id)?;\n    let evidence_id = path_int(\"evidence_id\", &evidence_id)?;\n"
+  },
+  {
+   "name": "the limiter ignores its budget",
+   "file": "src/ratelimit.rs",
+   "old": "            .check(&self.bucket, LIMIT, Duration::from_secs(WINDOW_SECS))",
+   "new": "            .check(&self.bucket, LIMIT + 1, Duration::from_secs(WINDOW_SECS))"
+  }
+ ]
+}

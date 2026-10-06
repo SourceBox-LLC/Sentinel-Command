@@ -12,7 +12,7 @@ Start here if you're new. Every repository, every deployed service, and the path
 
 ## [SENTINEL_AGENT.md](SENTINEL_AGENT.md) — the AI agent
 
-How the Sentinel AI agent works, how to run one yourself, and every environment variable it reads. It lives in this repo at `backend/app/sentinel_agent/` and deploys as the `agent` process group of the `sentinel-command` Fly app — not, as older references may suggest, a separate repository or app.
+How the Sentinel AI agent works, how to run one yourself, and every environment variable it reads. It lives in this repo at `backend-rs/src/agent/` and deploys as the `agent` process group of the `sentinel-command` Fly app — not, as older references may suggest, a separate repository or app.
 
 ## Architecture Decision Records (`docs/adr/`)
 
@@ -39,9 +39,9 @@ sections, command-oriented, not narrative.
   do when the whole machine/volume is lost, RPO/RTO, and a rehearsal
   drill. Also covers **self-hosted** installs, whose recovery story is
   completely different — no Fly volume or S3 bucket, but a cloud
-  mirror they restore from with
-  `backend/scripts/restore_from_cloud.py`, including what that
-  deliberately does *not* bring back (node API keys, evidence blobs).
+  mirror they restore from with the `sentinel-restore-from-cloud`
+  binary, including what that deliberately does *not* bring back (node
+  API keys, evidence blobs).
 
 ## Legal templates (`docs/legal/`)
 
@@ -59,7 +59,7 @@ The rule:
 - **Reference docs state a value once.** Whichever doc owns the subject owns the number. `AGENTS.md` owns Command Center's internals; `SENTINEL_AGENT.md` owns the agent's; `ARCHITECTURE.md` owns facts that only make sense *across* services (like the Fly proxy's bind budget, which is why two services scale to zero and two don't). Everything else links.
 - **ARCHITECTURE.md carries structure, not values.** Relationships change rarely; numbers drift constantly. If you're about to add a figure there, check whether the doc that owns the subject should carry it instead.
 - **Operational docs may inline a value** where stopping to look it up would make them unusable. `LAUNCH_HANDOFF.md` saying "kill a CameraNode for >90s" is correct; it's an instruction, not a specification.
-- **Prefer pointing at code.** A value with a good comment beside it (`fly.toml`'s `[env]` block, `plans.py`) is more durable than the same value copied into prose, because the next person to change it is already looking at it.
+- **Prefer pointing at code.** A value with a good comment beside it (`fly.toml`'s `[env]` block, `plans.rs`) is more durable than the same value copied into prose, because the next person to change it is already looking at it.
 
 ## Writing new docs
 

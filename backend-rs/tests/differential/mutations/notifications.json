@@ -1,0 +1,331 @@
+{
+ "_comment": "Mutations for the notification slice: the two preference gates, the row the inbox gets, the outbox rows beside it, the agent dispatcher's gates, and the routes that emit all of it. The write differential is filtered to this slice's own cases — a full sweep is 587 cases and ten minutes, which at thirty mutations is a run nobody finishes, and only these cases can move. The unit harness carries what no route reaches yet: the motion cooldown, the transition debounce, and the schedule window.",
+ "restart_rust": true,
+ "env": {
+  "DIFF_ONLY": "file:|dispatch:|unsub:|promotion:|mint |revoke mcp|revoke agent|revoke an already-revoked agent|revoke another tenant's agent|revoke missing agent|revoke agent key,"
+ },
+ "harness": [
+  [
+   "tests/differential/write_run.sh"
+  ],
+  [
+   "tests/differential/unit_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "an unknown kind is emailed",
+   "_why": "The inbox gate defaults an unknown kind on so a new kind does not vanish; the email gate defaults it off, because a kind that silently starts mailing every org costs the sender reputation of every other kind. The two defaults are not symmetrical and a port that shared one would look right for every kind that is in the map.",
+   "file": "src/notifications.rs",
+   "old": "    let Some((_, key, default)) = EMAIL_KIND_TO_SETTING.iter().find(|(k, ..)| *k == kind) else {\n        return false;\n    };",
+   "new": "    let Some((_, key, default)) = EMAIL_KIND_TO_SETTING.iter().find(|(k, ..)| *k == kind) else {\n        return true;\n    };"
+  },
+  {
+   "name": "an unknown kind is kept out of the inbox",
+   "file": "src/notifications.rs",
+   "old": "    let Some((_, key, default)) = INBOX_KIND_TO_SETTING.iter().find(|(k, ..)| *k == kind) else {\n        return true;\n    };",
+   "new": "    let Some((_, key, default)) = INBOX_KIND_TO_SETTING.iter().find(|(k, ..)| *k == kind) else {\n        return false;\n    };"
+  },
+  {
+   "name": "the global email switch is ignored",
+   "file": "src/notifications.rs",
+   "old": "    if !config.email_enabled {\n        return false;\n    }",
+   "new": "    if false {\n        return false;\n    }",
+   "equivalent": "EMAIL_ENABLED is process configuration, and tiers.sh sets it true for both stacks so the email path is exercised at all — with the switch already on, ignoring it is a no-op. Reaching this would take a second tier pair running with it off, which would buy one branch at the cost of doubling every run."
+  },
+  {
+   "name": "a setting that is not \"true\" still enables",
+   "_why": "Exact string comparison. Anything generous here turns \"false\" into an enabled toggle.",
+   "file": "src/notifications.rs",
+   "old": "        Ok(Some(value)) => value == \"true\",",
+   "new": "        Ok(Some(value)) => value != \"false\","
+  },
+  {
+   "name": "the inbox gate also gates the email",
+   "_why": "The two are independent, and an earlier Python returned early on the inbox gate — silently killing every 'email on, inbox off' combination.",
+   "file": "src/notifications.rs",
+   "old": "    // The email side-channel, which runs whatever the inbox gate said.\n    if email_enabled(",
+   "new": "    // The email side-channel, which runs whatever the inbox gate said.\n    if persisted && email_enabled("
+  },
+  {
+   "name": "a suppressed inbox row still claims an id",
+   "_why": "`notification_id` is a soft reference; when the inbox gate is closed the notification is never inserted and its id is null.",
+   "file": "src/notifications.rs",
+   "old": "    let notification_id = persisted.then_some(row.id);",
+   "new": "    let notification_id = Some(row.id);"
+  },
+  {
+   "name": "the title is not cut to the column",
+   "file": "src/notifications.rs",
+   "old": "    let title: String = notification.title.chars().take(200).collect();",
+   "new": "    let title: String = notification.title.clone();"
+  },
+  {
+   "name": "the title is cut by bytes",
+   "_why": "`title[:200]` is characters, and the column counts characters too. Cutting bytes both truncates a non-ASCII title early and can split a character.",
+   "file": "src/notifications.rs",
+   "old": "    let title: String = notification.title.chars().take(200).collect();",
+   "new": "    let title: String = String::from_utf8_lossy(\n        &notification.title.as_bytes()[..notification.title.len().min(200)]\n    ).to_string();"
+  },
+  {
+   "name": "an empty meta is stored as an empty object",
+   "_why": "`json.dumps(meta) if meta else None` — {} is falsy in Python and stores NULL.",
+   "file": "src/notifications.rs",
+   "old": "        .filter(|meta| !is_falsy(meta))",
+   "new": "        .filter(|meta| !meta.is_null())",
+   "equivalent": "No caller in the tree passes an empty meta: every emitter either omits it or fills it. The `{}` -> NULL rule is Python truthiness applied to an argument that is always either absent or populated, so no route can reach it. `python_truthiness_decides_whether_meta_is_stored` in the unit harness pins `is_falsy` over every falsy JSON value instead."
+  },
+  {
+   "name": "an unknown audience becomes admin",
+   "_why": "Python falls through to \"all\". Falling to \"admin\" instead would hide a notification from everyone it was meant for.",
+   "file": "src/notifications.rs",
+   "old": "        \"all\" | \"admin\" => notification.audience.as_str(),\n        _ => \"all\",",
+   "new": "        \"all\" | \"admin\" => notification.audience.as_str(),\n        _ => \"admin\",",
+   "equivalent": "Every caller passes a literal 'all' or 'admin', so the fallback is defensive and unreachable over HTTP. Held by `an_unrecognised_audience_or_severity_falls_back`, which is why that test exists."
+  },
+  {
+   "name": "an unknown severity is kept",
+   "file": "src/notifications.rs",
+   "old": "        \"info\" | \"warning\" | \"error\" | \"critical\" => notification.severity.as_str(),\n        _ => \"info\",",
+   "new": "        \"info\" | \"warning\" | \"error\" | \"critical\" => notification.severity.as_str(),\n        other => other,",
+   "equivalent": "Same: every caller passes a literal from the enum. Held by the same unit test."
+  },
+  {
+   "name": "the cooldown gate applies to every kind",
+   "file": "src/notifications.rs",
+   "old": "        let send = if row.kind == \"motion\" {",
+   "new": "        let send = if true {"
+  },
+  {
+   "name": "the outbox rows are not one transaction",
+   "_why": "Python adds every row and commits once, so a row the database refuses takes the whole batch with it rather than leaving some recipients mailed and others not.",
+   "file": "src/notifications.rs",
+   "old": "        if let Err(err) = result {\n            tracing::error!(error = %err, org_id, kind = %row.kind, address, \"[Notifications] enqueue failed\");\n            return;\n        }",
+   "new": "        if let Err(err) = result {\n            tracing::error!(error = %err, org_id, kind = %row.kind, address, \"[Notifications] enqueue failed\");\n        }",
+   "equivalent": "Needs a batch where one row is refused and another is not, which needs more than one recipient — and the differential runs the local-auth tier, where `recipient_emails` returns exactly the one local admin. A single-row batch is atomic either way."
+  },
+  {
+   "name": "the motion cooldown never floors at a minute",
+   "file": "src/notifications.rs",
+   "old": "        Ok(PyInt::Small(minutes)) => minutes.max(1),",
+   "new": "        Ok(PyInt::Small(minutes)) => minutes,"
+  },
+  {
+   "name": "a corrupt cooldown disables the email",
+   "_why": "Python falls back to fifteen. Returning zero would make every motion event mail.",
+   "file": "src/notifications.rs",
+   "old": "        Err(_) => 15,\n    }\n}",
+   "new": "        Err(_) => 0,\n    }\n}"
+  },
+  {
+   "name": "the admin audience keeps every member",
+   "_why": "Node health, key audit and member events are admin-audience. This one mails an org's viewers about its security events.",
+   "file": "src/recipients.rs",
+   "old": "        if audience == \"admin\" {\n            let role = member.get(\"role\").and_then(Value::as_str).unwrap_or(\"\");\n            if !ADMIN_ROLES.contains(&role) {\n                continue;\n            }\n        }",
+   "new": "        if false {\n            continue;\n        }",
+   "equivalent": "Unreachable from the harness: the differential runs the local-auth tier, where `recipient_emails` short-circuits to the single local admin and never asks Clerk. The filter is covered by `the_admin_audience_keeps_only_admin_roles` in the unit harness, which is why that test reimplements the loop rather than going through HTTP."
+  },
+  {
+   "name": "a recipient is deduplicated case-sensitively",
+   "file": "src/recipients.rs",
+   "old": "        // Dedup folded to lower case so `Alice@Example.com` and\n        // `alice@example.com` are one recipient — but the address that\n        // goes out is the one Clerk gave, in its own casing.\n        if seen.insert(addr.to_lowercase()) {",
+   "new": "        // Dedup folded to lower case so `Alice@Example.com` and\n        // `alice@example.com` are one recipient — but the address that\n        // goes out is the one Clerk gave, in its own casing.\n        if seen.insert(addr.to_string()) {",
+   "equivalent": "Same reason: no Clerk lookup happens on the local-auth tier. Held by the same unit test, which pins that `Alice@Example.com` and `alice@example.com` are one recipient and the first casing is the one mailed."
+  },
+  {
+   "name": "a failed recipient lookup is cached",
+   "_why": "Marked equivalent at first and wrongly: the unit harness catches it. `a_failed_lookup_is_not_cached` points the lookup at a dead port and asserts nothing was written to the cache, which does not need Clerk.",
+   "file": "src/recipients.rs",
+   "old": "    let Some(addrs) = fetch_from_clerk(lookup, org_id, audience).await else {\n        return Vec::new();\n    };",
+   "new": "    let addrs = fetch_from_clerk(lookup, org_id, audience).await.unwrap_or_default();"
+  },
+  {
+   "name": "sentinel dispatches while disabled",
+   "file": "src/sentinel_dispatch.rs",
+   "old": "    if !cfg.enabled {\n        return Err(Refusal::SentinelDisabled);\n    }",
+   "new": "    if false {\n        return Err(Refusal::SentinelDisabled);\n    }"
+  },
+  {
+   "name": "the per-kind trigger flag is ignored",
+   "file": "src/sentinel_dispatch.rs",
+   "old": "    if !on {\n        return Err(Refusal::TriggerOff(field));\n    }",
+   "new": "    if false {\n        return Err(Refusal::TriggerOff(field));\n    }"
+  },
+  {
+   "name": "a camera out of scope is dispatched anyway",
+   "file": "src/sentinel_dispatch.rs",
+   "old": "    if !is_camera_in_scope(&cfg.camera_scope(), camera_id) {\n        return Err(Refusal::CameraOutOfScope);\n    }",
+   "new": "    if false {\n        return Err(Refusal::CameraOutOfScope);\n    }"
+  },
+  {
+   "name": "a camera absent from the scope is excluded",
+   "_why": "Absent means in scope, so a camera added after the scope was last saved does not silently fall out of the agent's purview.",
+   "file": "src/sentinel_dispatch.rs",
+   "old": "    !matches!(scope.get(camera_id), Some(Value::Bool(false)))",
+   "new": "    matches!(scope.get(camera_id), Some(Value::Bool(true)))"
+  },
+  {
+   "name": "the schedule window is not consulted",
+   "file": "src/sentinel_dispatch.rs",
+   "old": "    if !schedule_allows_now(state, org_id, cfg, now).await {\n        return Err(Refusal::OutsideScheduleWindow);\n    }",
+   "new": "    if false {\n        return Err(Refusal::OutsideScheduleWindow);\n    }"
+  },
+  {
+   "name": "schedule_mode off still dispatches",
+   "file": "src/sentinel_dispatch.rs",
+   "old": "        \"off\" => return false,",
+   "new": "        \"off\" => return true,"
+  },
+  {
+   "name": "an empty active-days list means every day",
+   "file": "src/sentinel_dispatch.rs",
+   "old": "    if !listed {\n        return false;\n    }",
+   "new": "    if false {\n        return false;\n    }"
+  },
+  {
+   "name": "a wrapped window is read as an empty one",
+   "_why": "22:30 to 06:15 is the night, not nothing. The daytime half keeps working, which is what makes this survivable.",
+   "file": "src/sentinel_dispatch.rs",
+   "old": "    if start < end {\n        (start..end).contains(&current)\n    } else {\n        current >= start || current < end\n    }",
+   "new": "    (start..end).contains(&current)"
+  },
+  {
+   "name": "the monthly cap is not enforced",
+   "file": "src/sentinel_dispatch.rs",
+   "old": "    if cap.saturating_sub(used) <= 0 {\n        return Err(Refusal::MonthlyCapReached);\n    }",
+   "new": "    if false {\n        return Err(Refusal::MonthlyCapReached);\n    }",
+   "equivalent": "Equivalent in outcome, not merely unreached: the check before the INSERT is the cheap path, and the recount inside the transaction is the guard. Remove the former and the row is inserted, recounted at cap+1, and rolled back — the org still gets no run. What it costs is a wasted insert, which no snapshot shows."
+  },
+  {
+   "name": "the licence gate is skipped",
+   "file": "src/sentinel_dispatch.rs",
+   "old": "    if sentinel_blocked_by_license(&license_ctx(state), &plan).await {\n        return Err(Refusal::LicenseRequired);\n    }",
+   "new": "    if false {\n        return Err(Refusal::LicenseRequired);\n    }"
+  },
+  {
+   "name": "an agent-authored incident retriggers",
+   "_why": "motion -> run -> create_incident -> incident_created -> another run, self-amplifying until the month's cap is gone with an email to every member per cycle.",
+   "file": "src/sentinel_dispatch.rs",
+   "old": "    created_by.starts_with(\"mcp\") || created_by.starts_with(\"sentinel\")",
+   "new": "    false"
+  },
+  {
+   "name": "the cap recount after the insert is dropped",
+   "_why": "The check before the insert is a read-then-write race: two dispatchers at cap-1 both pass it and the org overshoots.",
+   "file": "src/sentinel_dispatch.rs",
+   "old": "    if used > cap {\n        tx.rollback().await?;\n        tracing::info!(org_id, cap, used, \"sentinel: dispatch lost cap race\");\n        return Ok(false);\n    }",
+   "new": "    let _ = used;",
+   "equivalent": "The other half of the same pair. With the pre-check present, the recount only changes the outcome when two dispatchers pass the pre-check concurrently — a race the harness is single-threaded against. Both layers are kept because each covers what the other cannot."
+  },
+  {
+   "name": "the incident report column is left null",
+   "_why": "The model declares default=\"\", and the read path returns `self.report or \"\"` — which renders NULL and '' identically while the stored row differs.",
+   "file": "src/api/incidents.rs",
+   "old": "            (org_id, camera_id, title, summary, report, severity, status, created_by,\n             created_at, updated_at)\n         VALUES ($1, $2, $3, $4, '', $5, 'open', $6, $7, $8)",
+   "new": "            (org_id, camera_id, title, summary, report, severity, status, created_by,\n             created_at, updated_at)\n         VALUES ($1, $2, $3, $4, NULL, $5, 'open', $6, $7, $8)"
+  },
+  {
+   "name": "an empty camera id is stored as null",
+   "_why": "Python's `if body.camera_id:` skips the lookup for '' but still hands the original value to the model.",
+   "file": "src/api/incidents.rs",
+   "old": "    .bind(camera_id.as_deref())\n    .bind(&stored_title)",
+   "new": "    .bind(camera_id.as_deref().filter(|id| !id.is_empty()))\n    .bind(&stored_title)"
+  },
+  {
+   "name": "the incident severity enum is not checked",
+   "file": "src/api/incidents.rs",
+   "old": "    if !SEVERITIES.contains(&severity.as_str()) {\n        return Err(ApiError::bad_request(format!(\"Invalid severity: {severity}\")));\n    }",
+   "new": "    if false {\n        return Err(ApiError::bad_request(format!(\"Invalid severity: {severity}\")));\n    }"
+  },
+  {
+   "name": "a whitespace-only title is filed",
+   "file": "src/api/incidents.rs",
+   "old": "    if title.is_empty() {\n        return Err(ApiError::bad_request(\"title is required\"));\n    }",
+   "new": "    if false {\n        return Err(ApiError::bad_request(\"title is required\"));\n    }"
+  },
+  {
+   "name": "a foreign camera can be named on an incident",
+   "_why": "The org filter is the security control: without it an admin could attach another tenant's camera to their own incident.",
+   "file": "src/api/incidents.rs",
+   "old": "            \"SELECT camera_id FROM cameras WHERE org_id = $1 AND camera_id = $2\",",
+   "new": "            \"SELECT camera_id FROM cameras WHERE camera_id = $2 AND $1 = $1\","
+  },
+  {
+   "name": "a minted integration key has no scope mode",
+   "_why": "The handler passes scope_mode=None explicitly, and SQLAlchemy applies the column's own default=\"all\" — so the Python source says the opposite of what it stores.",
+   "file": "src/api/keys.rs",
+   "old": "         VALUES ($1, $2, $3, 'integration', 'all', NULL, false, $4)",
+   "new": "         VALUES ($1, $2, $3, 'integration', NULL, NULL, false, $4)"
+  },
+  {
+   "name": "revoking an already-revoked key writes again",
+   "_why": "SQLAlchemy emits no UPDATE when nothing changed, which the side-effect comparison counts.",
+   "file": "src/api/keys.rs",
+   "old": "    if revoked != Some(true) {",
+   "new": "    if true {",
+   "equivalent": "`mcp_api_keys` has no `updated_at`, so a second UPDATE setting `revoked = true` on a row that already has it produces a byte-identical row. The skip is there to keep the write count matching Python's, which nothing in the snapshot can see. Noted rather than dropped, because the day that table grows an onupdate column this becomes observable."
+  },
+  {
+   "name": "an MCP key id revokes on the integration surface",
+   "_why": "One table, two surfaces, split by `kind`. Crossing them is how an MCP credential gets revoked by a route that should not see it.",
+   "file": "src/api/keys.rs",
+   "old": "        \"SELECT name, revoked FROM mcp_api_keys WHERE id = $1 AND org_id = $2 AND kind = $3\",",
+   "new": "        \"SELECT name, revoked FROM mcp_api_keys WHERE id = $1 AND org_id = $2 AND $3 = $3\","
+  },
+  {
+   "name": "an agent key is revoked without its org",
+   "_why": "The org filter is the security control, not a convenience — without it any admin could revoke any org's key.",
+   "file": "src/api/sentinel.rs",
+   "old": "        \"SELECT name, revoked FROM sentinel_agent_keys WHERE id = $1 AND org_id = $2\",",
+   "new": "        \"SELECT name, revoked FROM sentinel_agent_keys WHERE id = $1 AND $2 = $2\","
+  },
+  {
+   "name": "an agent key revoke is a hard delete",
+   "_why": "Soft revoke keeps last_used_at as the forensic answer to 'when did this leaked credential last act?' and keeps the unique hash burned.",
+   "file": "src/api/sentinel.rs",
+   "old": "        sqlx::query(\"UPDATE sentinel_agent_keys SET revoked = true WHERE id = $1 AND org_id = $2\")",
+   "new": "        sqlx::query(\"DELETE FROM sentinel_agent_keys WHERE id = $1 AND org_id = $2\")"
+  },
+  {
+   "name": "the agent key stores the wrong suffix",
+   "file": "src/api/sentinel.rs",
+   "old": "        let last4: String = raw_key.chars().rev().take(4).collect::<Vec<_>>()\n            .into_iter().rev().collect();",
+   "new": "        let last4: String = raw_key.chars().take(4).collect();"
+  },
+  {
+   "name": "the agent key path skips its billing gate",
+   "_why": "This key spends money on every run, which is exactly the 'past-due orgs can read but not provision' case that dependency exists for.",
+   "file": "src/api/sentinel.rs",
+   "old": "    ModelBody(crate::auth::RequireActiveBilling(user), body): ModelBody<\n        crate::auth::RequireActiveBilling,\n    >,",
+   "new": "    ModelBody(RequireAdmin(user), body): ModelBody<RequireAdmin>,"
+  },
+  {
+   "name": "the unsubscribe link suppresses the org toggle",
+   "_why": "Tokens live in inboxes as long as the mail does, including the inbox of someone since removed from the org. v1 flipped the org-wide setting, which let any past recipient permanently disable a whole organisation's security alerts.",
+   "file": "src/api/notifications.rs",
+   "old": "            let inserted = sqlx::query(\n                \"INSERT INTO email_suppression (address, reason, source, created_at)\n                 VALUES ($1, 'unsubscribe', 'unsubscribe_link', $2)\",\n            )\n            .bind(&recipient)",
+   "new": "            let inserted = sqlx::query(\n                \"INSERT INTO email_suppression (address, reason, source, created_at)\n                 VALUES ($1, 'unsubscribe', 'unsubscribe_link', $2)\",\n            )\n            .bind(format!(\"{recipient}.other\"))"
+  },
+  {
+   "name": "an unsubscribe audit records the whole address",
+   "_why": "An audit trail should not double as an email directory.",
+   "file": "src/api/notifications.rs",
+   "old": "            format!(\"{}***@{domain}\", local.chars().take(1).collect::<String>())",
+   "new": "            format!(\"{local}@{domain}\")"
+  },
+  {
+   "name": "an already-suppressed address is inserted again",
+   "file": "src/api/notifications.rs",
+   "old": "    match existing {\n        Ok(None) => {",
+   "new": "    match existing {\n        Ok(_) => {",
+   "equivalent": "`email_suppression.address` is UNIQUE, so the duplicate INSERT is refused by the database, logged, and the final state is the same row. The lookup is there to avoid an error in the log, not to protect the table — the constraint does that."
+  },
+  {
+   "name": "an admin can request their own promotion",
+   "_why": "It would emit \"X requested admin access\" to the person who already has it, which reads as a fault.",
+   "file": "src/api/notifications.rs",
+   "old": "    if user.is_admin() {\n        return Err(ApiError::bad_request(\n            \"You're already an admin in this organization — no need to request promotion.\",\n        ));\n    }",
+   "new": "    if false {\n        return Err(ApiError::bad_request(\n            \"You're already an admin in this organization — no need to request promotion.\",\n        ));\n    }"
+  }
+ ]
+}

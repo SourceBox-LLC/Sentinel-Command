@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useNotifications } from "../hooks/useNotifications.jsx"
+import { parseServerDate } from "../utils/time.js"
 
 /**
  * Bell icon in the top-right with an unread badge and dropdown inbox.
@@ -196,7 +197,7 @@ function iconForKind(kind) {
 
 function relativeTime(iso) {
   if (!iso) return ""
-  const then = new Date(iso).getTime()
+  const then = parseServerDate(iso).getTime()
   if (Number.isNaN(then)) return ""
   const diff = Math.max(0, Date.now() - then)
   const s = Math.floor(diff / 1000)
@@ -207,7 +208,7 @@ function relativeTime(iso) {
   if (h < 24) return `${h}h ago`
   const d = Math.floor(h / 24)
   if (d < 7) return `${d}d ago`
-  return new Date(iso).toLocaleDateString()
+  return parseServerDate(iso).toLocaleDateString()
 }
 
 function BellIcon() {

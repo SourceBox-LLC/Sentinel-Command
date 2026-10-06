@@ -13,22 +13,57 @@ primary_region = "sjc"
   # now, which makes it a credential, so it lives in `fly secrets` —
   # `fly.toml` is committed to a public repository.
   #
-  # Self-hosted installs are unaffected: they get the SQLite default from
-  # app/core/config.py and the data layer branches on the URL scheme.
+  # Self-hosted installs set it themselves, to either database: a
+  # postgresql:// URL, or sqlite:///path for a single file. The driver is
+  # compiled in, so the image carries two builds and `sentinel-command`
+  # hands over to `sentinel-command-sqlite` when the URL asks for it
+  # (`db::dispatch_to_matching_build`). Unset, it is the Python tier's
+  # old default, sqlite:///./sentinel.db — which is why it must stay SET
+  # here: a hosted machine that lost this secret would start on an empty
+  # file rather than fail.
   #
   # Segment-cache ceiling MUST stay well under [[vm]].memory_mb below —
   # above physical RAM, the kernel OOM-killer fires (killing every
   # org's streams at once) long before the cache's own eviction can.
-  # 384 MiB on the 1 GiB machine leaves ~600 MiB for Python
+  # 384 MiB on the 1 GiB machine leaves ~600 MiB for the web tier
   # (~25 concurrent live cameras). Scale this and memory_mb TOGETHER.
+  #
+  # That headroom figure was measured against Python at 239 MB RSS in
+  # production. The Rust tier has now been measured too, though NOT in
+  # production — `backend-rs/tests/differential/memory_run.sh` runs both
+  # tiers on one machine over one Postgres with identical load, release
+  # binary, production cache ceilings:
+  #
+  #                                python     rust
+  #   idle, just booted            152.8 MB   14.7 MB
+  #   + 2 cameras x 60 segments    190.3 MB   60.3 MB   (~36 MB of .ts)
+  #   + 400 segment reads          190.8 MB   61.1 MB
+  #
+  # Two things to read off that. The FIXED cost is about a tenth: ~15 MB
+  # against ~153 MB, which is the ~140 MB this rewrite was justified on.
+  # And the cache itself costs the same either way — it is bytes — with
+  # Rust in fact growing slightly MORE than the data it cached (45 MB for
+  # 36 MB of segments, glibc holding freed 300 KB blocks), so none of the
+  # saving comes from the thing this variable bounds.
+  #
+  # The number therefore STAYS at 384 MiB. The comment's own bar was a
+  # production measurement and a laptop is not one; what has changed is
+  # that raising it is now an argument someone can make from evidence
+  # rather than from hope. Raise it only alongside a production RSS
+  # reading, because the failure mode of getting it wrong is the OOM
+  # killer taking every org's streams at once.
   # The database no longer shares this machine's RAM for page cache,
   # so there is a little more headroom here than there used to be.
   SEGMENT_CACHE_MAX_TOTAL_BYTES = "402653184"
 
 # This app runs TWO process groups from ONE image. Fly has no per-group
-# image, only per-group command — which is why the Sentinel AI agent
-# resolves against backend/pyproject.toml rather than carrying its own
-# dependency set.
+# image, only per-group command, so both binaries are built from one
+# crate (`backend-rs/`) and copied into one image.
+#
+# Both groups are Rust. `agent` was the last Python in this repository —
+# `python -m app.sentinel_agent`, with LiteLLM and the Python MCP SDK —
+# and is now the `sentinel-agent` binary, with rig and rmcp in their
+# place. The image no longer carries a Python runtime.
 #
 #   app   — the web tier. Owns the volume and the HLS segment cache,
 #           always-on (min_machines_running = 1 below).
@@ -53,8 +88,23 @@ primary_region = "sjc"
 # Defining [processes] overrides the Dockerfile CMD for BOTH groups, so
 # the web command below must stay in sync with that CMD.
 [processes]
-  app = "/app/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --timeout-keep-alive 65 --forwarded-allow-ips=* --no-access-log"
-  agent = "/app/.venv/bin/python -m app.sentinel_agent"
+  # The web tier is Rust now. Gone with uvicorn:
+  #
+  #   --forwarded-allow-ips=*  existed so the MCP mount redirect emitted
+  #                            https rather than http behind Fly's edge.
+  #                            The Rust tier reads X-Forwarded-Proto in
+  #                            app.rs::mcp_redirect, and there is a unit
+  #                            test for it because no differential could
+  #                            see it.
+  #   --no-access-log          there is no per-request access log to
+  #                            disable; tracing logs what the app chooses.
+  #   --workers 1              one process, many tasks.
+  #   --timeout-keep-alive 65  hyper's default keep-alive handling covers
+  #                            this; the 65s was tuned against Fly's
+  #                            60s idle timeout and axum does not hold a
+  #                            connection open past the client.
+  app = "/usr/local/bin/sentinel-command"
+  agent = "/usr/local/bin/sentinel-agent"
 
 # Still required after the Postgres migration — /data holds HLS segment
 # working files and the local backup directory. It is no longer where
@@ -131,23 +181,24 @@ primary_region = "sjc"
 # POST / is disabled whenever WEBHOOK_VERIFY_SIGNATURE is set (it
 # defaults to True, which is what production runs).
 #
-# NOT scaled to zero, despite that being this worker's obvious shape, and
-# despite it being how the agent ran as its own app. Fly's proxy waits
-# only ~8s for a machine it auto-started to bind its port, and this
-# process cannot reliably beat that: Python plus the MCP SDK plus Sentry
-# took ~7s before LiteLLM and ~10s after — so an auto-started machine got
-# declared unreachable and Command Center's wakeup came back
-# RemoteDisconnected. Measured, twice, on 2026-09-09.
+# NOT scaled to zero, despite that being this worker's obvious shape,
+# and despite the reason it was kept warm no longer holding.
 #
-# The 7s figure means this was always marginal and happened to fit; the
-# LiteLLM move only exposed it. Deferring litellm's import cut boot from
-# 16s to 10s, which was necessary but not sufficient, and trimming
-# further imports would be tuning against a proxy limit we do not
-# control and cannot test except in production.
+# The reason was boot time. Fly's proxy waits only ~8s for a machine it
+# auto-started to bind its port, and the Python agent could not beat
+# that: the interpreter plus the MCP SDK plus Sentry took ~7s before
+# LiteLLM and ~10s after, so an auto-started machine was declared
+# unreachable and Command Center's wakeup came back RemoteDisconnected.
+# Measured, twice, on 2026-09-09.
 #
-# So the agent stays warm. One shared-cpu-1x/512MB machine is ~$2/month,
-# which is noise against the LLM spend of a single run, and it removes
-# cold starts from the wakeup path entirely rather than racing them.
+# `sentinel-agent` answers /health ~40 ms after start on a laptop, so scaling
+# to zero is very likely possible again. It has NOT been switched on,
+# because the thing that failed last time was a race against a proxy
+# limit that can only be observed in production, and this file has
+# already been wrong about that race once. To try it: set
+# auto_stop_machines = "stop" and min_machines_running = 0 below, fire a
+# wakeup at a stopped machine, and check the run is claimed. One
+# shared-cpu-1x/512MB machine is ~$2/month in the meantime.
 [[services]]
   internal_port = 8080
   protocol = "tcp"
@@ -172,15 +223,14 @@ primary_region = "sjc"
   # makes wakeups fail fast rather than hang on a process that accepts TCP
   # and does nothing. It is not self-healing.
   #
-  # Safe to run against this process because the agent is async all the
-  # way down — the LLM call is `await litellm.acompletion(...)` and the MCP
-  # client is an async session, so nothing blocks the event loop during an
-  # investigation and /health keeps answering while a run is in flight. A
-  # blocking LLM call here would have made this check *cause* wakeup
-  # failures during the agent's most important work.
+  # Safe to run against this process because a drain is a spawned task:
+  # the listener keeps answering /health while a run is in flight. A
+  # drain that blocked the server would have made this check *cause*
+  # wakeup failures during the agent's most important work.
   #
-  # grace_period covers cold boot, measured at ~10s once litellm's import
-  # was deferred, with headroom.
+  # grace_period was sized for the Python agent's ~10s cold boot and is
+  # far more than the binary needs; it is left alone because a generous
+  # grace period costs nothing.
   [[services.http_checks]]
     grace_period = "30s"
     interval = "15s"
@@ -196,8 +246,10 @@ primary_region = "sjc"
   processes = ["app"]
 
 # The agent needs less than the web tier: no segment cache, no SPA, one
-# run at a time. 512 MiB comfortably holds the Python process plus the
-# base64 frames of a single investigation.
+# run at a time. 512 MiB was sized for the Python process plus the base64
+# frames of a single investigation; the binary needs a fraction of it,
+# and the frames are the part that did not shrink. Not reduced without a
+# production reading, for the same reason as the cache ceiling above.
 #
 # It bills continuously, not per run — this machine is the one kept warm
 # on purpose (auto_stop_machines = "off", min_machines_running = 1, see

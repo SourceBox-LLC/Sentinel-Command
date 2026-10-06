@@ -1,0 +1,328 @@
+{
+ "_comment": "Health-probe scenarios. Every input the probes read is supplied: uptime, the disk reading, the worker's tick age, the config flags and the licence rows. The HTTP differential cannot reach most of these \u2014 the mutator restarts the tier before every run, so the process is always inside its startup grace, and the harness environment has every optional subsystem healthy. Seventeen mutations survived a full run for that reason alone. A setting value of \"@recent\" is replaced by both probes with one hour ago: the licence grace is 72 hours, so a literal timestamp would drift out of it in three days and the scenario would quietly stop distinguishing anything.",
+ "scenarios": [
+  {
+   "name": "a healthy hosted install",
+   "uptime": 120.0,
+   "local_auth": false,
+   "email_enabled": true,
+   "tick_age": 3.0,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   }
+  },
+  {
+   "name": "a healthy self-hosted install",
+   "uptime": 120.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 3.0,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   },
+   "license_key": "harness-licence-key",
+   "settings": {
+    "sentinel_license_valid": "true",
+    "sentinel_license_last_check_reachable": "true",
+    "sentinel_license_last_check_at": "2026-09-01T00:00:00",
+    "sentinel_license_last_ok_at": "2026-09-01T00:00:00"
+   }
+  },
+  {
+   "name": "the disk at the warn threshold",
+   "uptime": 120.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 3.0,
+   "disk": {
+    "total": 100000000000,
+    "free": 20000000000,
+    "used": 80000000000
+   }
+  },
+  {
+   "name": "the disk one byte under warn",
+   "uptime": 120.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 3.0,
+   "disk": {
+    "total": 100000000000,
+    "free": 20100000000,
+    "used": 79949999999
+   }
+  },
+  {
+   "name": "the disk at the critical threshold",
+   "uptime": 120.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 3.0,
+   "disk": {
+    "total": 100000000000,
+    "free": 5000000000,
+    "used": 95000000000
+   }
+  },
+  {
+   "name": "the disk full",
+   "uptime": 120.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 3.0,
+   "disk": {
+    "total": 100000000000,
+    "free": 0,
+    "used": 100000000000
+   }
+  },
+  {
+   "name": "a reserved filesystem, where free and used do not sum to total",
+   "uptime": 120.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 3.0,
+   "disk": {
+    "total": 100000000000,
+    "free": 10000000000,
+    "used": 85000000000
+   }
+  },
+  {
+   "name": "a disk whose size is zero",
+   "uptime": 120.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 3.0,
+   "disk": {
+    "total": 0,
+    "free": 0,
+    "used": 0
+   }
+  },
+  {
+   "name": "a percentage that needs rounding",
+   "uptime": 120.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 3.0,
+   "disk": {
+    "total": 3000000000,
+    "free": 1000000000,
+    "used": 1234567890
+   }
+  },
+  {
+   "name": "email off",
+   "uptime": 120.0,
+   "local_auth": true,
+   "email_enabled": false,
+   "tick_age": null,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   }
+  },
+  {
+   "name": "never ticked, inside the grace",
+   "uptime": 5.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": null,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   }
+  },
+  {
+   "name": "never ticked, past the grace",
+   "uptime": 45.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": null,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   }
+  },
+  {
+   "name": "never ticked, exactly at the grace",
+   "uptime": 30.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": null,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   }
+  },
+  {
+   "name": "a tick just inside the stale window",
+   "uptime": 300.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 59.5,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   }
+  },
+  {
+   "name": "a tick exactly at the stale window",
+   "uptime": 300.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 60.0,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   }
+  },
+  {
+   "name": "a stale tick",
+   "uptime": 300.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 90.0,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   }
+  },
+  {
+   "name": "a tick age that needs rounding",
+   "uptime": 300.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 12.3456,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   }
+  },
+  {
+   "name": "a licence with no key",
+   "uptime": 120.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 3.0,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   },
+   "license_key": ""
+  },
+  {
+   "name": "a licence that has never checked in, inside the grace",
+   "uptime": 5.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 3.0,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   },
+   "license_key": "harness-licence-key",
+   "settings": {
+    "sentinel_license_valid": "true"
+   }
+  },
+  {
+   "name": "a licence that has never checked in, past the grace",
+   "uptime": 120.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 3.0,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   },
+   "license_key": "harness-licence-key",
+   "settings": {
+    "sentinel_license_valid": "true"
+   }
+  },
+  {
+   "name": "a licence coasting on grace while the service is unreachable",
+   "uptime": 120.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 3.0,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   },
+   "license_key": "harness-licence-key",
+   "settings": {
+    "sentinel_license_valid": "true",
+    "sentinel_license_last_check_reachable": "false",
+    "sentinel_license_last_check_at": "@recent",
+    "sentinel_license_last_ok_at": "@recent"
+   }
+  },
+  {
+   "name": "a licence explicitly denied by a reachable service",
+   "uptime": 120.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 3.0,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   },
+   "license_key": "harness-licence-key",
+   "settings": {
+    "sentinel_license_valid": "false",
+    "sentinel_license_last_check_reachable": "true",
+    "sentinel_license_last_check_at": "2026-09-01T00:00:00"
+   }
+  },
+  {
+   "name": "a licence checked in but never once valid",
+   "uptime": 120.0,
+   "local_auth": true,
+   "email_enabled": true,
+   "tick_age": 3.0,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   },
+   "license_key": "harness-licence-key",
+   "settings": {
+    "sentinel_license_last_check_reachable": "true",
+    "sentinel_license_last_check_at": "2026-09-01T00:00:00"
+   }
+  },
+  {
+   "name": "a hosted install reports the licence disabled",
+   "uptime": 120.0,
+   "local_auth": false,
+   "email_enabled": true,
+   "tick_age": 3.0,
+   "disk": {
+    "total": 100000000000,
+    "free": 60000000000,
+    "used": 35000000000
+   },
+   "license_key": "harness-licence-key"
+  }
+ ]
+}

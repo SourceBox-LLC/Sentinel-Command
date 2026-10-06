@@ -1,7 +1,7 @@
 name: Test & Deploy
 
-# One workflow, one app, one image. Command Center and the Sentinel AI
-# agent both ship from here: the image carries both, and fly.toml's
+# One workflow, one app, one image, one crate. Command Center and the
+# Sentinel AI agent both ship from here: the image carries both binaries, and fly.toml's
 # [processes] block runs them as two process groups on separate machines.
 # There is no separate agent workflow or agent app any more.
 #
@@ -10,6 +10,16 @@ name: Test & Deploy
 #
 #   Backend tests (sqlite) · Backend tests (postgres) ·
 #   Frontend audit + build
+#
+# All three still exist, by exact name, which is what branch protection
+# matches on. This workflow also produces `Backend tests (no database)`;
+# it is not required today and nothing waits on it. There is no agent
+# job: the agent is a binary in the same crate, so the backend legs
+# build, lint, audit and test it.
+#
+# Renaming any of these jobs detaches it from branch protection: a
+# required check that never reports blocks a PR forever, and the failure
+# looks like a stuck check rather than a config error.
 #
 # GitHub reports NO status for a workflow that a path filter skipped —
 # not "skipped", nothing at all — so a required check on a path-filtered
@@ -67,27 +77,42 @@ jobs:
   test:
     # Explicit name so the branch-protection check name is STABLE.
     # Without it GitHub derives the name from the whole matrix entry —
-    # "Backend tests (postgres, postgresql+psycopg://sentinel:sentinel@
-    # localhost:5432/sentinel_test)" — and editing that URL would rename
-    # the check, silently detaching it from branch protection.
-    name: Backend tests (${{ matrix.dialect }})
+    # including the database URL — and editing that URL would rename the
+    # check, silently detaching it from branch protection.
+    name: Backend tests (${{ matrix.database }})
     runs-on: ubuntu-latest
-    # One codebase, two databases: hosted Command Center runs Postgres,
-    # self-hosted runs SQLite. Testing only one of them means shipping
-    # the other unverified, so the suite runs against both and a failure
-    # in either blocks the deploy.
+    # Three legs, because there are three things to be wrong about:
     #
-    # fail-fast is off deliberately — when a dialect-specific bug lands,
-    # seeing which engine broke (and whether the other survived) is the
-    # whole diagnostic.
+    #   no database  `cargo test` with TEST_DATABASE_URL unset. The
+    #                database-gated integration tests skip themselves, so
+    #                this is the pure-logic suite — and it is the leg that
+    #                proves the suite still passes for a contributor with
+    #                no Postgres running.
+    #   postgres     the same command with a live Postgres, which turns
+    #                on tests/*_db.rs. Each applies the migrations itself,
+    #                because this service container starts EMPTY. A
+    #                set-but-unreachable URL is a failure, not a skip.
+    #   sqlite       `--features sqlite`: the other driver, which is a
+    #                different BUILD (src/db.rs), so it is linted and
+    #                tested as one. Its tests/*_db.rs always run, on a
+    #                fresh file — there is nothing to provision, so
+    #                nothing to skip.
+    #
+    # `Backend tests (sqlite)` is also, by exact name, a check `master`
+    # has required since the Python tier had a SQLite leg. It went away
+    # when the Rust tier was Postgres-only and is back because the engine
+    # is.
     strategy:
       fail-fast: false
       matrix:
         include:
-          - dialect: sqlite
+          - database: no database
             test_database_url: ""
-          - dialect: postgres
-            test_database_url: postgresql+psycopg://sentinel:sentinel@localhost:5432/sentinel_test
+          - database: postgres
+            test_database_url: postgresql://sentinel:sentinel@localhost:5432/sentinel_test
+          - database: sqlite
+            test_database_url: ""
+            cargo_features: --features sqlite
     services:
       # Always started, used only by the postgres leg. GitHub has no
       # per-matrix-entry `services`, and an idle container costs a few
@@ -109,52 +134,86 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install uv
-        # astral-sh/setup-uv doesn't publish sliding major-version
-        # tags (v7, v8 etc.) the way actions/* and docker/* do — only
-        # specific versions like v8.1.0.  Pin to the exact tag and
-        # bump manually when there's a reason to.  v8.x is the first
-        # Node.js 24-ready major.
-        uses: astral-sh/setup-uv@v10.2.0
+      # Pinned to the Dockerfile's `rust:1.98-bookworm`. A CI toolchain
+      # ahead of the builder's can accept code the deploy then fails to
+      # compile, which is the one failure this job exists to prevent.
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy, rustfmt
 
-      - name: Set up Python
-        run: uv python install 3.12
+      # Keyed on the lockfile, so a dependency bump misses the cache and
+      # everything else hits it.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend-rs
 
-      - name: Install dependencies
-        working-directory: backend
-        run: uv sync --extra dev
+      # Formatting, enforced from the commit that adopted it. The crate
+      # was hand-formatted until then and `cargo fmt` disagreed with it in
+      # 531 places, so this step went in only once the reformat had landed
+      # on its own — a check that fails on its first run trains everyone
+      # to ignore red checks.
+      - name: Formatting
+        working-directory: backend-rs
+        run: cargo fmt --check
 
-      # Lint before tests — ruff is sub-second and catches the kind of
-      # issue (unused imports, import-sort drift, missing `from err` on
-      # re-raises) that masks real bugs and clutters review diffs.  Ruleset
-      # is conservative (F + E9 + W6 + I + B + UP) so the bar is "real
-      # problems only" rather than "every style nit"; tighten in pyproject
-      # when the team agrees on each new rule.
-      - name: Lint with ruff
-        working-directory: backend
-        run: uv run ruff check
+      # `-D warnings` because a clippy warning nobody fails on is a
+      # clippy warning nobody reads. --all-targets covers the tests and
+      # the examples, which is where the probe binaries live.
+      - name: Lint (clippy)
+        working-directory: backend-rs
+        run: cargo clippy --all-targets ${{ matrix.cargo_features }} -- -D warnings
 
-      # Scan our Python dep tree against the PyPA Advisory DB.
-      # ``--strict`` makes any vulnerability a non-zero exit so a
-      # known-bad transitive dep blocks the deploy.  Mirrors the
-      # frontend's npm-audit gate (--audit-level=high --omit=dev)
-      # in policy: this also blocks at high+ tiers — pip-audit
-      # doesn't currently expose a severity gate, so anything in
-      # the advisory DB counts.  When a CVE shows up with no fix
-      # yet, add ``--ignore-vuln <PYSEC-ID>`` here with a comment
-      # citing the upstream issue and the date we plan to revisit.
-      - name: Dependency scan (pip-audit)
-        working-directory: backend
-        run: uv run pip-audit --strict
+      # The backend's dependency scan, beside `npm audit` for the
+      # frontend. `cargo audit` scans Cargo.lock against the RustSec
+      # advisory DB and exits non-zero on any finding.
+      #
+      # RUSTSEC-2023-0071 (`rsa` 0.9.10, Marvin timing sidechannel) is
+      # ignored and has to be: there is NO fixed version, and the crate is
+      # not in this build. It arrives through `sqlx-mysql`, an optional
+      # sqlx dependency we never enable — `cargo tree -i rsa` prints
+      # nothing, so it is in the lockfile and not in the binary. Revisit
+      # if a fix ships or if the mysql feature is ever turned on. A waiver
+      # names the advisory and says why.
+      #
+      # Only on one leg — the advisory DB does not change between them.
+      - name: Install cargo-audit
+        if: matrix.database == 'postgres'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: Dependency scan (cargo audit)
+        if: matrix.database == 'postgres'
+        working-directory: backend-rs
+        run: cargo audit --ignore RUSTSEC-2023-0071
 
-      # TEST_DATABASE_URL is empty for the sqlite leg, and conftest.py
-      # falls back to in-memory SQLite when it's unset — so the two
-      # matrix entries share one command.
-      - name: Run tests (${{ matrix.dialect }})
-        working-directory: backend
+      # TEST_DATABASE_URL is empty for the first leg, and the
+      # database-gated tests skip themselves when it is unset — so the
+      # entries share one command. The sqlite leg ignores it: its
+      # database is a file `db::test_pool` creates.
+      - name: Run tests (${{ matrix.database }})
+        working-directory: backend-rs
         env:
           TEST_DATABASE_URL: ${{ matrix.test_database_url }}
-        run: uv run pytest -v
+        run: cargo test --all-targets ${{ matrix.cargo_features }}
+
+      # The release profile has `lto = true`, which is where a linker or
+      # codegen problem shows up — and that is what ships. Only on the
+      # no-database leg: the default build is the same binary either way.
+      # The sqlite leg builds its own, because it IS a different binary
+      # and the image ships both.
+      - name: Release build
+        if: matrix.database != 'no database'
+        working-directory: backend-rs
+        run: cargo build --release ${{ matrix.cargo_features }}
+
+      # The OpenAPI document is a harvested snapshot of what FastAPI
+      # generated, so it cannot notice a route being added. This compares
+      # its paths against app.rs's route table in both directions. Reads
+      # source only; one leg is enough.
+      - name: OpenAPI drift
+        if: matrix.database == 'no database'
+        run: python3 backend-rs/tests/differential/openapi_drift.py
 
   frontend:
     name: Frontend audit + build
@@ -224,7 +283,7 @@ jobs:
         run: npm test
 
       # Build now so a syntax or type error fails CI here rather than
-      # mid-deploy.  Catches the same class of bug as backend pytest.
+      # mid-deploy.  Catches the same class of bug as the backend's cargo test.
       - name: Build production bundle
         working-directory: frontend
         run: npm run build

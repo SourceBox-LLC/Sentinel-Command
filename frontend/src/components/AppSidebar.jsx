@@ -25,6 +25,12 @@ const NAV_ICONS = {
       <rect x="14" y="14" width="7" height="7" rx="1.5" />
     </svg>
   ),
+  sentinel: (
+    <svg {...iconProps}>
+      <path d="M12 3l7 3v5c0 4.5-3 8.2-7 9.5C8 19.2 5 15.5 5 11V6l7-3z" />
+      <circle cx="12" cy="11" r="2.2" />
+    </svg>
+  ),
   incidents: (
     <svg {...iconProps}>
       <path d="M12 3l9 16H3l9-16z" />
@@ -96,6 +102,7 @@ function AppSidebar({ open, onClose }) {
       items: [
         { to: "/dashboard", label: "Dashboard", icon: "dashboard" },
         isAdmin && { to: "/incidents", label: "Incidents", icon: "incidents" },
+        { to: "/sentinel", label: "Sentinel AI", icon: "sentinel" },
       ].filter(Boolean),
     },
     {
@@ -119,8 +126,9 @@ function AppSidebar({ open, onClose }) {
       kicker: "Account",
       items: [{ to: "/pricing", label: "Pricing", icon: "pricing" }],
     },
-    // Sentinel and Docs now live on the standalone website at
-    // sentinel-command.com — removed from the in-app sidebar.
+    // Docs live on the standalone website at sentinel-command.com. Sentinel
+    // AI was removed alongside them once and cannot live there: it is this
+    // org's configuration and run history, behind this org's login.
   ].filter((section) => section.items.length > 0)
 
   const showPlanBanner = !!(planInfo && hasAdminFeature)

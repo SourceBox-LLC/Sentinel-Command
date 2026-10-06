@@ -1,0 +1,202 @@
+{
+ "_comment": "Mutations for the readiness probes and the two health endpoints, scored against BOTH harnesses. http_run.sh has the endpoints and covers the wiring \u2014 the cache, the status code, the rollup. health_run.sh has the probes with every input supplied, and covers everything the HTTP one structurally cannot reach: the mutator restarts the tier before each run, so the process is always inside its startup grace, and the harness environment has email on, a valid licence and a healthy disk. Seventeen of these survived an HTTP-only run for that reason. Several are about the vocabulary rather than the logic \u2014 `disabled` versus `unconfigured`, `warn` versus `critical` \u2014 because those distinctions are the whole product of a health endpoint and the easiest thing to flatten by accident.",
+ "restart_rust": true,
+ "env": {
+  "DIFF_ONLY": "health"
+ },
+ "harness": [
+  [
+   "tests/differential/http_run.sh"
+  ],
+  [
+   "tests/differential/health_run.sh"
+  ],
+  [
+   "tests/differential/unit_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "warn flips readiness to 503",
+   "file": "src/health_probes.rs",
+   "_why": "Only critical pages. A disk at 85% is yellow on a dashboard; answering 503 for it would have every uptime monitor paging on a volume that needs resizing next month.",
+   "old": "    let ready = !probes.iter().any(|(_, p)| p.is_critical());",
+   "new": "    let ready = !probes.iter().any(|(_, p)| p.status != \"ok\");"
+  },
+  {
+   "name": "nothing flips readiness",
+   "file": "src/health_probes.rs",
+   "_why": "The other direction: an endpoint that always answers 200 tells an uptime monitor nothing at all.",
+   "old": "    let ready = !probes.iter().any(|(_, p)| p.is_critical());",
+   "new": "    let ready = true;"
+  },
+  {
+   "name": "the licence probe can page",
+   "file": "src/health_probes.rs",
+   "_why": "Never critical, by design: an unlicensed AI feature is not a Command Center outage and must not flip readiness. It is surfaced on `detailed` for an operator to notice, and nowhere else.",
+   "old": "    let status = if licensed && reachable == \"true\" { \"ok\" } else { \"warn\" };",
+   "new": "    let status = if licensed && reachable == \"true\" { \"ok\" } else { \"critical\" };"
+  },
+  {
+   "name": "a coasting licence reports healthy",
+   "file": "src/health_probes.rs",
+   "_why": "Reachability is not validity. A revoked licence behind a perfectly reachable service, and a valid one coasting on grace while the service is down, both have to stop short of ok.",
+   "old": "    let status = if licensed && reachable == \"true\" { \"ok\" } else { \"warn\" };",
+   "new": "    let status = if licensed { \"ok\" } else { \"warn\" };"
+  },
+  {
+   "name": "the disk thresholds are swapped",
+   "file": "src/health_probes.rs",
+   "_why": "95 pages, 80 warns. Inverted, a nearly full volume is yellow and a half-full one is red.",
+   "old": "    let status = if pct >= DISK_CRITICAL_PCT {\n        \"critical\"\n    } else if pct >= DISK_WARN_PCT {\n        \"warn\"\n    } else {\n        \"ok\"\n    };",
+   "new": "    let status = if pct >= DISK_WARN_PCT {\n        \"critical\"\n    } else if pct >= DISK_CRITICAL_PCT {\n        \"warn\"\n    } else {\n        \"ok\"\n    };"
+  },
+  {
+   "name": "free bytes are read as available-to-root",
+   "file": "src/health_probes.rs",
+   "_why": "`shutil.disk_usage` reports `f_bavail` \u2014 what an unprivileged process can actually have \u2014 not `f_bfree`, which includes the reserved blocks. On a filesystem with a 5% reserve the two differ by gigabytes.",
+   "old": "    let free = stat.f_bavail as u64 * frsize;",
+   "new": "    let free = stat.f_bfree as u64 * frsize;"
+  },
+  {
+   "name": "used bytes are total minus available",
+   "file": "src/health_probes.rs",
+   "_why": "Used is total minus FREE, not total minus available: the reserved blocks are not in use, they are merely unavailable, and counting them as used inflates the percentage that decides whether someone is paged.",
+   "old": "    let used = (stat.f_blocks as u64 - stat.f_bfree as u64) * frsize;",
+   "new": "    let used = (stat.f_blocks as u64 - stat.f_bavail as u64) * frsize;"
+  },
+  {
+   "name": "the disk percentage is not rounded to one place",
+   "file": "src/health_probes.rs",
+   "_why": "`round(pct, 1)`. An unrounded float is a different JSON number, and this one is rendered on a status page.",
+   "old": "        crate::pyrepr::round_to((used as f64 / total as f64) * 100.0, 1)",
+   "new": "        (used as f64 / total as f64) * 100.0"
+  },
+  {
+   "name": "a self-hosted install reports Clerk unconfigured",
+   "file": "src/health_probes.rs",
+   "_why": "`disabled` and `unconfigured` are different answers to an operator: one is a deliberate choice, the other is a setup step they forgot.",
+   "old": "    if config.is_local_auth() {\n        // By design, not a forgotten step.\n        return ProbeResult::new(\"disabled\", json!({}));\n    }",
+   "new": "    if config.is_local_auth() {\n        return ProbeResult::new(\"unconfigured\", json!({}));\n    }"
+  },
+  {
+   "name": "a self-hosted install calls Clerk anyway",
+   "file": "src/health_probes.rs",
+   "_why": "There is no Clerk account in local mode, so the call cannot succeed \u2014 it would report critical on every poll of a perfectly healthy install.",
+   "old": "    if config.is_local_auth() {",
+   "new": "    if false {"
+  },
+  {
+   "name": "the email probe pages while email is off",
+   "file": "src/health_probes.rs",
+   "_why": "An install that deliberately runs without email must not be paged about a loop that is correctly idle.",
+   "old": "    if !config.email_enabled {\n        return ProbeResult::new(\"disabled\", json!({}));\n    }",
+   "new": "    if false {\n        return ProbeResult::new(\"disabled\", json!({}));\n    }"
+  },
+  {
+   "name": "the startup grace never expires",
+   "file": "src/health_probes.rs",
+   "_why": "Past the grace window with no tick at all, the loop never started or died before its first iteration \u2014 which is exactly the failure this probe exists to catch.",
+   "old": "        if uptime_seconds < EMAIL_WORKER_STARTUP_GRACE_SECONDS {",
+   "new": "        if true {"
+  },
+  {
+   "name": "there is no startup grace",
+   "file": "src/health_probes.rs",
+   "_why": "The other direction: every restart would page for the few seconds before the loop's first tick.",
+   "old": "        if uptime_seconds < EMAIL_WORKER_STARTUP_GRACE_SECONDS {",
+   "new": "        if false {"
+  },
+  {
+   "name": "a stale worker is not noticed",
+   "file": "src/health_probes.rs",
+   "_why": "Sixty seconds is twelve ticks at the default interval. Without the check a wedged worker looks healthy forever.",
+   "old": "    if age > EMAIL_WORKER_STALE_AFTER_SECONDS {",
+   "new": "    if false {"
+  },
+  {
+   "name": "the licence startup grace is skipped",
+   "file": "src/health_probes.rs",
+   "_why": "Without it, every restart reports warn until the boot-time check-in lands \u2014 which trains an operator to ignore the field.",
+   "old": "    if last_check_at.is_empty() && uptime_seconds < LICENSE_STARTUP_GRACE_SECONDS {",
+   "new": "    if false {"
+  },
+  {
+   "name": "an empty licence timestamp reports as empty rather than null",
+   "file": "src/health_probes.rs",
+   "_why": "`x or None` \u2014 a falsy string becomes null in the JSON, and a status page rendering \"\" for \"never\" is a different answer.",
+   "old": "fn non_empty(value: &str) -> Value {\n    if value.is_empty() {\n        Value::Null\n    } else {\n        json!(value)\n    }\n}",
+   "new": "fn non_empty(value: &str) -> Value {\n    json!(value)\n}"
+  },
+  {
+   "name": "the probe payload nests instead of flattening",
+   "file": "src/health_probes.rs",
+   "_why": "`{\"status\": \u2026, **data}` \u2014 the payload sits BESIDE the status, not under a key. Every consumer of this endpoint reads it flat.",
+   "old": "        let mut out = Map::new();\n        out.insert(\"status\".to_string(), json!(self.status));\n        for (key, value) in &self.data {\n            out.insert(key.clone(), value.clone());\n        }\n        Value::Object(out)",
+   "new": "        json!({ \"status\": self.status, \"data\": Value::Object(self.data.clone()) })"
+  },
+  {
+   "name": "readiness answers 200 when a probe is critical",
+   "file": "src/api/health.rs",
+   "_why": "The whole point of this endpoint over `detailed`: uptime monitors read HTTP status, not JSON.",
+   "old": "fn ready_status(ready: bool) -> StatusCode {\n    if ready {\n        StatusCode::OK\n    } else {\n        StatusCode::SERVICE_UNAVAILABLE\n    }\n}",
+   "new": "fn ready_status(_ready: bool) -> StatusCode {\n    StatusCode::OK\n}"
+  },
+  {
+   "name": "the readiness cache is never used",
+   "file": "src/api/health.rs",
+   "_why": "Thirty seconds of cache is what keeps a swarm of pollers \u2014 two uptime monitors, a status page and the admin panel \u2014 from hammering Clerk on every request.",
+   "old": "    if nocache {\n        return None;\n    }",
+   "new": "    if true {\n        return None;\n    }"
+  },
+  {
+   "name": "nocache is ignored",
+   "file": "src/api/health.rs",
+   "_why": "The diagnostic escape hatch. Ignoring it hands an on-call engineer a cached answer from before the incident.",
+   "old": "    let nocache = q.bool(\"nocache\", false);",
+   "new": "    let nocache = false;"
+  },
+  {
+   "name": "the cache never expires",
+   "file": "src/api/health.rs",
+   "_why": "A TTL that never elapses freezes the first answer the process ever gave, which is the worst possible thing for a health endpoint to do.",
+   "old": "fn cache_is_fresh(age: std::time::Duration) -> bool {\n    age < READY_CACHE_TTL\n}",
+   "new": "fn cache_is_fresh(_age: std::time::Duration) -> bool {\n    true\n}"
+  },
+  {
+   "name": "an unreadable nocache is a silent false",
+   "file": "src/api/health.rs",
+   "_why": "FastAPI answers 422 for a bool it cannot coerce. Silently defaulting hands back a cached answer while the caller believes they bypassed the cache.",
+   "old": "    q.finish()?;",
+   "new": "    let _ = q;"
+  },
+  {
+   "name": "detailed rolls warn up as unhealthy",
+   "file": "src/api/health.rs",
+   "_why": "Warn-tier signals colour the dashboard; critical-tier ones page. Collapsing them means a disk at 85% reads the same as a dead database.",
+   "old": "    if any_critical {\n        \"unhealthy\"\n    } else if viewer_warn || disk_warn || license_warn {",
+   "new": "    if any_critical || viewer_warn || disk_warn || license_warn {\n        \"unhealthy\"\n    } else if false {"
+  },
+  {
+   "name": "resend being off degrades the rollup",
+   "file": "src/api/health.rs",
+   "_why": "An install running without email is a configuration choice, not a failure mode. Letting it degrade the rollup paints every self-hosted install yellow forever \u2014 which is why resend is not an input to `rollup` at all.",
+   "old": "pub fn rollup(\n    any_critical: bool,\n    viewer_warn: bool,\n    disk_warn: bool,\n    license_warn: bool,\n) -> &'static str {",
+   "new": "pub fn rollup(\n    any_critical: bool,\n    viewer_warn: bool,\n    disk_warn: bool,\n    license_warn: bool,\n) -> &'static str {\n    let license_warn = license_warn || true;"
+  },
+  {
+   "name": "a failed queue count reports zero",
+   "file": "src/api/health.rs",
+   "_why": "-1 says \"we do not know\". Zero says \"the queue is empty\", which is a claim, and the wrong one.",
+   "old": "pub const UNKNOWN_QUEUE_DEPTH: i64 = -1;",
+   "new": "pub const UNKNOWN_QUEUE_DEPTH: i64 = 0;"
+  },
+  {
+   "name": "the viewer-usage warning threshold is ignored",
+   "file": "src/api/health.rs",
+   "_why": "A backlog past a hundred thousand pending writes means the flush loop is failing quietly, which is the only symptom it has.",
+   "old": "pub fn viewer_usage_status(pending_writes: i64) -> &'static str {\n    if pending_writes > 100_000 {",
+   "new": "pub fn viewer_usage_status(pending_writes: i64) -> &'static str {\n    if false {"
+  }
+ ]
+}

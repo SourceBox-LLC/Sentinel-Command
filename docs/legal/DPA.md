@@ -303,7 +303,7 @@ Per-tier metadata retention windows for log tables (`stream_access_logs`,
 - Pro Plus tier: 365 days
 
 After the retention window, rows are automatically purged by the
-nightly cleanup loop (`backend/app/main.py::run_log_cleanup`).
+nightly cleanup loop (`backend-rs/src/loops.rs::run_log_cleanup`).
 
 Account / identity data is retained for the duration of the
 Agreement and deleted on Customer's request or via Settings → Delete

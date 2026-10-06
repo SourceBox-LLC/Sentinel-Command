@@ -1,0 +1,50 @@
+{
+ "_comment": "Mutations for body decoding order and shape, scored by the body cases. See mutate.py.",
+ "restart_rust": true,
+ "env": {
+  "DIFF_ONLY": "body "
+ },
+ "harness": [
+  [
+   "tests/differential/write_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "auth runs before the body is decoded",
+   "file": "src/query.rs",
+   "old": "        let decoded = decode_json_body(&bytes).map_err(IntoResponse::into_response)?;\n        let auth = A::from_request_parts(&mut parts, state)\n            .await\n            .map_err(IntoResponse::into_response)?;",
+   "new": "        let auth = A::from_request_parts(&mut parts, state)\n            .await\n            .map_err(IntoResponse::into_response)?;\n        let decoded = decode_json_body(&bytes).map_err(IntoResponse::into_response)?;"
+  },
+  {
+   "name": "the shape is checked before auth",
+   "file": "src/query.rs",
+   "old": "        let auth = A::from_request_parts(&mut parts, state)\n            .await\n            .map_err(IntoResponse::into_response)?;\n        let body = model_shape(decoded).map_err(IntoResponse::into_response)?;",
+   "new": "        let body = model_shape(decoded).map_err(IntoResponse::into_response)?;\n        let auth = A::from_request_parts(&mut parts, state)\n            .await\n            .map_err(IntoResponse::into_response)?;"
+  },
+  {
+   "name": "a list body is read as an object",
+   "file": "src/query.rs",
+   "old": "        Some(other) => Err(validation_error(&[json!({\n            \"type\": \"model_attributes_type\",",
+   "new": "        Some(Value::Array(_)) => Ok(json!({})),\n        Some(other) => Err(validation_error(&[json!({\n            \"type\": \"model_attributes_type\","
+  },
+  {
+   "name": "serde's decode message is reported",
+   "file": "src/query.rs",
+   "old": "                \"ctx\": {\"error\": msg},",
+   "new": "                \"ctx\": {\"error\": format!(\"{msg} \")},"
+  },
+  {
+   "name": "a null body is model_attributes_type",
+   "file": "src/query.rs",
+   "old": "        None | Some(Value::Null) => Err(missing_body()),",
+   "new": "        None => Err(missing_body()),"
+  },
+  {
+   "name": "handler json returns FastAPI's 422",
+   "file": "src/query.rs",
+   "old": "        Err(_) => Err(ApiError::internal(\"request body is not valid JSON\")),",
+   "new": "        Err(_) => Err(decode_json_body(bytes).err().unwrap_or_else(missing_body)),"
+  }
+ ]
+}

@@ -152,9 +152,10 @@ terminate the affected Service per Section 4.4 of the
   still the only component that sends imagery anywhere; an AGPL-3.0 fork
   that never runs it does not engage Ollama as a sub-processor.
 - **⚠ This entry names the provider CURRENTLY configured, and that is
-  now a setting rather than a hardcoded client.** Since 2026-09-09 the
-  agent reaches its model through LiteLLM, so a single environment
-  variable (`LLM_MODEL`) selects the inference provider. The first-party
+  now a setting rather than a hardcoded client.** Since 2026-09-09 a
+  single environment variable (`LLM_MODEL`) selects the inference
+  provider. The agent can be pointed at Ollama, Anthropic, or an
+  OpenAI-compatible endpoint. The first-party
   deployment is verified to resolve to `ollama_chat/qwen3.5:cloud` as of
   this revision.
 
@@ -230,6 +231,15 @@ diff this file in the repository for the full record.
     Ollama Cloud (`ollama_chat/qwen3.5:cloud`, verified against the
     running configuration), and the agent remains the only component
     that transmits camera imagery.
+  - **2026-10-01** — The agent was rewritten in Rust and its LLM client
+    changed again, from LiteLLM to `rig`. **No new sub-processor and no
+    change to what is sent or to whom**: the same prompts, tool results
+    and camera frames go to the same configured provider, which was
+    checked by recording every request both agents sent to a scripted
+    model. The set of providers `LLM_MODEL` can select is narrower than
+    it was (three wire formats rather than LiteLLM's catalogue). This
+    entry describes the code; it takes effect when that build is
+    deployed.
 
     Recorded because it changes how a *future* change would happen: the
     inference provider is now selected by an environment variable

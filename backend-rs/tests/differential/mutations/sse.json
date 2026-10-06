@@ -1,0 +1,133 @@
+{
+ "_comment": "Mutations for the notification SSE stream: the broadcaster's fan-out and cap, and the route's framing and timing. The scenario harness is the only one that can see any of the route's behaviour \u2014 a stream has no response to compare \u2014 and the unit harness carries the broadcaster's queue and audience rules, which need two subscribers in one process and so cannot be reached over HTTP at all. The rate-limit ordering harness cannot be used: it issues limit+1 requests and reads each response, and a stream has no end to read to. That the route carries Python's 60/minute at all is checked statically by ratelimit_parity.py.",
+ "restart_rust": true,
+ "env": {},
+ "harness": [
+  [
+   "tests/differential/sse_run.sh"
+  ],
+  [
+   "tests/differential/unit_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "the keepalive waits half a minute",
+   "_why": "Both stacks wait 25s. A longer wait looks perfect until an intermediary with a 30s idle timeout starts dropping the connections.",
+   "file": "src/api/notifications.rs",
+   "old": "                std::time::Duration::from_secs(25),",
+   "new": "                std::time::Duration::from_secs(30),"
+  },
+  {
+   "name": "the keepalive is an empty data frame",
+   "file": "src/api/notifications.rs",
+   "old": "                Err(_) => \": keepalive\\n\\n\".to_string(),",
+   "new": "                Err(_) => \"data: \\n\\n\".to_string(),"
+  },
+  {
+   "name": "the greeting is skipped",
+   "_why": "Without it a client waits up to 25 seconds before anything proves the stream is live.",
+   "file": "src/api/notifications.rs",
+   "old": "            if let Some(hello) = hello {\n                return Some((Ok::<_, std::io::Error>(hello), (None, subscription)));\n            }",
+   "new": "            if let Some(hello) = hello {\n                let _ = hello;\n            }"
+  },
+  {
+   "name": "the greeting names the wrong field",
+   "file": "src/api/notifications.rs",
+   "old": "            (\"type\", json!(\"connected\")),\n            (\"org_id\", json!(user.org_id)),",
+   "new": "            (\"type\", json!(\"connected\")),\n            (\"org\", json!(user.org_id)),"
+  },
+  {
+   "name": "the frames are not separated by a blank line",
+   "_why": "One newline is a continuation, not an event boundary; every frame would coalesce into one the client never dispatches.",
+   "file": "src/api/notifications.rs",
+   "old": "                Ok(Some(event)) => format!(\"data: {event}\\n\\n\"),",
+   "new": "                Ok(Some(event)) => format!(\"data: {event}\\n\"),"
+  },
+  {
+   "name": "the stream is served as plain text",
+   "file": "src/api/notifications.rs",
+   "old": "        .header(\"content-type\", \"text/event-stream; charset=utf-8\")",
+   "new": "        .header(\"content-type\", \"text/plain; charset=utf-8\")"
+  },
+  {
+   "name": "the stream is cacheable",
+   "file": "src/api/notifications.rs",
+   "old": "        .header(\"cache-control\", \"no-cache\")",
+   "new": "        .header(\"cache-control\", \"max-age=60\")"
+  },
+  {
+   "name": "nginx is allowed to buffer the stream",
+   "_why": "The header is the whole reason the stream arrives at all behind a proxy, and nothing about the response looks wrong without it.",
+   "file": "src/api/notifications.rs",
+   "old": "        .header(\"x-accel-buffering\", \"no\")",
+   "new": "        .header(\"x-accel-buffering\", \"yes\")"
+  },
+  {
+   "name": "the cap is off by one",
+   "file": "src/sse.rs",
+   "old": "            if existing.len() >= cap {",
+   "new": "            if existing.len() > cap {"
+  },
+  {
+   "name": "the cap counts every org together",
+   "_why": "One busy org would then lock every other org out of its own bell.",
+   "file": "src/sse.rs",
+   "old": "            let existing = inner.subscribers.entry(org_id.to_string()).or_default();\n            if existing.len() >= cap {",
+   "new": "            let total: usize = inner.subscribers.values().map(Vec::len).sum();\n            let existing = inner.subscribers.entry(org_id.to_string()).or_default();\n            if total >= cap {"
+  },
+  {
+   "name": "the cap is the fallback rather than the plan's",
+   "file": "src/api/notifications.rs",
+   "old": "    let cap = crate::plans::get_plan_limits(&user.plan).max_sse_subscribers.max(0) as usize;",
+   "new": "    let cap = crate::sse::DEFAULT_CAP;"
+  },
+  {
+   "name": "a slot is not freed when a stream closes",
+   "file": "src/sse.rs",
+   "old": "impl Drop for Subscription<'_> {\n    fn drop(&mut self) {\n        self.broadcaster.unsubscribe(&self.org_id, self.id);\n    }\n}",
+   "new": "impl Drop for Subscription<'_> {\n    fn drop(&mut self) {}\n}"
+  },
+  {
+   "name": "an admin-only event reaches every subscriber",
+   "_why": "Node health, member changes and key audit events are admin-audience. This is the one mutation here that is a tenant-visible leak rather than a nuisance.",
+   "file": "src/sse.rs",
+   "old": "                if audience == \"admin\" && !subscriber.is_admin {\n                    return true;\n                }",
+   "new": "                if false {\n                    return true;\n                }"
+  },
+  {
+   "name": "an admin-only event drops its viewers",
+   "_why": "Returning false rather than true unsubscribes every viewer the first time an admin event goes out.",
+   "file": "src/sse.rs",
+   "old": "                if audience == \"admin\" && !subscriber.is_admin {\n                    return true;\n                }",
+   "new": "                if audience == \"admin\" && !subscriber.is_admin {\n                    return false;\n                }"
+  },
+  {
+   "name": "an event crosses into another org",
+   "file": "src/sse.rs",
+   "old": "            let Some(subscribers) = inner.subscribers.get_mut(org_id) else {\n                return;\n            };",
+   "new": "            let all: Vec<String> = inner.subscribers.keys().cloned().collect();\n            let _ = org_id;\n            let Some(subscribers) = all.first().and_then(|k| inner.subscribers.get_mut(k)) else {\n                return;\n            };"
+  },
+  {
+   "name": "the fan-out waits for a full queue",
+   "_why": "blocking_send from inside the lock would deadlock the process; dropping is the behaviour, and it has to be the Full case specifically.",
+   "file": "src/sse.rs",
+   "old": "                !matches!(\n                    subscriber.tx.try_send(payload.to_string()),\n                    Err(mpsc::error::TrySendError::Full(_))\n                )",
+   "new": "                let _ = subscriber.tx.try_send(payload.to_string());\n                true"
+  },
+  {
+   "name": "the queue is a tenth as deep",
+   "file": "src/sse.rs",
+   "old": "const QUEUE_DEPTH: usize = 100;",
+   "new": "const QUEUE_DEPTH: usize = 10;"
+  },
+  {
+   "name": "the broadcast goes out before the insert",
+   "_why": "A subscriber would then see a notification whose row can still fail, and whose id is zero.",
+   "file": "src/notifications.rs",
+   "old": "                persisted = true;\n                // After the insert, never before: a subscriber must\n                // not see a row that could still be rolled back.\n                BROADCASTER.notify(org_id, audience, &broadcast_payload(&row));",
+   "new": "                persisted = true;",
+   "equivalent": "Nothing that reaches a stream calls create_notification yet \u2014 every emitter is still on the Python side of the proxy \u2014 so no harness can see the broadcast at all. Kept in the spec, unmarked, from the commit that wires the first emitter; until then it is a placeholder for a case that cannot exist."
+  }
+ ]
+}

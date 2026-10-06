@@ -1,0 +1,181 @@
+# Self-hosted Sentinel Command Center: the dashboard, its database, and —
+# optionally — the Sentinel AI agent.
+#
+# The PostgreSQL way to self-host. For one site with a handful of nodes
+# the smaller answer is docker-compose.sqlite.yml — one container, one
+# file, no database service. This one is for when you already run
+# Postgres, want its tooling, or expect many nodes writing at once:
+# one command, one volume per concern, nothing to tune.
+#
+# Quick start:
+#
+#   cp backend-rs/.env.example .env
+#   # fill in LOCAL_ADMIN_USERNAME / LOCAL_ADMIN_EMAIL, and change
+#   # FRONTEND_URL to http://localhost:8000 (the example's :5173 is the
+#   # dev server; here the dashboard and the API are one origin, and that
+#   # value is the base of every link in a notification email), then:
+#   openssl rand -hex 32                        # → APP_SECRET_KEY
+#   docker compose run --rm --no-deps app sentinel-hash-password
+#                                               # → LOCAL_ADMIN_PASSWORD_HASH
+#   docker compose up -d
+#   # http://localhost:8000
+#
+# ⚠️ PUT THE HASH IN SINGLE QUOTES IN `.env`:
+#
+#     LOCAL_ADMIN_PASSWORD_HASH='$argon2id$v=19$m=65536,t=3,p=4$...'
+#
+# An argon2 PHC string is full of `$`, and Compose interpolates `.env`
+# values — unquoted, `$argon2id$v=19$m=65536` becomes `=19=65536` with a
+# warning you will not read, and the login then fails for a reason
+# nothing explains. Verified: single quotes pass it through intact, as
+# does doubling every `$`. Same trap as the shell's, where a
+# double-quoted assignment eats the whole string.
+#
+# The hash step runs the image's own tool, so there is no Python, no
+# toolchain and no checkout-local build needed to produce the one
+# credential this mode cannot start without. `--no-deps` keeps it from
+# starting Postgres just to print a hash.
+#
+# Upgrading: `docker compose pull || docker compose build`, then
+# `docker compose up -d`. The schema is applied on startup by the binary
+# itself, so there is no migration step to remember.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-sentinel}"
+      POSTGRES_DB: sentinel
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    # The app waits on this rather than on the container starting:
+    # Postgres accepts connections a second or two after the process
+    # exists, and without the gate the first boot races it and the
+    # migration fails on a connection refused.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel -d sentinel"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Not published. Nothing outside this compose project needs the
+    # database, and a Postgres on a published port with a default password
+    # is how a self-hosted install becomes someone else's.
+    expose:
+      - "5432"
+
+  app:
+    # The build arg is not optional decoration: the dashboard's auth
+    # provider is compiled into the JavaScript bundle, so without it this
+    # image serves Clerk's sign-in page in front of a local-auth backend.
+    # It must agree with AUTH_PROVIDER below.
+    build:
+      context: .
+      args:
+        AUTH_PROVIDER: local
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Self-hosted mode: one admin, one org, no Clerk, no billing. Every
+      # feature is unlocked except Sentinel AI, which is licensed
+      # separately because it has a real per-run LLM cost.
+      AUTH_PROVIDER: local
+      DATABASE_URL: "postgresql://sentinel:${POSTGRES_PASSWORD:-sentinel}@db:5432/sentinel"
+      # From .env — see the quick start above. No defaults on purpose:
+      # a dashboard that ships with a known password is worse than one
+      # that refuses to start.
+      APP_SECRET_KEY: "${APP_SECRET_KEY:?set APP_SECRET_KEY in .env, e.g. openssl rand -hex 32}"
+      LOCAL_ADMIN_USERNAME: "${LOCAL_ADMIN_USERNAME:?set LOCAL_ADMIN_USERNAME in .env}"
+      LOCAL_ADMIN_PASSWORD_HASH: "${LOCAL_ADMIN_PASSWORD_HASH:?see the quick start — docker compose run --rm --no-deps app sentinel-hash-password}"
+      LOCAL_ADMIN_EMAIL: "${LOCAL_ADMIN_EMAIL:?set LOCAL_ADMIN_EMAIL in .env}"
+      # The browser talks to the API at the same origin by default; set
+      # this if you serve the dashboard from another host or port, because
+      # it is also the CORS origin and the base of every email link.
+      FRONTEND_URL: "${FRONTEND_URL:-http://localhost:8000}"
+      # Only behind your own reverse proxy; see .env.example.
+      TRUST_PROXY_HEADERS: "${TRUST_PROXY_HEADERS:-}"
+      # Optional, all off unless set: Sentinel AI + the cloud mirror
+      # (one licence key, two entitlements), email, error tracking.
+      SENTINEL_LICENSE_KEY: "${SENTINEL_LICENSE_KEY:-}"
+      # The two secrets the `agent` service below authenticates with.
+      # Empty unless you run it (`--profile ai`), and an empty value
+      # leaves that path switched off.
+      SENTINEL_AGENT_KEY: "${SENTINEL_AGENT_KEY:-}"
+      SENTINEL_AGENT_MCP_KEY: "${SENTINEL_AGENT_MCP_KEY:-}"
+      EMAIL_ENABLED: "${EMAIL_ENABLED:-false}"
+      RESEND_API_KEY: "${RESEND_API_KEY:-}"
+      SENTRY_DSN: "${SENTRY_DSN:-}"
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      # `/data` is where the disk-usage probe looks and where the backup
+      # scripts write. Live video never lands on disk — segments are
+      # served from memory — so this stays small; recordings live on the
+      # CameraNode, which is the only place they ever are.
+      - app-data:/data
+    # Same check Fly runs, for the same reason: the container is not
+    # "up" until the schema is applied and the port answers.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # Sentinel AI — the agent that investigates motion and files incidents.
+  #
+  # OFF unless asked for: `docker compose --profile ai up -d`. It needs a
+  # licence (SENTINEL_LICENSE_KEY above) before Command Center will queue
+  # it any work, and a model to talk to, so starting it by default would
+  # be a container that either idles or fails for everyone who has
+  # neither.
+  #
+  # Same image as `app`, different binary. It polls rather than waiting
+  # to be called, so it needs nothing published and would work the same
+  # on another machine entirely — point OPENSENTRY_API_BASE at the
+  # dashboard and it is the setup docs/SENTINEL_AGENT.md describes.
+  #
+  # In .env:
+  #   SENTINEL_AGENT_KEY=<openssl rand -hex 32>
+  #   SENTINEL_AGENT_MCP_KEY=<openssl rand -hex 32, a different one>
+  #   OLLAMA_API_KEY=…                 (the default provider), or
+  #   LLM_MODEL=anthropic/claude-sonnet-5 + LLM_API_KEY=…, or
+  #   LLM_MODEL=openai/<model> + LLM_API_BASE=http://your-endpoint/v1
+  agent:
+    profiles: ["ai"]
+    build:
+      context: .
+      args:
+        AUTH_PROVIDER: local
+    command: ["sentinel-agent"]
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      AGENT_MODE: poll
+      OPENSENTRY_API_BASE: "http://app:8000"
+      # Not `:?`-required, unlike the admin credentials above: Compose
+      # interpolates every service whether or not its profile is active,
+      # so a required variable here would stop `docker compose up` for
+      # everyone who is NOT running the agent.
+      SENTINEL_AGENT_KEY: "${SENTINEL_AGENT_KEY:-}"
+      OPENSENTRY_MCP_AGENT_KEY: "${SENTINEL_AGENT_MCP_KEY:-}"
+      LLM_MODEL: "${LLM_MODEL:-}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_API_BASE: "${LLM_API_BASE:-}"
+      OLLAMA_API_KEY: "${OLLAMA_API_KEY:-}"
+      SENTRY_DSN: "${SENTRY_DSN:-}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  db-data:
+  app-data:

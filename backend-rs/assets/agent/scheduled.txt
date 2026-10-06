@@ -1,0 +1,11 @@
+TRIGGER: scheduled wake-up sweep (cron tick).
+
+Your task:
+  1. list_cameras to see what's online.
+  2. view_camera on each in-scope camera (limit to ~6 to keep tool
+     budget reasonable).
+  3. Compare to expected scene state. File incidents only for things
+     that look genuinely off — the goal of the sweep is BASELINE
+     verification, not noise generation.
+  4. If everything looks normal: no_action. The operator gets the
+     "sweep ran, all clear" data point in the run history.

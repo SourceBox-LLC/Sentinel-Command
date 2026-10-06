@@ -1,0 +1,5 @@
+/target
+
+# Scratch target dir for typechecking while a mutation run holds /target.
+/target-check
+/.ws-check

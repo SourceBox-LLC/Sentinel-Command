@@ -68,15 +68,15 @@ specific issue ID (e.g. `OPENSENTRY-COMMAND-1`).
 - A code path with no test coverage was hit by real production data.
   (Example: `OPENSENTRY-COMMAND-1` — `_log_cleanup_loop` chained
   `.union()` calls hit a CompoundSelect that has no `.union()`. Fix:
-  `union(a, b, c, ...)` function form. Tests now in
-  `backend/tests/test_log_cleanup_union.py` + `test_log_cleanup.py`.)
+  `union(a, b, c, ...)` function form. That was the Python; the Rust
+  `loops::run_log_cleanup` is covered by `backend-rs/tests/loops_db.rs`.)
 - An external dependency (Clerk, Fly database) is degraded.
 - A recent deploy introduced a regression. Check `git log master --since=24.hours`.
 
 **Fix paths.**
-- **Hotfix and roll forward.** If the failing code is in Python or
-  JS, write a regression test in `backend/tests/` or
-  `frontend/tests/` first, then fix, then push to master. CI deploys
+- **Hotfix and roll forward.** If the failing code is in Rust or
+  JS, write a regression test beside it (`backend-rs/src/**`,
+  `backend-rs/tests/`) or in `frontend/tests/` first, then fix, then push to master. CI deploys
   via GitHub Actions; do **not** `fly deploy` directly — the pipeline
   is `.github/workflows/deploy.yml` ("Test & Deploy"), which gates on
   the backend suite, `npm audit`, and the frontend build before it
@@ -287,14 +287,18 @@ self-hosted section applies to them, not this scenario.
   ```
   fly ssh console -a sentinel-command -C "sh -c 'ls -lt /data/backups | head'"
   ```
-  Then trigger early log cleanup if needed:
-  ```
-  fly ssh console -a sentinel-command \
-    -C "uv run python -c 'from app.main import run_log_cleanup; \
-        from app.core.database import SessionLocal; \
-        db = SessionLocal(); \
-        print(run_log_cleanup(db))'"
-  ```
+  **Log cleanup will not help here, and the step that used to live at
+  this point in the runbook said otherwise.** It deletes rows from
+  Postgres, and since the 2026-09-07 migration the database is not on
+  `/data` at all — this volume holds HLS working files and
+  `/data/backups`. A full `/data` is a streaming problem; see the note
+  at the top of this section.
+
+  There is also no longer a way to invoke the sweep by hand: the backend
+  is a Rust binary, so the `uv run python -c 'from app.main import
+  run_log_cleanup'` one-liner this step used to carry has no equivalent.
+  The loop runs every 24h and sleeps first, so a restart does not
+  trigger it either. For the *database* disk, see below.
 - **Database disk full:** extend the *cluster's* volume:
   ```
   fly volumes list -a sentinel-postgres
@@ -578,7 +582,7 @@ not yet on the latest commit.
 - **Deploy is BLOCKING a critical fix:** as a one-time emergency
   override, you can bypass CI and deploy manually:
   ```
-  cd backend && uv run python -c "..."  # tests still must pass locally
+  cd backend-rs && cargo test          # tests still must pass locally
   cd frontend && npm run build
   fly deploy -a sentinel-command  # USE WITH CAUTION
   ```
@@ -598,7 +602,9 @@ not yet on the latest commit.
 > Not a fire — but if you're deploying at 11pm, walk through this
 > checklist before pushing.
 
-- `cd backend && python -m pytest` — must be green.
+- `cd backend-rs && cargo test && cargo clippy --all-targets` — green, no
+  warnings. This covers the AI agent too: it is a binary in the same
+  crate.
 - `cd frontend && npm run build && npm run lint` — must be clean
   (lint warnings allowed; errors are not).
 - `git log origin/master..HEAD` — read every commit message. If

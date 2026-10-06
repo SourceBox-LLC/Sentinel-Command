@@ -1,0 +1,167 @@
+[package]
+name = "sentinel-command"
+version = "2.1.2"
+edition = "2021"
+authors = ["SourceBox LLC"]
+description = "Command Center backend — Rust web tier."
+license = "AGPL-3.0"
+repository = "https://github.com/SourceBox-LLC/Sentinel-Command"
+
+[features]
+# The database is chosen per build; see src/db.rs. Default is PostgreSQL.
+sqlite = ["sqlx/sqlite"]
+
+[dependencies]
+axum = { version = "0.8", features = ["ws", "macros"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs", "limit", "trace"] }
+
+# Runtime-checked queries rather than the compile-time macros, so a build
+# needs no live database — CI builds this without a Postgres container.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "chrono",
+    "json",
+    "macros",
+    "migrate",
+] }
+
+# Query strings are decoded with the same crate the url/reqwest stack
+# already pulls in, rather than a hand-rolled percent-decoder: getting
+# UTF-8 sequences wrong here would corrupt filter values silently.
+form_urlencoded = "1"
+
+serde = { version = "1", features = ["derive"] }
+# preserve_order: serde_json's default Map is a BTreeMap, which sorts
+# keys. Python dicts preserve insertion order, and json.dumps writes them
+# in that order — so an audit `details` column built from a nested object
+# came out re-sorted, and that string is stored, rendered and compared
+# literally. IndexMap keeps the order Python would have written.
+serde_json = { version = "1", features = ["preserve_order"] }
+
+# NaiveDateTime throughout: the Python service stores and serves naive
+# (tz-less) timestamps. An Offset type would append a "+00:00" that no
+# existing client parses.
+chrono = { version = "0.4", features = ["serde"] }
+# `shutil.disk_usage` is statvfs, and there is no std equivalent. Already
+# in the tree transitively; made direct rather than pulling a wrapper
+# crate for one call.
+libc = "0.2"
+
+# The MCP server. Replaces `fastmcp`, which is what the Python builds
+# `/mcp` from.
+rmcp = { version = "3.5", default-features = false, features = [
+    "server",
+    "macros",
+    "tower",
+    "transport-streamable-http-server",
+    # Stateless: every request carries its own bearer and resolves its
+    # own org, so there is nothing for a session to hold. It also keeps
+    # the port free of per-process session state, which is the thing
+    # that forces a producer and its consumers to move together.
+    "transport-streamable-http-server-session",
+    # The CLIENT half, for the Sentinel agent binary: it reaches this
+    # same server's tools over streamable HTTP, with the org override
+    # header. `reqwest` selects rustls, like everything else here.
+    "client",
+    "transport-streamable-http-client-reqwest",
+    "reqwest",
+] }
+
+# The agent's one LLM call. Replaces LiteLLM, which the Python used for
+# exactly `acompletion`. rig models the three provider shapes the old
+# `llm.py` documented by hand — Ollama's raw-base64 `images` list and
+# dict arguments, OpenAI's `tool_call_id` and JSON-string arguments,
+# Anthropic's tool_use blocks — and was probed against a capture server
+# before being adopted, so those are observed rather than assumed.
+#
+# Licence: MIT, as is every one of the 229 crates in its tree bar
+# `r-efi`, which is MIT-OR-Apache-OR-LGPL. Checked because an earlier
+# note recorded it as "MIT and maybe GPL-3.0" against this project's
+# AGPL-3.0. Pre-1.0 and it does break between minors, so the version is
+# pinned to the minor and the wire shapes are pinned by tests.
+rig-core = { version = "0.43", default-features = false, features = ["reqwest", "rustls"] }
+# Only for `shared()`: the transport `agent::llm::RepairingHttp` wraps.
+rig-reqwest = "0.43"
+
+# Outbound calls: Clerk, Resend, GitHub releases, the licence and sync
+# services. (hyper, hyper-util and http-body-util were here for the
+# strangler proxy, which went with the Python; nothing used them since.)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+bytes = "1"
+
+# `secrets.token_hex` for the API keys this service mints. Already in
+# the tree through uuid; declared directly because a v4 UUID is not a
+# substitute — it fixes six of its bits, so its hex always carries a
+# `4` in the thirteenth place.
+getrandom = "0.3"
+
+# Clerk session verification is local RS256 against a cached JWKS — there
+# is no Rust SDK and none is needed. See src/auth.rs.
+jsonwebtoken = "9"
+
+# Shared rate-limit counters. Production sets REDIS_URL and the Python
+# limiter already uses it; without shared storage a caller round-robining
+# across machines would get N x the nominal limit.
+redis = { version = "0.27", default-features = false, features = ["tokio-comp", "connection-manager"] }
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+anyhow = "1"
+sha2 = "0.11"
+uuid = { version = "1", features = ["v4"] }
+
+# Local (self-hosted) admin login. The stored hash is a PHC string
+# written by python-argon2's PasswordHasher, so the parameters travel
+# with it and this only has to verify, never choose them.
+argon2 = "0.5"
+subtle = "2"
+thiserror = "2"
+jiff = { version = "0.2.37", features = ["tzdb-bundle-always"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+regex = { version = "1.13.1", default-features = false, features = ["std", "unicode-perl"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["async-await", "std"] }
+minijinja = { version = "2.24.0", features = ["loader"] }
+sentry = { version = "0.49", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls", "tower", "tower-http", "tracing"] }
+
+[dev-dependencies]
+jiff-tzdb = "0.1.8"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = "debuginfo"
+
+# The plan probe is an example rather than a bin so `cargo build` — which
+# the tier restart runs on every mutation — does not compile it.
+[[example]]
+name = "plan_probe"
+path = "examples/plan_probe.rs"
+
+# The main service binary, named explicitly because the [[bin]] blocks
+# below would otherwise suppress the implicit src/main.rs target.
+[[bin]]
+name = "sentinel-command"
+path = "src/main.rs"
+
+# Operator tools that replace the Python scripts deleted with the rest of
+# `backend/`. Both are referenced by documentation — AGENTS.md for the
+# password hash, DISASTER_RECOVERY.md for the restore — so neither could
+# simply go.
+[[bin]]
+name = "sentinel-hash-password"
+path = "src/bin/hash_password.rs"
+
+# The documented disaster-recovery path — DISASTER_RECOVERY.md names it
+# in three places.
+[[bin]]
+name = "sentinel-restore-from-cloud"
+path = "src/bin/restore_from_cloud.rs"
+
+# The Sentinel AI agent — the `agent` Fly process group, and what a
+# self-hoster runs. Replaces `python -m app.sentinel_agent`.
+[[bin]]
+name = "sentinel-agent"
+path = "src/bin/agent.rs"

@@ -1,0 +1,101 @@
+{
+ "_comment": "Mutations for the integration surface, scored by its read and write cases.",
+ "restart_rust": true,
+ "env": {
+  "DIFF_ONLY": "/api/integration/cameras|/api/integration/status|integration recording"
+ },
+ "harness": [
+  [
+   "tests/differential/http_run.sh"
+  ],
+  [
+   "tests/differential/write_run.sh"
+  ]
+ ],
+ "mutations": [
+  {
+   "name": "an MCP key authenticates on the integration surface",
+   "file": "src/api/integration.rs",
+   "old": "WHERE key_hash = $1 AND revoked = false AND kind = 'integration' LIMIT 1",
+   "new": "WHERE key_hash = $1 LIMIT 1"
+  },
+  {
+   "name": "a revoked integration key still works",
+   "file": "src/api/integration.rs",
+   "old": "AND revoked = false AND kind = 'integration'",
+   "new": "AND kind = 'integration'"
+  },
+  {
+   "name": "the bearer token is not trimmed",
+   "file": "src/api/integration.rs",
+   "old": "let raw = python_strip(raw);",
+   "new": "let raw = raw;"
+  },
+  {
+   "name": "the scheme is matched case-sensitively",
+   "file": "src/api/integration.rs",
+   "old": "if !auth.to_lowercase().starts_with(\"bearer \") {",
+   "new": "if !auth.starts_with(\"Bearer \") {"
+  },
+  {
+   "name": "last_used_at is not stamped",
+   "file": "src/api/integration.rs",
+   "old": "        sqlx::query(\"UPDATE mcp_api_keys SET last_used_at = $1 WHERE id = $2\")\n            .bind(now_naive())",
+   "new": "        sqlx::query(\"UPDATE mcp_api_keys SET last_used_at = last_used_at WHERE $1::timestamp IS NOT NULL AND id = $2\")\n            .bind(now_naive())"
+  },
+  {
+   "name": "the camera list is not org-scoped",
+   "file": "src/api/integration.rs",
+   "old": "FROM cameras WHERE org_id = $1 ORDER BY created_at ASC",
+   "new": "FROM cameras WHERE $1 = $1 ORDER BY created_at ASC"
+  },
+  {
+   "name": "an empty local_ip still builds a URL",
+   "file": "src/api/integration.rs",
+   "old": "n.local_ip.as_deref().is_some_and(|ip| !ip.is_empty())",
+   "new": "n.local_ip.is_some()"
+  },
+  {
+   "name": "http_port 0 is used verbatim",
+   "file": "src/api/integration.rs",
+   "old": "n.http_port.filter(|p| *p != 0).unwrap_or(8080)",
+   "new": "n.http_port.unwrap_or(8080)"
+  },
+  {
+   "name": "a LAN URL is built for an offline node",
+   "file": "src/api/integration.rs",
+   "old": "&& n.online()).map(|n| {",
+   "new": ").map(|n| {"
+  },
+  {
+   "name": "online is derived from the stored status",
+   "file": "src/api/integration.rs",
+   "old": "let eff = camera_effective_status(cam.status.as_deref(), cam.last_seen);",
+   "new": "let eff = cam.status.clone();"
+  },
+  {
+   "name": "the recording switch writes even when unchanged",
+   "file": "src/api/integration.rs",
+   "old": "    if current != recording {",
+   "new": "    if true {"
+  },
+  {
+   "name": "recording truthiness is JSON-shaped",
+   "file": "src/api/integration.rs",
+   "old": "        .map(crate::pyrepr::truthy)",
+   "new": "        .map(|v| v.as_bool().unwrap_or(false))"
+  },
+  {
+   "name": "the recording audit drops its via marker",
+   "file": "src/api/integration.rs",
+   "old": "            (\"via\", json!(\"integration\")),",
+   "new": ""
+  },
+  {
+   "name": "status counts offline cameras as online",
+   "file": "src/api/integration.rs",
+   "old": "camera_effective_status(s.as_deref(), *seen).as_deref() != Some(\"offline\")",
+   "new": "true"
+  }
+ ]
+}

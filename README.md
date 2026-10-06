@@ -33,9 +33,16 @@
 
 **Most people should just use the hosted app.** Sentinel Command Center is a **product we operate as a service** — **[sign up on the live app](https://sentinel-command.com)** and pair it with a [CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode) — no servers to provision, no Docker, no database to babysit.
 
-**Prefer to run it yourself?** Set `AUTH_PROVIDER=local` and Command Center runs fully self-hosted — a single fixed admin account, no Clerk account, no billing, every feature unlocked except the optional Sentinel AI agent (which has a real ongoing LLM cost and needs a separately licensed key). See [AGENTS.md › Build & Run](AGENTS.md#build--run) for the self-hosted quick start.
+**Prefer to run it yourself?** `docker compose up -d` — the repo's
+[`docker-compose.yml`](docker-compose.yml) brings up Command Center and its
+Postgres together. Set `AUTH_PROVIDER=local` (the compose file does) and it
+runs fully self-hosted: a single fixed admin account, no Clerk account, no
+billing, every feature unlocked except the optional Sentinel AI agent
+(which has a real ongoing LLM cost and needs a separately licensed key).
+The four-command quick start is at the top of that file and in
+[AGENTS.md › Build & Run](AGENTS.md#build--run).
 
-Self-hosted installs can also opt into **cloud data-sync**: a one-way mirror of the local database to a SourceBox-hosted Postgres, so a dead disk doesn't take your incident history with it. Local SQLite stays the source of truth and the app works with no internet at all — the mirror is a backup, not a dependency. It's a separate entitlement on the same licence key as Sentinel AI, and recovery runs through [`backend/scripts/restore_from_cloud.py`](backend/scripts/restore_from_cloud.py) (procedure, and what it deliberately can't bring back, in [DISASTER_RECOVERY.md](docs/runbooks/DISASTER_RECOVERY.md#self-hosted-installs-restoring-from-the-cloud-mirror)).
+Self-hosted installs can also opt into **cloud data-sync**: a one-way mirror of the local database to a SourceBox-hosted Postgres, so a dead disk doesn't take your incident history with it. Your own database stays the source of truth and the app works with no internet at all — the mirror is a backup, not a dependency. It's a separate entitlement on the same licence key as Sentinel AI, and recovery runs through the `sentinel-restore-from-cloud` tool ([source](backend-rs/src/bin/restore_from_cloud.rs)) (procedure, and what it deliberately can't bring back, in [DISASTER_RECOVERY.md](docs/runbooks/DISASTER_RECOVERY.md#self-hosted-installs-restoring-from-the-cloud-mirror)).
 
 > **Looking for the part you actually install either way?** That's **[CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode)** — a small daemon that turns any USB or IP camera into a private, cloud-connected feed. It runs on your hardware and has its own setup guide.
 
@@ -85,7 +92,7 @@ CameraNode captures and encodes video on your network, then pushes it **outbound
 | **Command Center** *(this repo)* | The hosted dashboard, API, and live-video hub | [Live app ›](https://sentinel-command.com) |
 | **CameraNode** | The camera daemon you install on your own hardware | [Repo ›](https://github.com/SourceBox-LLC/Sentinel-CameraNode) |
 | **Home Assistant integration** | Your Sentinel cameras inside Home Assistant | [Repo ›](https://github.com/SourceBox-LLC/Sentinel-HomeAssistant) |
-| **Sentinel AI agent** | AI agent that investigates motion & incidents | [Docs ›](docs/SENTINEL_AGENT.md) · in this repo at `backend/app/sentinel_agent/` |
+| **Sentinel AI agent** | AI agent that investigates motion & incidents | [Docs ›](docs/SENTINEL_AGENT.md) · in this repo at `backend-rs/src/agent/` |
 
 ---
 

@@ -1,0 +1,13 @@
+TRIGGER: a human operator filed an incident manually.
+
+Your task is to ASSIST that human, not duplicate their work:
+  1. Use list_incidents (or get_incident if you have the id) to find the
+     freshly-filed incident.
+  2. Read what they wrote. Identify which camera(s) they're concerned
+     about and the timeframe.
+  3. Pull supporting evidence: attach_snapshot from the relevant
+     camera(s), attach_clip if motion is ongoing.
+  4. Add an observation summarizing what you see in the evidence.
+  5. Do NOT change the operator's severity or finalize the report —
+     they may still be writing it. Leave the incident in its current
+     state.
