@@ -157,7 +157,7 @@ Everything is an environment variable. `backend-rs/.env.example` is a commented 
 | `PORT` | `8000` | Listen port. |
 | `STATIC_DIR` | `/app/static` | The built frontend. |
 | `SCRIPTS_DIR` | `/app/scripts` | Where `/install.sh` and `/mcp-setup.*` are read from. |
-| `REDIS_URL` | — | Shared rate-limit counters. Without it, counters are per process: fine on one machine. Production uses Upstash. |
+| `REDIS_URL` | — | Shared rate-limit counters. Without it, counters are per process: fine on one machine. Production has used Upstash on Fly; confirm with `fly secrets list`. |
 | `API_DOCS_ENABLED` | off under Fly, else on | Serves `/api-docs`, `/api-redoc` and `/api/openapi.json`. |
 | `CLERK_WEBHOOK_SECRET` | — | Svix signing secret for `/api/webhooks/clerk`. Unset, every delivery is refused. |
 | `LOCAL_ORG_ID` | `self-host` | The single org in local-auth mode. |
@@ -437,7 +437,7 @@ Both live in `mcp_api_keys`, split by `kind` (`mcp` or `integration`). **Every q
 | POST | `/api/gdpr/export`: export all org data | admin | 3/h |
 | GET | `/api/audit-logs`, `/api/audit/stream-logs`, `/api/audit/stream-logs/stats` | admin | 120 / 120 / 60 |
 
-Several list endpoints also answer `?format=csv` (`csv_export.rs`). String cells starting with `=`, `+`, `-`, `@`, tab or CR are prefixed with `'` so spreadsheets don't run them as formulas.
+`/api/audit-logs`, `/api/audit/stream-logs` and `/api/mcp/activity/logs` also answer `?format=csv`, streamed (`csv_export.rs`). String cells starting with `=`, `+`, `-`, `@`, tab or CR are prefixed with `'` so spreadsheets don't run them as formulas.
 
 ### Nodes (CameraNode)
 

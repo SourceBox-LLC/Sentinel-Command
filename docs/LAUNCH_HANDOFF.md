@@ -17,14 +17,15 @@ Tackle the dependencies first (auth, transports) so the later items
 > | - | ---- | ---------- |
 > | 1 | Clerk production keys | you — swap at the last minute before launch |
 > | 3 | Status page vendor | you — optional, recommended |
-> | 6 | Lawyer review of legal templates | counsel — DPA and SUB_PROCESSORS still say *DRAFT — NOT FOR EXECUTION* |
+> | 6 | Legal: Terms of Service + Privacy Policy published, DPA reviewed | you + counsel — **no Terms or Privacy Policy exists yet**, though sign-up asks users to agree to both |
 > | 8 | Pi performance benchmark | hardware access |
 > | 11 | On-call rotation | you — a process, not a change |
 >
 > Item 12 (day-before go/no-go) is a checklist to *run*, not to close.
 >
-> Items 2, 4, 5, 7, 9 and 10 are closed. The only genuine blocker is
-> counsel.
+> Items 2, 4, 5, 7, 9 and 10 are closed. The genuine blocker is legal:
+> a Terms of Service and Privacy Policy have to be written and published
+> (sign-up already links them), and the DPA reviewed.
 
 ---
 
@@ -228,7 +229,7 @@ Dashboard: `fly ext sentry dashboard -a sentinel-command`.
 
 ---
 
-## 6. Lawyer review of legal templates
+## 6. Legal: terms, privacy policy and DPA review
 
 **State now.** I wrote `docs/legal/DPA.md` and
 `docs/legal/SUB_PROCESSORS.md` as engineering-truth working drafts.
@@ -246,10 +247,25 @@ accidentally.
    and email the billing contact (per the DPA's 14-day notice
    policy). The repo edit IS the public notice.
 
+**⚠️ Terms of Service and Privacy Policy do not exist anywhere yet.**
+The sign-up page says "By creating an account you agree to our Terms of
+Service and Privacy Policy" and links
+`https://sentinel-command.com/legal/terms` and `…/legal/privacy`; the
+footer of every email links the privacy one. Both URLs return 404 (the
+old `/legal` page went with the marketing pages in July and was never
+republished; the website's own "Terms" link 404s too). Write both, have
+counsel review them, and publish them **at those two URLs** so the
+existing links start working. Until then, users are agreeing to
+documents that don't exist.
+
+**Factual corrections the drafts need** are listed in editor's notes at
+the top of `legal/DPA.md` and `legal/SUB_PROCESSORS.md`. The important
+one: incident evidence (snapshots and short video clips) *is* stored in
+Command Center's database, which the drafts deny. The website's "Privacy
+by design" section says "We don't hold your video", which needs the same
+qualification.
+
 **Other legal documents you may need (not drafted yet).**
-- Terms of Service (the existing `/legal` page has an outline; have
-  the lawyer review it).
-- Privacy Policy (same — check `/legal`).
 - Acceptable Use Policy (probably worth one, given the camera
   context — what users *cannot* point cameras at).
 

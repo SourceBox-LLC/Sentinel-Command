@@ -26,7 +26,7 @@
 
 ## What it does
 
-📹 &nbsp;**Live video, private by design.** CameraNodes push video to your dashboard through an in-memory relay. Your recordings stay on your own device; Command Center holds only a short live buffer in memory, never your footage at rest.
+📹 &nbsp;**Live video, private by design.** CameraNodes push video to your dashboard through an in-memory relay. Your recordings stay on your own device; Command Center holds only a short live buffer in memory. The only video it ever stores is what's attached to an incident: a snapshot or a short clip, saved by you or the Sentinel AI agent.
 
 🔔 &nbsp;**Motion and alerts.** Real-time motion events, one notification inbox, and opt-in email for what matters: a camera going offline, a node low on disk, a new incident.
 
@@ -49,7 +49,7 @@
                                 └──────────────────────┘
 ```
 
-CameraNode captures and encodes video on your network and pushes it **outbound** to Command Center over HTTPS: no inbound ports, no port forwarding, no VPN. Command Center keeps a short rolling buffer in memory and streams it to your browser. Your recordings never leave your CameraNode.
+CameraNode captures and encodes video on your network and pushes it **outbound** to Command Center over HTTPS: no inbound ports, no port forwarding, no VPN. Command Center keeps a short rolling buffer in memory and streams it to your browser. Your recordings never leave your CameraNode; only incident evidence (a snapshot or short clip) is saved in the cloud.
 
 ## Use it hosted, or run it yourself
 
