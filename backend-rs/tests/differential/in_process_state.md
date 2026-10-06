@@ -1,5 +1,11 @@
 # In-process state: what the strangler cannot cross
 
+> **Historical record.** Written during the Python → Rust port, about the
+> Python process's in-memory state and how each piece was carried over.
+> The port is finished; for how this state works now, read the code
+> (`hls.rs`, `ws.rs`, `notifications.rs`, `ratelimit.rs`) and
+> [AGENTS.md](../../../AGENTS.md).
+
 The plan assumed routes are stateless handlers over a shared database.
 Most are. The ones that are not cannot be ported one at a time, because
 the state they read lives in the Python process's memory and there is no

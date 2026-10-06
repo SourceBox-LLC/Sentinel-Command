@@ -4,7 +4,7 @@ How the whole system fits together — every repository, every deployed service,
 
 `README.md` is setup and reference for this repo. `AGENTS.md` is the deep architecture reference for Command Center's internals. **This file is the level above both**: the system, not the codebase.
 
-*Verified against the running infrastructure on 2026-09-09.*
+*Verified against the running infrastructure on 2026-10-05, after the Rust backend went live.*
 
 ## The pieces
 
@@ -12,11 +12,13 @@ How the whole system fits together — every repository, every deployed service,
 
 | Repo | What it is | Language |
 | ---- | ---------- | -------- |
-| **Sentinel-Command** (this one) | Command Center: API, dashboard, MCP server, and the Sentinel AI agent | Python + React |
-| **Sentinel-CameraNode** | The binary customers install on the machine their cameras are on | Rust |
-| **Sentinel-License-Service** | Validates self-hosted licence keys | Python |
-| **Sentinel-Sync-Service** | Optional cloud mirror for self-hosted installs | Python |
-| **Sentinel Home Assistant** | Home Assistant integration | Python |
+| **Sentinel-Command** (this one) | Command Center: API, dashboard, MCP server, and the Sentinel AI agent | Rust + React |
+| **Sentinel-CameraNode** | The software customers install on the machine their cameras are on | Rust |
+| **Sentinel-License-Service** | Validates self-hosted licence keys | Rust |
+| **Sentinel-Sync-Service** | Optional cloud mirror for self-hosted installs | Rust |
+| **Sentinel-HomeAssistant** | Home Assistant integration | Python |
+
+All three services were Python until September–October 2026.
 
 `SourceBox-Sentinel` was the AI agent's repository until 2026-09-09. It is **archived, not deleted** — the agent's pre-move commit history exists only there, because the move was squash-merged.
 
@@ -26,7 +28,7 @@ Four apps. Command Center runs **two process groups from one image** — Fly giv
 
 | App | Process | Memory | Runs | Purpose |
 | --- | ------- | ------ | ---- | ------- |
-| `sentinel-command` | `app` | 1 GB | always | API, SPA, MCP server, in-memory video cache, 8 background loops |
+| `sentinel-command` | `app` | 1 GB | always | API, SPA, MCP server, in-memory video cache, background loops |
 | `sentinel-command` | `agent` | 512 MB | always | Sentinel AI agent |
 | `sentinel-license` | `app` | 256 MB | **scales to zero** | Licence validation |
 | `sentinel-sync` | `app` | 256 MB | **scales to zero** | One-way mirror receiver |
@@ -34,15 +36,12 @@ Four apps. Command Center runs **two process groups from one image** — Fly giv
 
 **Why two of these scale to zero and two don't.** This is a cross-service comparison, so it lives here rather than in any one service's docs.
 
-Fly's proxy waits **~8s** for an auto-started machine to bind its port. That single number decides it:
+A service can sleep only if it wakes fast and a missed call is cheap.
 
-| Service | Boot | Verdict |
-| ------- | ---- | ------- |
-| `sentinel-sync` | ~3s | clears it |
-| `sentinel-license` | ~4s | clears it |
-| `sentinel-command` / `agent` | ~10s | **misses it** — stays warm |
-
-Boot time alone isn't sufficient; a missed call also has to be cheap. It is for both sleepers — a failed licence check-in falls into a grace window measured in days, and a failed sync push simply retries next cycle with the operator's local database still authoritative. Command Center's web tier serves live video and never sleeps.
+- **Waking fast.** Fly's proxy waits about **8 seconds** for an auto-started machine to bind its port.
+- **License and Sync** pass both tests. A failed licence check-in falls into a 72-hour grace window, and a failed sync push retries next cycle while the operator's own database stays authoritative.
+- **Command Center's `app`** serves live video and never sleeps.
+- **The `agent`** used to miss the 8-second budget: the Python agent took about 10 seconds to start. The Rust binary answers in milliseconds, but it still stays warm until scale-to-zero has been tried in production. [SENTINEL_AGENT.md](SENTINEL_AGENT.md#why-the-machine-stays-warm) explains.
 
 ## The signal path — camera to browser
 
@@ -50,10 +49,10 @@ This is the part most often assumed to work differently. There is **no object st
 
 1. **CameraNode** cuts HLS segments with FFmpeg — 1-second `.ts` files by default.
 2. **CameraNode pushes** them: `POST /api/cameras/{id}/push-segment` with the raw body and an `X-Node-API-Key` header. The node dials *out*, so no inbound port opens on the customer's network.
-3. **Command Center** stores bytes in `_segment_cache[camera_id][filename]`, evicting oldest past `SEGMENT_CACHE_MAX_PER_CAMERA`.
+3. **Command Center** keeps the bytes in its in-memory segment cache (`backend-rs/src/hls.rs`), evicting the oldest past `SEGMENT_CACHE_MAX_PER_CAMERA`.
 4. **CameraNode pushes the playlist** separately: `POST /api/cameras/{id}/playlist`.
 5. **Command Center rewrites** the playlist's segment filenames to relative `segment/<file>` proxy URLs, so the browser learns nothing about the node's own addressing.
-6. **Browser** plays it as ordinary HLS. A camera that stops heartbeating flips to `offline` via the sweep loop.
+6. **Browser** plays it as ordinary HLS, at `app.sentinel-command.com`. A camera that stops heartbeating flips to `offline` within about 90 seconds.
 
 The cache is bounded, and its ceiling is **coupled to the machine's memory** — raise one without the other and the kernel OOM-killer takes every org's streams down at once, well before the cache's own eviction can help. Both numbers, and why they move together, are in the `[env]` comment in `fly.toml`.
 
@@ -79,11 +78,11 @@ There is no single "API key". Every class of caller has its own credential, scop
 | Clerk JWT | Browser users (hosted) | Per-user, per-org, role-aware |
 | Local auth | Browser users (self-hosted) | Single admin, `AUTH_PROVIDER=local` |
 | Node API key | CameraNodes | One node; hashed at rest, rotatable |
-| MCP API key | Claude and other MCP clients | Org + `readonly` or full; daily cap |
-| Integration key | Home Assistant | Org-wide camera read |
-| `osa_` agent key | Sentinel AI agent | Per-org, issued in the dashboard |
+| MCP API key (`osc_`) | Claude and other MCP clients | One org; `all`, `readonly` or a custom tool list; per-minute and daily caps |
+| Integration key (`osi_`) | Home Assistant | One org; camera list, snapshots, recording toggle, motion feed |
+| Agent key | Sentinel AI agent | `osa_` keys: one org, issued in the dashboard. The first-party agent's shared key: every org, never given out |
 
-A `readonly` MCP key is intersected with the read-tool set **in middleware**, so scope is enforced before a tool runs rather than inside each one. Tool inventory and the read/write split: `../AGENTS.md` → MCP Server.
+MCP scope is enforced **before** a tool runs, in one gate, rather than inside each tool. Agent keys can never call `set_camera_recording_policy`. Details and the tool list: [AGENTS.md › MCP server](../AGENTS.md#mcp-server).
 
 ## Data
 
@@ -91,7 +90,7 @@ A `readonly` MCP key is intersected with the read-tool set **in middleware**, so
 
 **Self-hosted — SQLite or Postgres.** The same code on either: the database driver is chosen when the binary is built (`backend-rs/src/db.rs`), the image ships both builds, and `DATABASE_URL` decides which runs. SQLite is one file and nothing to operate, which suits one site; Postgres is there for anyone who already runs it. The SQLite build was verified against the Postgres build on the same case lists the port was verified with — see `backend-rs/tests/differential/README.md` › "The dialect differential". CI runs three legs: no database, postgres, sqlite.
 
-Schema changes are sqlx migrations embedded at compile time; the first one adopts exactly what the Python's `create_all()` + `sync_schema()` sweep had already built in production, taken from `pg_dump --schema-only`. [ADR 0001](adr/0001-sync-schema-vs-alembic.md) is the history that led there.
+Schema changes are sqlx migrations, compiled into the binary and applied at start-up. The first one is production's own `pg_dump --schema-only`, so it adopted the existing schema rather than recreating it. [ADR 0001](adr/0001-sync-schema-vs-alembic.md) has the history.
 
 Backups: nightly `pg_dump` for `sentinel_command` and `sentinel_license`, with restores rehearsed rather than assumed. `sentinel_sync` deliberately has none — it holds a mirror whose source of truth is the operator's own database. See [DISASTER_RECOVERY.md](runbooks/DISASTER_RECOVERY.md).
 
@@ -107,7 +106,7 @@ Backups: nightly `pg_dump` for `sentinel_command` and `sentinel_license`, with r
 
 Only Sentinel AI is gated for self-hosters, because it is the one feature with an ongoing per-run cost. Everything else ships unlocked.
 
-Plans are enforced on five axes: camera cap, **viewer-hours** (the real tier axis — see [ADR 0002](adr/0002-viewer-hour-billing.md)), SSE caps, MCP daily cap, and log retention.
+Plans are enforced on camera count, **viewer-hours** (the real tier axis; see [ADR 0002](adr/0002-viewer-hour-billing.md)), live-connection caps, MCP rate limits, Sentinel AI runs, and log retention. The numbers are in [AGENTS.md › Plans and limits](../AGENTS.md#plans-and-limits).
 
 ## How code ships
 
@@ -124,4 +123,4 @@ Plans are enforced on five axes: camera cap, **viewer-hours** (the real tier axi
 - [runbooks/DISASTER_RECOVERY.md](runbooks/DISASTER_RECOVERY.md) — "the data is gone"
 - [LAUNCH_HANDOFF.md](LAUNCH_HANDOFF.md) — what's left before paying customers
 - [adr/](adr/) — why non-obvious decisions were made
-- `../AGENTS.md` — Command Center's internals, in detail
+- [../AGENTS.md](../AGENTS.md) — Command Center's internals, in detail

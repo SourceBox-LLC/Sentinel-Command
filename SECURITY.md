@@ -2,9 +2,7 @@
 
 Sentinel by SourceBox is a security-focused product and we take vulnerabilities seriously.
 
-**This file is the policy.** Scope, response timelines, and safe-harbour terms are all below, and the machine-readable [`security.txt`](https://app.sentinel-command.com/.well-known/security.txt) points here.
-
-It previously deferred to a page at `sentinel-command.com/security` and called that page canonical. That page does not exist and never has — so the canonical policy was a 404, and `security.txt` sent researchers there. Corrected 2026-09-09. If a hosted policy page is published later, point `security.txt` at it and say so here.
+**This file is the policy.** Scope, response timelines and safe-harbour terms are below. The machine-readable [`security.txt`](https://app.sentinel-command.com/.well-known/security.txt) points here.
 
 ## Reporting a vulnerability
 
@@ -44,10 +42,10 @@ Two channels, use whichever you prefer:
 
 **Out of scope:**
 
-- Issues in third-party services (Clerk, Stripe, Fly.io, Resend, Sentry) — report upstream
+- Issues in third-party services (Clerk, Stripe via Clerk billing, Fly.io, Resend, Sentry, Upstash, Ollama) — report upstream
 - Social engineering, physical attacks, attacks needing local access to a CameraNode you don't own
 - Volumetric DoS / bandwidth flood attacks (application-layer rate-limit bypasses ARE in scope)
-- Missing security headers / rate limits we've consciously chosen not to set
+- Missing security headers we've consciously chosen not to set (for example, there is no Content-Security-Policy yet)
 - Self-XSS requiring the victim to paste attacker-controlled content
 - Email spoofing of domains we don't own
 - Reports generated solely by automated scanners with no proof-of-impact

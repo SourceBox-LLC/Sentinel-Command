@@ -13,6 +13,13 @@
 > the lawyer-reviewed binding version lives elsewhere (a signed PDF
 > in your records system).
 
+> **Editor's note (2026-10-05), for counsel.** This draft refers to a
+> `/security` page on the Command Center website as the live security
+> description. No such page exists today (`sentinel-command.com/security`
+> and `app.sentinel-command.com/security` both return 404). Before this
+> document is executed, either publish that page or point these
+> references at `SECURITY.md` in the public repository.
+
 ---
 
 **Version:** Draft 0.1

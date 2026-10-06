@@ -365,7 +365,7 @@ pub(crate) fn too_many_requests(limit: u32, window_secs: u64) -> Response {
     let body = json!({
         "error": "rate_limit_exceeded",
         "message": "Too many requests. Back off and retry after the Retry-After window. \
-                    See https://sentinel-command.com/docs#api-rate-limits for per-route limits.",
+                    Per-route limits: https://sentinel-command.com/documentation/",
         "limit": format!("{limit} per 1 {window}"),
         "retry_after_seconds": RETRY_AFTER_SECONDS,
     });

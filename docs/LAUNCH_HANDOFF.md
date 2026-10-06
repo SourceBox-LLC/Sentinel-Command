@@ -1,16 +1,14 @@
 # Launch handoff — what only you can do
 
 > **Audience:** Sb (you, the operator).
-> **Goal:** every code-side launch blocker I (Claude) could close has
-> been closed and committed. What's left is everything that needs a
-> credit card, a signature, hardware, or a human decision — none of
-> which I can do for you.
+> **Goal:** every launch blocker that code could close is closed. What's
+> left needs a credit card, a signature, hardware or a human decision.
 
 This list is sequenced by *order-of-operations*, not by importance.
 Tackle the dependencies first (auth, transports) so the later items
 (legal, support process) have something to point at.
 
-> **Last refreshed: 2026-09-09.** Items marked ✅ have shipped. Items
+> **Last refreshed: 2026-10-05**, after the Rust backend went live. Items marked ✅ have shipped. Items
 > marked 🟡 are partially done. Unmarked items are open.
 >
 > **Five remain, and none of them is code:**
@@ -25,9 +23,8 @@ Tackle the dependencies first (auth, transports) so the later items
 >
 > Item 12 (day-before go/no-go) is a checklist to *run*, not to close.
 >
-> Items 2, 4, 5, 7, 9 and 10 are closed. Four of those were closed
-> earlier and never marked, which made this list look considerably worse
-> than reality — the only genuine blocker is counsel.
+> Items 2, 4, 5, 7, 9 and 10 are closed. The only genuine blocker is
+> counsel.
 
 ---
 
@@ -35,19 +32,20 @@ Tackle the dependencies first (auth, transports) so the later items
 
 **State now.** The dashboard is using Clerk's test keys (`pk_test_*`,
 `sk_test_*`). These work end-to-end for auth and billing in the
-sandbox, but they're scoped to the test environment — real Stripe
-charges don't post, the dev-mode badge shows in the UI, and the
-"Clerk dev keys in prod" memory note documents this is intentional
-*for now*.
+sandbox, but they're scoped to the test environment: real Stripe
+charges don't post, and the sign-in card says "Development mode". This
+is intentional until launch. The Clerk application is also still
+named "SourceBox Sentry", which is what the sign-in card shows; rename
+it in the Clerk dashboard.
 
 **What you need to do.**
 1. In the Clerk dashboard, switch the application to production
    mode (or create a separate production app and copy the
    user/organization schema across — Clerk has a one-click clone for
    this).
-2. Configure the production Stripe account via Clerk's billing tab
-   (Clerk handles Stripe under the hood per
-   `MEMORY.md::project_billing_stack`).
+2. Configure the production Stripe account in Clerk's billing tab.
+   Billing runs entirely through Clerk, which uses Stripe underneath;
+   there is no direct Stripe integration in the code.
 3. Update Fly secrets:
    ```
    fly secrets set \
@@ -59,7 +57,7 @@ charges don't post, the dev-mode badge shows in the UI, and the
    `https://app.sentinel-command.com/api/webhooks/clerk` is
    registered in the production Clerk app and signing secret is set
    (`CLERK_WEBHOOK_SECRET`). Test by upgrading a test org and
-   confirming the `Setting(org_plan="pro")` row shows up.
+   confirming its `settings` row `org_plan` becomes `pro`.
 
    **Subscribe it to every event the handler reads**, not just billing:
    `organization.created`/`.deleted`, `organizationMembership.created`/
@@ -86,30 +84,20 @@ The dev-mode badge in the corner should disappear.
 ## 2. Notification transport — Resend email ✅ DONE (live)
 
 > **2026-07-05:** Resend is configured and `EMAIL_ENABLED=true` in
-> production. All 15 notification-email kinds are render-covered by
-> `backend/tests/test_email_templates.py`. The original operator
-> walkthrough is retained below for reference.
+> production. The operator walkthrough is kept below for reference.
 
+**State now.** Email is built and deployed. Each notification kind has
+a per-org email toggle. Motion email **defaults off** and has a
+per-camera 15-minute cooldown with a digest, to keep volume down.
+Transport is Resend; the code is `backend-rs/src/email*.rs` and
+`recipients.rs`, and the 46 templates in `backend-rs/templates/emails/`
+are compiled into the binary and checked against a golden corpus by
+`cargo test`. Bounces and complaints arrive at `/api/webhooks/resend`
+and land in `email_suppression`. The sub-processor disclosure is in
+`SUB_PROCESSORS.md` and `DPA.md`.
 
-
-**State now.** Email v1 + v1.1 are fully built and deployed. **12
-notification kinds gated by 7 per-org per-kind toggles.** Six default
-ON for new orgs (camera offline/recovered, CameraNode offline/recovered,
-AI-agent incidents, MCP key audit, CameraNode disk, member audit);
-**motion defaults OFF** with a per-camera 15-min cooldown + digest
-mechanism for volume control. Transport is Resend; integration lives
-in `app/core/email.py`, `app/core/email_worker.py`, `app/core/recipients.py`,
-`app/core/email_templates.py`, `app/core/email_unsubscribe.py`. 22
-Jinja2 templates in `backend-rs/templates/emails/`, compiled into the binary. Webhook-driven bounce/
-complaint handling at `/api/webhooks/resend` writes to `EmailSuppression`.
-Sub-processor disclosure already in `SUB_PROCESSORS.md` + `DPA.md`.
-Marketing copy already swept across SecurityPage / PricingPage / FAQ /
-docs Notifications.
-
-**SMS and mobile push are still explicitly out of scope** per the
-`project_notification_channels` memory note. MCP-driven external
-alerting (wire to Twilio / PagerDuty via your own MCP agent) is
-the answer for those.
+**SMS and mobile push are out of scope.** For those, wire your own MCP
+agent to Twilio or PagerDuty.
 
 **Operator action to activate email:**
 1. Sign up at resend.com (free tier covers 3K emails/month — comfortably
@@ -181,8 +169,7 @@ There's no public status page yet.
 2. Point the synthetic monitor at `/api/health/ready` (NOT
    `/detailed`) every minute. The monitor only needs to look at
    HTTP status: 200 = up, 5xx = down. Body is for humans.
-3. Link the status page from `/security` (replace the placeholder
-   "No public status page yet" line in the "Honest gaps" section).
+3. Link the status page from the website and from `SECURITY.md`.
 4. Subscribe customers to status updates via the vendor's
    subscription widget — automatic for most.
 
@@ -191,9 +178,11 @@ There's no public status page yet.
 ## 4. Domain / DNS ✅ DONE
 
 **State now.** Live and serving. `app.sentinel-command.com` (the app and
-API) holds a Fly-issued cert, valid to 2026-12-02; the apex
-`sentinel-command.com` (marketing site) is valid to 2026-12-07. CORS is
-hard-coded for that origin (`backend-rs/src/cors.rs`).
+API) holds a Let's Encrypt certificate from Fly, valid to 2026-12-02;
+the apex `sentinel-command.com` (marketing site, on GitHub Pages) is
+valid to 2026-12-07. Both renew automatically. The app's own origin is
+`FRONTEND_URL` (`app.sentinel-command.com`, set in `fly.toml`), which is
+also the only origin Clerk sign-in tokens are accepted from.
 
 Note the split, because it has bitten the docs twice: **the API lives on
 `app.`, not the apex.** The apex has no `/api` and no `/docs`. Anything
@@ -206,11 +195,12 @@ not outstanding work.
 **To switch.**
 1. Buy a domain (e.g. `sentry.sourceboxlabs.com`).
 2. Add a Fly cert via `fly certs add`.
-3. Add the new origin to the `CORS_ALLOWED_ORIGINS` env var on Fly
-   (comma-separated; read by `backend-rs/src/cors.rs`).
-4. Update `FRONTEND_URL` env var on Fly.
-5. Update Clerk's allowed origins to include the new domain.
-6. Update `install.sh` (Linux/macOS) so it points at the new base URL
+3. Update `FRONTEND_URL` in `fly.toml`. It is the CORS origin, the
+   only `azp` Clerk tokens are accepted with, and the base of email links.
+   Extra origins go in `CORS_ALLOWED_ORIGINS` (comma-separated).
+4. Update Clerk's allowed origins, and the Clerk webhook endpoint URL.
+5. Update the Resend webhook endpoint URL.
+6. Update `scripts/install.sh` (Linux/macOS) so it points at the new base URL
    — this URL gets baked into customer CameraNodes at install time, so
    transitioning takes weeks. The Windows MSI doesn't need a parallel
    update because it's a static download from GitHub Releases (the
@@ -229,12 +219,10 @@ no-ops gracefully when DSN is absent (local dev), so no extra config
 needed there. Email alerting confirmed firing — you've received at
 least one Sentry alert email (`OPENSENTRY-COMMAND-1`).
 
-The disk-check loop that was added in the SaaS-readiness sweep
-(`_check_and_emit_disk_critical` at 95% threshold) routes its alert
-via `logger.error()` with structured `extra` fields, which Sentry
-captures as a server-side event. This replaced an earlier (incorrect)
-attempt to email customer admins about the platform disk — see ADR
-in commit `594b86c` for the multi-tenant violation rationale.
+The disk check (`loops.rs::check_disk_critical`, at 95% full) raises
+its alert as one `tracing::error!`, which Sentry turns into an event.
+It deliberately does not notify customers: platform disk is the
+operator's problem, not theirs (commit `594b86c`).
 
 Dashboard: `fly ext sentry dashboard -a sentinel-command`.
 
@@ -258,7 +246,7 @@ accidentally.
    and email the billing contact (per the DPA's 14-day notice
    policy). The repo edit IS the public notice.
 
-**Other legal templates you may need that I haven't drafted.**
+**Other legal documents you may need (not drafted yet).**
 - Terms of Service (the existing `/legal` page has an outline; have
   the lawyer review it).
 - Privacy Policy (same — check `/legal`).
@@ -269,70 +257,23 @@ accidentally.
 
 ## 7. Backups and disaster recovery ✅ DONE
 
-> **2026-07-06 restore drill — VERIFIED; blocker found AND fixed.** A Fly
-> volume snapshot restored end-to-end into a throwaway volume:
-> `PRAGMA integrity_check` = ok, all 20 tables present (see
-> `docs/runbooks/DISASTER_RECOVERY.md`). The drill exposed that the live
-> DB was `/data/opensentry.db` (a `DATABASE_URL` **secret** overrode the
-> `fly.toml` sentinel.db env), so `backup_db.sh` had been failing on the
-> missing `/data/sentinel.db`. **Fixed same day:** secret repointed to
-> `sqlite:////data/sentinel.db`, app restarted onto a fresh `sentinel.db`
-> (empty pre-launch DB, no data lost), leftover `opensentry.db` + orphaned
-> `opensentry_data` volume removed, `/api/health/detailed` = database ok,
-> and a manual backup run **succeeded**. Remaining optional: set
-> `BACKUP_ENCRYPTION_KEY` — **closed 2026-09-07: declined.** Backups are
-> Fly-only by decision; see DISASTER_RECOVERY.md.
+**State now.** The hosted database is `sentinel_command` on the shared
+`sentinel-postgres` cluster. Backups are the cluster's daily snapshots
+(kept 5 days) plus a daily portable `pg_dump` from
+`.github/workflows/backup.yml` (kept 14 days). Both live on Fly, by
+decision. Restores were rehearsed on 2026-07-06 and twice on 2026-09-07,
+and the procedure is in
+[DISASTER_RECOVERY.md](runbooks/DISASTER_RECOVERY.md).
 
-> **2026-09-07 — migrated to Postgres; drill re-run and PASSED.** The
-> paragraph below described SQLite-on-a-volume, which is no longer how
-> this runs. See `docs/runbooks/DISASTER_RECOVERY.md` for the current
-> procedure and the new drill log entry.
-
-**State now.** The hosted database is **Postgres**, in the
-`sentinel_command` database on the managed `sentinel-postgres` cluster
-(shared with Sync-Service and License-Service — separate databases).
-`DATABASE_URL` is a **Fly secret**, not a `fly.toml` env value, because
-it carries a password. The `sentinel_data` volume still exists but now
-holds only HLS segment working files and `/data/backups` — **losing it
-no longer loses data.** Backups are the cluster's managed snapshots
-(primary) plus a daily `pg_dump` from `.github/workflows/backup.yml`
-(portable secondary).
-
-Self-hosted installs still run SQLite; the codebase supports both and CI
-tests both.
-
-**What you need to do.**
-1. Verify the cluster's snapshot schedule:
-   ```
+**What to keep doing.**
+1. Glance at the snapshots now and then:
+   ```bash
    fly volumes list -a sentinel-postgres
    fly volumes snapshots list <volume_id> -a sentinel-postgres
    ```
-   You should see daily snapshots going back 5+ days.
-2. **Test a restore.** ✅ *Done 2026-09-07 — see the drill log in
-   `DISASTER_RECOVERY.md`.* Re-run quarterly. The procedure restores a
-   production `pg_dump` into a throwaway `postgres:18-alpine` container,
-   deliberately **not** the origin cluster, since restoring somewhere
-   else is the scenario the portable dump exists for:
-   ```
-   docker run -d --name pgdrill -e POSTGRES_PASSWORD=drill \
-     -e POSTGRES_DB=drill -p 15499:5432 postgres:18-alpine
-   DATABASE_URL=postgresql://postgres:drill@127.0.0.1:15499/drill \
-     bash scripts/restore_db.sh <dump> --yes
-   ```
-   Sanity-check key tables have rows: `Camera`, `CameraNode`,
-   `Setting`, `Notification`.
-3. Document the restore procedure in
-   `docs/runbooks/DISASTER_RECOVERY.md` (still unwritten — wait
-   until you've done a real restore so you can capture what
-   actually broke vs. what worked).
-
-**Single-machine deploy caveat:** because we run a single Fly machine
-with a single volume, "restore" means downtime. The deploy strategy
-is `immediate` (also documented in `fly.toml`), so a deploy already
-involves ~30-60s of unavailability. A restore would be similar but
-with the additional manual swap step. Acceptable for current scale;
-worth re-evaluating when usage warrants HA (LiteFS or migrating to
-Postgres for clusterability).
+2. Re-run the restore drill quarterly, and once more as soon as there is
+   real customer data (every drill so far restored an empty pre-launch
+   database).
 
 ---
 
@@ -389,9 +330,9 @@ auto-merge for no safety gain — the checks still run against the PR head.
   (`DEPENDABOT_PAT`); `deploy.yml` has a `workflow_dispatch` trigger as
   the interim lever. See the notes at the top of
   `.github/workflows/dependabot-auto-merge.yml`.
-- **CI does not lint the frontend** — audit, test and build only, which
-  is why several eslint errors have sat unnoticed. The backend gates on
-  `ruff`.
+- **Frontend lint warnings don't fail CI.** `npm run lint` runs and
+  fails on errors only, so warnings accumulate. The backend gates on
+  `cargo fmt --check` and `cargo clippy -D warnings`.
 
 **Dependabot:** now configured on all four repos (Command Center,
 CameraNode, License, Sync). Only Command Center has an auto-merge
@@ -424,8 +365,9 @@ mail only — outbound transactional email still goes through Resend
    day). Don't promise an SLA on the public site at the Free / Pro
    tiers (the security page already says "No formal SLA on Free or
    Pro").
-2. Keep `/docs#faq` current so customers can self-serve the common
-   questions before they email.
+2. Keep the website's documentation current
+   (<https://sentinel-command.com/documentation/>) so customers can
+   self-serve the common questions before they email.
 
 ---
 
@@ -448,32 +390,35 @@ a page.
 
 ```
 [ ] Clerk production keys swapped (item 1)
-[X] Backup restore tested (item 7) — Fly snapshot restore VERIFIED 2026-07-06;
-    the opensentry.db/sentinel.db mismatch found during the drill was FIXED same
-    day (DATABASE_URL secret repointed to sentinel.db, app healthy, backup job now
-    succeeds). BACKUP_ENCRYPTION_KEY deliberately left unset — Fly-only
-    backups is an accepted decision, not an outstanding task.
+[X] Backup restore tested (item 7) — rehearsed 2026-07-06 and 2026-09-07;
+    Fly-only backups are an accepted decision
 [ ] DPA + sub-processors PDF on file with lawyer signoff (item 6)
 [ ] Status page live and pointed at /api/health/ready (item 3)
 [X] Sentry alerts confirmed firing in production env (item 5)        — done 2026-05-03
-[ ] Custom domain (if applicable) live + Clerk allows it (item 4)
+[X] Custom domain live + Clerk allows it (item 4)                   — app.sentinel-command.com
 [X] Branch protection enabled on master (item 9)                      — done 2026-05-04
 [X] Support inbox configured and monitored (item 10)                 — done 2026-07-05 (ImprovMX: support@ + security@)
 [X] Resend signup + EMAIL_ENABLED=true + smoke test (item 2)         — done
-[ ] Run `cd backend-rs && cargo test && cargo clippy --all-targets` — green,
-    zero warnings (420+ tests, the agent's included — same crate).
+[ ] Run `cd backend-rs && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings`
+    — green, zero warnings (the agent's tests included: same crate)
 [ ] Run `cd frontend && npm run build && npm audit --omit=dev` — both clean
-[ ] Browse the live site at 375px, 1024px, 1440px — nothing broken
-[ ] Hit /api/health/detailed — overall "healthy", DB latency < 50ms,
+[ ] Browse the live app at 375px, 1024px, 1440px — nothing broken
+[ ] Clerk webhook endpoint enabled, pointed at app.sentinel-command.com,
+    subscribed to the full event list (item 1)
+[ ] Hit https://app.sentinel-command.com/api/health/detailed — overall "healthy", DB latency < 50ms,
     disk.percent_used < 80%, resend.status either "ok" or
     "unconfigured" (intentional pre-launch)
 ```
 
-When all twelve check, ship the launch announcement.
+When every box is checked, ship the launch announcement.
 
 ---
 
 ## What's shipped since the original draft (audit trail)
+
+> A historical record. File names below from before October 2026 refer
+> to the deleted Python backend (`backend/app/…`); the behaviour lives on
+> in `backend-rs/`.
 
 - **2026-04-26 → 2026-05-01:** SaaS-readiness sweep — composite
   indexes on McpActivityLog + MotionEvent, disk-full alarm in

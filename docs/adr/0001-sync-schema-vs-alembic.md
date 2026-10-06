@@ -1,8 +1,10 @@
 # ADR 0001: Lightweight `sync_schema` instead of Alembic
 
-- **Status:** Accepted — reaffirmed 2026-09-07 (see "Revisiting" below)
+- **Status:** **Superseded** (October 2026) by the Rust rewrite. Accepted April 2026; reaffirmed 2026-09-07.
 - **Date:** 2026-04
 - **Deciders:** Command Center maintainers
+
+> **How the schema is managed now.** The Rust backend uses sqlx migrations, embedded at compile time and applied at start-up: `backend-rs/migrations/` for PostgreSQL and `backend-rs/migrations-sqlite/` for SQLite. The first PostgreSQL migration is production's `pg_dump --schema-only`, so it adopts what `sync_schema` had built rather than recreating it. The SQLite one is what the Python models produced, so an existing self-hosted `sentinel.db` opens unchanged. Unlike `sync_schema`, migrations can express renames, type changes and backfills. The rest of this record is kept as history; its file paths refer to the deleted Python backend.
 
 > **2026-09-07 update.** One of the revisit triggers below actually
 > fired: hosted Command Center migrated from SQLite to Postgres. The

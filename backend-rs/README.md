@@ -1,134 +1,94 @@
-# Command Center — the backend, and the agent
+# backend-rs: Command Center and the Sentinel AI agent
 
-Rust, and the whole of it: one crate, four binaries. `sentinel-command`
-is the web tier (axum) and was a Python FastAPI application until the
-rewrite. `sentinel-agent` is the Sentinel AI agent (`src/agent/`, rig +
-rmcp's client) and was a Python worker on LiteLLM; it runs as its own
-Fly process group from the same image. The other two are operator
-tools. There is no Python left in the repository.
+One Rust crate, four binaries:
 
-**The route table in `src/app.rs` is the public surface.** Every route the
-service answers is registered there, in one place. It used to be a
-progress bar — anything not registered fell through to `proxy::forward`
-and was still Python — and that is why the file reads like an inventory.
-
-## How this was done, and how it was checked
-
-A strangler: Rust took the listening port on day one and proxied what it
-had not absorbed, slice by slice, with each slice verified against the
-running Python before the route moved off the proxy.
-`tests/differential/` is that apparatus. The final run before the Python
-was deleted:
-
-| | |
+| Binary | What it is |
 | --- | --- |
-| reads | 592/592 identical |
-| writes (response **and** table contents) | 729/729 |
-| MCP (JSON-RPC) | 150/150 |
-| background-loop bodies | 7/7 |
-| SSE · HLS · WebSocket · plans | 29/29 · 49/49 · 20/20 · 34/34 |
+| `sentinel-command` | The web tier ([axum](https://github.com/tokio-rs/axum)): API, MCP server, live-video relay, background loops, and the built frontend. Fly's `app` process group. |
+| `sentinel-agent` | The Sentinel AI agent (`src/agent/`, built on [rig](https://github.com/0xPlaygrounds/rig) and rmcp's client). Fly's `agent` process group. See [docs/SENTINEL_AGENT.md](../docs/SENTINEL_AGENT.md). |
+| `sentinel-hash-password` | Makes `LOCAL_ADMIN_PASSWORD_HASH` for self-hosted installs. Also takes `--stdin`. |
+| `sentinel-restore-from-cloud` | Restores a self-hosted install from its cloud mirror. See [DISASTER_RECOVERY.md](../docs/runbooks/DISASTER_RECOVERY.md#self-hosted-installs-restoring-from-the-cloud-mirror). |
 
-Response diffing alone would not have been enough and the harness says so
-in several places: the side-effect snapshots are what caught three loop
-bodies that did nothing while the diff stayed green.
+`sentinel-command` and `sentinel-restore-from-cloud` are also built for SQLite (`…-sqlite`); see [Two databases](#two-databases).
 
-### After the cut
+**Start with `src/app.rs`.** It registers every route the service answers, in one table. The rest of the internals are documented in [AGENTS.md](../AGENTS.md).
 
-The Python is gone, so most of that apparatus cannot run. What holds the
-line now:
-
-* **`cargo test`** — 420 tests, including `tests/routing.rs` (the
-  404/405/SPA answers the proxy used to give) and the `py*.rs` modules
-  that reproduce CPython semantics the port depends on: `json.dumps`
-  spacing, `round()` half-to-even, `float()` underscores,
-  `fromisoformat`, `int()` coercion, `str()`. Each of those exists
-  because a differential case failed on it.
-* **`cargo test` with `TEST_DATABASE_URL`** — the same command, plus the
-  database-gated integration tests, which skip themselves without it.
-* **`cargo clippy --all-targets`** — kept at zero warnings, enforced in
-  CI with `-D warnings`.
-* **`openapi_drift.py`** — the harvested OpenAPI document vs the route
-  table, both directions. Reads source only.
-* **`tests/agent_contract.rs`** — the agent's `/complete` body vs what the
-  handler reads. A renamed key there would silently record zero tool
-  calls on every run, with no 422 and no log line.
-* **`tests/differential/agent_run.sh`** — the agent's own differential,
-  against the Python agent from the pre-cut worktree and a scripted
-  model, on three provider wires.
-* **`tests/differential/csv_run.sh`** — the one harness that still runs a
-  real differential, by checking out the commit before the deletion as a
-  git worktree and serving *that* Python against the same Postgres. It is
-  how the three `?format=csv` exports were verified after the reference
-  was deleted: 35/35 identical, byte for byte. The pattern is available
-  to any later slice that needs it.
-
-The seven static checkers whose source of truth was `backend/app/**`
-refuse with exit 2 and the command that runs them against the parent
-commit. `tests/differential/README.md` § "After the cut" has the whole
-table.
-
-## Two databases
-
-PostgreSQL by default; SQLite with `--features sqlite`. One driver per
-BUILD, not per process (`src/db.rs` says why), so the query sites are
-written once and compiled for each, and the image carries both binaries.
-`sentinel-command` replaces itself with `sentinel-command-sqlite` when
-`DATABASE_URL` is a `sqlite://` URL.
+## Run it
 
 ```bash
-cargo run                                   # PostgreSQL, DATABASE_URL=postgresql://…
-DATABASE_URL=sqlite:///./sentinel.db cargo run --features sqlite
-cargo test --features sqlite                # tests/*_db.rs always run here
-```
-
-Writing SQL for both:
-
-* `$1` placeholders work in both; so do `RETURNING`, `ON CONFLICT`,
-  `FILTER (WHERE …)` and `NULLS LAST`.
-* `CAST(x AS TEXT)`, never `x::text`. `LIMIT n OFFSET m`, in that order.
-* A list is `format!("id {}", db::any(1))` with `.bind(db::list(&ids))`.
-* Case-insensitive match is `db::ILIKE`, always with `ESCAPE '\\'`.
-* No alias on the table in `UPDATE … RETURNING`.
-* Bind times from Rust (`now_naive()`); neither `now()` nor `interval`.
-* Give every aggregate an `ORDER BY`. The two engines group differently.
-
-`tests/differential/dialect_run.sh` is what holds the SQLite build to the
-PostgreSQL one; run it after touching a query.
-
-## What this tier does NOT do
-
-* **Every LLM provider LiteLLM knew.** The agent speaks three wires —
-  Ollama, Anthropic, and OpenAI Chat Completions (which, with
-  `LLM_API_BASE`, reaches any compatible endpoint). Another provider
-  prefix in `LLM_MODEL` is refused at startup with that list.
-  `docs/SENTINEL_AGENT.md` § "What the port changed" has the other three
-  places the agent deliberately differs from the Python.
-
-## Schema
-
-`migrations/0001_adopt_production_schema.sql` is `pg_dump --schema-only`
-from production, not a transcription of the SQLAlchemy models — 21
-tables, 62 indexes, 27 constraints, verified column-for-column (213/213)
-against the live database. It is applied by `sqlx::migrate!`, embedded at
-compile time.
-
-## Running it
-
-```bash
-# Postgres, because that is the only engine this build opens.
+# PostgreSQL (the default build)
 docker run -d --name sentinel-pg -p 5432:5432 \
     -e POSTGRES_USER=sentinel -e POSTGRES_PASSWORD=sentinel \
     -e POSTGRES_DB=sentinel postgres:16-alpine
+DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5432/sentinel cargo run   # http://localhost:8000
 
-DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5432/sentinel \
-    cargo run                       # http://localhost:8000
+# SQLite
+DATABASE_URL=sqlite:///./sentinel.db cargo run --features sqlite
 ```
 
-Two operator tools build from this crate and ship in the image on
-`PATH`, because the documentation names both and the Python scripts they
-replace went with the web tier:
+Copy `.env.example` to `.env` for the full list of settings. Sign-in needs either Clerk keys or the local-auth variables ([AGENTS.md › Configuration](../AGENTS.md#configuration)).
+
+## Test it
 
 ```bash
-cargo run --bin sentinel-hash-password          # LOCAL_ADMIN_PASSWORD_HASH
-cargo run --bin sentinel-restore-from-cloud -- --list
+cargo test                                  # unit and routing tests; DB tests skip themselves
+TEST_DATABASE_URL=postgresql://…/test_db cargo test   # plus the PostgreSQL integration tests
+cargo test --features sqlite                # the SQLite build; its DB tests always run
+cargo fmt                                   # CI fails on unformatted code
+cargo clippy --all-targets -- -D warnings   # and with --features sqlite; both kept at zero
 ```
+
+Point `TEST_DATABASE_URL` at a database of its own: the tests insert rows.
+
+What the tests cover:
+
+- **`src/**`**: unit tests beside the code, including the `py*.rs` modules that reproduce Python behaviours the API depends on (`json.dumps` spacing, `round()` half-to-even, `int()` coercion, `fromisoformat`, `str()`).
+- **`tests/routing.rs`**: 404, 405 and SPA answers, the MCP mount, and the docs switch.
+- **`tests/*_db.rs`**: everything that touches the database: HLS, plans, loops, sync, MCP scope, races, node auth, notifications, settings.
+- **`tests/agent_contract.rs`**: the agent's `/complete` body against the handler that reads it. A renamed field would otherwise make every run record zero tool calls, silently.
+- **`tests/clerk_verifier.rs`**: Clerk JWT verification against a local JWKS (`tests/fixtures/` holds a throwaway key pair).
+
+## Two databases
+
+The database driver is chosen **at build time**, not run time: plain `cargo build` for PostgreSQL, `--features sqlite` for SQLite (`src/db.rs` explains why). Query sites are written once and compiled for each. The Docker image carries both builds, and `sentinel-command` replaces itself with `sentinel-command-sqlite` when `DATABASE_URL` is a `sqlite://` URL.
+
+**Writing SQL that runs on both:**
+
+- `$1` placeholders, `RETURNING`, `ON CONFLICT`, `FILTER (WHERE …)` and `NULLS LAST` work on both.
+- `CAST(x AS TEXT)`, never `x::text`. `LIMIT n OFFSET m`, in that order.
+- Every `ORDER BY` over a nullable column says `NULLS LAST` or `NULLS FIRST`. The engines put NULL at opposite ends, and a unit test enforces this.
+- Lists: `format!("id {}", db::any(1))` with `.bind(db::list(&ids))`.
+- Case-insensitive matching: `db::ILIKE`, always with `ESCAPE '\\'`.
+- No alias on the table in `UPDATE … RETURNING`.
+- Bind times from Rust (`now_naive()`); don't use SQL `now()` or `interval`.
+- Give every aggregate an `ORDER BY`; the engines group differently.
+- To close a check-then-write race, use a conditional `UPDATE`, or `db::lock_for_update(&mut tx, key)` inside a `db::begin_write` transaction.
+
+## Schema
+
+`migrations/0001_adopt_production_schema.sql` is production's `pg_dump --schema-only`, not a transcription: 21 tables, checked column for column against the live database. `migrations-sqlite/` is what the old Python models produced on SQLite, so an existing self-hosted `sentinel.db` opens unchanged. Both are embedded at compile time and applied at start-up by `sqlx::migrate!`. Add a new numbered file to **both** directories for any schema change.
+
+## How the rewrite was checked
+
+The backend and the agent were Python until October 2026. Rust took over gradually, slice by slice, as a "strangler": it served what it had ported and proxied the rest to the Python, and each slice was compared with the running Python before it moved.
+
+`tests/differential/` is that apparatus. It ran both stacks against one database and compared responses **and** table contents. The final run before the Python was deleted:
+
+| | |
+| --- | --- |
+| Reads | 592/592 identical |
+| Writes (response and table contents) | 729/729 |
+| MCP (JSON-RPC) | 150/150 |
+| Background-loop bodies | 7/7 |
+| SSE · HLS · WebSocket · plans | 29/29 · 49/49 · 20/20 · 34/34 |
+| Agent, per provider wire | Ollama 20/20 · OpenAI 15/15 · Anthropic 12/12 |
+
+Most of those harnesses need the Python and now run only against the commit before the deletion. `tests/differential/README.md` records how each one worked and what it found. The bugs the port uncovered in the Python are in `PYTHON_BUGS.md`. Both files are historical records.
+
+After the merge to `master`, the code was also checked with:
+
+- schema-driven fuzzing of every REST route and MCP tool;
+- an authorization matrix for each credential type;
+- a two-org isolation run;
+- concurrency races;
+- a live production check with a real Clerk user.

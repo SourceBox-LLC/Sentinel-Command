@@ -512,7 +512,7 @@ async fn dispatch(
                 notification.body = "Your Sentinel workspace is ready.  Three steps to your \
                     first live feed: install CameraNode on the host where your cameras live, \
                     wait ~30 seconds for it to register, then add your first camera from \
-                    Settings → Cameras.  Full docs at https://sentinel-command.com/docs."
+                    Settings → Cameras.  Full docs at https://sentinel-command.com/documentation/."
                     .to_string();
                 notification.audience = "admin".to_string();
                 notification.link = Some("/dashboard".to_string());

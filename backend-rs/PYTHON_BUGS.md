@@ -1,5 +1,12 @@
 # Bugs found in `backend/` while porting
 
+> **Historical record.** Written during the Python → Rust port (September
+> 2026), when the Rust had to reproduce the Python exactly and so could
+> not fix these. The Python was deleted on 2026-09-30 (web tier) and 2026-10-01 (agent), and many of these
+> bugs have since been fixed in the Rust backend; the code comments cite
+> the entry number where they were (`PYTHON_BUGS.md #13`, …). For current
+> behaviour, read [AGENTS.md](../AGENTS.md) and the code, not this file.
+
 Found by the differential harnesses or by reading the code they made me
 read. **None of these are fixed here.** This branch is a port; changing
 the Python underneath it would mean the two stacks no longer agree, and

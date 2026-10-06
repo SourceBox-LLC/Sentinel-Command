@@ -46,13 +46,14 @@ use crate::agent::mcp_client::Tools;
 use crate::agent::queue::{Completion, RunQueue};
 use crate::agent::run::run_agent;
 
-/// Comfortably under `kill_timeout = 300` in fly.toml, which is Fly's
-/// maximum. Command Center's wakeup client hangs up after 5 s, so Fly's
-/// idle auto-stop signals the machine about 30 s into every drain and the
-/// in-flight work survives only as long as the kill timeout allows. At
-/// 540 s, drains in the 335–540 s band died at SIGKILL with the cleanup
-/// below unreachable, and the run sat `running` until the 20-minute
-/// reaper. At 270 the cleanup always wins.
+/// The wall-clock budget for one drain. It was set under the
+/// `kill_timeout = 300` of the agent's old standalone Fly app, which also
+/// stopped idle machines mid-drain: at 540 s, drains in the 335–540 s band
+/// died at SIGKILL with the cleanup below unreachable, and the run sat
+/// `running` until the 20-minute reaper. The `agent` process group never
+/// idles to a stop and `fly.toml` sets no `kill_timeout`, so today only a
+/// deploy or restart interrupts a drain — and the reaper settles that run.
+/// 270 s still bounds how long one wakeup can hold camera frames.
 pub const DRAIN_TIMEOUT_SECONDS: f64 = 270.0;
 pub const MAX_RUNS_PER_LIST: usize = 20;
 
