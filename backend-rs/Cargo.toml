@@ -15,7 +15,7 @@ sqlite = ["sqlx/sqlite"]
 axum = { version = "0.8", features = ["ws", "macros"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["fs", "limit", "trace"] }
+tower-http = { version = "0.7", features = ["fs", "limit", "trace"] }
 
 # Runtime-checked queries rather than the compile-time macros, so a build
 # needs no live database — CI builds this without a Postgres container.
