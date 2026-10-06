@@ -166,7 +166,7 @@ fly ssh console -a sentinel-command -s --process-group agent -C "curl -s localho
 | `AGENT_HOST` / `PORT` | `0.0.0.0` / `8080` | Where the agent's own server binds. |
 | `WEBHOOK_VERIFY_SIGNATURE` | `true` | Hard-disable HMAC for local dev. Always on in prod. |
 | `SENTRY_DSN` | unset | Error tracking. No-op when unset. |
-| `SENTRY_ENVIRONMENT` | `production` | Keeps local runs out of prod. |
+| `SENTRY_ENVIRONMENT` | `production` | Set it (for example, to `development`) on a local run, or its errors are reported as production's. |
 | `SENTRY_TRACES_SAMPLE_RATE` | `0.1` | Performance sampling. |
 
 ## Project structure

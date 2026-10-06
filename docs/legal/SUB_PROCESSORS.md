@@ -4,12 +4,21 @@
 > describes the engineering reality and must be reviewed by counsel
 > before being held out to customers as a binding sub-processor list.
 
-> **Editor's note (2026-10-05), for counsel.** This draft refers to a
-> `/security` page on the Command Center website as the live security
-> description. No such page exists today (`sentinel-command.com/security`
-> and `app.sentinel-command.com/security` both return 404). Before this
-> document is executed, either publish that page or point these
-> references at `SECURITY.md` in the public repository.
+> **Editor's note (2026-10-05), for counsel: factual corrections needed.**
+>
+> 1. **Fly.io holds incident evidence.** The Fly.io entry says Fly
+>    "does not see or process video content". When an incident is
+>    created, JPEG snapshots and short MPEG-TS video clips are stored in
+>    the Command Center database on Fly (`incident_evidence.data`) until
+>    the incident is deleted. The DPA has the same gap; see its note.
+> 2. **Possibly missing: Upstash (Redis).** The platform documentation
+>    records Upstash on Fly as production's shared rate-limit store
+>    (`REDIS_URL`). Its keys include client IP addresses and
+>    organization IDs. Confirm with `fly secrets list -a sentinel-command`;
+>    if `REDIS_URL` is set, Upstash belongs on this list.
+> 3. **`/security` page.** This list says it mirrors a `/security` page
+>    on the website. No such page exists (`sentinel-command.com/security`
+>    returns 404).
 
 This is the public list of third-party services that SourceBox LLC
 engages to process Customer Personal Data on behalf of customers of

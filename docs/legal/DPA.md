@@ -13,12 +13,40 @@
 > the lawyer-reviewed binding version lives elsewhere (a signed PDF
 > in your records system).
 
-> **Editor's note (2026-10-05), for counsel.** This draft refers to a
-> `/security` page on the Command Center website as the live security
-> description. No such page exists today (`sentinel-command.com/security`
-> and `app.sentinel-command.com/security` both return 404). Before this
-> document is executed, either publish that page or point these
-> references at `SECURITY.md` in the public repository.
+> **Editor's note (2026-10-05), for counsel: factual corrections needed
+> before execution.** These were found by checking the draft against
+> the code. The clauses themselves are left for counsel to reword.
+>
+> 1. **Incident evidence is stored by SourceBox.** "What SourceBox does
+>    not process" says snapshot images are CameraNode-only, and Annex 2
+>    says no video content is stored on Command Center disks. In fact,
+>    when an incident is created (by the Sentinel AI agent or through
+>    the MCP tools), JPEG snapshots and short MPEG-TS video clips are
+>    stored in Command Center's database (`incident_evidence.data`)
+>    until the incident is deleted. The same frames are sent to the
+>    configured LLM provider (see SUB_PROCESSORS.md). Recordings do stay
+>    CameraNode-only.
+> 2. **Live video buffer.** The draft says segments are evicted on a
+>    15-second window. The cache holds about 60 seconds per camera
+>    (`SEGMENT_CACHE_MAX_PER_CAMERA=60` one-second segments) and drops a
+>    camera's buffer 60 seconds after it stops streaming. It is RAM only.
+> 3. **Missing data categories:**
+>    - incidents (title, summary, markdown report, severity, status);
+>    - Sentinel AI run records, including the agent's tool trace;
+>    - the email outbox and email log (recipient addresses, subjects,
+>      bodies, delivery status);
+>    - the email suppression list.
+> 4. **Retention.** Incidents and their evidence are not purged by the
+>    retention loop; they persist until deleted. `email_log` *is* purged
+>    on the per-plan schedule, alongside the five log tables listed.
+> 5. **Deletion path.** "Settings → Delete Organization" is now
+>    **Settings → Danger Zone → Full Organization Reset**. Deleting the
+>    organization in Clerk runs the same erasure.
+> 6. **`/security` page.** The draft refers to a `/security` page on the
+>    website as the live security description. No such page exists
+>    (`sentinel-command.com/security` and `app.sentinel-command.com/security`
+>    both return 404). Publish it, or point these references at
+>    `SECURITY.md` in the public repository.
 
 ---
 
