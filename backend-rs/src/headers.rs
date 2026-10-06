@@ -30,6 +30,77 @@ const SECURITY_HEADERS: [(&str, &str); 4] = [
 
 const HSTS: &str = "max-age=63072000; includeSubDomains";
 
+/// The Content-Security-Policy every response carries, set once at
+/// start-up by [`configure_csp`]. Unset (unit tests that never build the
+/// router), no policy is sent.
+static CSP: std::sync::OnceLock<HeaderValue> = std::sync::OnceLock::new();
+
+/// Build the dashboard's Content-Security-Policy.
+///
+/// Scripts run only from this origin and from the few services the
+/// dashboard genuinely loads code from. That is what makes an injected
+/// `<script>` inert, which is the point of the policy. Each outside
+/// origin is here for a reason:
+///
+/// - `clerk_frontend` (Clerk mode): Clerk's sign-in script and its API,
+///   derived from the publishable key, so it follows a key swap.
+/// - `challenges.cloudflare.com`: the bot check on Clerk's sign-up form.
+/// - `js.stripe.com`, `api.stripe.com`, `hooks.stripe.com`: card entry
+///   in Clerk's billing screens.
+/// - `img.clerk.com`: profile photos. `clerk-telemetry.com`: Clerk's
+///   development-instance telemetry.
+/// - Google Fonts, for the dashboard's typefaces.
+///
+/// Styles allow `'unsafe-inline'` because Clerk injects its own `<style>`
+/// elements. `blob:` covers live video (HLS.js plays through a
+/// MediaSource object URL) and downloaded snapshots. A self-hosted
+/// install (`clerk_frontend` is `None`) gets the same policy without
+/// Clerk, Cloudflare and Stripe.
+pub fn content_security_policy(clerk_frontend: Option<&str>) -> String {
+    let clerk = clerk_frontend.is_some();
+    let fapi = clerk_frontend.map(|f| format!(" {f}")).unwrap_or_default();
+    let (clerk_script, clerk_connect, clerk_img, stripe_script, stripe_connect) = if clerk {
+        (
+            format!("{fapi} https://challenges.cloudflare.com"),
+            format!("{fapi} https://clerk-telemetry.com"),
+            " https://img.clerk.com",
+            " https://js.stripe.com",
+            " https://api.stripe.com",
+        )
+    } else {
+        (String::new(), String::new(), "", "", "")
+    };
+    let frame_src = if clerk {
+        "https://challenges.cloudflare.com https://js.stripe.com https://hooks.stripe.com"
+    } else {
+        "'none'"
+    };
+    [
+        "default-src 'self'".to_string(),
+        format!("script-src 'self'{clerk_script}{stripe_script}"),
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com".to_string(),
+        "font-src 'self' data: https://fonts.gstatic.com".to_string(),
+        format!("img-src 'self' data: blob:{clerk_img}"),
+        "media-src 'self' blob:".to_string(),
+        format!("connect-src 'self'{clerk_connect}{stripe_connect}"),
+        format!("frame-src {frame_src}"),
+        "worker-src 'self' blob:".to_string(),
+        "object-src 'none'".to_string(),
+        "base-uri 'self'".to_string(),
+        "form-action 'self'".to_string(),
+        "frame-ancestors 'none'".to_string(),
+    ]
+    .join("; ")
+}
+
+/// Set the policy [`stamp`] sends. Called once, from `build_router`;
+/// later calls (tests building several routers) keep the first.
+pub fn configure_csp(policy: &str) {
+    if let Ok(value) = HeaderValue::from_str(policy) {
+        let _ = CSP.set(value);
+    }
+}
+
 /// Whether an inbound `X-Request-Id` can be trusted.
 ///
 /// 8–128 characters, alphanumerics and hyphens only. The Python comment
@@ -146,11 +217,50 @@ pub fn stamp(headers: &mut axum::http::HeaderMap, request_id: &str, is_https: bo
             HeaderValue::from_static(HSTS),
         );
     }
+    // A handler that sets its own policy keeps it: the API docs pages
+    // load Swagger UI and ReDoc from a CDN.
+    if let Some(csp) = CSP.get() {
+        headers
+            .entry(axum::http::header::CONTENT_SECURITY_POLICY)
+            .or_insert_with(|| csp.clone());
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn directive<'a>(policy: &'a str, name: &str) -> &'a str {
+        policy
+            .split("; ")
+            .find(|d| d.starts_with(&format!("{name} ")))
+            .unwrap_or_else(|| panic!("no {name} in {policy}"))
+    }
+
+    #[test]
+    fn the_hosted_policy_allows_clerk_and_nothing_inline_for_scripts() {
+        let p = content_security_policy(Some("https://clerk.example.test"));
+        let script = directive(&p, "script-src");
+        assert!(script.contains("'self'"));
+        assert!(script.contains("https://clerk.example.test"));
+        assert!(script.contains("https://challenges.cloudflare.com"));
+        assert!(!script.contains("unsafe-inline"), "{script}");
+        assert!(!script.contains("unsafe-eval"), "{script}");
+        assert!(directive(&p, "connect-src").contains("https://clerk.example.test"));
+        assert_eq!(directive(&p, "frame-ancestors"), "frame-ancestors 'none'");
+        assert_eq!(directive(&p, "object-src"), "object-src 'none'");
+        assert!(directive(&p, "media-src").contains("blob:"));
+    }
+
+    #[test]
+    fn the_self_hosted_policy_names_no_outside_service_but_fonts() {
+        let p = content_security_policy(None);
+        for gone in ["clerk", "stripe", "cloudflare"] {
+            assert!(!p.contains(gone), "{gone} in {p}");
+        }
+        assert_eq!(directive(&p, "script-src"), "script-src 'self'");
+        assert_eq!(directive(&p, "frame-src"), "frame-src 'none'");
+    }
 
     #[test]
     fn a_well_formed_inbound_id_is_honoured() {

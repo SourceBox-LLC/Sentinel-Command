@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { Outlet, Link, useLocation } from "react-router-dom"
-import { SignedIn, SignedOut, UserButton, OrganizationSwitcher, useOrganization } from "../auth/index.jsx"
+import { SignedIn, SignedOut, AccountButton, OrganizationSwitcher, useOrganization } from "../auth/index.jsx"
 import { usePlanInfo } from "../hooks/usePlanInfo.jsx"
 import AppSidebar from "./AppSidebar.jsx"
 import ToastContainer from "./ToastContainer.jsx"
@@ -99,7 +99,7 @@ function Layout() {
                   <NotificationBell />
                 </>
               )}
-              <UserButton />
+              <AccountButton />
             </SignedIn>
 
             <SignedOut>

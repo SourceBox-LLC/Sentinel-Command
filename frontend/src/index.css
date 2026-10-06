@@ -3008,6 +3008,14 @@ body {
     border-color: var(--accent-red);
 }
 
+/* Deleting your own account (pages/AccountDeletionPage.jsx). */
+.account-delete .settings-section { max-width: 640px; }
+.account-delete-effects { padding-left: 1.2rem; margin: 0 0 1.25rem; line-height: 1.6; }
+.account-delete-effects li { margin-bottom: 0.6rem; }
+.account-delete-orgs { margin: 0.4rem 0 0.6rem; padding-left: 1.2rem; }
+.account-delete-orgs li { margin: 0.15rem 0; font-weight: 600; }
+.account-delete-error { color: var(--accent-red); font-size: 0.9rem; margin: 0 0 1rem; }
+
 .danger-success {
     color: var(--accent-green);
     font-weight: 500;

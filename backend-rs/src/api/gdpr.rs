@@ -34,7 +34,7 @@
 //! — member names, in order, and each one's JSON — which is what a
 //! reader of the export actually gets.
 
-use std::io::Write;
+use std::io::{Seek, Write};
 
 use axum::extract::{ConnectInfo, State};
 use axum::http::{header, HeaderMap, HeaderValue};
@@ -77,7 +77,21 @@ pub async fn export_organization_data(
     )
     .await;
 
-    let archive = build_archive(&state, &user.org_id, exported_at).await?;
+    // The archive is built in a temporary file, not in memory: it holds
+    // every incident's images and clips, and one clip alone can be
+    // 32 MB. The file is unlinked as soon as it is created, so nothing
+    // is left behind whether the download finishes or not.
+    let mut file = temp_file()?;
+    write_archive(&state.pool, &user.org_id, exported_at, &mut file).await?;
+    file.seek(std::io::SeekFrom::Start(0))
+        .map_err(|_| ApiError::internal("could not rewind the export archive"))?;
+    let len = file
+        .metadata()
+        .map_err(|_| ApiError::internal("could not size the export archive"))?
+        .len();
+    let body = axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(
+        tokio::fs::File::from_std(file),
+    ));
 
     // Starlette writes the explicit headers first and appends the
     // derived content-type; a streaming response carries no
@@ -93,7 +107,27 @@ pub async fn export_organization_data(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/zip"),
     );
-    Ok((out, archive).into_response())
+    out.insert(header::CONTENT_LENGTH, HeaderValue::from(len));
+    Ok((out, body).into_response())
+}
+
+/// An anonymous read-write file in the system temp directory.
+///
+/// Created, then unlinked at once: the open handle keeps the data until
+/// it is dropped, and no path is left for anyone to find.
+fn temp_file() -> Result<std::fs::File, ApiError> {
+    let path = std::env::temp_dir().join(format!(
+        "sentinel-export-{}.zip",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|_| ApiError::internal("could not create the export archive"))?;
+    let _ = std::fs::remove_file(&path);
+    Ok(file)
 }
 
 /// `filename_for("gdpr-export", org_id).replace(".csv", ".zip")`.
@@ -113,29 +147,50 @@ fn export_filename(org_id: &str, now: chrono::DateTime<Utc>) -> String {
 // two things to keep in step.
 use crate::csv_export::safe_segment;
 
-/// Build the whole archive in memory, as the Python does.
+/// Write the whole export, one JSON file per table plus every piece of
+/// incident evidence that has bytes, into `out`.
 ///
-/// Its docstring is worth keeping in mind: the archive must not be
-/// drained between members, because `ZipFile` records each member's
-/// offset from the buffer's absolute position. Here the buffer is a
-/// `Vec` that is never truncated, so the same hazard does not arise —
-/// but the memory profile is the same, and bounded the same way, by
-/// retention.
-async fn build_archive(
-    state: &AppState,
+/// Evidence blobs are read one at a time, so memory holds at most one
+/// of them however large the export is. They are stored rather than
+/// deflated: JPEG and MPEG-TS are already compressed.
+pub async fn write_archive<W: std::io::Write + std::io::Seek>(
+    pool: &crate::db::Pool,
     org_id: &str,
     exported_at: chrono::DateTime<Utc>,
-) -> Result<Vec<u8>, ApiError> {
-    let mut buf = Vec::new();
-    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+    out: W,
+) -> Result<(), ApiError> {
+    let mut zip = zip::ZipWriter::new(out);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         // `zipfile.writestr` stamps a ZipInfo with 0o600 and the local
         // clock; neither is part of what the export means.
         .unix_permissions(0o600);
+    let stored = options.compression_method(zip::CompressionMethod::Stored);
 
     let mut tables = Vec::new();
-    for (name, rows) in export_org_data(state, org_id).await? {
+    let mut evidence_files = 0usize;
+    for (name, mut rows) in export_org_data(pool, org_id).await? {
+        if name == "incident_evidence" {
+            for row in rows.iter_mut() {
+                let Some(path) = evidence_path(row) else {
+                    continue;
+                };
+                let id = row["id"].as_i64().unwrap_or_default();
+                let (data,): (Option<Vec<u8>>,) =
+                    sqlx::query_as("SELECT data FROM incident_evidence WHERE id = $1")
+                        .bind(id as i32)
+                        .fetch_one(pool)
+                        .await?;
+                let Some(data) = data else {
+                    continue;
+                };
+                zip.start_file(path.as_str(), stored)?;
+                zip.write_all(&data)
+                    .map_err(|_| ApiError::internal("could not write the export archive"))?;
+                row["file"] = json!(path);
+                evidence_files += 1;
+            }
+        }
         let payload = python_dumps_indented(&Value::Array(rows.clone()));
         zip.start_file(format!("{name}.json"), options)?;
         zip.write_all(payload.as_bytes())
@@ -154,25 +209,40 @@ async fn build_archive(
         "format_version": 1,
         "spec": "GDPR Article 20 — data portability export",
         "tables": tables,
+        "evidence_files": evidence_files,
         "excluded": {
             "recordings":
                 "Local to your CameraNode device. Not stored on \
-                 Command Center. Use the CameraNode TUI to export.",
-            "incident_evidence_blobs":
-                "Metadata exported here as 'incident_evidence.json'. \
-                 Binary bytes available per-evidence via \
-                 GET /api/incidents/{id}/evidence/{eid} during \
-                 your portability window.",
+                 Command Center. Export them from the CameraNode.",
         },
     });
     zip.start_file("manifest.json", options)?;
     zip.write_all(python_dumps_indented(&manifest).as_bytes())
         .map_err(|_| ApiError::internal("could not write the export manifest"))?;
 
-    // `finish` consumes the writer, which is what releases its borrow
-    // on the buffer.
     zip.finish()?;
-    Ok(buf)
+    Ok(())
+}
+
+/// Where a piece of evidence's bytes go in the archive, or `None` when
+/// it has none (a text observation).
+///
+/// `evidence/<incident>/<evidence>.<ext>`, the extension from the
+/// stored MIME type, so the files open with the right program.
+fn evidence_path(row: &Value) -> Option<String> {
+    let mime = row["data_mime"].as_str()?;
+    let ext = match mime {
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "video/mp2t" => "ts",
+        "video/mp4" => "mp4",
+        _ => "bin",
+    };
+    Some(format!(
+        "evidence/{}/{}.{ext}",
+        row["incident_id"].as_i64()?,
+        row["id"].as_i64()?
+    ))
 }
 
 /// `json.dumps(value, indent=2, default=str)`.
@@ -192,10 +262,9 @@ fn iso_aware(ts: chrono::DateTime<Utc>) -> String {
 
 /// Every org-scoped table, in the order `export_org_data` yields them.
 async fn export_org_data(
-    state: &AppState,
+    pool: &crate::db::Pool,
     org_id: &str,
 ) -> Result<Vec<(&'static str, Vec<Value>)>, ApiError> {
-    let pool = &state.pool;
     let mut out: Vec<(&'static str, Vec<Value>)> = Vec::new();
 
     // --- ORG_SCOPED_MODELS, in their own order ----------------------
@@ -301,11 +370,11 @@ async fn export_org_data(
         org_id,
     )
     .await?;
-    // `_serialize` calls `to_dict()` with no arguments, and the trace is
-    // off by default.
+    // With the tool trace: it is the record of what the agent looked at
+    // and did, which is the part of a run worth having a copy of.
     out.push((
         "sentinel_runs",
-        rows.iter().map(|r| r.to_json(false)).collect(),
+        rows.iter().map(|r| r.to_json(true)).collect(),
     ));
 
     let rows: Vec<SentinelAgentKeyRow> = org_rows(
@@ -646,6 +715,157 @@ pub async fn delete_org_data(
     }
 
     Ok(counts)
+}
+
+/// Erase an organization: its caches, then every row it owns.
+///
+/// The one path for "this organization no longer exists", used by
+/// Clerk's `organization.deleted` webhook and by account deletion. The
+/// caches go first so no segment outlives its camera row. Unlike Full
+/// Organization Reset, nothing is sent to the CameraNodes: they keep
+/// their local recordings, which belong to whoever owns the hardware.
+pub async fn erase_org(state: &AppState, org_id: &str) -> Result<(), ApiError> {
+    let cameras: Vec<(String,)> =
+        sqlx::query_as("SELECT camera_id FROM cameras WHERE org_id = $1 ORDER BY id")
+            .bind(org_id)
+            .fetch_all(&state.pool)
+            .await?;
+    for (camera_id,) in &cameras {
+        state.hls.cleanup_camera(camera_id);
+    }
+    let mut tx = crate::db::begin_write(&state.pool).await?;
+    let counts = delete_org_data(&mut tx, org_id).await?;
+    tx.commit().await?;
+    crate::hls::invalidate_auth_cache();
+    state.hls.forget_org_viewer_usage(org_id);
+    tracing::info!(
+        org_id,
+        cameras = cameras.len(),
+        counts = ?counts,
+        "org erased"
+    );
+    Ok(())
+}
+
+/// What a deleted account leaves behind in place of a name.
+pub const DELETED_USER: &str = "deleted user";
+
+/// Erase one person's personal data, in every organization.
+///
+/// Called when an account is deleted. `emails` are the addresses the
+/// account had; rows that recorded an address rather than the user id
+/// (email logs, the outbox, "created by" labels) are found by those.
+///
+/// - Their viewing history and read cursors are deleted outright.
+/// - Email sent to them is deleted from the log and the queue, and any
+///   bounce record for them is dropped.
+/// - The audit log keeps each event, because it is the organization's
+///   security record, but loses the name, user id and IP address.
+/// - Incidents and agent keys they created or resolved keep the record
+///   but say "deleted user".
+///
+/// Safe to run twice: the second run finds nothing.
+pub async fn erase_user_data(
+    pool: &crate::db::Pool,
+    user_id: &str,
+    emails: &[String],
+) -> Result<Vec<(&'static str, i64)>, sqlx::Error> {
+    let emails: Vec<String> = emails
+        .iter()
+        .map(|e| e.trim().to_lowercase())
+        .filter(|e| !e.is_empty())
+        .collect();
+    let in_emails = crate::db::any(2);
+    let mut tx = crate::db::begin_write(pool).await?;
+    let mut counts = Vec::new();
+
+    let n = sqlx::query("DELETE FROM stream_access_logs WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected() as i64;
+    counts.push(("stream_access_logs", n));
+
+    let n = sqlx::query("DELETE FROM user_notification_state WHERE clerk_user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected() as i64;
+    counts.push(("user_notification_state", n));
+
+    let n = sqlx::query(&format!(
+        "UPDATE audit_log SET username = '{DELETED_USER}', user_id = NULL, ip_address = NULL
+          WHERE user_id = $1 OR LOWER(username) {in_emails}"
+    ))
+    .bind(user_id)
+    .bind(crate::db::list(&emails))
+    .execute(&mut *tx)
+    .await?
+    .rows_affected() as i64;
+    counts.push(("audit_log", n));
+
+    for (table, column) in [
+        ("email_log", "recipient_email"),
+        ("email_outbox", "recipient_email"),
+        ("email_suppression", "address"),
+    ] {
+        let n = sqlx::query(&format!(
+            "DELETE FROM {table} WHERE LOWER({column}) {}",
+            crate::db::any(1)
+        ))
+        .bind(crate::db::list(&emails))
+        .execute(&mut *tx)
+        .await?
+        .rows_affected() as i64;
+        counts.push((table, n));
+    }
+
+    for (table, column) in [
+        ("incidents", "created_by"),
+        ("incidents", "resolved_by"),
+        ("sentinel_agent_keys", "created_by"),
+    ] {
+        let n = sqlx::query(&format!(
+            "UPDATE {table} SET {column} = '{DELETED_USER}'
+              WHERE {column} = $1 OR LOWER({column}) {in_emails}"
+        ))
+        .bind(user_id)
+        .bind(crate::db::list(&emails))
+        .execute(&mut *tx)
+        .await?
+        .rows_affected() as i64;
+        counts.push((table, n));
+    }
+
+    tx.commit().await?;
+    Ok(counts)
+}
+
+/// The addresses this database has recorded for a user id.
+///
+/// For the `user.deleted` webhook, whose payload carries only the id:
+/// by then Clerk can no longer say what the addresses were.
+pub async fn recorded_emails(
+    pool: &crate::db::Pool,
+    user_id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
+    let rows: Vec<(Option<String>,)> = sqlx::query_as(
+        "SELECT user_email FROM stream_access_logs WHERE user_id = $1
+         UNION
+         SELECT username FROM audit_log WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    let mut out: Vec<String> = rows
+        .into_iter()
+        .filter_map(|(e,)| e)
+        .filter(|e| e.contains('@'))
+        .map(|e| e.to_lowercase())
+        .collect();
+    out.sort();
+    out.dedup();
+    Ok(out)
 }
 
 #[cfg(test)]

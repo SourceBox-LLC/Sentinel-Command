@@ -373,6 +373,19 @@ export async function downloadOrgAuditLogsCsv(getToken, params = {}) {
 // streams a ZIP containing one JSON file per org-scoped table
 // (cameras, settings, audit, motion events, notifications, MCP
 // keys, email logs, incidents, etc.) plus a manifest.json.
+// Deleting your own account. The preview says which organizations
+// would be deleted, left, or would block the deletion.
+export async function getAccountDeletionPreview(getToken) {
+  return fetchWithAuth("/api/account/deletion", getToken)
+}
+
+export async function deleteAccount(getToken, confirm) {
+  return fetchWithAuth("/api/account", getToken, {
+    method: "DELETE",
+    body: JSON.stringify({ confirm }),
+  })
+}
+
 export async function downloadGdprExport(getToken) {
   return _downloadFile(
     "/api/gdpr/export",

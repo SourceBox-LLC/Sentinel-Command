@@ -45,7 +45,7 @@ Two channels, use whichever you prefer:
 - Issues in third-party services (Clerk, Stripe via Clerk billing, Fly.io, Resend, Sentry, Upstash, Ollama) — report upstream
 - Social engineering, physical attacks, attacks needing local access to a CameraNode you don't own
 - Volumetric DoS / bandwidth flood attacks (application-layer rate-limit bypasses ARE in scope)
-- Missing security headers we've consciously chosen not to set (for example, there is no Content-Security-Policy yet)
+- Missing security headers we've consciously chosen not to set (for example, `style-src` allows `'unsafe-inline'` because the sign-in library injects styles)
 - Self-XSS requiring the victim to paste attacker-controlled content
 - Email spoofing of domains we don't own
 - Reports generated solely by automated scanners with no proof-of-impact

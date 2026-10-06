@@ -494,6 +494,9 @@ async fn dispatch(
         | "organizationMembership.deleted" => {
             let data = data_object()?;
             membership_notification(state, event_type, &data).await;
+            if event_type == "organizationMembership.deleted" {
+                delete_org_if_empty(state, &data).await;
+            }
         }
 
         // First touch. The creator is automatically the org's first
@@ -527,37 +530,28 @@ async fn dispatch(
 
         "organization.deleted" => {
             let data = data_object()?;
-            let org_id = data
-                .get("id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
+            let org_id = data.get("id").and_then(Value::as_str).unwrap_or_default();
             if !org_id.is_empty() {
-                // The caches go first, so segment-cache entries do not
-                // outlive the camera rows. Then the same helper the
-                // in-app erasure uses, so a Clerk-initiated deletion
-                // and an in-app one reach identical end states — this
-                // branch once cleared seven tables and left motion
+                // The same helper account deletion uses, so every way an
+                // organization disappears reaches the same end state.
+                // This branch once cleared seven tables and left motion
                 // events, notifications, incidents and the rest behind.
-                let cameras: Vec<(String,)> =
-                    sqlx::query_as("SELECT camera_id FROM cameras WHERE org_id = $1 ORDER BY id")
-                        .bind(&org_id)
-                        .fetch_all(&state.pool)
-                        .await?;
-                for (camera_id,) in &cameras {
-                    state.hls.cleanup_camera(camera_id);
-                }
-                let mut tx = crate::db::begin_write(&state.pool).await?;
-                let counts = crate::api::gdpr::delete_org_data(&mut tx, &org_id).await?;
-                tx.commit().await?;
-                crate::hls::invalidate_auth_cache();
-                state.hls.forget_org_viewer_usage(&org_id);
-                tracing::info!(
-                    org_id,
-                    cameras = cameras.len(),
-                    counts = ?counts,
-                    "org deleted"
-                );
+                crate::api::gdpr::erase_org(state, org_id).await?;
+            }
+        }
+
+        // An account was deleted: in the app, which has already erased
+        // it (this run then finds nothing), or in Clerk's own screens,
+        // which have not. The payload carries only the id, so the
+        // addresses to erase are the ones this database recorded.
+        "user.deleted" => {
+            let data = data_object()?;
+            let user_id = data.get("id").and_then(Value::as_str).unwrap_or_default();
+            if !user_id.is_empty() {
+                let emails = crate::api::gdpr::recorded_emails(&state.pool, user_id).await?;
+                let counts =
+                    crate::api::gdpr::erase_user_data(&state.pool, user_id, &emails).await?;
+                tracing::info!(user_id, counts = ?counts, "user data erased");
             }
         }
 
@@ -689,6 +683,42 @@ fn past_due_stamp(data: &Map<String, Value>) -> Result<String, ApiError> {
 /// Every one is best-effort: a notification fault must not make Svix
 /// retry, because the membership change happened either way and the
 /// retry would just re-notify.
+/// After a membership ends, delete the organization if nobody is left.
+///
+/// An organization with no members can never be opened again, so its
+/// data would sit in the database for good. This happens when the last
+/// member's account is deleted outside the app's own deletion flow,
+/// which deletes such organizations itself. Deleting it at Clerk sends
+/// `organization.deleted`, which erases the data.
+///
+/// Best-effort: a failure is logged, not returned, so Svix does not
+/// replay the membership notification over it.
+async fn delete_org_if_empty(state: &AppState, data: &Map<String, Value>) {
+    let Some(org_id) = data
+        .get("organization")
+        .and_then(|o| o.get("id"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    else {
+        return;
+    };
+    let clerk = crate::api::account::Clerk::new(state);
+    match clerk.organization_member_count(org_id).await {
+        Ok(0) => match clerk.delete_organization(org_id).await {
+            Ok(()) => tracing::info!(org_id, "deleted an organization left with no members"),
+            Err(err) => {
+                tracing::error!(org_id, error = %err, "could not delete an empty organization")
+            }
+        },
+        Ok(_) => {}
+        // Already deleted (for example, by the account-deletion flow).
+        Err(crate::api::account::ClerkError::NotFound) => {}
+        Err(err) => {
+            tracing::error!(org_id, error = %err, "could not count an organization's members")
+        }
+    }
+}
+
 async fn membership_notification(state: &AppState, event_type: &str, data: &Map<String, Value>) {
     // `data.get("organization") or {}` — a falsy value takes the
     // default, so a null organization is an empty map rather than a
