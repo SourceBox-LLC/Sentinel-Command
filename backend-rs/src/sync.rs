@@ -28,6 +28,30 @@ use crate::app::AppState;
 
 /// `_PUSH_TIMEOUT_SECONDS`.
 const PUSH_TIMEOUT_SECONDS: u64 = 30;
+
+/// How many 429s one request waits out before it is reported as failed.
+pub const MAX_RATE_LIMIT_WAITS: u32 = 5;
+
+/// How long a 429 asks to be left alone, or `None` for any other answer.
+///
+/// Sync-Service limits each route to 120 requests a minute per address.
+/// A first sync of a large table, or a restore walking one, can go
+/// faster than that; treating the 429 as a failure aborted the restore
+/// part-way and pushed a backlog back by a whole 30-minute cycle. The
+/// wait is the service's `Retry-After`, 60 s when absent, and capped so
+/// a malformed header cannot park the caller for hours.
+pub fn rate_limit_wait(response: &reqwest::Response) -> Option<std::time::Duration> {
+    if response.status() != reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return None;
+    }
+    let seconds = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(60);
+    Some(std::time::Duration::from_secs(seconds.clamp(1, 120)))
+}
 /// `_BATCH_SIZE`.
 const BATCH_SIZE: i64 = 500;
 
@@ -317,23 +341,34 @@ async fn push_table(
                 serde_json::json!(ids.into_iter().map(|(id,)| id).collect::<Vec<_>>());
         }
 
-        let response = state
-            .http
-            .post(format!(
-                "{}/v1/sync/push",
-                state.config.sentinel_sync_service_url.trim_end_matches('/')
-            ))
-            .bearer_auth(
-                state
-                    .config
-                    .sentinel_license_key
-                    .clone()
-                    .unwrap_or_default(),
-            )
-            .timeout(std::time::Duration::from_secs(PUSH_TIMEOUT_SECONDS))
-            .json(&payload)
-            .send()
-            .await?;
+        let mut waits = 0;
+        let response = loop {
+            let response = state
+                .http
+                .post(format!(
+                    "{}/v1/sync/push",
+                    state.config.sentinel_sync_service_url.trim_end_matches('/')
+                ))
+                .bearer_auth(
+                    state
+                        .config
+                        .sentinel_license_key
+                        .clone()
+                        .unwrap_or_default(),
+                )
+                .timeout(std::time::Duration::from_secs(PUSH_TIMEOUT_SECONDS))
+                .json(&payload)
+                .send()
+                .await?;
+            match rate_limit_wait(&response) {
+                Some(wait) if waits < MAX_RATE_LIMIT_WAITS => {
+                    waits += 1;
+                    tracing::info!(table = spec.table, ?wait, "[Sync] rate limited; waiting");
+                    tokio::time::sleep(wait).await;
+                }
+                _ => break response,
+            }
+        };
         // `raise_for_status()`: the cursor advances only past rows the
         // service CONFIRMED. A cursor moved on an unacknowledged push is
         // data silently missing from the mirror.

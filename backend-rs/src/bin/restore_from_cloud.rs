@@ -340,13 +340,26 @@ async fn get(
     path: &str,
     query: &[(&str, String)],
 ) -> Result<serde_json::Value, String> {
-    let response = client
-        .get(format!("{base}{path}"))
-        .bearer_auth(key)
-        .query(query)
-        .send()
-        .await
-        .map_err(|err| format!("sync service unreachable: {err}"))?;
+    let mut waits = 0;
+    let response = loop {
+        let response = client
+            .get(format!("{base}{path}"))
+            .bearer_auth(key)
+            .query(query)
+            .send()
+            .await
+            .map_err(|err| format!("sync service unreachable: {err}"))?;
+        // A large table can outrun the service's per-address limit; wait
+        // it out rather than abandon a restore half-way through.
+        match sentinel_command::sync::rate_limit_wait(&response) {
+            Some(wait) if waits < sentinel_command::sync::MAX_RATE_LIMIT_WAITS => {
+                waits += 1;
+                eprintln!("  rate limited by the sync service; waiting {}s", wait.as_secs());
+                tokio::time::sleep(wait).await;
+            }
+            _ => break response,
+        }
+    };
     match response.status().as_u16() {
         403 => {
             return Err("Sync service rejected the licence key (403).\n\
