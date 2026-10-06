@@ -17,15 +17,15 @@ Tackle the dependencies first (auth, transports) so the later items
 > | - | ---- | ---------- |
 > | 1 | Clerk production keys | you — swap at the last minute before launch |
 > | 3 | Status page vendor | you — optional, recommended |
-> | 6 | Legal: Terms of Service + Privacy Policy published, DPA reviewed | you + counsel — **no Terms or Privacy Policy exists yet**, though sign-up asks users to agree to both |
+> | 6 | Legal: counsel review of the published Terms and Privacy Policy, and of the DPA | you + counsel. Both policies are live (2026-10-06); nothing about them has been reviewed by a lawyer |
 > | 8 | Pi performance benchmark | hardware access |
 > | 11 | On-call rotation | you — a process, not a change |
 >
 > Item 12 (day-before go/no-go) is a checklist to *run*, not to close.
 >
-> Items 2, 4, 5, 7, 9 and 10 are closed. The genuine blocker is legal:
-> a Terms of Service and Privacy Policy have to be written and published
-> (sign-up already links them), and the DPA reviewed.
+> Items 2, 4, 5, 7, 9 and 10 are closed. The remaining legal step is
+> review: the Terms of Service and Privacy Policy are published, but a
+> lawyer has not read them, and the DPA is still a draft.
 
 ---
 
@@ -247,23 +247,36 @@ accidentally.
    and email the billing contact (per the DPA's 14-day notice
    policy). The repo edit IS the public notice.
 
-**⚠️ Terms of Service and Privacy Policy do not exist anywhere yet.**
-The sign-up page says "By creating an account you agree to our Terms of
-Service and Privacy Policy" and links
-`https://sentinel-command.com/legal/terms` and `…/legal/privacy`; the
-footer of every email links the privacy one. Both URLs return 404 (the
-old `/legal` page went with the marketing pages in July and was never
-republished; the website's own "Terms" link 404s too). Write both, have
-counsel review them, and publish them **at those two URLs** so the
-existing links start working. Until then, users are agreeing to
-documents that don't exist.
+**Terms of Service and Privacy Policy: published 2026-10-06, not yet
+reviewed by counsel.** They live in the `sentinel-website` repo
+(`docs/legal/terms.html`, `docs/legal/privacy.html`) and are served at
+<https://sentinel-command.com/legal/terms> and
+<https://sentinel-command.com/legal/privacy>, the URLs sign-up and every
+email footer already link. They were written against the code, not
+against the drafts: they say incident evidence is stored, that Sentinel
+AI sends images to Ollama Cloud, and that it is off until an admin turns
+it on (which was made true in the same change; it used to switch itself
+on). Governing law is Washington. Send both to counsel with the DPA.
 
-**Factual corrections the drafts need** are listed in editor's notes at
-the top of `legal/DPA.md` and `legal/SUB_PROCESSORS.md`. The important
-one: incident evidence (snapshots and short video clips) *is* stored in
-Command Center's database, which the drafts deny. The website's "Privacy
-by design" section says "We don't hold your video", which needs the same
-qualification.
+When the processing changes, update the Privacy Policy in the same
+change as the code, as you would `SUB_PROCESSORS.md`. In particular,
+changing the first-party agent's `LLM_MODEL` changes a sentence in it.
+
+**Things for counsel to look at in particular:**
+- the liability cap (greater of 12 months' fees and US$50) and the
+  indemnity, which applies to business users only;
+- that disputes go to Washington courts, with no arbitration clause;
+- whether consumers need a separate withdrawal-right notice at checkout;
+- the Upstash entry in the sub-processor table: it is listed because the
+  platform docs record Upstash as the rate-limit store, but
+  `fly secrets list` was not available to confirm `REDIS_URL` is set.
+  If it isn't, remove that row.
+
+**Factual corrections the DPA drafts need** are listed in editor's
+notes at the top of `legal/DPA.md` and `legal/SUB_PROCESSORS.md`. The
+important one: incident evidence (snapshots and short video clips) *is*
+stored in Command Center's database, which the drafts deny. The
+published Privacy Policy already says so.
 
 **Other legal documents you may need (not drafted yet).**
 - Acceptable Use Policy (probably worth one, given the camera

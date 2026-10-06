@@ -92,7 +92,7 @@ describe('SentinelPage', () => {
     const runNow = screen.getByRole('button', { name: /Run now/ })
     expect(runNow).toBeEnabled()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Pause Sentinel' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Turn Sentinel off' }))
     await waitFor(() => expect(mockUpdateConfig).toHaveBeenCalled())
     expect(mockUpdateConfig.mock.calls[0][1]).toEqual({ enabled: false })
   })

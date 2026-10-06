@@ -269,6 +269,16 @@ diff this file in the repository for the full record.
   2026-10-01 entry were deployed to production. **No new sub-processor
   and no change to what is sent or to whom.** The first-party agent
   still resolves to Ollama Cloud.
+- **2026-10-06** — Published the Privacy Policy at
+  <https://sentinel-command.com/legal/privacy>. Its provider table lists
+  everyone here plus Upstash (see the editor's note) and the providers
+  that serve the website and our email (GitHub Pages, ImprovMX), which
+  handle visitors' and correspondents' data rather than Customer
+  Personal Data. Also changed Sentinel AI to start **off** for new
+  organizations. Before this, the settings row was created switched on
+  the first time anyone opened the Sentinel page, so an organization on
+  a paid plan could start sending images to Ollama without an admin
+  deciding to.
 
 ---
 

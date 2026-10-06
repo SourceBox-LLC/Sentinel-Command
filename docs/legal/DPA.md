@@ -42,7 +42,10 @@
 > 5. **Deletion path.** "Settings → Delete Organization" is now
 >    **Settings → Danger Zone → Full Organization Reset**. Deleting the
 >    organization in Clerk runs the same erasure.
-> 6. **`/security` page.** The draft refers to a `/security` page on the
+> 6. **Governing law.** Section 11 below says Delaware. The published
+>    Terms of Service (<https://sentinel-command.com/legal/terms>), which
+>    this DPA says it forms part of, choose Washington. Make them agree.
+> 7. **`/security` page. The draft refers to a `/security` page on the
 >    website as the live security description. No such page exists
 >    (`sentinel-command.com/security` and `app.sentinel-command.com/security`
 >    both return 404). Publish it, or point these references at

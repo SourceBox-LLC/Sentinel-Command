@@ -5,7 +5,7 @@ import { IS_LOCAL_AUTH } from "../auth/index.jsx"
 
 function SignUpPage() {
   // Self-hosted: a single fixed admin account, provisioned once via
-  // backend/scripts/hash_local_admin_password.py — there's nothing to
+  // sentinel-hash-password — there's nothing to
   // sign up for.
   if (IS_LOCAL_AUTH) {
     return <Navigate to="/sign-in" replace />
