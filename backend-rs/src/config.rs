@@ -568,6 +568,9 @@ mod tests {
         assert!(!trust_proxy_headers(None, Some("")));
         assert!(trust_proxy_headers(Some("true"), None));
         assert!(trust_proxy_headers(Some(" YES "), None));
-        assert!(!trust_proxy_headers(Some("false"), Some("sentinel-command")));
+        assert!(!trust_proxy_headers(
+            Some("false"),
+            Some("sentinel-command")
+        ));
     }
 }

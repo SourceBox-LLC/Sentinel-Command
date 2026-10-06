@@ -588,8 +588,14 @@ mod tests {
     fn untrusted_proxy_headers_are_ignored_for_the_peer() {
         // Off Fly a caller can send either header; the peer is the client.
         let spoofed = headers(&[("fly-client-ip", "1.1.1.1"), ("x-forwarded-for", "2.2.2.2")]);
-        assert_eq!(tenant_key_with(&spoofed, Some("10.0.0.1"), false, false), "10.0.0.1");
-        assert_eq!(client_ip(&spoofed, Some("10.0.0.1"), false).as_deref(), Some("10.0.0.1"));
+        assert_eq!(
+            tenant_key_with(&spoofed, Some("10.0.0.1"), false, false),
+            "10.0.0.1"
+        );
+        assert_eq!(
+            client_ip(&spoofed, Some("10.0.0.1"), false).as_deref(),
+            Some("10.0.0.1")
+        );
     }
 
     #[test]

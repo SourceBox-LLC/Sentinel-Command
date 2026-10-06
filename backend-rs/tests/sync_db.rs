@@ -206,14 +206,16 @@ async fn a_rate_limited_push_waits_and_lands_in_the_same_cycle() {
         (sentinel_command::license::LICENSE_VALID, "true"),
         (sentinel_command::license::SYNC_ENABLED, "true"),
     ] {
-        sqlx::query("INSERT INTO settings (org_id, key, value, updated_at) VALUES ($1, $2, $3, $4)")
-            .bind(&org)
-            .bind(key)
-            .bind(value)
-            .bind(now)
-            .execute(&state.pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO settings (org_id, key, value, updated_at) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(&org)
+        .bind(key)
+        .bind(value)
+        .bind(now)
+        .execute(&state.pool)
+        .await
+        .unwrap();
     }
     sqlx::query(
         "INSERT INTO notifications (org_id, kind, audience, title, body, severity, created_at)
@@ -228,8 +230,14 @@ async fn a_rate_limited_push_waits_and_lands_in_the_same_cycle() {
     let started = Instant::now();
     sentinel_command::sync::push_pending_changes(&state).await;
 
-    assert!(refused.load(std::sync::atomic::Ordering::SeqCst), "the stand-in refused once");
-    assert!(started.elapsed() >= std::time::Duration::from_secs(1), "the Retry-After was honoured");
+    assert!(
+        refused.load(std::sync::atomic::Ordering::SeqCst),
+        "the stand-in refused once"
+    );
+    assert!(
+        started.elapsed() >= std::time::Duration::from_secs(1),
+        "the Retry-After was honoured"
+    );
     let landed = seen.lock().unwrap().iter().any(|r| {
         r["table"] == "notifications"
             && r["row"]["data"]["org_id"] == org.as_str()

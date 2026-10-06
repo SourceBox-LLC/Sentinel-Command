@@ -354,7 +354,10 @@ async fn get(
         match sentinel_command::sync::rate_limit_wait(&response) {
             Some(wait) if waits < sentinel_command::sync::MAX_RATE_LIMIT_WAITS => {
                 waits += 1;
-                eprintln!("  rate limited by the sync service; waiting {}s", wait.as_secs());
+                eprintln!(
+                    "  rate limited by the sync service; waiting {}s",
+                    wait.as_secs()
+                );
                 tokio::time::sleep(wait).await;
             }
             _ => break response,

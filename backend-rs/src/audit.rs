@@ -351,10 +351,19 @@ mod tests {
         use crate::ratelimit::client_ip as resolve;
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-for", "2.2.2.2, 3.3.3.3".parse().unwrap());
-        assert_eq!(resolve(&h, Some("9.9.9.9"), true).as_deref(), Some("2.2.2.2"));
+        assert_eq!(
+            resolve(&h, Some("9.9.9.9"), true).as_deref(),
+            Some("2.2.2.2")
+        );
         h.insert("fly-client-ip", "1.1.1.1".parse().unwrap());
-        assert_eq!(resolve(&h, Some("9.9.9.9"), true).as_deref(), Some("1.1.1.1"));
-        assert_eq!(resolve(&h, Some("9.9.9.9"), false).as_deref(), Some("9.9.9.9"));
+        assert_eq!(
+            resolve(&h, Some("9.9.9.9"), true).as_deref(),
+            Some("1.1.1.1")
+        );
+        assert_eq!(
+            resolve(&h, Some("9.9.9.9"), false).as_deref(),
+            Some("9.9.9.9")
+        );
     }
 
     #[test]

@@ -53,7 +53,11 @@ async fn a_wrong_key_annotates_only_a_node_that_has_never_connected() {
         )
         .bind(&node_id)
         .bind(&org)
-        .bind(if last_seen.is_some() { "online" } else { "pending" })
+        .bind(if last_seen.is_some() {
+            "online"
+        } else {
+            "pending"
+        })
         .bind(last_seen)
         .bind(now)
         .execute(&state.pool)
@@ -79,7 +83,11 @@ async fn a_wrong_key_annotates_only_a_node_that_has_never_connected() {
                 .oneshot(request)
                 .await
                 .unwrap();
-            assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN, "{path} {node_id}");
+            assert_eq!(
+                response.status(),
+                axum::http::StatusCode::FORBIDDEN,
+                "{path} {node_id}"
+            );
         }
         let notes: Vec<(String, Option<String>)> = sqlx::query_as(
             "SELECT node_id, last_register_error FROM camera_nodes WHERE org_id = $1
@@ -91,9 +99,15 @@ async fn a_wrong_key_annotates_only_a_node_that_has_never_connected() {
         .unwrap();
         for (node_id, note) in notes {
             if node_id.ends_with("new") {
-                assert!(note.is_some(), "{path}: the never-connected node gets the note");
+                assert!(
+                    note.is_some(),
+                    "{path}: the never-connected node gets the note"
+                );
             } else {
-                assert_eq!(note, None, "{path}: a working node is not told to rotate its key");
+                assert_eq!(
+                    note, None,
+                    "{path}: a working node is not told to rotate its key"
+                );
             }
         }
     }
