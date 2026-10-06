@@ -510,9 +510,10 @@ async fn dispatch(
                 let mut notification =
                     NewNotification::new("welcome", format!("Welcome to Sentinel, {org_name}"));
                 notification.body = "Your Sentinel workspace is ready.  Three steps to your \
-                    first live feed: install CameraNode on the host where your cameras live, \
-                    wait ~30 seconds for it to register, then add your first camera from \
-                    Settings → Cameras.  Full docs at https://sentinel-command.com/documentation/."
+                    first live feed: in Settings, click Add Your First Node; run the install \
+                    command it shows on the computer your cameras are plugged into; your \
+                    cameras appear on the dashboard within about a minute.  Full docs at \
+                    https://sentinel-command.com/documentation/."
                     .to_string();
                 notification.audience = "admin".to_string();
                 notification.link = Some("/dashboard".to_string());
