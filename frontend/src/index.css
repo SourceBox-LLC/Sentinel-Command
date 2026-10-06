@@ -4825,6 +4825,57 @@ body {
 }
 
 /* Auth Page */
+/* Auth Layout — the sign-in / sign-up frame and its logo.
+   These lived in styles/landing.css and went with it when the
+   marketing pages were removed, which left the logo an unstyled
+   blue link above the Clerk card. Restored verbatim. */
+.auth-layout {
+  min-height: 100vh;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.auth-layout .bg-grid,
+.auth-layout .bg-glow {
+  position: fixed;
+  pointer-events: none;
+}
+
+.auth-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-decoration: none;
+  margin-bottom: 2rem;
+  position: relative;
+  z-index: 10;
+}
+
+.auth-logo-icon {
+  font-size: 2rem;
+}
+
+.auth-logo-text {
+  color: var(--text-primary);
+}
+
+.auth-logo-highlight {
+  color: var(--accent-green);
+}
+
+.auth-layout .auth-page {
+  position: relative;
+  z-index: 10;
+  min-height: auto;
+}
+
 .auth-page {
     min-height: calc(100vh - 60px);
     display: flex;
