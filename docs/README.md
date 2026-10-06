@@ -26,7 +26,11 @@ One decision per file, in order, so nobody has to re-argue it. Context, decision
 - [0001: schema migrations](adr/0001-sync-schema-vs-alembic.md). Why there was no Alembic, and how the schema is managed now (sqlx migrations).
 - [0002: viewer-hour billing](adr/0002-viewer-hour-billing.md). Why monthly viewer-hours, not camera count, are the real plan limit.
 
-## Legal drafts (`legal/`)
+## Legal
+
+The **Terms of Service** and **Privacy Policy** are published on the website, from the `sentinel-website` repo: <https://sentinel-command.com/legal/terms> and <https://sentinel-command.com/legal/privacy>. Update the Privacy Policy in the same change as any code that alters what is collected, where it goes, or how long it is kept.
+
+### Drafts (`legal/`)
 
 Marked `DRAFT — NOT FOR EXECUTION`. **Counsel must review them** before they're sent to a customer or relied on. They live here so the legal text and the engineering reality don't drift apart.
 

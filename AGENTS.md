@@ -402,7 +402,7 @@ Both live in `mcp_api_keys`, split by `kind` (`mcp` or `integration`). **Every q
 | `mcp_api_keys` | MCP (`osc_`) and integration (`osi_`) keys; `scope_mode`, `scope_tools` |
 | `mcp_activity_logs` | one row per MCP tool call |
 | `sentinel_agent_keys` | per-org agent keys (`osa_`) |
-| `sentinel_config` | per-org Sentinel AI settings; created on first read |
+| `sentinel_config` | per-org Sentinel AI settings; created on first read, switched **off** (the Privacy Policy promises it is off until an admin turns it on) |
 | `sentinel_runs` | one row per agent run: trigger, outcome, severity, incident, tool trace |
 | `incidents` | title, summary, markdown report, severity, status (`open`, `acknowledged`, `resolved`, `dismissed`) |
 | `incident_evidence` | snapshot (JPEG), clip (MPEG-TS) or text observation; bytes stored inline |

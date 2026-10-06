@@ -595,7 +595,7 @@ function CompactHeader({ enabled, locked, onToggle, triggerCount, scopeCount, to
         <div className="sentinel-compact-status">
           <StatusDot kind={enabled && !locked ? "active" : "paused"} pulse={enabled && !locked} />
           <span className="sentinel-compact-status-label">
-            {locked ? "LOCKED" : enabled ? "ARMED" : "PAUSED"}
+            {locked ? "LOCKED" : enabled ? "ARMED" : "OFF"}
           </span>
         </div>
         <div className="sentinel-compact-divider" aria-hidden="true" />
@@ -628,7 +628,7 @@ function CompactHeader({ enabled, locked, onToggle, triggerCount, scopeCount, to
           active={enabled}
           onClick={onToggle}
           disabled={!interactive}
-          ariaLabel={enabled ? "Pause Sentinel" : "Resume Sentinel"}
+          ariaLabel={enabled ? "Turn Sentinel off" : "Turn Sentinel on"}
         />
       </div>
     </header>
@@ -676,7 +676,7 @@ function OverviewTab({ enabled, locked, scopeCount, runs, runStats, loadingRuns,
               <div className="sentinel-armed-pill-row">
                 <StatusDot kind={enabled && !locked ? "active" : "paused"} pulse={enabled && !locked} />
                 <span className="sentinel-armed-pill">
-                  {locked ? "LOCKED" : enabled ? "ARMED" : "PAUSED"}
+                  {locked ? "LOCKED" : enabled ? "ARMED" : "OFF"}
                 </span>
               </div>
               <h2 className="sentinel-armed-headline">
@@ -684,7 +684,7 @@ function OverviewTab({ enabled, locked, scopeCount, runs, runStats, loadingRuns,
                   ? "Sentinel isn't running"
                   : enabled
                     ? `Watching ${scopeCount} camera${scopeCount === 1 ? "" : "s"} for motion`
-                    : "Sentinel is paused"}
+                    : "Sentinel is off"}
               </h2>
               <p className="sentinel-armed-sub">
                 {locked
@@ -693,7 +693,7 @@ function OverviewTab({ enabled, locked, scopeCount, runs, runStats, loadingRuns,
                     : "No runs will start on your current plan — see the banner above."
                   : enabled
                     ? "Listening for triggers. Runs land in the activity feed below as they happen."
-                    : "No triggers will fire until you re-enable Sentinel from the header."}
+                    : "Turn it on with the switch in the header. While it runs, it sends camera snapshots to our AI provider (Ollama Cloud) to describe what is happening."}
               </p>
             </div>
           </div>

@@ -129,11 +129,17 @@ async fn ensure_config_row(state: &AppState, org_id: &str) -> Result<ConfigRow, 
         return Ok(row);
     }
     let now = now_naive();
+    // `enabled` starts false. Sentinel sends camera frames to the AI
+    // provider, and the Privacy Policy promises that happens only once
+    // an admin turns it on. This row is created by any member merely
+    // opening the Sentinel page, so a true default would switch it on
+    // without anyone deciding to. The triggers start on, so the master
+    // switch is the one decision.
     let inserted = sqlx::query(
         "INSERT INTO sentinel_config
             (org_id, enabled, motion_enabled, incident_opened_enabled, motion_cooldown_min,
              schedule_mode, schedule_start, schedule_end, created_at, updated_at)
-         VALUES ($1, true, true, true, 5, 'always', '22:00', '06:00', $2, $2)",
+         VALUES ($1, false, true, true, 5, 'always', '22:00', '06:00', $2, $2)",
     )
     .bind(org_id)
     .bind(now)
