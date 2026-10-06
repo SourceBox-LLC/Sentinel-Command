@@ -24,9 +24,9 @@ function PricingPage() {
         <div className="pricing-table-wrapper pricing-self-host-notice">
           <h2>You're running Sentinel self-hosted</h2>
           <p>
-            This install has no billing and no usage caps — every feature
-            is unlocked. Pricing and hosted plans only apply to the
-            managed Command Center service.
+            This install has no billing, and every feature is unlocked
+            except Sentinel AI, which needs a licence key. Pricing and
+            hosted plans only apply to the managed Command Center service.
           </p>
         </div>
       ) : (
@@ -38,9 +38,7 @@ function PricingPage() {
           <p className="pricing-detail-footnote">
             Need higher caps? If you legitimately need more than 200 cameras or
             1,500 viewer-hours per month, email{" "}
-            <a href="https://github.com/SourceBox-LLC" target="_blank" rel="noopener noreferrer">
-              SourceBox LLC
-            </a>{" "}
+            <a href="mailto:support@sentinel-command.com">support@sentinel-command.com</a>{" "}
             — we'd rather raise your bucket than lose a real customer to an
             arbitrary ceiling.
           </p>
@@ -65,8 +63,8 @@ function PricingPage() {
           </div>
           <div className="pricing-feature-item">
             <div className="pricing-feature-icon">🔐</div>
-            <h3>Encrypted end to end to disk</h3>
-            <p>TLS in flight, AES-256-GCM on the CameraNode at rest. A stolen drive is unreadable elsewhere.</p>
+            <h3>Encrypted in transit and at rest</h3>
+            <p>TLS in flight, AES-256-GCM for recordings on the CameraNode. A stolen drive is unreadable elsewhere.</p>
           </div>
           <div className="pricing-feature-item">
             <div className="pricing-feature-icon">🚫</div>
@@ -123,7 +121,7 @@ function PricingPage() {
           </div>
           <div className="pricing-faq-item">
             <h3>What's Sentinel and how does the run cap work?</h3>
-            <p>Sentinel is the optional AI agent that investigates motion events and incidents on your behalf — it views the camera, decides whether what it sees warrants attention, files an incident report with snapshot evidence, and writes a long-form summary. One "run" = one investigation, regardless of how many tool calls it took. Pro includes 100 runs/month, Pro Plus includes 500 runs/month, and the cap resets on the 1st of each calendar month. There's no overage billing — when you hit the cap, dispatch pauses for the rest of the month and your existing recordings, motion alerts, and dashboard keep working as normal. Note: Sentinel is the one feature that uses cloud AI — when it investigates, it sends camera snapshots to our LLM provider (Ollama Cloud) to analyze the scene. It's opt-in per organization; if you don't use it, no imagery leaves your devices. See the <a href="https://github.com/SourceBox-LLC/Sentinel-Command/blob/master/SECURITY.md" target="_blank" rel="noopener noreferrer">security policy</a> for details.</p>
+            <p>Sentinel is the optional AI agent that investigates motion events and incidents on your behalf — it views the camera, decides whether what it sees warrants attention, files an incident report with snapshot evidence, and writes a long-form summary. One "run" = one investigation, regardless of how many tool calls it took. Pro includes 100 runs/month, Pro Plus includes 500 runs/month, and the cap resets on the 1st of each calendar month. There's no overage billing — when you hit the cap, dispatch pauses for the rest of the month and your existing recordings, motion alerts, and dashboard keep working as normal. Note: Sentinel is the one feature that uses cloud AI — when it investigates, it sends camera snapshots to our LLM provider (Ollama Cloud) to analyze the scene. It's opt-in per organization; if you don't use it, no imagery is sent to an AI provider. See the <a href="https://github.com/SourceBox-LLC/Sentinel-Command/blob/master/SECURITY.md" target="_blank" rel="noopener noreferrer">security policy</a> for details.</p>
           </div>
           <div className="pricing-faq-item">
             <h3>Do you send email or SMS alerts?</h3>

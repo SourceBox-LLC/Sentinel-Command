@@ -6,17 +6,17 @@ MCP integration, with motion detection + incident reports baked in.
 
 Three steps to your first live feed:
 
-  1. Install CameraNode on the machine where your cameras live.
-     One-liner for Linux/macOS:
-       curl -fsSL {{ dashboard_url }}/install.sh | bash
-     Windows: download the installer from
-       {{ dashboard_url }}/downloads/windows/x64
+  1. In Settings, click "Add Your First Node".  Command Center
+     creates the node and shows an install command with its key
+     built in.
 
-  2. The CameraNode auto-registers with your org and shows up under
-     Settings → CameraNode panel within ~30 seconds of starting.
+  2. Run that command on the computer your USB cameras are plugged
+     into (Linux or macOS).  On Windows, install the MSI from
+       {{ dashboard_url }}/downloads/windows/x86_64
+     and enter the node ID and key when setup asks for them.
 
-  3. Add your first camera (RTSP / ONVIF / HTTP MJPEG) from
-     Settings → Cameras.  The live grid populates immediately.
+  3. CameraNode finds your cameras and registers them on its own.
+     They appear on the dashboard within about a minute.
 
 Open the dashboard:
   {{ dashboard_url }}/dashboard

@@ -12,11 +12,12 @@ will stop writing new local recordings — live streaming continues,
 but recorded segments stop persisting.
 
 What to do:
-  - Free up space on the host (delete old recordings off the
-    /var/lib/sourcebox-sentry-cameranode/ directory, or whichever
-    path your install uses).
-  - Or: lower the recording retention cap in the per-camera
-    recording policy so the node prunes more aggressively.
+  - Lower the CameraNode's storage cap: re-run its setup wizard and
+    choose a smaller maximum size.  The node deletes its oldest
+    recordings to fit, within about 5 minutes.
+  - Or: free up space on the host by removing other files.
+    Recordings live inside the node's encrypted database, so don't
+    delete them by hand.
   - Or: expand the host's storage (mount a larger drive, swap
     the SD card on a Pi, etc.).
 
