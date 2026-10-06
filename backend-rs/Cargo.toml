@@ -96,7 +96,7 @@ bytes = "1"
 # the tree through uuid; declared directly because a v4 UUID is not a
 # substitute — it fixes six of its bits, so its hex always carries a
 # `4` in the thirteenth place.
-getrandom = "0.3"
+getrandom = "0.4"
 
 # Clerk session verification is local RS256 against a cached JWKS — there
 # is no Rust SDK and none is needed. See src/auth.rs.
