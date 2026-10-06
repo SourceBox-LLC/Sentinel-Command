@@ -143,6 +143,30 @@ impl Authenticator {
         resolved
     }
 
+    /// The signed-in Clerk user's id, whether or not an organization is
+    /// active.
+    ///
+    /// Only for routes about the person rather than an organization
+    /// (deleting your account): someone who has left every organization
+    /// must still be able to do that. Clerk mode only; everything else
+    /// is unauthenticated.
+    pub async fn clerk_user_id(&self, parts: &Parts) -> Result<String, AuthError> {
+        let Authenticator::Clerk(verifier) = self else {
+            return Err(AuthError::NotAuthenticated);
+        };
+        let token = bearer_token(parts)
+            .map(str::to_string)
+            .or_else(|| session_cookie(parts))
+            .ok_or(AuthError::NotAuthenticated)?;
+        let claims = verifier.verify(&token).await?;
+        claims
+            .get("sub")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .ok_or(AuthError::NotAuthenticated)
+    }
+
     async fn authenticate_inner(&self, parts: &Parts) -> Result<AuthUser, AuthError> {
         match self {
             Authenticator::Unconfigured => Err(AuthError::NotConfigured),
@@ -321,6 +345,23 @@ impl FromRequestParts<AppState> for AuthUser {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         Ok(state.auth.authenticate(parts).await?)
+    }
+}
+
+/// A signed-in Clerk user, with or without an active organization.
+pub struct SignedInUser {
+    pub user_id: String,
+}
+
+impl FromRequestParts<AppState> for SignedInUser {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let user_id = state.auth.clerk_user_id(parts).await?;
+        Ok(SignedInUser { user_id })
     }
 }
 

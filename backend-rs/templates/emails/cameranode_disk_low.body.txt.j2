@@ -12,9 +12,10 @@ will stop writing new local recordings — live streaming continues,
 but recorded segments stop persisting.
 
 What to do:
-  - Lower the CameraNode's storage cap: re-run its setup wizard and
-    choose a smaller maximum size.  The node deletes its oldest
-    recordings to fit, within about 5 minutes.
+  - Lower the CameraNode's storage cap on the Storage page of its
+    web dashboard (CameraNode 0.1.78 or later; on older versions,
+    re-run its setup wizard).  The node deletes its oldest
+    recordings to fit.
   - Or: free up space on the host by removing other files.
     Recordings live inside the node's encrypted database, so don't
     delete them by hand.

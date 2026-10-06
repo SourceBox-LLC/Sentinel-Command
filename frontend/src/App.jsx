@@ -20,6 +20,7 @@ const IncidentsPage = lazy(() => import("./pages/IncidentsPage.jsx"))
 const SentinelPage = lazy(() => import("./pages/SentinelPage.jsx"))
 const PricingPage = lazy(() => import("./pages/PricingPage.jsx"))
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage.jsx"))
+const AccountDeletionPage = lazy(() => import("./pages/AccountDeletionPage.jsx"))
 
 function RequireOrg({ children }) {
   const { organization, isLoaded } = useOrganization()
@@ -239,6 +240,10 @@ function App() {
               </RequireOrg>
             }
           />
+          {/* Not behind RequireOrg: someone who has left every
+              organization must still be able to delete their account.
+              The page sends signed-out visitors to /sign-in itself. */}
+          <Route path="/account/delete" element={<AccountDeletionPage />} />
         </Route>
 
         {/* Catch-all. Without this React Router renders nothing for an

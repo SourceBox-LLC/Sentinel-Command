@@ -86,9 +86,24 @@ pub async fn redoc() -> Response {
 // click actually visits — and I nearly did, on the strength of a
 // captured asset that turned out to be the SPA index.
 
+/// Swagger UI and ReDoc come from jsdelivr and are started by an inline
+/// script, so these two pages carry their own, looser policy in place of
+/// the dashboard's (`headers::stamp` leaves a handler's policy alone).
+const DOCS_CSP: &str = "default-src 'self'; \
+     script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; \
+     style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; \
+     font-src 'self' data: https://fonts.gstatic.com; \
+     img-src 'self' data: https:; \
+     worker-src 'self' blob:; \
+     connect-src 'self'; \
+     object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+
 fn html(body: &'static str) -> Response {
     (
-        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        [
+            (axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (axum::http::header::CONTENT_SECURITY_POLICY, DOCS_CSP),
+        ],
         body,
     )
         .into_response()

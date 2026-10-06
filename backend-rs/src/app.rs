@@ -156,6 +156,16 @@ pub fn build_router(state: AppState) -> Router {
     let static_dir = state.config.static_dir.clone();
     let index = format!("{static_dir}/index.html");
     let local_auth = state.config.is_local_auth();
+    // The Content-Security-Policy names Clerk's frontend host, which the
+    // publishable key encodes. A self-hosted install has no Clerk.
+    let clerk_frontend = if local_auth {
+        None
+    } else {
+        crate::auth::issuer_from_publishable_key(&state.config.clerk_publishable_key)
+    };
+    crate::headers::configure_csp(&crate::headers::content_security_policy(
+        clerk_frontend.as_deref(),
+    ));
 
     let mut router = Router::new()
         // ---- served by Rust --------------------------------------------
@@ -577,6 +587,16 @@ pub fn build_router(state: AppState) -> Router {
             .route(
                 "/api/webhooks/clerk",
                 served(axum::routing::post(api::clerk_webhook::clerk_webhook)),
+            )
+            // Deleting your own account. Clerk mode only: a self-hosted
+            // install has one admin account, defined by its environment.
+            .route(
+                "/api/account",
+                served(axum::routing::delete(api::account::delete_account)),
+            )
+            .route(
+                "/api/account/deletion",
+                served(axum::routing::get(api::account::deletion_preview)),
             );
     }
     if local_auth {

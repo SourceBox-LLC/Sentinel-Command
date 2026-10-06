@@ -36,6 +36,14 @@ const CLERK_APPEARANCE = {
     borderRadius: "10px",
     fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   },
+  elements: {
+    // Clerk's own "Delete account" button. Hidden so every deletion goes
+    // through the app's flow (pages/AccountDeletionPage.jsx), which
+    // won't strand an organization without an admin and erases what the
+    // person leaves behind. "Delete account" in the account menu leads
+    // there instead.
+    profileSection__danger: { display: "none" },
+  },
 }
 
 function ClerkAuthProvider({ children }) {
@@ -101,6 +109,25 @@ export function SignedOut(props) {
 }
 export function UserButton(props) {
   return IS_LOCAL ? <Local.UserButton {...props} /> : <Clerk.UserButton {...props} />
+}
+// The account menu in the header. In Clerk mode it adds "Delete
+// account", which leads to the app's own deletion flow. Clerk is read at
+// render time, not module load, so tests that mock it narrowly still
+// import this file.
+export function AccountButton() {
+  if (IS_LOCAL) return <Local.UserButton />
+  const ClerkUserButton = Clerk.UserButton
+  return (
+    <ClerkUserButton>
+      <ClerkUserButton.MenuItems>
+        <ClerkUserButton.Link
+          label="Delete account"
+          labelIcon={<span aria-hidden="true">⌫</span>}
+          href="/account/delete"
+        />
+      </ClerkUserButton.MenuItems>
+    </ClerkUserButton>
+  )
 }
 export function OrganizationSwitcher(props) {
   return IS_LOCAL ? (

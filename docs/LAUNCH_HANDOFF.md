@@ -62,9 +62,17 @@ it in the Clerk dashboard.
 
    **Subscribe it to every event the handler reads**, not just billing:
    `organization.created`/`.deleted`, `organizationMembership.created`/
-   `.updated`/`.deleted`, `paymentAttempt.updated`, `subscription.*`
-   (`created`, `updated`, `active`, `pastDue`) and `subscriptionItem.*`
-   (`active`, `canceled`, `ended`, `freeTrialEnding`, `pastDue`).
+   `.updated`/`.deleted`, `user.deleted`, `paymentAttempt.updated`,
+   `subscription.*` (`created`, `updated`, `active`, `pastDue`) and
+   `subscriptionItem.*` (`active`, `canceled`, `ended`,
+   `freeTrialEnding`, `pastDue`).
+
+   **In the production Clerk instance, also turn off "Allow users to
+   delete their accounts"** (User & authentication → Restrictions or
+   Account deletion, depending on the dashboard version). The app hides
+   Clerk's button and provides its own flow, which refuses to strand an
+   organization without an admin; turning the setting off closes the
+   last way around that.
 
    > **2026-10-05:** the development instance's only endpoint still
    > pointed at `https://opensentry-command.fly.dev/…` — a hostname that

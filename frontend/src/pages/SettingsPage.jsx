@@ -1311,13 +1311,13 @@ function SettingsPage() {
       <div className="settings-section">
         <h2>Privacy &amp; Data</h2>
         <p className="section-description">
-          GDPR Article 20 (data portability) export.  Downloads a
-          ZIP with one JSON file per data table in your organization
-          &mdash; cameras, settings, audit log, motion events,
-          notifications, MCP keys, email log, incidents, and the
-          monthly usage counter.  Recordings live on your CameraNode
-          devices, not Command Center, and are <strong>not</strong>
-          included.  Admin only.  Rate-limited to 3 exports/hour.
+          Download everything Command Center holds for your
+          organization as a ZIP: cameras, nodes, settings, logs, motion
+          events, notifications, incidents with their snapshots and
+          clips, and Sentinel AI runs. Recordings live on your
+          CameraNodes, not in Command Center, so they are{" "}
+          <strong>not</strong> included. Admins only, up to 3 exports
+          an hour.
         </p>
         <div className="privacy-actions">
           <button
