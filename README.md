@@ -1,14 +1,16 @@
 <p align="center">
   <h1 align="center">Sentinel Command Center</h1>
   <p align="center">
-    One dashboard for every camera, on every site — live, in real time.
+    One dashboard for every camera, on every site, live.
     <br />
     The cloud hub for <strong>Sentinel by SourceBox</strong>. Your footage stays yours.
     <br />
     <br />
-    <a href="https://sentinel-command.com"><strong>► Try the live app</strong></a>
+    <a href="https://app.sentinel-command.com"><strong>► Open the app</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://app.sentinel-command.com/docs">Documentation</a>
+    <a href="https://sentinel-command.com">Website</a>
+    &nbsp;·&nbsp;
+    <a href="https://sentinel-command.com/documentation/">Documentation</a>
     &nbsp;·&nbsp;
     <a href="https://github.com/SourceBox-LLC/Sentinel-CameraNode">CameraNode</a>
   </p>
@@ -20,106 +22,93 @@
   <img src="https://img.shields.io/badge/source-public_for_transparency-6366f1.svg" alt="Source available for transparency">
 </p>
 
-<p align="center">
-  <a href="https://github.com/SourceBox-LLC/Sentinel-Command">
-    <img src="https://img.shields.io/github/stars/SourceBox-LLC/Sentinel-Command?style=social&label=Star" alt="Star this repo">
-  </a>
-  &nbsp; If Sentinel is useful to you, please ⭐ <a href="https://github.com/SourceBox-LLC/Sentinel-Command">star the repo</a> — it helps others find it.
-</p>
-
----
-
-## Hosted, or run it yourself
-
-**Most people should just use the hosted app.** Sentinel Command Center is a **product we operate as a service** — **[sign up on the live app](https://sentinel-command.com)** and pair it with a [CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode) — no servers to provision, no Docker, no database to babysit.
-
-**Prefer to run it yourself?** `docker compose up -d` — the repo's
-[`docker-compose.yml`](docker-compose.yml) brings up Command Center and its
-Postgres together. Set `AUTH_PROVIDER=local` (the compose file does) and it
-runs fully self-hosted: a single fixed admin account, no Clerk account, no
-billing, every feature unlocked except the optional Sentinel AI agent
-(which has a real ongoing LLM cost and needs a separately licensed key).
-The four-command quick start is at the top of that file and in
-[AGENTS.md › Build & Run](AGENTS.md#build--run).
-
-Self-hosted installs can also opt into **cloud data-sync**: a one-way mirror of the local database to a SourceBox-hosted Postgres, so a dead disk doesn't take your incident history with it. Your own database stays the source of truth and the app works with no internet at all — the mirror is a backup, not a dependency. It's a separate entitlement on the same licence key as Sentinel AI, and recovery runs through the `sentinel-restore-from-cloud` tool ([source](backend-rs/src/bin/restore_from_cloud.rs)) (procedure, and what it deliberately can't bring back, in [DISASTER_RECOVERY.md](docs/runbooks/DISASTER_RECOVERY.md#self-hosted-installs-restoring-from-the-cloud-mirror)).
-
-> **Looking for the part you actually install either way?** That's **[CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode)** — a small daemon that turns any USB or IP camera into a private, cloud-connected feed. It runs on your hardware and has its own setup guide.
-
-### So why is this repo public?
-
-**Trust.** Sentinel is built on the idea that your security footage should be *yours*, and you shouldn't have to take our word for how it's handled. So the code behind every privacy and security claim on the site is right here, in the open — auditable by anyone. It's licensed [AGPL-3.0](LICENSE): source-available, with the obligation that anyone who modifies it and runs it as a network service publishes their changes too.
-
 ---
 
 ## What it does
 
-📹 &nbsp;**Live video, private by design** — CameraNodes push video straight to your dashboard through an in-memory proxy. Your recordings stay on your own device; Command Center keeps only a short live buffer in memory, never a copy of your footage at rest.
+📹 &nbsp;**Live video, private by design.** CameraNodes push video to your dashboard through an in-memory relay. Your recordings stay on your own device; Command Center holds only a short live buffer in memory, never your footage at rest.
 
-🔔 &nbsp;**Motion & alerts** — real-time motion events, a unified notification inbox, and opt-in email for the things that matter: a camera going offline, a node low on disk, a new incident.
+🔔 &nbsp;**Motion and alerts.** Real-time motion events, one notification inbox, and opt-in email for what matters: a camera going offline, a node low on disk, a new incident.
 
-🤖 &nbsp;**AI that investigates, not just alerts** — the optional Sentinel agent watches for motion and incidents and looks into them for you, filing reports with snapshots and short clips.
+🤖 &nbsp;**AI that investigates.** The optional Sentinel AI agent looks into motion and incidents for you and files reports with snapshots and clips.
 
-🔌 &nbsp;**Fits your setup** — a one-key [Home Assistant](https://github.com/SourceBox-LLC/Sentinel-HomeAssistant) integration (on every plan), plus an MCP server so AI assistants like Claude can view your cameras and review past incidents.
+🔌 &nbsp;**Fits your setup.** A [Home Assistant](https://github.com/SourceBox-LLC/Sentinel-HomeAssistant) integration on every plan, and an MCP server so AI assistants such as Claude can view your cameras and review incidents.
 
-👥 &nbsp;**Built for teams and multiple sites** — organizations with role-based access, multi-tenant isolation, and an audit trail on every sensitive action.
-
----
+👥 &nbsp;**Built for teams and multiple sites.** Organizations with roles, strict tenant isolation, and an audit trail on every sensitive action.
 
 ## How it fits together
 
-```
+```text
    Your network                        Our cloud                       You
  ┌──────────────────┐           ┌──────────────────────┐         ┌──────────────┐
- │     CameraNode    │  outbound │   Command Center     │         │    Browser   │
- │  camera + FFmpeg │══════════▶│   live proxy +       │◀═══════▶│   dashboard  │
+ │    CameraNode    │  outbound │   Command Center     │         │    Browser   │
+ │  camera + FFmpeg │══════════▶│   live relay +       │◀═══════▶│   dashboard  │
  │  records locally │   HTTPS   │   dashboard + API    │  HTTPS  │  (live video)│
  │  (your footage)  │           │  (short live buffer, │         │              │
  └──────────────────┘           │   not your archive)  │         └──────────────┘
                                 └──────────────────────┘
 ```
 
-CameraNode captures and encodes video on your network, then pushes it **outbound** to Command Center over HTTPS — no inbound ports, no port-forwarding, no VPN. Command Center holds a short rolling buffer in memory and streams it to your browser. Your actual recordings never leave your CameraNode.
+CameraNode captures and encodes video on your network and pushes it **outbound** to Command Center over HTTPS: no inbound ports, no port forwarding, no VPN. Command Center keeps a short rolling buffer in memory and streams it to your browser. Your recordings never leave your CameraNode.
 
-→ Full architecture, API routes, and data models: **[AGENTS.md](AGENTS.md)**.
+## Use it hosted, or run it yourself
 
----
+**Most people should use the hosted app.** Sign up at **[app.sentinel-command.com](https://app.sentinel-command.com/sign-up)** and pair it with a [CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode). There are no servers or databases to look after.
 
-## The Sentinel ecosystem
+**To run it yourself**, use Docker Compose:
 
-| Project | What it is | |
-|---------|------------|---|
-| **Command Center** *(this repo)* | The hosted dashboard, API, and live-video hub | [Live app ›](https://sentinel-command.com) |
-| **CameraNode** | The camera daemon you install on your own hardware | [Repo ›](https://github.com/SourceBox-LLC/Sentinel-CameraNode) |
-| **Home Assistant integration** | Your Sentinel cameras inside Home Assistant | [Repo ›](https://github.com/SourceBox-LLC/Sentinel-HomeAssistant) |
-| **Sentinel AI agent** | AI agent that investigates motion & incidents | [Docs ›](docs/SENTINEL_AGENT.md) · in this repo at `backend-rs/src/agent/` |
+```bash
+cp backend-rs/.env.example .env      # set LOCAL_ADMIN_USERNAME and LOCAL_ADMIN_EMAIL
+openssl rand -hex 32                 # → APP_SECRET_KEY in .env
+docker compose run --rm --no-deps app sentinel-hash-password   # → LOCAL_ADMIN_PASSWORD_HASH
+docker compose up -d                 # open http://localhost:8000
+```
 
----
+Put the password hash in **single quotes** in `.env`; it contains `$` characters that Compose would otherwise expand. `docker-compose.yml` runs PostgreSQL alongside the app. `docker-compose.sqlite.yml` is a single container with a SQLite file instead (`docker compose -f docker-compose.sqlite.yml …`).
+
+A self-hosted install has one admin account and no Clerk account or billing, and every feature is unlocked except Sentinel AI. Sentinel AI has a real ongoing model cost, so it needs a licence key. The same licence can add **cloud data-sync**: a one-way backup of your database to a SourceBox-hosted mirror, restored with `sentinel-restore-from-cloud` ([how](docs/runbooks/DISASTER_RECOVERY.md#self-hosted-installs-restoring-from-the-cloud-mirror)). Your own database stays the source of truth, and the app works without internet access.
+
+## Why is the source public?
+
+**Trust.** Your security footage should be yours, and you shouldn't have to take our word for how it's handled. The code behind every privacy and security claim is here for anyone to audit. It is licensed [AGPL-3.0](LICENSE): anyone who modifies it and runs it as a network service must publish their changes.
+
+## The Sentinel system
+
+| Project | What it is |
+| --- | --- |
+| **Command Center** (this repo) | The dashboard, API, live-video relay, MCP server and the Sentinel AI agent |
+| **[CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode)** | The camera software you install on your own hardware |
+| **[Home Assistant integration](https://github.com/SourceBox-LLC/Sentinel-HomeAssistant)** | Your Sentinel cameras inside Home Assistant |
+| **[License Service](https://github.com/SourceBox-LLC/Sentinel-License-Service)** | Validates self-hosted licence keys |
+| **[Sync Service](https://github.com/SourceBox-LLC/Sentinel-Sync-Service)** | The cloud mirror for self-hosted installs |
 
 ## Documentation
 
-| If you want to… | Go to |
-|-----------------|-------|
-| **Use Sentinel** — set up cameras, recording, notifications, integrations | The in-app [Documentation](https://app.sentinel-command.com/docs) |
-| **See how the whole system fits together** — every repo, every deployed service, the paths between them | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| **Understand the code** — architecture, API, data models, configuration | [AGENTS.md](AGENTS.md) |
-| **Operate it** — decision records, runbooks, legal templates | [docs/](docs/) |
-| **Audit or run the source locally** for review | [AGENTS.md › Build & Run](AGENTS.md) |
+| If you want to… | Read |
+| --- | --- |
+| **Use Sentinel**: cameras, recording, notifications, integrations | [sentinel-command.com/documentation](https://sentinel-command.com/documentation/) |
+| **See how the whole system fits together** | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| **Work on this code**: configuration, API, data model, internals | [AGENTS.md](AGENTS.md) |
+| **Understand the AI agent** | [docs/SENTINEL_AGENT.md](docs/SENTINEL_AGENT.md) |
+| **Operate it**: runbooks, launch checklist, decision records | [docs/](docs/README.md) |
+| **Report a vulnerability** | [SECURITY.md](SECURITY.md) |
 
----
+## Tech stack
 
-## License & contributions
+A Rust backend (axum, sqlx, rmcp) and a React 19 frontend, shipped as one Docker image on Fly.io. PostgreSQL in production, SQLite or PostgreSQL self-hosted. Sign-in through Clerk (hosted) or a local admin account (self-hosted). Developer setup is in [AGENTS.md › Build, run and test](AGENTS.md#build-run-and-test).
 
-[**AGPL-3.0**](LICENSE) — source-available. Command Center is operated by **SourceBox LLC** as a SaaS, and the source is public so customers can verify the implementation behind the product's privacy and security claims — but self-hosting (`AUTH_PROVIDER=local`, see above) is a supported, intended use too, not just something the license happens to permit. AGPL §13 requires anyone who modifies it and offers it over a network to publish their changes.
+## License and contributions
 
-This project is **not currently accepting external code contributions**, but bug reports and feature ideas are very welcome via [Issues](https://github.com/SourceBox-LLC/Sentinel-Command/issues) and [Discussions](https://github.com/SourceBox-LLC/Sentinel-Command/discussions). See [CONTRIBUTING.md](CONTRIBUTING.md).
+[**AGPL-3.0**](LICENSE). SourceBox LLC operates Command Center as a hosted service, and self-hosting is a supported use too.
+
+We don't accept external code contributions at the moment, but bug reports and ideas are welcome in [Issues](https://github.com/SourceBox-LLC/Sentinel-Command/issues) and [Discussions](https://github.com/SourceBox-LLC/Sentinel-Command/discussions). See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
 <p align="center">
   Made by <a href="https://github.com/SourceBox-LLC">SourceBox LLC</a>
   &nbsp;·&nbsp;
-  <a href="https://sentinel-command.com">Live app</a>
+  <a href="https://app.sentinel-command.com">App</a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/SourceBox-LLC/Sentinel-CameraNode">CameraNode</a>
+  <a href="https://sentinel-command.com">Website</a>
 </p>

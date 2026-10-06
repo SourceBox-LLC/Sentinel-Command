@@ -1,69 +1,61 @@
 # Command Center docs
 
-Supplementary documentation for Sentinel Command Center — the SaaS we operate at <https://sentinel-command.com>. The top-level `README.md` is the engineer-facing setup + reference for anyone reading or running the source locally (for audit or fixes); `AGENTS.md` is the developer / LLM-facing architecture reference. End users sign up at the live app; they don't deploy Command Center themselves. The docs in this tree cover the things that don't fit cleanly in either of those two files — operator launch checklist, ADRs, runbooks, and legal templates.
+Documentation that doesn't belong in the two main files. `README.md` introduces the project. `AGENTS.md` is the developer reference for Command Center's internals. Everything else lives here.
 
-## [LAUNCH_HANDOFF.md](LAUNCH_HANDOFF.md) — what you need to do before paying customers
+User-facing documentation (setting up cameras, recording, notifications) is on the website: <https://sentinel-command.com/documentation/>.
 
-Twelve user-only items (Clerk prod keys, backup restore test, lawyer signoff, status page vendor, etc.) that every code-side launch blocker has been closed against. Start here if you're driving toward launch.
+## Start here
 
-## [ARCHITECTURE.md](ARCHITECTURE.md) — how the whole system fits together
+| Doc | Read it when |
+| --- | --- |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | You're new, or need to know which service or repo owns something. Every repository and deployed service, and how they connect. |
+| [SENTINEL_AGENT.md](SENTINEL_AGENT.md) | You're working on the AI agent, or running one yourself. |
+| [LAUNCH_HANDOFF.md](LAUNCH_HANDOFF.md) | You're preparing for paying customers. The remaining steps that need a person, not code. |
 
-Start here if you're new. Every repository, every deployed service, and the paths between them — the signal path from camera to browser, the six credential types, where data lives, and how code ships. `README.md` is this repo's setup; `AGENTS.md` is Command Center's internals; ARCHITECTURE is the level above both.
+## Runbooks (`runbooks/`)
 
-## [SENTINEL_AGENT.md](SENTINEL_AGENT.md) — the AI agent
+Written to be read under pressure: short sections and copy-paste commands.
 
-How the Sentinel AI agent works, how to run one yourself, and every environment variable it reads. It lives in this repo at `backend-rs/src/agent/` and deploys as the `agent` process group of the `sentinel-command` Fly app — not, as older references may suggest, a separate repository or app.
+- **[ON_CALL.md](runbooks/ON_CALL.md)**: "the app is broken". Sentry alerts, cameras or streams down, database trouble, suspected breaches, deletion requests, email failures, CI and deploy failures. Ends with an incident log.
+- **[DISASTER_RECOVERY.md](runbooks/DISASTER_RECOVERY.md)**: "the data is gone". Production backups and restores, losing the whole machine, recovery targets, a rehearsal drill. It also covers self-hosted installs restoring from the cloud mirror with `sentinel-restore-from-cloud`, and what that can't bring back.
 
-## Architecture Decision Records (`docs/adr/`)
+## Decision records (`adr/`)
 
-One decision per file, numbered in order. ADRs capture the *why* behind a non-obvious choice so future maintainers don't re-litigate it. Format follows Michael Nygard's template (Context / Decision / Consequences).
+One decision per file, in order, so nobody has to re-argue it. Context, decision, consequences.
 
-- [0001-sync-schema-vs-alembic.md](adr/0001-sync-schema-vs-alembic.md) — why we don't use Alembic for backend schema migrations
-- [0002-viewer-hour-billing.md](adr/0002-viewer-hour-billing.md) — why monthly viewer-hours, not camera count, are the binding tier limit
+- [0001: schema migrations](adr/0001-sync-schema-vs-alembic.md). Why there was no Alembic, and how the schema is managed now (sqlx migrations).
+- [0002: viewer-hour billing](adr/0002-viewer-hour-billing.md). Why monthly viewer-hours, not camera count, are the real plan limit.
 
-## Runbooks (`docs/runbooks/`)
+## Legal drafts (`legal/`)
 
-Step-by-step responses to incidents that recur often enough to be
-worth writing down. Optimised for being read under pressure — short
-sections, command-oriented, not narrative.
+Marked `DRAFT — NOT FOR EXECUTION`. **Counsel must review them** before they're sent to a customer or relied on. They live here so the legal text and the engineering reality don't drift apart.
 
-- [ON_CALL.md](runbooks/ON_CALL.md) — ten scenarios (A–J) covering
-  Sentry alerts, customer-reported camera/stream outages,
-  Postgres/database issues, multi-customer incidents, suspected
-  breaches, deletion requests, Resend email transport failures, CI
-  deploy failures, and pre-deploy sanity checks. Has an append-only
-  incident log section to populate as we respond to real ones.
-- [DISASTER_RECOVERY.md](runbooks/DISASTER_RECOVERY.md) — the one
-  `ON_CALL.md` deliberately doesn't cover: not "the app is slow" but
-  "the data is gone." Backup production, the restore procedure, what to
-  do when the whole machine/volume is lost, RPO/RTO, and a rehearsal
-  drill. Also covers **self-hosted** installs, whose recovery story is
-  completely different — no Fly volume or S3 bucket, but a cloud
-  mirror they restore from with the `sentinel-restore-from-cloud`
-  binary, including what that deliberately does *not* bring back (node
-  API keys, evidence blobs).
+- [DPA.md](legal/DPA.md): data processing agreement template, with SCC annexes for EEA and UK transfers.
+- [SUB_PROCESSORS.md](legal/SUB_PROCESSORS.md): the public sub-processor list and notice policy.
 
-## Legal templates (`docs/legal/`)
+## Historical records
 
-Working drafts of customer-facing legal documents. Each is marked `DRAFT — NOT FOR EXECUTION` at the top and **must** be reviewed by counsel before it is sent to a customer or relied on as binding. They live in source control so the engineering reality and the legal text don't drift apart unnoticed.
+The backend and agent were Python until the Rust rewrite (merged 2026-10-05). These files record how the port was done and checked. They describe the past and are not maintained as current reference:
 
-- [DPA.md](legal/DPA.md) — Data Processing Agreement template, including SCC parameter annexes for EEA / UK transfers.
-- [SUB_PROCESSORS.md](legal/SUB_PROCESSORS.md) — public sub-processor list with notice policy.
+- `backend-rs/tests/differential/README.md`: the harnesses that compared Rust against the Python, and their results.
+- `backend-rs/PYTHON_BUGS.md`: bugs the port found in the Python.
+- `backend-rs/SLICE_8.md`: the plan for deleting the Python.
+- `backend-rs/tests/differential/in_process_state.md`: the Python's in-memory state, and how each piece was carried over.
 
-## One fact, one home
+`image-specs/` holds prompts for generated marketing images. It is not documentation of the system.
 
-The failure mode for a doc set this size isn't missing information, it's the same number written in three places and updated in one. On 2026-09-09 the reasoning behind the agent's isolation existed in three files in three phrasings, and "23 tools" appeared five ways.
+## Keeping the docs right
 
-The rule:
+**One fact, one home.** A doc set this size fails by saying the same number in three places and updating one. On 2026-09-09, "23 tools" appeared five different ways.
 
-- **Reference docs state a value once.** Whichever doc owns the subject owns the number. `AGENTS.md` owns Command Center's internals; `SENTINEL_AGENT.md` owns the agent's; `ARCHITECTURE.md` owns facts that only make sense *across* services (like the Fly proxy's bind budget, which is why two services scale to zero and two don't). Everything else links.
-- **ARCHITECTURE.md carries structure, not values.** Relationships change rarely; numbers drift constantly. If you're about to add a figure there, check whether the doc that owns the subject should carry it instead.
-- **Operational docs may inline a value** where stopping to look it up would make them unusable. `LAUNCH_HANDOFF.md` saying "kill a CameraNode for >90s" is correct; it's an instruction, not a specification.
-- **Prefer pointing at code.** A value with a good comment beside it (`fly.toml`'s `[env]` block, `plans.rs`) is more durable than the same value copied into prose, because the next person to change it is already looking at it.
+- **Each subject's own doc states its values.** `AGENTS.md` owns Command Center's internals; `SENTINEL_AGENT.md` owns the agent; `ARCHITECTURE.md` owns facts that only make sense across services. Everything else links.
+- **`ARCHITECTURE.md` carries structure, not numbers.** Relationships change rarely; numbers drift.
+- **Runbooks may repeat a value** when stopping to look it up would make them unusable under pressure.
+- **Prefer pointing at code.** A value with a comment beside it (`fly.toml`, `plans.rs`) outlives the same value copied into prose, because whoever changes it is already looking at it.
 
-## Writing new docs
+**Writing new docs:**
 
-- **ADR** — when you make a decision that was hard to make, or that someone else will almost certainly re-argue. Write it *while the tradeoffs are fresh*, not six months later.
-- **Runbook** — when you catch yourself pasting the same sequence of commands into more than one support thread. Cheap to write, saves time forever. Two exist (`ON_CALL.md`, `DISASTER_RECOVERY.md`); add to those before starting a third file.
-- **Legal templates** — `docs/legal/` is for drafts that capture engineering truth; the lawyer-reviewed binding version lives elsewhere (a signed PDF in your records system). Update the draft *whenever* the underlying processing changes (new sub-processor, new data category, new retention window) so the lawyer review stays small.
-- **README / AGENTS** — these two are the primary docs and get updated in-place with every feature. Don't fork them into `docs/`.
+- **ADR**: when a decision was hard, or someone will want to re-argue it. Write it while the trade-offs are fresh.
+- **Runbook**: when you've pasted the same commands into a second support thread. Add to the two existing runbooks before starting a third.
+- **Legal draft**: update it whenever the processing changes (a new sub-processor, data category or retention window), so the next legal review is small.
+- **README / AGENTS**: update them in place with every feature. Don't fork them into `docs/`.

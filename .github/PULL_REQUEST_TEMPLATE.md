@@ -1,65 +1,32 @@
-## Description
+## What and why
 
-<!-- Describe your changes in detail -->
+<!-- What does this change, and why? Link the issue if there is one: Fixes #… -->
 
-## Related Issue
+## Areas touched
 
-<!-- Link to the issue this PR addresses -->
-Fixes #
+- [ ] Backend (Rust, `backend-rs/`)
+- [ ] Sentinel AI agent (`backend-rs/src/agent/`)
+- [ ] Frontend (React, `frontend/`)
+- [ ] Database schema (a migration in **both** `migrations/` and `migrations-sqlite/`)
+- [ ] Auth, permissions or tenant isolation
+- [ ] Live video / segment cache
+- [ ] Docker, `fly.toml` or CI
+- [ ] Documentation only
 
-## Type of Change
+## How it was tested
 
-<!-- Mark the relevant option with an "x" -->
+<!-- Commands run, manual steps, anything a reviewer should repeat. -->
 
-- [ ] Bug fix (non-breaking change that fixes an issue)
-- [ ] New feature (non-breaking change that adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to change)
-- [ ] Documentation update
-- [ ] Refactoring (no functional changes)
-- [ ] Performance improvement
-- [ ] Test addition or update
-
-## Component(s) Affected
-
-<!-- Mark all that apply -->
-
-- [ ] Frontend (React/Vite)
-- [ ] Backend (FastAPI API)
-- [ ] CameraNode (Rust)
-- [ ] Authentication (Clerk)
-- [ ] HLS streaming / segment cache
-- [ ] Docker/Deployment
-- [ ] Documentation
-
-## Testing
-
-<!-- Describe the tests you ran and how to reproduce them -->
-
-### Test Configuration:
-- OS:
-- Docker version:
-- Browser (if UI change):
-
-### Tests Performed:
-- [ ] Manual testing
-- [ ] Unit tests (if applicable)
-- [ ] Tested with camera node connected
-- [ ] Tested Docker build
-
-## Screenshots
-
-<!-- If applicable, add screenshots to help explain your changes -->
+- [ ] `cargo fmt` and `cargo clippy --all-targets -- -D warnings` (both builds) are clean
+- [ ] `cargo test` passes, with `TEST_DATABASE_URL` and with `--features sqlite` if it touches the database
+- [ ] `npx vitest run` and `npm run build` pass, for frontend changes
+- [ ] Checked by hand, with a CameraNode if it touches video or nodes
 
 ## Checklist
 
-- [ ] My code follows the project's coding guidelines
-- [ ] I have performed a self-review of my own code
-- [ ] I have commented my code, particularly in hard-to-understand areas
-- [ ] I have made corresponding changes to the documentation
-- [ ] My changes generate no new warnings
-- [ ] I have tested my changes locally
-- [ ] Any dependent changes have been merged and published
+- [ ] AGENTS.md / docs updated if behaviour, routes or configuration changed
+- [ ] No secrets, keys or customer data in the diff
 
-## Additional Notes
+## Screenshots
 
-<!-- Add any other context about the PR here -->
+<!-- For UI changes. -->

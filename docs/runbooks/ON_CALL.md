@@ -6,7 +6,8 @@
 
 This runbook covers Command Center (the cloud service). For
 CameraNode-side issues (a single customer's hardware misbehaving) see
-the operator FAQ in `/docs#troubleshooting` — most of those are
+the troubleshooting section of the user documentation at
+<https://sentinel-command.com/documentation/>. Most of those are
 self-serve.
 
 The format is one section per scenario. Each section has the same
@@ -40,7 +41,7 @@ That last row matters: this runbook is for "the service is broken." If the *data
 | Tool / link | Why |
 |---|---|
 | https://app.sentinel-command.com/api/health | Liveness — is the process up? |
-| https://app.sentinel-command.com/api/health/detailed | DB ping latency, cache + queue depths |
+| https://app.sentinel-command.com/api/health/detailed | Database, Clerk, disk, email worker, Resend queue, video cache, SSE, viewer usage, licence |
 | `fly logs -a sentinel-command` | Application stderr/stdout |
 | `fly status -a sentinel-command` | Machine health + last deploy |
 | `fly ssh console -a sentinel-command` | Shell into the live machine |
@@ -66,10 +67,9 @@ specific issue ID (e.g. `OPENSENTRY-COMMAND-1`).
 
 **Likely causes.**
 - A code path with no test coverage was hit by real production data.
-  (Example: `OPENSENTRY-COMMAND-1` — `_log_cleanup_loop` chained
-  `.union()` calls hit a CompoundSelect that has no `.union()`. Fix:
-  `union(a, b, c, ...)` function form. That was the Python; the Rust
-  `loops::run_log_cleanup` is covered by `backend-rs/tests/loops_db.rs`.)
+  (The first real alert, `OPENSENTRY-COMMAND-1`, was a log-cleanup
+  query that only real data reached. The Sentry project still carries
+  the old OpenSentry name.)
 - An external dependency (Clerk, Fly database) is degraded.
 - A recent deploy introduced a regression. Check `git log master --since=24.hours`.
 
@@ -100,15 +100,16 @@ specific issue ID (e.g. `OPENSENTRY-COMMAND-1`).
 camera in their org as offline; node heartbeats not coming through.
 
 **First checks.**
-1. From `fly logs`, search for the customer's `org_id` (find it
-   via Clerk dashboard). Look for `[OfflineSweep]` log lines —
-   these fire when the sweep flips a node/camera to offline.
+1. In `fly logs`, look for `offline sweep flipped N entities to
+   offline`, which the sweep logs each time it marks nodes or cameras
+   offline. The customer's inbox will also show `node_offline` /
+   `camera_offline` notifications with the exact times.
 2. Hit `/api/health/detailed` — is the SSE subscriber count zero?
    Is anything else degraded? If the DB is fine and other customers
    are streaming, this is likely customer-side.
 3. Ask the customer: did they restart their CameraNode? Is the host
    machine on a network with outbound HTTPS to
-   `sentinel-command.com`?
+   `app.sentinel-command.com`?
 
 **Likely causes.**
 - Customer's home internet dropped and the node hasn't reconnected.
@@ -123,8 +124,9 @@ camera in their org as offline; node heartbeats not coming through.
   Check the org's billing status in Clerk.
 
 **Fix paths.**
-- For credential-out-of-sync, walk the customer through the
-  re-auth flow documented in `/docs#troubleshooting`.
+- For credential-out-of-sync, have the customer rotate the node's key
+  (Settings → node → Rotate key) and re-run the CameraNode setup with
+  it. The user documentation walks through it.
 - For payment-grace expiry, ask the customer to update their card
   in the Clerk billing portal. The grace flag clears on next webhook.
 - For genuine node hangs, the customer needs hands-on access to
@@ -149,8 +151,9 @@ error overlay.
 2. From `fly ssh console`, hit `/api/health/detailed` and check
    `checks.hls_cache.playlists_cached` — is it nonzero? If so, at
    least one customer is streaming.
-3. Tail `fly logs` for the customer's `camera_id` and look for
-   `[HLS]` or `[Cleanup]` lines that mention it.
+3. Tail `fly logs` for the customer's `camera_id`. A camera whose
+   pushes are refused shows up there as 4xx/5xx responses on
+   `push-segment`.
 
 **Likely causes.**
 - Stream segments aged out of the in-memory cache. The segment
@@ -170,8 +173,8 @@ error overlay.
   Form / Pro Plus paid agreement.
 - Cache-related: ask the customer to refresh. If the issue persists
   longer than 60s, the CameraNode is probably the problem.
-- CameraNode-side: customer-side troubleshooting — see
-  `/docs#troubleshooting`.
+- CameraNode-side: customer-side troubleshooting in the user
+  documentation.
 
 **When to escalate.**
 - Cache size in `/api/health/detailed` is *zero* but multiple
@@ -185,9 +188,9 @@ error overlay.
 
 **Symptoms.** `/api/health/detailed` shows
 `checks.database.status == "error"`, `latency_ms > 1000`, or
-`checks.disk.status == "critical"`. Sentry firing `OperationalError`,
-`psycopg.OperationalError`, or our own `[DiskCheck] OPERATOR ALERT`
-event.
+`checks.disk.status == "critical"`. Sentry showing database errors
+(`pool timed out`, `connection refused`) or our own `[DiskCheck]
+OPERATOR ALERT` event.
 
 **Important context.** Since 2026-09-07 the hosted database is
 **Postgres on the managed `sentinel-postgres` cluster** — a separate Fly
@@ -213,8 +216,8 @@ Two consequences worth internalising before you debug:
   promote during an incident. There isn't one. Recovery is restart, or
   restore from snapshot.
 
-**Cluster capacity, measured 2026-09-07** — so you can tell "tight" from
-"broken" at 3am:
+**Cluster capacity, measured 2026-09-07** (re-measure if it looks off),
+so you can tell "tight" from "broken" at 3am:
 
 | | Value | Note |
 |---|---|---|
@@ -249,7 +252,7 @@ self-hosted section applies to them, not this scenario.
    - `checks.disk.percent_used` and `checks.disk.status` (segments now,
      not the DB)
    - `checks.viewer_usage.pending_writes` (high = flush loop wedged)
-4. `fly logs -a sentinel-command` — search for `OperationalError`,
+4. `fly logs -a sentinel-command` — search for `pool timed out`,
    `connection refused`, `too many connections`, `no space left`, or
    `[DiskCheck]`.
 5. `fly logs -a sentinel-postgres` — the database's own side of the story.
@@ -258,19 +261,20 @@ self-hosted section applies to them, not this scenario.
 
 - **Cluster down, restarting, or unreachable.** App logs show
   `connection refused` / `could not connect`. Check the cluster app's
-  status and events first; `pool_pre_ping=True` means a *recycled* idle
-  connection reconnects transparently, so persistent errors mean the
-  cluster itself, not a stale pool.
+  status and events first. The app's pool (10 connections, 10-second
+  acquire timeout) replaces dead connections on its own, so persistent
+  errors mean the cluster itself, not a stale pool.
 - **Connection exhaustion.** `too many connections` — the cluster has a
-  per-instance `max_connections`, and every app machine holds a
-  QueuePool. Rare at one machine; the thing to watch if we scale out.
+  `max_connections` of 300 shared by three services, and each
+  Command Center machine holds up to 10. Rare at one machine; the thing
+  to watch if we scale out.
 - **Disk full on `/data`.** Logs show `no space left on device` or the
   disk-check loop's `OPERATOR ALERT` fired. Now caused by HLS segments
   and accumulated `/data/backups` dumps, **not** database growth.
 - **Database storage full on the cluster.** A separate disk from the
   app's. `fly volumes list -a sentinel-postgres`. Most common growth
   driver is still an org with high motion-event volume (every event is
-  a row in `MotionEvent` until the daily cleanup loop runs).
+  a row in `motion_events` until the daily cleanup loop runs).
 - **Viewer-usage flush wedged.** If
   `checks.viewer_usage.pending_writes` is climbing, the 60s flush loop
   is failing — now most likely a connection error or an app-level
@@ -294,11 +298,9 @@ self-hosted section applies to them, not this scenario.
   `/data/backups`. A full `/data` is a streaming problem; see the note
   at the top of this section.
 
-  There is also no longer a way to invoke the sweep by hand: the backend
-  is a Rust binary, so the `uv run python -c 'from app.main import
-  run_log_cleanup'` one-liner this step used to carry has no equivalent.
-  The loop runs every 24h and sleeps first, so a restart does not
-  trigger it either. For the *database* disk, see below.
+  There is no way to run the log-cleanup sweep by hand. It runs every
+  24 hours and sleeps first, so a restart doesn't trigger it either.
+  For the *database* disk, see below.
 - **Database disk full:** extend the *cluster's* volume:
   ```
   fly volumes list -a sentinel-postgres
@@ -313,15 +315,12 @@ self-hosted section applies to them, not this scenario.
   fly ssh console -a sentinel-command \
     -C "bash -c 'psql \"\${DATABASE_URL/+psycopg/}\" -tAc \"select count(*) from pg_stat_activity\"'"
   ```
-  Two things this line is doing deliberately, both verified against the
-  live machine:
-  - It strips SQLAlchemy's `+psycopg` driver suffix, which libpq does
-    not understand (it reads the whole thing as the scheme and errors
-    with "invalid URI").
-  - It runs under **`bash -c`, not `sh -c`**. `${VAR/a/b}` is a
-    bash-ism and the image's `/bin/sh` is dash, which fails it with
-    `Bad substitution`. If you'd rather stay in `sh`, use
-    `psql "$(echo $DATABASE_URL | sed s/+psycopg//)"` instead.
+  Two things this line does deliberately:
+  - It strips a `+psycopg` driver suffix, in case the secret still has
+    the form the Python era wrote. libpq doesn't understand the suffix
+    and fails with "invalid URI". The backend strips it on its own.
+  - It runs under **`bash -c`, not `sh -c`**. `${VAR/a/b}` needs bash;
+    the image's `/bin/sh` is dash, which fails with `Bad substitution`.
 - **Viewer-usage flush wedged:** restart the app. Root-cause via the
   app exception trail in Sentry.
 
@@ -414,10 +413,12 @@ initiate; an audit log row your monitoring flagged.
 2. Identify the org_id.
 
 **Fix paths.**
-- Self-service: walk the admin through Settings → Delete
-  Organization. This deletes every node, camera, group, MCP key,
-  audit log, stream access log, motion event, and settings row in
-  a single transaction. There is no soft-delete.
+- Self-service: walk the admin through **Settings → Danger Zone →
+  Full Organization Reset** (`POST /api/settings/danger/full-reset`).
+  It deletes every node, camera, group, key, incident, log, motion
+  event and setting for the org in one transaction. There is no
+  soft-delete. Deleting the organization in Clerk runs the same
+  erasure, through the `organization.deleted` webhook.
 - Manual: if self-service fails (e.g. a stuck row), `fly ssh
   console` and run the same cascade via psql. Document what you
   ran in the runbook log below.
@@ -439,8 +440,8 @@ initiate; an audit log row your monitoring flagged.
 
 **Symptoms.** Customer reports they didn't get an expected camera-
 offline email. `/api/health/detailed` shows `checks.resend.queue_depth`
-climbing or `checks.resend.status == "error"`. Sentry firing
-exceptions from `app.core.email_worker`.
+climbing or `checks.resend.status == "error"`. Sentry showing
+`Resend send failed` or `email worker tick failed`.
 
 **First checks.**
 1. `/api/health/detailed` — `checks.resend.status` tells you the
@@ -448,24 +449,16 @@ exceptions from `app.core.email_worker`.
    - `"ok"` — sending fine
    - `"unconfigured"` — `EMAIL_ENABLED=false` OR `RESEND_API_KEY` unset
    - `"error"` — recent send attempts are failing
-2. `fly logs -a sentinel-command | grep -E "\\[Email\\]|\\[Worker\\]"` —
-   look for lines like `[Email] Resend send failed` or
-   `[Worker] reclaimed N stuck sending rows`.
+2. `fly logs -a sentinel-command | grep -iE "resend|outbox|email worker"` —
+   look for `Resend send failed`, `giving up on outbox row`, or
+   `reclaimed stuck 'sending' rows`.
 3. Resend dashboard — check the "Emails" tab for recent attempts.
    Are they marked sent / bounced / blocked? Resend's dashboard
    shows the SMTP-level reason.
-4. SSH and query the outbox directly. Going through the app's own
-   session avoids having to hand-massage `DATABASE_URL` for `psql`
-   (libpq rejects SQLAlchemy's `+psycopg` suffix):
-   ```
+4. Query the outbox directly with `psql` (it ships in the image):
+   ```bash
    fly ssh console -a sentinel-command \
-     -C "/app/.venv/bin/python -c \"
-from app.core.database import SessionLocal
-from sqlalchemy import text
-db = SessionLocal()
-for row in db.execute(text('SELECT status, COUNT(*) FROM email_outbox GROUP BY status')):
-    print(row)
-db.close()\""
+     -C "bash -c 'psql \"\${DATABASE_URL/+psycopg/}\" -c \"select status, count(*) from email_outbox group by status\"'"
    ```
 
 **Likely causes.**
@@ -475,14 +468,15 @@ db.close()\""
   Resend dashboard for warnings. Most common trigger: someone with
   many flappy outdoor cameras opted INTO motion email + the digest
   cooldown wasn't enough. Recovery: investigate the suppression list
-  for the affected addresses, possibly tighten cooldown via
-  `Setting.email_motion_cooldown_minutes` for that org.
+  for the affected addresses, and possibly lengthen that org's motion
+  cooldown: the `email_motion_cooldown_minutes` row in `settings`
+  (default 15).
 - **DNS / SPF / DKIM regression.** A registrar change broke the
   Resend domain verification. Resend dashboard → Domains tab will
   show "verification failed." Re-add the records and wait for
   propagation.
-- **API key rotated / revoked.** `[Email] Resend send failed
-  err=AuthenticationError` everywhere. Generate a new API key in
+- **API key rotated / revoked.** `Resend send failed` on every send,
+  with a 401 from Resend. Generate a new API key in
   Resend, update the Fly secret:
   ```
   fly secrets set RESEND_API_KEY=re_... -a sentinel-command
@@ -491,10 +485,10 @@ db.close()\""
   it out. The outbox queue will drain on its own when Resend
   recovers (rows stay `pending` and the worker keeps retrying up to
   `EMAIL_MAX_ATTEMPTS=3` per row).
-- **Worker crash loop.** The `email_worker_loop` is supposed to
-  swallow per-row exceptions but might be failing at the outer
-  `SessionLocal()` open. Sentry traces will show the actual
-  exception.
+- **Worker failing every tick.** The worker handles per-row errors
+  itself, so `email worker tick failed` on every tick means it can't
+  reach the database at all. `checks.email_worker.tick_age_seconds`
+  in `/api/health/detailed` climbs when it stalls.
 
 **Fix paths.**
 
@@ -602,9 +596,9 @@ not yet on the latest commit.
 > Not a fire — but if you're deploying at 11pm, walk through this
 > checklist before pushing.
 
-- `cd backend-rs && cargo test && cargo clippy --all-targets` — green, no
-  warnings. This covers the AI agent too: it is a binary in the same
-  crate.
+- `cd backend-rs && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings`
+  — green, no warnings. This covers the AI agent too: it is a binary in
+  the same crate. CI rejects unformatted code.
 - `cd frontend && npm run build && npm run lint` — must be clean
   (lint warnings allowed; errors are not).
 - `git log origin/master..HEAD` — read every commit message. If

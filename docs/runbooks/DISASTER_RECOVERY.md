@@ -27,109 +27,26 @@ must exist and the restore must have been rehearsed.
 **Before you restore anything:** a restore is destructive and a wrong one compounds the damage. Read the whole [Restore procedure](#restore-procedure) section before running its first command.
 
 
-> 🔀 **Migrated to Postgres (2026-09-07).** Until this date the hosted
-> database was a single SQLite file on the `sentinel_data` Fly volume,
-> and this runbook was written around that. What changed:
->
-> - The database is `sentinel_command` on the **`sentinel-postgres`**
->   cluster — one cluster hosting one database per service
->   (`sentinel_command`, `sentinel_license`, `sentinel_sync`).
->   `DATABASE_URL` is now a **Fly secret**, not a `fly.toml` env value,
->   because it carries a password.
-> - The `sentinel_data` volume still exists and still holds HLS segment
->   working files and `/data/backups`. It no longer holds the database,
->   so **losing the volume is no longer losing the data.**
->
->   ⚠️ **Failure domain, stated precisely.** Moving off SQLite made the
->   database survive losing an app machine, but it also made all three
->   services depend on one Postgres app. Before, Command Center and
->   License Service each ran SQLite on their own volume and failed
->   alone; now a `sentinel-postgres` outage takes down all three at
->   once. That is a deliberate trade — one cluster is a third of the
->   cost and a third of the operational surface — but it is a real
->   regression in blast radius and should not be forgotten.
->
->   **Single node, no replica — decided 2026-09-07.** The cluster runs
->   one machine (`shared-cpu-1x:512MB`, one `pg_data` volume) and a
->   standby was considered and declined. The reasoning: a replica buys
->   *uptime*, not durability, and durability is already covered by
->   snapshots plus the portable dumps, with the restore path rehearsed
->   and passing. At current scale the cost and operational surface of a
->   second node is not worth the uptime it would buy.
->
->   What that means when it bites: a node failure is **downtime for all
->   three services** until Fly restarts the machine, or — in a genuine
->   host/volume loss — until someone restores from a snapshot. There is
->   no automatic failover and nothing to promote. Budget for a recovery
->   measured in minutes, not seconds.
->
->   `fly machine clone -a sentinel-postgres` is how you'd add a standby
->   if the trade ever stops making sense.
-> - `backup_db.sh` / `restore_db.sh` are `pg_dump` / `pg_restore` now.
->   The managed cluster's own snapshots became the *primary* backup.
-> - The pre-migration SQLite file is still at `/data/sentinel.db` (and
->   `/data/backups/sentinel-20260907T023056Z.db.gz`) as the rollback
->   point. Delete it once you're confident, not before.
->
-> **Superseded history (2026-07-06):** a `DATABASE_URL` secret pinned to
-> the old OpenSentry-era filename silently overrode `fly.toml` and made
-> the daily backup fail on a missing `/data/sentinel.db` for ~1 day. The
-> lesson outlived the SQLite setup and is why the note above spells out
-> that `DATABASE_URL` is a secret: **the secret always wins over
-> `fly.toml`, so check `fly secrets list` before believing the config
-> file.**
->
-> **Decided 2026-09-07: backups live only on Fly.** The operator
-> accepted this explicitly. `BACKUP_ENCRYPTION_KEY` and
-> `BACKUP_S3_BUCKET` are intentionally unset, so there is no
-> off-platform copy and that is not a gap to be closed. The reasoning
-> is that cluster snapshots plus the portable dumps cover the failure
-> modes that actually happen (bad migration, accidental delete, cluster
-> loss), and the residual — losing the Fly account itself — is accepted.
-> Both code paths remain in place, so reversing the decision is a single
-> repo secret and no code change.
->
-> ⚠️ **The cluster is new, so snapshot history is short.**
-> `sentinel-postgres` was created 2026-09-07; its snapshot history
-> starts then and reaches full 5-day depth around 2026-09-12. Until
-> then the only recovery points are the `pg_dump` files in
-> `/data/backups` and the dumps saved off-platform to
-> `~/sentinel-db-rollback/` on the operator's machine.
+## Where the data lives
 
-> 🔒 **Resolved (2026-09-07): cross-service database access — and it
-> stays resolved only if you re-apply this after any new attach.**
->
-> `fly postgres attach` creates every role as a Postgres **SUPERUSER**.
-> On a shared cluster that meant any single leaked `DATABASE_URL` was
-> full read/write on all three databases — including `sentinel_sync`,
-> which holds self-hosted customers' mirrored data. Verified at the
-> time, not assumed.
->
-> The fix is role hardening rather than separate clusters. Per database:
->
-> ```sql
-> ALTER DATABASE sentinel_command OWNER TO sentinel_command;
-> REVOKE CONNECT ON DATABASE sentinel_command FROM PUBLIC;
-> ALTER ROLE sentinel_command NOSUPERUSER;
-> ```
->
-> Ownership must move **before** dropping superuser: the database is
-> created owned by `postgres` and the `public` schema by
-> `pg_database_owner`, so a bare `NOSUPERUSER` strips the app's ability
-> to create its own tables and breaks `ensure_schema` on the next boot.
-> This was rehearsed on a scratch cluster first — the full 816-test
-> suite passes against a hardened, role-owned, non-superuser database,
-> which is what proves the app still has the rights it needs.
->
-> Verified afterwards on the real cluster: **all six** cross-database
-> connection attempts refused, all three own-database connections work,
-> `rolsuper=false` on every service role, and each database owned by its
-> own role. `fly postgres db list` shows it plainly — each database now
-> lists only its own role.
->
-> ⚠️ **`fly postgres attach` will recreate a superuser role.** Any
-> service added later, or any re-attach, reopens this. Re-run the three
-> statements above for the new database and re-verify.
+- **The database** is `sentinel_command` on **`sentinel-postgres`**, a Fly Postgres cluster that holds one database per service: `sentinel_command`, `sentinel_license` and `sentinel_sync`. `DATABASE_URL` is a Fly **secret** (it carries a password). A secret always wins over `fly.toml`, so check `fly secrets list` before believing the config file.
+- **The `sentinel_data` volume** (`/data` on the `app` machine) holds HLS working files and `/data/backups`. It does **not** hold the database, so losing the volume does not lose data.
+- **The cluster is one node with no replica**, by decision (2026-09-07). A replica buys uptime, not durability, and durability is covered by snapshots plus portable dumps with a rehearsed restore. The cost: a cluster failure is **downtime for all three services** until Fly restarts the machine or someone restores a snapshot. There is no failover and nothing to promote; plan for minutes, not seconds. `fly machine clone -a sentinel-postgres` adds a standby if that trade ever changes.
+- **Every backup lives inside Fly**, by decision (2026-09-07). `BACKUP_ENCRYPTION_KEY` and `BACKUP_S3_BUCKET` are deliberately unset. Snapshots plus dumps cover a bad migration, an accidental delete and losing the cluster. Losing the Fly account itself is the accepted risk, so keep its billing current and its login secured. Turning on an off-platform copy needs only a secret, no code.
+
+### Each service can reach only its own database
+
+`fly postgres attach` creates every role as a Postgres **superuser**. On a shared cluster, that would let one leaked `DATABASE_URL` read and write all three databases, including `sentinel_sync`, which holds self-hosted customers' mirrored data. The roles are hardened instead:
+
+```sql
+ALTER DATABASE sentinel_command OWNER TO sentinel_command;
+REVOKE CONNECT ON DATABASE sentinel_command FROM PUBLIC;
+ALTER ROLE sentinel_command NOSUPERUSER;
+```
+
+Move ownership **before** dropping superuser. The database is created owned by `postgres`, so a bare `NOSUPERUSER` takes away the app's right to create tables and its start-up migrations fail. Verified on the real cluster: all six cross-database connection attempts are refused, each service reaches its own, and no service role is a superuser.
+
+⚠️ **Any future `fly postgres attach` recreates a superuser role.** Re-run the three statements for that database and re-verify.
 
 ---
 
@@ -167,31 +84,24 @@ for:
 | `BACKUP_RETENTION_DAYS` | `14` | local prune window |
 | `BACKUP_S3_BUCKET` | _(unset)_ | off-platform target, e.g. `s3://bucket/cc` (needs `aws` CLI + creds) |
 
-> **Every copy of the database is inside Fly — by choice.** Verified
-> 2026-09-07 and accepted by the operator the same day, so read this as
-> the deliberate position rather than an outstanding risk:
->
-> | Copy | Where it lives | Status |
-> |---|---|---|
-> | Cluster snapshots | Fly | ✅ primary — daily, **5-day retention** |
-> | Portable `pg_dump` | Fly volume (`/data/backups`) | ✅ secondary, 14-day prune |
-> | Encrypted GH artifact | GitHub | ⬜ off by choice (`BACKUP_ENCRYPTION_KEY` unset) |
-> | S3 | elsewhere | ⬜ off by choice (`BACKUP_S3_BUCKET` unset) |
->
-> **What this buys and what it costs.** Recovery from a bad migration,
-> an accidental delete, or cluster loss is covered. The recovery window
-> is about **5 days** — anything older than the snapshot retention is
-> gone. A Fly account suspension or billing lapse would take every copy
-> simultaneously; that is the accepted risk. Keep the Fly account's
-> billing current and its login secured, because that account is now
-> the single thing standing between you and total data loss.
+**Every copy lives inside Fly, by choice** (see [Where the data lives](#where-the-data-lives)):
+
+| Copy | Where | Kept for |
+| --- | --- | --- |
+| Cluster snapshots (primary) | Fly | 5 days, daily |
+| Portable `pg_dump` (secondary) | `/data/backups` on the app's volume | 14 days, daily |
+| Encrypted GitHub artifact | GitHub | off (`BACKUP_ENCRYPTION_KEY` unset) |
+| S3 | elsewhere | off (`BACKUP_S3_BUCKET` unset) |
+
+So you can go back up to 5 days with a snapshot, or 14 days with a dump.
 
 **Two gotchas the scripts handle for you, worth knowing before you run
 `pg_dump` by hand:**
 
-- `DATABASE_URL` is `postgresql+psycopg://…`. That `+psycopg` suffix is
-  a SQLAlchemy driver selector; **libpq does not understand it** and
-  fails with an unhelpful "invalid URI". The scripts strip it.
+- `DATABASE_URL` may still carry a `+psycopg` suffix
+  (`postgresql+psycopg://…`), the form the Python era used. **libpq does
+  not understand it** and fails with an unhelpful "invalid URI". The
+  scripts strip it, and so does the backend.
 - `pg_dump` **refuses** to dump a server whose major version is newer
   than its own ("aborting because of server version mismatch"). The
   cluster is 18.x and Debian bookworm ships client 15, so the Dockerfile
@@ -286,9 +196,8 @@ somewhere the original roles don't exist.
    database and role on it.
 2. Restore the newest dump into it (`restore_db.sh`, or `pg_restore`
    directly from a laptop with a client ≥ the cluster's major version).
-3. Point the app at it: `fly secrets set DATABASE_URL=…` — remember the
-   `postgresql+psycopg://` scheme, since `fly postgres attach` emits a
-   bare `postgres://` that SQLAlchemy routes to the uninstalled psycopg2.
+3. Point the app at it: `fly secrets set DATABASE_URL=postgresql://… -a sentinel-command`.
+   `postgres://` and `postgresql://` both work.
 4. If the app machine/volume is *also* gone, recreate them
    (`fly volumes create sentinel_data …`, then `fly deploy`) — the
    volume now only holds HLS segment working files and `/data/backups`,
@@ -344,20 +253,31 @@ refills as their installs push again.
 The database is unaffected. Recreate the volume and deploy; the app
 reconnects to Postgres and comes back with all data intact. You lose
 only in-flight HLS segments and the local copies of dumps.
-4. Start, verify, and **rotate the Clerk webhook endpoint** if the host
-   changed so billing events resume syncing.
+
+If the app's address changed, update the **Clerk webhook endpoint** in
+the Clerk dashboard to `https://<new host>/api/webhooks/clerk`, or plan
+changes and org deletions stop arriving.
+
+---
+
+## Recovery targets (hosted)
+
+- **RPO (data you can lose):** up to **24 hours**. Cluster snapshots and
+  the `pg_dump` are both daily, taken at different times, so the newer
+  of the two is usually less than a day old. Run the backup workflow
+  more often to shrink it.
+- **RTO:** minutes — dominated by the restore itself plus the ~30–60s
+  app restart. Communicate the downtime (see `ON_CALL.md` Scenario E).
 
 ---
 
 ## Self-hosted installs: restoring from the cloud mirror
 
-Everything above is about **this** hosted deployment — Postgres on a
-managed cluster, backed up by snapshots plus `backup_db.sh`. A
-self-hosted operator has none of that: they run **their own Postgres** —
-the repo's `docker-compose.yml` brings one up beside the dashboard — on
-their own hardware, with no Fly volume, no S3 bucket, and no backup cron.
-Their recovery story is the **cloud data-sync tier**, and it's a different
-procedure.
+Everything above is about **this** hosted deployment. A self-hosted
+operator runs their own database (SQLite by default, or the PostgreSQL
+that `docker-compose.yml` brings up) on their own hardware, with no
+snapshots and no backup schedule unless they set one up. Their recovery
+story is the **cloud data-sync tier**, and it's a different procedure.
 
 > A self-hosted install is on SQLite (the default) or on Postgres. The
 > `pg_dump`-based scripts above apply to a self-hosted **Postgres**
@@ -416,10 +336,6 @@ sentinel-restore-from-cloud --dry-run
 sentinel-restore-from-cloud
 ```
 
-> It replaced `backend/scripts/restore_from_cloud.py` when the web tier
-> was rewritten in Rust. Same flags, same non-destructive default, same
-> exit codes — and the same two things it cannot bring back.
-
 Then start the app and re-register each camera node to issue fresh API
 keys.
 
@@ -433,21 +349,13 @@ keys.
   malformed record can't cost you the other 9,999 — but check the exit
   code, because a partial restore that reads as success is how you find
   out months later that data you believed was recovered never came back.
-- **RPO is one sync interval** (30 minutes, `SENTINEL_SYNC_INTERVAL_SECONDS`)
+- **RPO is one sync interval** (30 minutes)
   — worse than the hosted daily backup in staleness terms, better in
   granularity. Anything written in the final half hour before the disk
   died is gone.
 - Same rule as the rest of this runbook: **rehearse it.** Restore into a
   scratch `DATABASE_URL` on a machine you don't care about and confirm
   the row counts match `--list`.
-
-### Acceptable data loss (RPO) / time to recover (RTO)
-
-- **RPO:** near-zero from cluster snapshots; up to one backup interval
-  (24h on the daily schedule) if you have to fall back to a `pg_dump`.
-  Shrink the latter by running the workflow more often.
-- **RTO:** minutes — dominated by the restore itself plus the ~30–60s
-  app restart. Communicate the downtime (see `ON_CALL.md` Scenario E).
 
 ---
 
@@ -457,8 +365,10 @@ The point of the drill is to restore **somewhere other than the
 origin** — that's the scenario the portable dump exists for, and it's
 the half that a snapshot restore can't prove.
 
-1. `bash /app/scripts/backup_db.sh` on the live machine. Confirm a
-   `.dump` lands in `BACKUP_DIR` (and in S3 if configured).
+1. Run the **Scheduled DB Backup** workflow (`gh workflow run backup.yml
+   -R SourceBox-LLC/Sentinel-Command`), or `bash /app/scripts/backup_db.sh`
+   on the machine. Confirm a `.dump` lands in `/data/backups`, then copy it
+   off with `fly ssh sftp get`.
 2. Start a throwaway Postgres of the same major version:
    `docker run -d --name pgdrill -e POSTGRES_PASSWORD=drill -e POSTGRES_DB=drill -p 15499:5432 postgres:18-alpine`
 3. Restore into it — note this is the real script, not a hand-typed
@@ -469,19 +379,21 @@ the half that a snapshot restore can't prove.
      bash scripts/restore_db.sh <dump> --yes
    ```
 
-4. Verify content, not just table count: row counts on a core table, and
+4. Verify content, not just table count: row counts on core tables, and
    that Boolean columns still carry `default false` (the dialect trap
    that ADR 0001's 2026-09-07 update describes):
 
    ```bash
-   psql postgresql://postgres:drill@127.0.0.1:15499/drill -c \
-     "select count(*) from organizations"
+   DB=postgresql://postgres:drill@127.0.0.1:15499/drill
+   psql $DB -c "select count(*) from cameras" -c "select count(*) from incidents"
+   psql $DB -c "select column_name, column_default from information_schema.columns
+                where table_name = 'cameras' and data_type = 'boolean'"
    ```
 
 5. `docker rm -f pgdrill`. Write the date + result in the log below so
    "last rehearsed" is always visible.
 
-### Rehearsal log
+## Rehearsal log
 
 - **2026-09-07 (later) — Post-consolidation drill on `sentinel-postgres`.
   PASS, both services, no findings.** The earlier drill that day covered
@@ -540,3 +452,9 @@ the half that a snapshot restore can't prove.
   (`sentinel-20260706T064510Z.db.gz`). `/api/health/detailed` reported
   `database: ok` after the switch. **Re-run this drill once there is real
   customer data to restore (non-zero rows).**
+
+## History
+
+- **2026-07-06.** A `DATABASE_URL` secret pinned to an OpenSentry-era file name silently overrode `fly.toml`, and the daily backup failed for about a day. That is why this runbook keeps saying the secret wins over `fly.toml`.
+- **2026-09-07.** The hosted database moved from a SQLite file on the `sentinel_data` volume to Postgres on `sentinel-postgres`. The backup scripts became `pg_dump` / `pg_restore`, and cluster snapshots became the primary backup. The pre-migration SQLite file was left at `/data/sentinel.db` (and `/data/backups/sentinel-20260907T023056Z.db.gz`) as a rollback point. Delete it once nobody needs it.
+- **2026-10-05.** The backend became Rust. Schema is now applied by sqlx migrations at start-up; the database itself did not change.

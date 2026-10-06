@@ -1,6 +1,6 @@
 # ADR 0002: Viewer-hours per month is the real tier differentiator
 
-- **Status:** Accepted (April 2026, shipped in commit `a94ef35`)
+- **Status:** Accepted (April 2026, shipped in commit `a94ef35`). Still in force; code references updated for the Rust backend.
 - **Date:** 2026-04
 - **Deciders:** Command Center maintainers + product
 
@@ -38,14 +38,14 @@ We picked option three.
 | Pro | 25 | 10 | **300** | 30 | 90 days |
 | Pro Plus | 200 | unlimited | **1,500** | 100 | 365 days |
 
-Source of truth: `backend/app/core/plans.py::PLAN_LIMITS`.
+Source of truth: `backend-rs/src/plans.rs::get_plan_limits`.
 
 ### How it's enforced
 
-- **Counter:** Every successful `GET /api/cameras/{id}/segment/{filename}` calls `record_viewer_second(org_id)`, which increments an in-memory `dict[(org_id, "YYYY-MM"), int]`. One segment ≈ 1 second of video, so the counter is a viewer-second tally.
-- **Flush:** A 60-second background task (`_viewer_usage_flush_loop` in `backend/app/main.py`) snapshots the dict, clears it, then UPSERTs each entry into `OrgMonthlyUsage`. One DB write per minute per *active* org. The hot serve path never touches the database.
-- **Cap check:** Before serving a segment, `get_hls_segment` calls `_warm_cached_viewer_seconds(org_id)` which returns the cached DB total + pending in-memory delta (O(1) after first call per org per process). If `used_seconds >= max_hours * 3600`, return HTTP 429 with `Retry-After: 3600` and an upgrade-prompt message body.
-- **Plan resolution for the cap:** Uses `effective_plan_for_caps(db, org_id)`, not `user.plan` from the JWT — see `0001-sync-schema-vs-alembic.md` precedent for "DB-resolved truth beats stale token claims."
+- **Counter:** Every successful `GET /api/cameras/{id}/segment/{filename}` calls `record_viewer_second(org_id)`, which increments an in-memory counter keyed on `(org_id, "YYYY-MM")`. One segment ≈ 1 second of video, so the counter is a viewer-second tally.
+- **Flush:** A 60-second background task (`hls.rs::spawn_loops`, calling `flush_viewer_usage`) snapshots the counters, clears it, then UPSERTs each entry into `org_monthly_usage`. One DB write per minute per *active* org. The hot serve path never touches the database.
+- **Cap check:** Before serving a segment, `get_hls_segment` asks the cache for the org's running total (`cached_viewer_seconds`), which is the cached DB total + pending in-memory delta (O(1) after first call per org per process). If `used_seconds >= max_hours * 3600`, return HTTP 429 with `Retry-After: 3600` and an upgrade-prompt message body.
+- **Plan resolution for the cap:** Uses `effective_plan_for_caps`, not the plan in the user's token: the database's answer beats a stale claim.
 
 ### What's not metered
 
@@ -84,10 +84,12 @@ Re-evaluate if any of the following become true:
 
 ## References
 
-- `backend/app/core/plans.py` — `PLAN_LIMITS`, `effective_plan_for_caps`, `resolve_org_plan`.
-- `backend/app/api/hls.py` — `record_viewer_second`, `_warm_cached_viewer_seconds`, `flush_viewer_usage`, `get_hls_segment`'s 429 path.
-- `backend/app/api/nodes.py` — the `/api/nodes/plan` endpoint that surfaces `usage.viewer_hours_used` to the dashboard.
-- `backend/app/main.py` — `_viewer_usage_flush_loop` background task.
-- `backend/app/models/models.py::OrgMonthlyUsage` — the persistence shape.
-- Frontend `DashboardPage.jsx` — the live gauge with green/amber/red thresholds.
-- Frontend `PricingPage.jsx` — the customer-facing copy that this ADR justifies.
+The code moved from Python to Rust in October 2026; the mechanism is unchanged.
+
+- `backend-rs/src/plans.rs`: `get_plan_limits`, `effective_plan_for_caps`, `resolve_org_plan`.
+- `backend-rs/src/hls.rs`: `record_viewer_second`, `cached_viewer_seconds`, `flush_viewer_usage`, and the 60-second flush loop.
+- `backend-rs/src/api/hls.rs`: `get_hls_segment` and its 429.
+- `backend-rs/src/api/nodes.rs`: `GET /api/nodes/plan`, which reports `usage.viewer_hours_used` to the dashboard.
+- The `org_monthly_usage` table (`backend-rs/migrations/`).
+- Frontend `DashboardPage.jsx`: the live gauge with green/amber/red thresholds.
+- Frontend `PricingPage.jsx`: the customer-facing copy this ADR justifies.

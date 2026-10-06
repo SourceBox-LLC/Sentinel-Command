@@ -1,5 +1,12 @@
 # Differential tests
 
+> **Historical record.** These harnesses compared the Rust backend with
+> the Python one it replaced. The Python was deleted on 2026-09-30 (web tier) and 2026-10-01 (agent), so
+> most of them now run only against a checkout of the commit before the
+> deletion (see "After the cut" below). They are kept as the evidence the
+> port was checked, and as a pattern to reuse. For what guards the code
+> today, see [backend-rs/README.md](../../README.md#test-it).
+
 Each slice of the Python → Rust migration is verified by running both
 implementations over the same inputs and comparing results, rather than
 by trusting that the port reads correctly. This directory holds the

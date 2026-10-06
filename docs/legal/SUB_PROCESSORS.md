@@ -4,6 +4,13 @@
 > describes the engineering reality and must be reviewed by counsel
 > before being held out to customers as a binding sub-processor list.
 
+> **Editor's note (2026-10-05), for counsel.** This draft refers to a
+> `/security` page on the Command Center website as the live security
+> description. No such page exists today (`sentinel-command.com/security`
+> and `app.sentinel-command.com/security` both return 404). Before this
+> document is executed, either publish that page or point these
+> references at `SECURITY.md` in the public repository.
+
 This is the public list of third-party services that SourceBox LLC
 engages to process Customer Personal Data on behalf of customers of
 **Sentinel Command Center**.
@@ -249,6 +256,10 @@ diff this file in the repository for the full record.
     and requires updating this list and notifying customers in advance.
     The Ollama Cloud entry above carries the same warning at the point
     of use.
+- **2026-10-05** — The Rust backend and agent described in the
+  2026-10-01 entry were deployed to production. **No new sub-processor
+  and no change to what is sent or to whom.** The first-party agent
+  still resolves to Ollama Cloud.
 
 ---
 

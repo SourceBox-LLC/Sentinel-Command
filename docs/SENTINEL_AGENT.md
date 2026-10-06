@@ -72,14 +72,14 @@ The binary is in the Command Center image (`docker run --env-file agent.env <ima
 
 ## Plan tiers
 
-Gated end-to-end (UI, dispatcher, agent MCP auth) on the org's plan. Caps reset on the 1st of each calendar month, UTC.
+Gated end-to-end (UI, dispatcher, agent MCP auth) on the org's plan. Caps reset on the 1st of each calendar month, UTC. The numbers live in `backend-rs/src/api/sentinel_config.rs::cap_for_plan`.
 
 | Plan | Monthly runs | Note |
 | -------- | ------------ | ----------------------------------------- |
 | Free | 0 | Sentinel locked; UI shows upgrade banner. |
 | Pro | 100 | ~3 / day — casual home use. |
 | Pro Plus | 500 | ~16 / day — commercial-shaped use. |
-| Self-hosted | unlimited | Unlocked by a license key — see the License Service. |
+| Self-hosted | 500 | Needs a licence key (`SENTINEL_LICENSE_KEY`). |
 
 At the cap, dispatch pauses for the rest of the month. No overage billing; recordings, motion notifications, dashboard and MCP keep working.
 
@@ -90,7 +90,7 @@ A run is bounded at every layer. All bounds are env-tunable.
 - **Per-LLM-call timeout** — 120s, around the whole call rather than the HTTP request: a provider that accepts the connection then stalls mid-stream would otherwise hold the machine until the wall clock fires.
 - **Per-MCP-tool timeout** — 60s. Stuck tools surface to the LLM as an error result so the model can retry or pivot.
 - **Iteration cap** — 10 tool-call rounds per run (`MAX_AGENT_ITERATIONS`). Hitting it → outcome `error`, "investigation incomplete".
-- **Wall-clock cap** — 270s per wakeup, under Fly's 300s `kill_timeout` so cleanup runs before SIGKILL. `process_with_timeout` catches the timeout, identifies the in-flight run, and best-effort POSTs `complete` with `outcome=error` so the run lands terminal instead of stranding in `running`.
+- **Wall-clock cap** — 270s per wakeup (`processor.rs::DRAIN_TIMEOUT_SECONDS`). When it fires, the agent finds the in-flight run and posts `complete` with `outcome=error`, so the run ends cleanly instead of sitting in `running`. The figure was chosen under the old standalone app's 300s `kill_timeout`; this app sets none, and the `agent` machine never idles to a stop, so today only a deploy or restart cuts a run short, and the reaper below settles it.
 - **CC-side stranded-run reaper** — runs stuck in `running` for >20 minutes are marked `error` by Command Center. Catches the case where the agent crashes before its own cleanup fires.
 
 ## Endpoints

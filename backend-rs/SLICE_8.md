@@ -1,5 +1,10 @@
 # Slice 8: cutting the proxy
 
+> **Historical record.** The plan for the last step of the Python → Rust
+> port: removing the Python and its proxy. That step is done (the Python
+> was deleted on 2026-09-30 and 2026-10-01; the rewrite merged to `master` on
+> 2026-10-05). Kept for the reasoning; not current reference.
+
 The plan says "delete `backend/`, drop the second process". Both halves
 of that sentence turn out to be wrong, and the real scope is larger. This
 file is the working list, written before the irreversible part starts.

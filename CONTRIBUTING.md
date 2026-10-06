@@ -4,7 +4,7 @@ Thanks for your interest in Sentinel by SourceBox. This document explains how yo
 
 ## We do not currently accept external code contributions
 
-Sentinel is **source-available under AGPL-3.0**. The source is public for trust and transparency — customers can audit the implementation behind every security and privacy claim on the live site — but we do not accept pull requests from outside the core team at this time. Command Center is a SaaS we host and operate; running your own copy is allowed by the license but is not the intended use case.
+Sentinel is **source-available under AGPL-3.0**. The source is public for trust and transparency: customers can audit the implementation behind every security and privacy claim. We do not accept pull requests from outside the core team at this time. You are welcome to run your own copy: self-hosting is a supported mode (see the [README](README.md#use-it-hosted-or-run-it-yourself)).
 
 External pull requests opened against this repository will be automatically closed with a link back to this document. This is not personal — we keep the contribution surface narrow so we can move fast, retain clean copyright, and avoid the overhead of a Contributor License Agreement.
 
@@ -25,7 +25,7 @@ Before filing, check [existing issues](https://github.com/SourceBox-LLC/Sentinel
 - Steps to reproduce
 - Expected vs. actual behavior
 - Relevant logs (redact any secrets)
-- Environment (OS, Python version, browser if UI-related)
+- Environment: hosted or self-hosted, the version from `GET /api/health`, OS, and browser if it's a UI problem
 
 ### Reporting security issues
 
@@ -33,7 +33,7 @@ See [SECURITY.md](SECURITY.md). Do **not** file public issues for vulnerabilitie
 
 ## Local development setup
 
-For engineers cloning the repo to read, audit, or contribute fixes locally. (Most end users sign up at the live SaaS rather than running Command Center themselves — but self-hosting via `AUTH_PROVIDER=local` is a supported mode, not just a dev-only setup; see [AGENTS.md › Build & Run](AGENTS.md#build--run).)
+For engineers cloning the repo to read, audit or fix it locally. To simply *run* Command Center, use Docker Compose instead (see the [README](README.md#use-it-hosted-or-run-it-yourself)).
 
 Sentinel has two main components:
 
@@ -42,17 +42,10 @@ Sentinel has two main components:
 | **Command Center** | Rust (axum) + React | [Sentinel-Command](https://github.com/SourceBox-LLC/Sentinel-Command) |
 | **CameraNode** | Rust | [Sentinel-CameraNode](https://github.com/SourceBox-LLC/Sentinel-CameraNode) |
 
-The backend was Python (FastAPI) and the AI agent a Python worker until
-both were rewritten in Rust; they are two binaries from one crate,
-`backend-rs/`, and there is no Python left. If you are looking for a file
-that used to be under `backend/app/`, its counterpart is named in
-[AGENTS.md › API Routes](AGENTS.md#api-routes); the agent's is
-`backend-rs/src/agent/`.
+The backend and the AI agent are two binaries from one Rust crate, `backend-rs/`. Both were Python until October 2026. The full developer reference is [AGENTS.md](AGENTS.md).
 
 ### Command Center
 
-To just *run* it, rather than develop on it, use the repo's
-`docker-compose.yml` — see [AGENTS.md › Build & Run](AGENTS.md#build--run).
 For development, with the frontend on its own dev server:
 
 ```bash
@@ -67,6 +60,7 @@ DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5432/sentinel \
     cargo run                 # http://localhost:8000
 
 cargo test                    # DB-gated tests skip without TEST_DATABASE_URL
+cargo fmt                     # CI rejects unformatted code
 cargo clippy --all-targets    # kept at zero warnings
 
 # Frontend
