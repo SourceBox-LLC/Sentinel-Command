@@ -86,7 +86,7 @@ A self-hosted install has one admin account and no Clerk account or billing, and
 
 | If you want to… | Read |
 | --- | --- |
-| **Use Sentinel**: cameras, recording, notifications, integrations | [sentinel-command.com/documentation](https://sentinel-command.com/documentation/) |
+| **Use Sentinel**: cameras, recording, alerts, incidents, Sentinel AI, your data | [Using Sentinel](docs/USER_GUIDE.md), also on [the docs site](https://sentinel-command.com/documentation/) |
 | **See how the whole system fits together** | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Work on this code**: configuration, API, data model, internals | [AGENTS.md](AGENTS.md) |
 | **Understand the AI agent** | [docs/SENTINEL_AGENT.md](docs/SENTINEL_AGENT.md) |
