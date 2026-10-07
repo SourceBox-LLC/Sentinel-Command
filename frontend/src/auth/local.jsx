@@ -31,7 +31,9 @@ const FAKE_ORG = {
   name: "Local Install",
   imageUrl: null,
   membersCount: 1,
-  createdAt: new Date(0),
+  // No creation date exists for the self-hosted org. `new Date(0)` here
+  // showed "Created 12/31/1969" on Settings; null shows a dash.
+  createdAt: null,
 }
 const FAKE_MEMBERSHIP = { role: "org:admin" }
 

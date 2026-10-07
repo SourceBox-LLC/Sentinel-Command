@@ -31,7 +31,9 @@ function AdminTabs({ activeTab, onTabChange, streamCount, mcpCount, mcpErrors = 
             role="tab"
             id={`admin-tab-${tab.id}`}
             aria-selected={isActive}
-            aria-controls={`admin-panel-${tab.id}`}
+            // Only the active panel is rendered, so only its tab can
+            // point at it.
+            aria-controls={isActive ? "admin-panel" : undefined}
             className={`admin-tab admin-tab-${tab.accent}${isActive ? " active" : ""}`}
             onClick={() => onTabChange(tab.id)}
           >
