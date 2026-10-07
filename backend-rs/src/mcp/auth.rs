@@ -320,10 +320,11 @@ async fn resolve_via_agent_key(
     // Defence in depth: the dispatcher gates on `enabled` before
     // creating a run, but an operator can disable Sentinel between
     // dispatch and the agent picking the run up. The exemption is
-    // exactly as wide as the operator action — a manual "Run now" on a
-    // paused agent is deliberately allowed, and refusing tools for it
-    // turned every such run into a junk error that still spent a
-    // monthly-cap slot and the LLM budget.
+    // exactly as wide as the operator action: a manual "Run now" can no
+    // longer be started while Sentinel is off (`post_manual_run` refuses
+    // it), but one started while it was on and then paused is allowed to
+    // finish. Refusing tools for it turned the run into a junk error
+    // that still spent a monthly-cap slot and the LLM budget.
     let enabled: Option<(bool,)> =
         sqlx::query_as("SELECT enabled FROM sentinel_config WHERE org_id = $1 LIMIT 1")
             .bind(&org_id)

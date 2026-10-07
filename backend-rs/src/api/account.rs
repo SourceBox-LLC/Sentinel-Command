@@ -52,7 +52,7 @@ impl From<ClerkError> for ApiError {
         tracing::error!(error = %err, "Clerk call failed during account deletion");
         ApiError::new(
             reqwest::StatusCode::BAD_GATEWAY,
-            "Could not reach the sign-in service. Nothing was deleted; try again shortly.",
+            "Could not reach the sign-in service. Try again shortly; anything already done is not repeated.",
         )
     }
 }

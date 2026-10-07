@@ -311,7 +311,7 @@ A camera suspended by its plan's camera cap gets **402** with a `plan_limit_hit`
 
 Every response carries `X-Request-Id`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, a referrer policy and a permissions policy, plus HSTS over HTTPS (`headers.rs`).
 
-**Content-Security-Policy.** Built once at start-up (`headers::content_security_policy`) and sent on every response. Scripts run only from this origin, Clerk's frontend host (derived from the publishable key), Cloudflare's bot check and Stripe; there is no `'unsafe-inline'` or `'unsafe-eval'` for scripts. Styles allow `'unsafe-inline'` because Clerk injects `<style>` elements. `blob:` is allowed for media and images (HLS.js plays through a MediaSource URL). A self-hosted install gets the same policy without Clerk, Cloudflare and Stripe. The API docs pages set their own looser policy, because Swagger UI and ReDoc load from jsdelivr. **If the frontend starts loading anything from a new origin, add it to the policy, or the browser will block it silently.**
+**Content-Security-Policy.** Built once at start-up (`headers::content_security_policy`) and sent on every response. Scripts run only from this origin, Clerk's frontend host (derived from the publishable key), Cloudflare's bot check and Stripe (`js.stripe.com` and its `*.js.stripe.com` subdomains, per Stripe's published CSP); there is no `'unsafe-inline'` or `'unsafe-eval'` for scripts. Styles allow `'unsafe-inline'` because Clerk injects `<style>` elements. `blob:` is allowed for media and images (HLS.js plays through a MediaSource URL). A self-hosted install gets the same policy without Clerk, Cloudflare and Stripe. The API docs pages set their own looser policy, because Swagger UI and ReDoc load from jsdelivr. **If the frontend starts loading anything from a new origin, add it to the policy, or the browser will block it silently.**
 
 ## Errors
 
@@ -504,7 +504,7 @@ Members never see `audience = "admin"` notifications, in the list, the count or 
 | GET | `/api/sentinel/config`: always 200; non-eligible orgs get a read-only payload | view | |
 | PATCH | `/api/sentinel/config` | admin + eligible plan | |
 | GET | `/api/sentinel/runs`, `/api/sentinel/runs/{id}` | view | |
-| POST | `/api/sentinel/runs/manual`: "Run now" (skips schedule and scope, not the cap) | admin + eligible plan | |
+| POST | `/api/sentinel/runs/manual`: "Run now" (skips schedule and scope, not the cap; 409 `sentinel_off` while Sentinel is off) | admin + eligible plan | |
 | GET / POST | `/api/sentinel/agent-keys`: issue a per-org `osa_` key | admin / billing | – / 10/h |
 | DELETE | `/api/sentinel/agent-keys/{id}` | admin | 30/h |
 | GET | `/api/sentinel/runs/pending`: oldest first | agent key | |

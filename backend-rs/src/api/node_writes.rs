@@ -500,7 +500,13 @@ pub async fn set_storage_cap(
         .execute(&state.pool)
         .await?;
 
-    let previous_gb = previous_max_bytes.map(|b| b / (1024 * 1024 * 1024));
+    // The node's own answer is the truth; the heartbeat-reported value
+    // can be up to a heartbeat stale.
+    let data = &result["data"];
+    let previous_gb = data
+        .get("previous_gb")
+        .and_then(Value::as_i64)
+        .or(previous_max_bytes.map(|b| b / (1024 * 1024 * 1024)));
     write_audit(
         &state.pool,
         &user.org_id,
@@ -518,11 +524,10 @@ pub async fn set_storage_cap(
     )
     .await;
 
-    let data = &result["data"];
     Ok(Json(json!({
         "node_id": node_id,
         "max_size_gb": gb,
-        "previous_gb": data.get("previous_gb").cloned().unwrap_or(json!(previous_gb)),
+        "previous_gb": previous_gb,
         "freed_bytes": data.get("freed_bytes").cloned().unwrap_or(json!(0)),
     })))
 }

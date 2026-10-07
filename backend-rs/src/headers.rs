@@ -64,14 +64,14 @@ pub fn content_security_policy(clerk_frontend: Option<&str>) -> String {
             format!("{fapi} https://challenges.cloudflare.com"),
             format!("{fapi} https://clerk-telemetry.com"),
             " https://img.clerk.com",
-            " https://js.stripe.com",
+            " https://js.stripe.com https://*.js.stripe.com",
             " https://api.stripe.com",
         )
     } else {
         (String::new(), String::new(), "", "", "")
     };
     let frame_src = if clerk {
-        "https://challenges.cloudflare.com https://js.stripe.com https://hooks.stripe.com"
+        "https://challenges.cloudflare.com https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com"
     } else {
         "'none'"
     };
@@ -244,6 +244,9 @@ mod tests {
         assert!(script.contains("'self'"));
         assert!(script.contains("https://clerk.example.test"));
         assert!(script.contains("https://challenges.cloudflare.com"));
+        // Stripe Elements loads from js.stripe.com's subdomains too.
+        assert!(script.contains("https://*.js.stripe.com"));
+        assert!(directive(&p, "frame-src").contains("https://*.js.stripe.com"));
         assert!(!script.contains("unsafe-inline"), "{script}");
         assert!(!script.contains("unsafe-eval"), "{script}");
         assert!(directive(&p, "connect-src").contains("https://clerk.example.test"));

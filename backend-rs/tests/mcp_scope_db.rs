@@ -548,3 +548,88 @@ async fn tools_list_refuses_an_unrecognised_or_revoked_key() {
         .await
         .unwrap();
 }
+
+/// "Run now" sends camera images to the AI provider like any other run,
+/// so it is refused while Sentinel is off: the Privacy Policy promises
+/// nothing is sent until an admin turns Sentinel on. An org that has
+/// never opened the Sentinel page gets its config row created, off, by
+/// the refused request itself.
+#[tokio::test]
+async fn run_now_is_refused_while_sentinel_is_off() {
+    use tower::ServiceExt;
+    let Some(state) = state().await else { return };
+    // A licensed self-hosted install, so the licence gate isn't what
+    // answers.
+    // The licence verdict is stored under the install's own org, so this
+    // test gets one of its own rather than sharing `self-host`.
+    let org = format!("manoff-{}", uuid::Uuid::new_v4().simple());
+    let mut config = (*state.config).clone();
+    config.sentinel_license_key = Some("test-licence".into());
+    config.local_org_id = org.clone();
+    let state = AppState {
+        config: Arc::new(config),
+        ..state
+    };
+    for (key, value) in [
+        (sentinel_command::license::LAST_CHECK_REACHABLE, "true"),
+        (sentinel_command::license::LICENSE_VALID, "true"),
+    ] {
+        sentinel_command::settings::set(&state.pool, &org, key, value)
+            .await
+            .unwrap();
+    }
+    let token = sentinel_command::auth::local::issue_token(&"x".repeat(32), &org).unwrap();
+    let run_now =
+        || {
+            let mut request = axum::http::Request::builder()
+                .method("POST")
+                .uri("/api/sentinel/runs/manual")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"prompt":"look at the gate"}"#))
+                .unwrap();
+            request.extensions_mut().insert(axum::extract::ConnectInfo(
+                std::net::SocketAddr::from(([127, 0, 0, 1], 9)),
+            ));
+            sentinel_command::app::build_router(state.clone()).oneshot(request)
+        };
+    let runs = || async {
+        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sentinel_runs WHERE org_id = $1")
+            .bind(&org)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+        n
+    };
+
+    let refused = run_now().await.unwrap();
+    let status = refused.status();
+    let body = axum::body::to_bytes(refused.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        status,
+        axum::http::StatusCode::CONFLICT,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+    assert!(String::from_utf8_lossy(&body).contains("sentinel_off"));
+    assert_eq!(runs().await, 0, "a refused run must not be queued");
+
+    sqlx::query("UPDATE sentinel_config SET enabled = true WHERE org_id = $1")
+        .bind(&org)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    let accepted = run_now().await.unwrap();
+    assert!(accepted.status().is_success(), "{}", accepted.status());
+    assert_eq!(runs().await, 1);
+
+    for table in ["sentinel_runs", "sentinel_config", "settings"] {
+        sqlx::query(&format!("DELETE FROM {table} WHERE org_id = $1"))
+            .bind(&org)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+    }
+}

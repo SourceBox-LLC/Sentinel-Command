@@ -650,8 +650,21 @@ pub async fn post_manual_run(
         ));
     }
 
-    // The manual path works for an org that has never opened the page.
-    ensure_config_row(&state, &user.org_id).await?;
+    // Off means off: the Privacy Policy and the page both say Sentinel
+    // sends nothing to the AI provider until an admin turns it on, and a
+    // manual run sends camera images like any other. The row is created
+    // here for an org that has never opened the page, switched off, so a
+    // first "Run now" is refused the same way.
+    let cfg = ensure_config_row(&state, &user.org_id).await?;
+    if !cfg.enabled {
+        return Err(ApiError::new(
+            axum::http::StatusCode::CONFLICT,
+            json!({
+                "error": "sentinel_off",
+                "message": "Turn Sentinel on before running it.",
+            }),
+        ));
+    }
 
     let plan = effective_plan_for_caps(&plan_ctx(&state), &user.org_id, true).await;
     if !plan_has_sentinel(&plan) {
