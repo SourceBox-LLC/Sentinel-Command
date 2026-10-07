@@ -1,0 +1,108 @@
+# Uptime alerts, without a monitoring vendor.
+#
+# Every 5 minutes, check each public Sentinel service. If one still fails
+# after three attempts 20 seconds apart, open a GitHub issue labelled
+# `outage` (GitHub emails the repository's watchers, which includes the
+# owner) and fail this run once, which GitHub also emails about. While it
+# stays down, later runs see the open issue and stay quiet. When every
+# check passes again, the run comments and closes the issue.
+#
+# Limits worth knowing:
+# - GitHub runs schedules "at best effort": a run can start several
+#   minutes late under load, so this catches outages, not blips.
+# - GitHub disables scheduled workflows in a public repository after 60
+#   days with no commits. Re-enable it from the Actions tab if that ever
+#   happens.
+# - It is not a public status page; that still needs a provider.
+#
+# To prove the alert path end to end, run it by hand with `test_alert`
+# checked: it adds a check that is meant to fail, opens the issue, and
+# the next normal run closes it.
+name: Uptime
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      test_alert:
+        description: "Add a check that fails, to test the alert"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check services
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Check every service
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TEST_ALERT: ${{ inputs.test_alert || false }}
+        run: |
+          set -u
+          checks=(
+            "Command Center|https://app.sentinel-command.com/api/health/ready"
+            "Licence service|https://sentinel-license.fly.dev/health"
+            "Sync service|https://sentinel-sync.fly.dev/health"
+            "Website and docs|https://sentinel-command.com/"
+          )
+          if [ "$TEST_ALERT" = "true" ]; then
+            checks+=("Alert test (not a real outage)|https://app.sentinel-command.com/api/health/this-path-does-not-exist")
+          fi
+
+          down=()
+          for check in "${checks[@]}"; do
+            name=${check%%|*}
+            url=${check#*|}
+            code=""
+            for attempt in 1 2 3; do
+              # The licence service scales to zero, so its first answer
+              # can take a few seconds; 20 s covers a cold start.
+              code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$url" || true)
+              [ "$code" = "200" ] && break
+              [ "$attempt" -lt 3 ] && sleep 20
+            done
+            if [ "$code" = "200" ]; then
+              echo "up    $name"
+            else
+              echo "DOWN  $name ($url answered ${code:-nothing})"
+              down+=("- **$name**: \`$url\` answered \`${code:-nothing}\` three times, 20 seconds apart.")
+            fi
+          done
+
+          gh label create outage --color B60205 --description "Opened by the uptime check" -R "$REPO" 2>/dev/null || true
+          open=$(gh issue list -R "$REPO" --label outage --state open --json number -q '.[0].number // empty')
+
+          if [ "${#down[@]}" -gt 0 ]; then
+            if [ -n "$open" ]; then
+              echo "Still down; issue #$open is already open."
+              exit 0
+            fi
+            body=$(printf '%s\n' \
+              "The uptime check found a service down at $(date -u +'%Y-%m-%d %H:%M UTC'):" \
+              "" "${down[@]}" "" \
+              "Run: $RUN_URL" "" \
+              "Start with the first checks in docs/runbooks/ON_CALL.md. This issue closes itself when every check passes again.")
+            gh issue create -R "$REPO" --label outage \
+              --title "Outage: a Sentinel service is down" --body "$body"
+            # Fail this one run, so GitHub's failed-run email arrives too.
+            exit 1
+          fi
+
+          if [ -n "$open" ]; then
+            gh issue comment "$open" -R "$REPO" \
+              --body "Recovered: every check passed at $(date -u +'%Y-%m-%d %H:%M UTC'). Closing."
+            gh issue close "$open" -R "$REPO"
+          fi
