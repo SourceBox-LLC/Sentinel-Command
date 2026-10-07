@@ -45,11 +45,10 @@
 > 6. **Governing law.** Section 11 below says Delaware. The published
 >    Terms of Service (<https://sentinel-command.com/legal/terms>), which
 >    this DPA says it forms part of, choose Washington. Make them agree.
-> 7. **`/security` page. The draft refers to a `/security` page on the
->    website as the live security description. No such page exists
->    (`sentinel-command.com/security` and `app.sentinel-command.com/security`
->    both return 404). Publish it, or point these references at
->    `SECURITY.md` in the public repository.
+> 7. **`/security` page.** Published 2026-10-07 at
+>    <https://sentinel-command.com/security> (from the `sentinel-website`
+>    repo). Check that Annex 2 and that page still agree; the page was
+>    written from the code, so where they differ, the page is current.
 
 ---
 

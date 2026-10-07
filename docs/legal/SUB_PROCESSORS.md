@@ -16,9 +16,9 @@
 >    (`REDIS_URL`). Its keys include client IP addresses and
 >    organization IDs. Confirm with `fly secrets list -a sentinel-command`;
 >    if `REDIS_URL` is set, Upstash belongs on this list.
-> 3. **`/security` page.** This list says it mirrors a `/security` page
->    on the website. No such page exists (`sentinel-command.com/security`
->    returns 404).
+> 3. **`/security` page.** Published 2026-10-07 at
+>    <https://sentinel-command.com/security>. Its provider details point
+>    to the Privacy Policy's table, which matches this list.
 
 This is the public list of third-party services that SourceBox LLC
 engages to process Customer Personal Data on behalf of customers of
