@@ -615,11 +615,13 @@ function CompactHeader({ enabled, locked, onToggle, triggerCount, scopeCount, to
         <button
           type="button"
           className="sentinel-run-now-btn"
-          disabled={!interactive}
+          disabled={!interactive || !enabled}
           onClick={onRunNow}
-          title={interactive
-            ? "Queue a one-off agent run with a custom prompt"
-            : disabledReason
+          title={!interactive
+            ? disabledReason
+            : enabled
+              ? "Queue a one-off agent run with a custom prompt"
+              : "Turn Sentinel on to run it"
           }
         >
           <span aria-hidden="true">▶</span> Run now

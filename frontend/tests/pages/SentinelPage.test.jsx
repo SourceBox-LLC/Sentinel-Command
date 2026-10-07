@@ -107,6 +107,17 @@ describe('SentinelPage', () => {
     expect(runNow).toHaveAttribute('title', 'Only an org admin can run or pause Sentinel')
   })
 
+  it('offers no "Run now" while Sentinel is off', async () => {
+    // Off means nothing goes to the AI provider; the server refuses a
+    // manual run too.
+    mockGetConfig.mockResolvedValue(configResponse({ config: { ...CONFIG, enabled: false } }))
+    renderPage()
+    const runNow = await screen.findByRole('button', { name: /Run now/ })
+    await waitFor(() => expect(runNow).toBeDisabled())
+    expect(runNow).toHaveAttribute('title', 'Turn Sentinel on to run it')
+    expect(screen.getAllByText('OFF').length).toBeGreaterThan(0)
+  })
+
   it('sends a hosted org below Pro to the plans', async () => {
     mockGetConfig.mockResolvedValue(
       configResponse({ plan_gated: true, plan_gated_reason: 'plan_required', plan_current: 'Free', monthly_cap: 0 }),
