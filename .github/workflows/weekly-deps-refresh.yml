@@ -55,7 +55,7 @@ jobs:
       # Sentinel AI agent is a binary in this same crate, so this one
       # section covers what used to need a second, Python one.
       - name: Install Rust 1.98
-        uses: dtolnay/rust-toolchain@1.98.0
+        uses: dtolnay/rust-toolchain@1.120.0
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
