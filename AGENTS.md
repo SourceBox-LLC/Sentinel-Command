@@ -459,8 +459,9 @@ Both live in `mcp_api_keys`, split by `kind` (`mcp` or `integration`). **Every q
 | POST | `/api/nodes`: create a node, returns its key once | billing | 20/h |
 | DELETE | `/api/nodes/{id}`: deletes its cameras and caches | admin | 20/h |
 | POST | `/api/nodes/{id}/rotate-key` | admin | 5 |
+| POST | `/api/nodes/{id}/storage-cap`: body `{max_size_gb}`; sent to the node as `set_storage_cap` (CameraNode 0.1.79+) | admin | 10 |
 
-**WebSocket `/ws/node`.** The node authenticates with `X-Node-API-Key` and `X-Node-Id` headers; an old `?api_key=&node_id=` query string still works but logs a deprecation warning. Node → backend messages are `heartbeat` and `command_result`. Backend → node messages are `ack`, `command` (`take_snapshot`, `list_snapshots`, `list_recordings`, `wipe_data`) and `error`. Any other message type gets an `error` frame, and frames containing a NUL are refused. Motion never travels over the socket.
+**WebSocket `/ws/node`.** The node authenticates with `X-Node-API-Key` and `X-Node-Id` headers; an old `?api_key=&node_id=` query string still works but logs a deprecation warning. Node → backend messages are `heartbeat` and `command_result`. Backend → node messages are `ack`, `command` (`take_snapshot`, `list_snapshots`, `list_recordings`, `wipe_data`, `set_storage_cap`) and `error`. A node too old to know a command answers `unknown command: …`; `set_storage_cap` turns that into a 409 telling the admin to update. Any other message type gets an `error` frame, and frames containing a NUL are refused. Motion never travels over the socket.
 
 ### Live video (HLS)
 

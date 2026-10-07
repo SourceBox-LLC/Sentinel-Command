@@ -377,6 +377,10 @@ pub fn build_router(state: AppState) -> Router {
             served(axum::routing::post(api::node_writes::rotate_api_key)),
         )
         .route(
+            "/api/nodes/{node_id}/storage-cap",
+            served(axum::routing::post(api::node_writes::set_storage_cap)),
+        )
+        .route(
             "/api/nodes",
             served(get(api::nodes::list_nodes).post(api::node_writes::create_node)),
         )
