@@ -58,8 +58,14 @@ const PASS_THROUGH: [&str; 7] = [
 ];
 
 /// Whether this path is one the SPA must not answer.
+///
+/// Also any dot-file path (`/.env`, `/.git/config`, `/foo/.htaccess`):
+/// the app has none, and answering them `200 text/html` made every
+/// automated scanner report a leaked `.env` that was really the React
+/// page. `/.well-known/` is a real route and is matched first.
 pub fn passes_through(path: &str) -> bool {
     PASS_THROUGH.iter().any(|prefix| path.starts_with(prefix))
+        || path.split('/').any(|segment| segment.starts_with('.'))
 }
 
 /// The router's fallback: no route matched this path at all.
@@ -238,6 +244,21 @@ pub fn json_error(status: u16, message: &str) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dot_files_are_not_answered_with_the_app() {
+        for path in ["/.env", "/.git/config", "/assets/.DS_Store", "/a/.htaccess"] {
+            assert!(passes_through(path), "{path}");
+        }
+        for path in [
+            "/dashboard",
+            "/settings",
+            "/assets/index-abc.js",
+            "/legal/terms.v2",
+        ] {
+            assert!(!passes_through(path), "{path}");
+        }
+    }
 
     /// Every pass-through prefix, and the two that are deliberately NOT
     /// on the list.

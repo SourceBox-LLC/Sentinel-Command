@@ -67,18 +67,10 @@ impl<'a> Clerk<'a> {
         Clerk { state }
     }
 
-    fn url(&self, path: &str) -> Result<reqwest::Url, ClerkError> {
-        // The trailing slash is load-bearing: `join` treats the base's
-        // last segment as a file and would drop the `/v1`.
-        let base = &self.state.config.clerk_api_url;
-        let base = if base.ends_with('/') {
-            base.clone()
-        } else {
-            format!("{base}/")
-        };
-        reqwest::Url::parse(&base)
-            .and_then(|b| b.join(path))
-            .map_err(|e| ClerkError::Transport(e.to_string()))
+    /// Each id is its own encoded path segment (`clerk_api::url`).
+    fn url(&self, segments: &[&str]) -> Result<reqwest::Url, ClerkError> {
+        crate::clerk_api::url(&self.state.config.clerk_api_url, segments)
+            .ok_or_else(|| ClerkError::Transport("could not build the Clerk URL".to_string()))
     }
 
     async fn send(&self, request: reqwest::RequestBuilder) -> Result<Value, ClerkError> {
@@ -95,19 +87,19 @@ impl<'a> Clerk<'a> {
         }
     }
 
-    async fn get(&self, path: &str) -> Result<Value, ClerkError> {
-        let url = self.url(path)?;
-        self.send(self.state.http.get(url)).await
+    async fn get(&self, segments: &[&str], query: &[(&str, &str)]) -> Result<Value, ClerkError> {
+        let url = self.url(segments)?;
+        self.send(self.state.http.get(url).query(query)).await
     }
 
-    async fn delete(&self, path: &str) -> Result<(), ClerkError> {
-        let url = self.url(path)?;
+    async fn delete(&self, segments: &[&str]) -> Result<(), ClerkError> {
+        let url = self.url(segments)?;
         self.send(self.state.http.delete(url)).await.map(|_| ())
     }
 
     /// Every address on the account, lower-cased.
     pub async fn user_emails(&self, user_id: &str) -> Result<Vec<String>, ClerkError> {
-        let user = self.get(&format!("users/{user_id}")).await?;
+        let user = self.get(&["users", user_id], &[]).await?;
         Ok(user["email_addresses"]
             .as_array()
             .into_iter()
@@ -120,9 +112,10 @@ impl<'a> Clerk<'a> {
     /// `(org id, org name)` for every organization the user belongs to.
     async fn user_organizations(&self, user_id: &str) -> Result<Vec<(String, String)>, ClerkError> {
         let body = self
-            .get(&format!(
-                "users/{user_id}/organization_memberships?limit=100"
-            ))
+            .get(
+                &["users", user_id, "organization_memberships"],
+                &[("limit", "100")],
+            )
             .await?;
         Ok(body["data"]
             .as_array()
@@ -142,7 +135,10 @@ impl<'a> Clerk<'a> {
     async fn members(&self, org_id: &str) -> Result<Vec<(String, bool)>, ClerkError> {
         // Seats top out at 20, well inside one page.
         let body = self
-            .get(&format!("organizations/{org_id}/memberships?limit=100"))
+            .get(
+                &["organizations", org_id, "memberships"],
+                &[("limit", "100")],
+            )
             .await?;
         Ok(body["data"]
             .as_array()
@@ -158,7 +154,7 @@ impl<'a> Clerk<'a> {
 
     /// Whether the account still exists at Clerk.
     pub async fn user_exists(&self, user_id: &str) -> Result<bool, ClerkError> {
-        match self.get(&format!("users/{user_id}")).await {
+        match self.get(&["users", user_id], &[]).await {
             Ok(_) => Ok(true),
             Err(ClerkError::NotFound) => Ok(false),
             Err(err) => Err(err),
@@ -167,17 +163,17 @@ impl<'a> Clerk<'a> {
 
     pub async fn organization_member_count(&self, org_id: &str) -> Result<i64, ClerkError> {
         let body = self
-            .get(&format!("organizations/{org_id}/memberships?limit=1"))
+            .get(&["organizations", org_id, "memberships"], &[("limit", "1")])
             .await?;
         Ok(body["total_count"].as_i64().unwrap_or(0))
     }
 
     pub async fn delete_organization(&self, org_id: &str) -> Result<(), ClerkError> {
-        self.delete(&format!("organizations/{org_id}")).await
+        self.delete(&["organizations", org_id]).await
     }
 
     async fn delete_user(&self, user_id: &str) -> Result<(), ClerkError> {
-        self.delete(&format!("users/{user_id}")).await
+        self.delete(&["users", user_id]).await
     }
 }
 
