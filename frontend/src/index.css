@@ -4897,6 +4897,20 @@ body {
     z-index: 1;
 }
 
+/* Phones: Clerk's card plus 2rem of padding each side was wider than a
+   390px screen, so the sign-in and sign-up pages scrolled sideways. */
+@media (max-width: 480px) {
+    .auth-page {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 1.5rem 0.75rem;
+    }
+    .auth-page .cl-rootBox,
+    .auth-page .cl-cardBox {
+        max-width: 100%;
+    }
+}
+
 .auth-legal-consent {
     margin-top: 1rem;
     max-width: 24rem;
