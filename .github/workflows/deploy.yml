@@ -294,29 +294,48 @@ jobs:
     needs: [test, frontend]
     # Push-to-master only. PRs run test+frontend for validation but must
     # never deploy (no secrets exposure, no half-reviewed code shipped).
-    if: github.event_name == 'push'
-    # Deploys queue rather than cancel each other, and each deploys only
-    # if its commit is still the head of master (the first step). With
+    # A manual run (workflow_dispatch) deploys too: it exists to ship
+    # commits that started no run of their own (Dependabot merges; see
+    # the trigger above), and until 2026-10-07 this condition left it
+    # running the tests only.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      actions: read   # the first step lists this workflow's runs
+    # Deploys queue rather than cancel each other. With
     # `cancel-in-progress: true`, whichever run *reached* this job last
     # cancelled the other, whatever their commits: on 2026-10-07 the run
     # for #369 got here first and was cancelled by the run for #368, its
-    # parent, so production sat on the older commit until it was re-run
-    # by hand. Queued, an older run that comes up after a newer one sees
-    # that master has moved and steps aside; GitHub also replaces a
-    # waiting run with a newer one, so a burst of merges deploys once.
+    # parent, so production sat on the older commit until re-run by hand.
     concurrency:
       group: deploy
       cancel-in-progress: false
     steps:
-      - name: Deploy only the newest commit on master
+      # Queued, an older push run would deploy after a newer one and roll
+      # production back, so a push run steps aside when a NEWER push run
+      # of this workflow exists: that run deploys a commit which contains
+      # this one. It is deliberately "a newer run", not "a newer commit":
+      # a docs-only push (paths-ignore) or a Dependabot merge starts no
+      # run, and stepping aside for one of those would deploy nothing.
+      # (The first version compared against master's head and did exactly
+      # that when #374, docs-only, landed after #372 and #373.)
+      - name: Deploy unless a newer run will
         id: newest
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          head=$(git ls-remote "https://github.com/${{ github.repository }}" refs/heads/master | cut -f1)
-          if [ "$head" = "${{ github.sha }}" ]; then
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "Manual run: deploying ${{ github.sha }}."
             echo "deploy=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "master is at $head now; its own run deploys it. Skipping ${{ github.sha }}."
+            exit 0
+          fi
+          newer=$(gh api "repos/${{ github.repository }}/actions/workflows/deploy.yml/runs?branch=master&event=push&per_page=30" \
+            -q '[.workflow_runs[] | select(.id > ${{ github.run_id }}) | select(.head_sha != "${{ github.sha }}")] | length')
+          if [ "${newer:-0}" -gt 0 ]; then
+            echo "$newer newer push run(s) will deploy a later commit. Skipping ${{ github.sha }}."
             echo "deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: actions/checkout@v7
