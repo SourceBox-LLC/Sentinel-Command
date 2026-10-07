@@ -41,8 +41,11 @@ pub enum AuthError {
     /// No credential, or one that does not verify. 401.
     NotAuthenticated,
     /// Something went wrong that is not the caller's fault — a JWKS
-    /// fetch failure, a malformed publishable key. 401 with a distinct
-    /// message, and the detail goes to the log rather than the response.
+    /// fetch failure, a malformed publishable key. 503, not 401: the
+    /// dashboard treats a 401 as a dead session and signs the person
+    /// out, so a moment's trouble reaching Clerk (a cold machine's first
+    /// fetch, say) used to sign out everyone who loaded a page. The
+    /// detail goes to the log rather than the response.
     Failed,
     /// Verified, but no organisation selected. 400, and deliberately not
     /// a 401: the caller is signed in and must not be bounced to sign-in.
@@ -57,7 +60,10 @@ impl From<AuthError> for ApiError {
                 "Clerk authentication not configured. Set CLERK_SECRET_KEY and CLERK_PUBLISHABLE_KEY.",
             ),
             AuthError::NotAuthenticated => ApiError::unauthorized("Not authenticated"),
-            AuthError::Failed => ApiError::unauthorized("Authentication failed"),
+            AuthError::Failed => ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Sign-in could not be checked right now. Try again in a moment.",
+            ),
             AuthError::NoOrganization => ApiError::bad_request(
                 "No organization selected. Please create or join an organization.",
             ),
@@ -167,6 +173,13 @@ impl Authenticator {
             .ok_or(AuthError::NotAuthenticated)
     }
 
+    /// Warm the Clerk key cache (no-op in local mode). Spawned at start-up.
+    pub async fn warm(&self) {
+        if let Authenticator::Clerk(verifier) = self {
+            verifier.warm().await;
+        }
+    }
+
     async fn authenticate_inner(&self, parts: &Parts) -> Result<AuthUser, AuthError> {
         match self {
             Authenticator::Unconfigured => Err(AuthError::NotConfigured),
@@ -241,6 +254,14 @@ impl ClerkVerifier {
             // trailing-slash normalisation — so normalising here would
             // accept origins the Python rejects.
             authorized_party: frontend_url,
+        }
+    }
+
+    /// Fetch Clerk's signing keys ahead of the first request; see
+    /// [`jwks::JwksCache::warm`].
+    pub async fn warm(&self) {
+        if let Some(jwks) = self.jwks.as_ref() {
+            jwks.warm().await;
         }
     }
 

@@ -353,8 +353,12 @@ self-hosted section applies to them, not this scenario.
 - If Fly is down: post a status update to customers (email + the
   `#status` channel if you have one); wait it out; do not deploy
   during a regional incident.
-- If Clerk is down: same — every signed-in user starts seeing 401s
-  but the underlying app is fine. Wait for Clerk recovery.
+- If Clerk is down: same, and wait for Clerk to recover. Sessions keep
+  working on the signing keys the server already holds. If it can't
+  fetch them at all (a fresh machine during the outage), requests get
+  **503 "Sign-in could not be checked right now"** and the log says
+  `jwks unavailable`. Users stay signed in and recover by themselves;
+  it is deliberately not a 401, which would sign everyone out.
 - If Sentry shows a spike: jump to Scenario A with the most-fired
   issue.
 

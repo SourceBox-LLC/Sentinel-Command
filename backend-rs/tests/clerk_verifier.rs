@@ -160,6 +160,38 @@ async fn a_cached_key_survives_the_jwks_going_down() {
 }
 
 #[tokio::test]
+async fn keys_fetched_at_start_up_need_no_request_to_warm_them() {
+    // `warm` is what start-up calls. A machine that comes up while Clerk
+    // is reachable, then loses it, still verifies sessions: the first
+    // request never had to fetch.
+    let h = start_jwks_server(JWKS.to_string()).await;
+    let v = verifier(&h.issuer);
+    v.warm().await;
+    assert_eq!(h.hits.load(Ordering::SeqCst), 1);
+    h.fail.store(1, Ordering::SeqCst);
+
+    let token = sign(&base_claims(&h.issuer), Some(KID));
+    v.verify(&token)
+        .await
+        .expect("keys fetched at start-up verify the first request");
+}
+
+#[tokio::test]
+async fn trouble_reaching_clerk_is_a_503_not_a_sign_out() {
+    // The dashboard signs a person out on 401. A failure that is not the
+    // caller's fault must not answer 401.
+    let err: sentinel_command::error::ApiError = AuthError::Failed.into();
+    let response = axum::response::IntoResponse::into_response(err);
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+    let err: sentinel_command::error::ApiError = AuthError::NotAuthenticated.into();
+    let response = axum::response::IntoResponse::into_response(err);
+    assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn an_unsigned_token_is_rejected() {
     // alg=none with otherwise perfect claims. The header's own `alg` is
     // never what decides how a token is verified.
