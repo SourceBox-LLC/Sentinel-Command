@@ -74,6 +74,12 @@ it in the Clerk dashboard.
    organization without an admin; turning the setting off closes the
    last way around that.
 
+   **And turn on two-factor authentication** (User & authentication →
+   Multi-factor) for the production instance. The development instance
+   has none enabled, so the public security page
+   (<https://sentinel-command.com/security>) deliberately makes no
+   two-factor claim; add one there once it is on.
+
    > **2026-10-05:** the development instance's only endpoint still
    > pointed at `https://opensentry-command.fly.dev/…` — a hostname that
    > no longer resolves — and Svix had disabled it, so production had
