@@ -22,6 +22,7 @@ You know the symptom, not the scenario letter. Find the row, jump to the section
 
 | What you're seeing | Go to |
 | ------------------ | ----- |
+| An **"Outage: a Sentinel service is down"** issue opened | [E — multi-customer](#scenario-e-multiple-unrelated-customers-reporting-issues-at-once): it names the service that failed |
 | A Sentry alert fired | [A — Sentry alert](#scenario-a-sentry-alert-fired) |
 | One customer: "all my cameras are offline" | [B — cameras offline](#scenario-b-customer-reports-all-my-cameras-are-offline) |
 | One customer: "the stream won't play" | [C — stream won't play](#scenario-c-customer-reports-stream-wont-play) |
@@ -33,6 +34,8 @@ You know the symptom, not the scenario letter. Find the row, jump to the section
 | A deploy went red | [I — CI deploy failing](#scenario-i-ci-deploy-is-failing) |
 | About to push and want to be careful | [J — pre-deploy check](#scenario-j-pre-deploy-sanity-check-before-pushing-master) |
 | **Data is missing, corrupted, or gone** | **[DISASTER_RECOVERY.md](DISASTER_RECOVERY.md)** — not this file |
+
+**Uptime check.** `.github/workflows/uptime.yml` checks Command Center (`/api/health/ready`), the licence and sync services and the website every 5 minutes. A service that fails three times, 20 seconds apart, opens an issue labelled `outage`; GitHub emails you about it and about that one failed run. Later runs stay quiet while the issue is open, and the first all-clear comments on it and closes it. Run it by hand with **test_alert** to prove the path works. GitHub pauses scheduled workflows in a public repo after 60 days without commits; if alerts go quiet for that long, check the Actions tab.
 
 That last row matters: this runbook is for "the service is broken." If the *data* is gone, you are in the wrong document and the procedures here won't help.
 
