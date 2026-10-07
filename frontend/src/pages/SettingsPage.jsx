@@ -635,7 +635,12 @@ function SettingsPage() {
                         </div>
                       </div>
                     )}
-                    <NodeStorageBar storage={node.storage} />
+                    <NodeStorageBar
+                      storage={node.storage}
+                      nodeId={node.node_id}
+                      online={node.status !== "offline"}
+                      onChanged={loadNodes}
+                    />
                     {/* Per-camera recording-policy controls (v0.1.43+).
                         Cameras for this node, joined client-side from
                         the parallel /api/cameras fetch.  Renders one

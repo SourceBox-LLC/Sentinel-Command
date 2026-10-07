@@ -8688,3 +8688,38 @@ body {
 }
 
 
+
+/* Changing a node's storage cap (components/NodeStorageBar.jsx). */
+.node-storage-cap-link {
+  margin-left: 0.6rem;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--accent-green);
+  font: inherit;
+  cursor: pointer;
+}
+.node-storage-cap-link:hover:not(:disabled) { text-decoration: underline; }
+.node-storage-cap-link:disabled { color: var(--text-muted); cursor: not-allowed; }
+.node-storage-cap-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+}
+.node-storage-cap-form label { display: flex; align-items: center; gap: 0.4rem; }
+.node-storage-cap-form input {
+  width: 6rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.node-storage-cap-note,
+.node-storage-cap-error { flex-basis: 100%; margin: 0; font-size: 0.8rem; }
+.node-storage-cap-note { color: var(--accent-amber, #f59e0b); }
+.node-storage-cap-error { color: var(--accent-red); }

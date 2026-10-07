@@ -396,6 +396,169 @@ pub async fn rotate_api_key(
     })))
 }
 
+// ---------------------------------------------------------------------
+// POST /api/nodes/{node_id}/storage-cap
+// ---------------------------------------------------------------------
+
+/// CameraNode's own bounds (`storage::validate_cap_gb`): checked here
+/// too so an obviously bad value never reaches the node. The node still
+/// checks the upper end against its actual disk.
+const MIN_CAP_GB: i64 = 1;
+const MAX_CAP_GB: i64 = 100_000;
+
+/// The first CameraNode that understands `set_storage_cap`.
+const STORAGE_CAP_MIN_VERSION: &str = "0.1.79";
+
+/// Change a connected CameraNode's storage cap.
+///
+/// The node's own dashboard is loopback-only in Connected mode, so for a
+/// headless machine this is the only remote way to do it. The node
+/// applies it through the same code as its Storage page: saved, applied
+/// at once, and a lower cap deletes its oldest recordings straight
+/// away. Body: `{"max_size_gb": n}`.
+///
+/// 409 when the node is offline or too old to understand the command,
+/// 400 with the node's own message when it refuses the value (larger
+/// than its disk), 504 when it doesn't answer.
+pub async fn set_storage_cap(
+    rate: PerMinute<10>,
+    State(state): State<AppState>,
+    Path(node_id): Path<String>,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
+    ModelBody(RequireAdmin(user), body): ModelBody<RequireAdmin>,
+) -> Result<Json<Value>, ApiError> {
+    let node_id = path_segment(&node_id)?.to_string();
+    let mut errors = BodyErrors::new();
+    let gb = errors.optional_int_in_range(&body, "max_size_gb", MIN_CAP_GB, MAX_CAP_GB);
+    if gb.is_none() && body.get("max_size_gb").is_none() {
+        errors.missing("max_size_gb", &body);
+    }
+    errors.finish()?;
+    let Some(gb) = gb else {
+        return Err(ApiError::internal("validated cap missing"));
+    };
+    rate.check().await?;
+
+    let row: Option<(i32, String, Option<i64>)> = sqlx::query_as(
+        "SELECT id, name, storage_max_bytes FROM camera_nodes
+          WHERE node_id = $1 AND org_id = $2 LIMIT 1",
+    )
+    .bind(&node_id)
+    .bind(&user.org_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    let Some((id, name, previous_max_bytes)) = row else {
+        return Err(ApiError::not_found("Node not found"));
+    };
+    if !crate::ws::MANAGER.is_connected(&node_id) {
+        return Err(ApiError::new(
+            axum::http::StatusCode::CONFLICT,
+            json!({
+                "error": "node_offline",
+                "message": "This CameraNode is offline. Its storage cap can be changed \
+                            while it is connected.",
+            }),
+        ));
+    }
+
+    // Generous: a lower cap runs a retention pass before the node
+    // answers, which takes seconds on a large archive.
+    let answer = crate::ws::MANAGER
+        .send_command(
+            &node_id,
+            "set_storage_cap",
+            json!({ "max_size_gb": gb }),
+            std::time::Duration::from_secs(60),
+        )
+        .await;
+    let result = match answer {
+        Ok(result) => result,
+        Err(crate::ws::CommandError::Timeout { .. }) => {
+            return Err(ApiError::new(
+                axum::http::StatusCode::GATEWAY_TIMEOUT,
+                "The CameraNode didn't answer in time. It may still apply the change; \
+                 its next heartbeat will show the cap it has.",
+            ))
+        }
+        Err(other) => {
+            return Err(ApiError::new(
+                axum::http::StatusCode::CONFLICT,
+                json!({ "error": "node_offline", "message": other.to_string() }),
+            ))
+        }
+    };
+    cap_answer_ok(&result)?;
+
+    // Show the new cap now rather than at the next heartbeat, which
+    // will confirm it.
+    let max_bytes = gb.saturating_mul(1024 * 1024 * 1024);
+    sqlx::query("UPDATE camera_nodes SET storage_max_bytes = $1, updated_at = $2 WHERE id = $3")
+        .bind(max_bytes)
+        .bind(now_naive())
+        .bind(id)
+        .execute(&state.pool)
+        .await?;
+
+    let previous_gb = previous_max_bytes.map(|b| b / (1024 * 1024 * 1024));
+    write_audit(
+        &state.pool,
+        &user.org_id,
+        "node_storage_cap_changed",
+        &user.user_id,
+        &audit_label(&user),
+        Some(python_json(&[
+            ("node_id", json!(node_id)),
+            ("name", json!(name)),
+            ("from_gb", json!(previous_gb)),
+            ("to_gb", json!(gb)),
+        ])),
+        &headers,
+        Some(&peer.ip().to_string()),
+    )
+    .await;
+
+    let data = &result["data"];
+    Ok(Json(json!({
+        "node_id": node_id,
+        "max_size_gb": gb,
+        "previous_gb": data.get("previous_gb").cloned().unwrap_or(json!(previous_gb)),
+        "freed_bytes": data.get("freed_bytes").cloned().unwrap_or(json!(0)),
+    })))
+}
+
+/// Read a CameraNode's answer to `set_storage_cap`.
+///
+/// A node older than [`STORAGE_CAP_MIN_VERSION`] answers every command
+/// it doesn't know with `unknown command: …`; that becomes a 409 telling
+/// the admin to update it. Any other refusal is the node's own message
+/// (for example, a cap larger than its disk), passed through as a 400.
+fn cap_answer_ok(result: &Value) -> Result<(), ApiError> {
+    if result["status"] == "success" {
+        return Ok(());
+    }
+    let message = result["error"]
+        .as_str()
+        .unwrap_or("The CameraNode refused the change.");
+    if message.starts_with("unknown command") {
+        return Err(ApiError::new(
+            axum::http::StatusCode::CONFLICT,
+            json!({
+                "error": "node_update_required",
+                "message": format!(
+                    "This CameraNode is too old to change its storage cap remotely. \
+                     Update it to {STORAGE_CAP_MIN_VERSION} or later, or change the cap \
+                     on the node itself."
+                ),
+            }),
+        ));
+    }
+    Err(ApiError::new(
+        axum::http::StatusCode::BAD_REQUEST,
+        json!({ "error": "invalid_cap", "message": message }),
+    ))
+}
+
 /// Postgres keeps microseconds. A response that echoes a timestamp it
 /// just wrote must echo the stored value, not the nanosecond one.
 fn truncate_to_micros(ts: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
@@ -728,6 +891,48 @@ pub async fn delete_node(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn status_and_body(err: ApiError) -> (u16, String) {
+        let response = axum::response::IntoResponse::into_response(err);
+        let status = response.status().as_u16();
+        let body = futures_util::FutureExt::now_or_never(axum::body::to_bytes(
+            response.into_body(),
+            usize::MAX,
+        ))
+        .unwrap()
+        .unwrap();
+        (status, String::from_utf8(body.to_vec()).unwrap())
+    }
+
+    #[test]
+    fn a_successful_cap_answer_is_accepted() {
+        assert!(cap_answer_ok(&json!({"status": "success", "data": {}})).is_ok());
+    }
+
+    #[test]
+    fn an_old_node_is_told_to_update() {
+        let err = cap_answer_ok(&json!({
+            "status": "error",
+            "error": "unknown command: set_storage_cap",
+        }))
+        .unwrap_err();
+        let (status, body) = status_and_body(err);
+        assert_eq!(status, 409);
+        assert!(body.contains("node_update_required"), "{body}");
+        assert!(body.contains(STORAGE_CAP_MIN_VERSION), "{body}");
+    }
+
+    #[test]
+    fn a_refused_value_carries_the_nodes_own_message() {
+        let err = cap_answer_ok(&json!({
+            "status": "error",
+            "error": "The cap can't be larger than the disk (77 GB).",
+        }))
+        .unwrap_err();
+        let (status, body) = status_and_body(err);
+        assert_eq!(status, 400);
+        assert!(body.contains("larger than the disk (77 GB)"), "{body}");
+    }
 
     #[test]
     fn sanitize_video_codec_matches_the_python_module() {

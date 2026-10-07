@@ -302,6 +302,14 @@ export async function rotateNodeKey(getToken, nodeId) {
   })
 }
 
+// Change a connected CameraNode's storage cap (CameraNode 0.1.79+).
+export async function setNodeStorageCap(getToken, nodeId, maxSizeGb) {
+  return fetchWithAuth(`/api/nodes/${nodeId}/storage-cap`, getToken, {
+    method: "POST",
+    body: JSON.stringify({ max_size_gb: maxSizeGb }),
+  })
+}
+
 export async function deleteNode(getToken, nodeId) {
   return fetchWithAuth(`/api/nodes/${nodeId}`, getToken, {
     method: "DELETE"
