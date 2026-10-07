@@ -110,7 +110,9 @@ async fn export(pool: &Pool, org: &str) -> zip::ZipArchive<Cursor<Vec<u8>>> {
     archive(buf.into_inner())
 }
 
-#[tokio::test]
+// Multi-threaded, as the server is, so the writes take the
+// `block_in_place` path; the other tests here cover the inline one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn evidence_bytes_are_in_the_archive_and_linked_from_their_rows() {
     let pool = require_db!();
     let org = "gdx_evidence";

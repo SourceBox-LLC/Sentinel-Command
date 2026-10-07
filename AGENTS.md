@@ -604,7 +604,7 @@ Both endpoints verify a Svix signature and dedupe on the Svix message ID (`proce
 | `subscriptionItem.freeTrialEnding` | logged only |
 | `organization.created` | `welcome` notification |
 | `organization.deleted` | erase all the org's data (the same function as full-reset) |
-| `organizationMembership.created` / `updated` / `deleted` | `member_added` / `member_role_changed` / `member_removed` notification for admins. On `deleted`, an organization left with no members is deleted at Clerk (which sends `organization.deleted`) |
+| `organizationMembership.created` / `updated` / `deleted` | `member_added` / `member_role_changed` / `member_removed` notification for admins. On `deleted`: if the account no longer exists at Clerk, its data is erased using the email address the event carries (`user.deleted` carries only the id); and an organization left with no members is deleted at Clerk (which sends `organization.deleted`) |
 | `user.deleted` | erase that person's data in every org (`gdpr::erase_user_data`): viewing history and read cursors deleted, email log and queue rows deleted, audit rows and "created by" labels kept but anonymised |
 
 Clerk only sends what the endpoint subscribes to. Its configuration is in the Clerk dashboard (Webhooks); the event list is in [LAUNCH_HANDOFF.md](docs/LAUNCH_HANDOFF.md).
