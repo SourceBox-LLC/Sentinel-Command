@@ -59,9 +59,9 @@ pub enum ClaimError {
     NotAuthenticated,
     /// Valid user, but no organisation selected. 400.
     NoOrganization,
-    /// A claim is present with a type this code does not expect. 401,
-    /// with the same "Authentication failed" body Python's blanket
-    /// handler produces. See `validate_claim_types`.
+    /// A claim is present with a type this code does not expect: Clerk
+    /// changed its token format under us. Becomes `AuthError::Failed`, a
+    /// 503 rather than a sign-out. See `validate_claim_types`.
     Malformed(&'static str),
 }
 
@@ -97,7 +97,8 @@ fn absent(claims: &Value, key: &str) -> bool {
 ///
 /// * Where Python raises (`pla`/`fea`/`o.per`/`o.fpm` of the wrong type,
 ///   or a non-object `o`), its blanket handler returns 401
-///   "Authentication failed". This returns the same 401 — an exact match.
+///   "Authentication failed". This used to return the same 401; it is
+///   now a 503 (see `AuthError::Failed`), so it no longer signs anyone out.
 /// * Where Python silently coerces (`sub`, `org_id`, `o.id`, `o.rol`), it
 ///   builds an `AuthUser` around a non-string. That is worth diverging
 ///   from rather than copying: `org_permissions` arriving as a *string*

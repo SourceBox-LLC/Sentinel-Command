@@ -149,6 +149,33 @@ impl JwksCache {
     /// Start a refresh unless one is already running. Its failure only
     /// logs: the keys already held keep working, which is the point — a
     /// Clerk outage must not sign every tenant out.
+    /// Fetch the key set before any request needs it, retrying.
+    ///
+    /// Called once at start-up. Without it the first signed-in request
+    /// on a fresh machine pays for the fetch, and if that fetch fails
+    /// (networking still coming up) the forced-refresh rate limit then
+    /// refuses every request for the next ten seconds. Retries are
+    /// spaced past that limit; after the last one, requests fetch on
+    /// demand as before.
+    pub async fn warm(&self) {
+        const ATTEMPTS: u32 = 6;
+        for attempt in 1..=ATTEMPTS {
+            match self.inner.refresh().await {
+                Ok(()) => {
+                    tracing::info!(attempt, "jwks fetched at start-up");
+                    return;
+                }
+                Err(err) => {
+                    tracing::warn!(attempt, error = %err, "jwks start-up fetch failed; retrying");
+                }
+            }
+            tokio::time::sleep(MIN_FORCED_REFRESH_INTERVAL + Duration::from_secs(1)).await;
+        }
+        tracing::error!(
+            "jwks could not be fetched at start-up; sign-in checks will retry on demand"
+        );
+    }
+
     fn refresh_in_background(&self) {
         let inner = Arc::clone(&self.inner);
         tokio::spawn(async move {
