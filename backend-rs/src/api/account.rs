@@ -156,6 +156,15 @@ impl<'a> Clerk<'a> {
             .collect())
     }
 
+    /// Whether the account still exists at Clerk.
+    pub async fn user_exists(&self, user_id: &str) -> Result<bool, ClerkError> {
+        match self.get(&format!("users/{user_id}")).await {
+            Ok(_) => Ok(true),
+            Err(ClerkError::NotFound) => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
     pub async fn organization_member_count(&self, org_id: &str) -> Result<i64, ClerkError> {
         let body = self
             .get(&format!("organizations/{org_id}/memberships?limit=1"))

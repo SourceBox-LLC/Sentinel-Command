@@ -242,3 +242,109 @@ async fn a_deleted_account_leaves_nothing_personal_behind() {
     erase_user_data(&pool, GONE, &emails).await.unwrap();
     clear(&pool).await;
 }
+
+/// A stand-in for Clerk's `GET /v1/users/{id}`: `user_gone` has been
+/// deleted, anyone else still exists.
+async fn fake_clerk() -> String {
+    use axum::{extract::Path, routing::get, Router};
+    let app = Router::new().route(
+        "/v1/users/{id}",
+        get(|Path(id): Path<String>| async move {
+            if id == "user_mem_gone" {
+                (axum::http::StatusCode::NOT_FOUND, "{}")
+            } else {
+                (axum::http::StatusCode::OK, "{}")
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://{addr}/v1")
+}
+
+/// Deleted outside the app, an account's email rows are found through
+/// the address Clerk's membership event carries, even when nothing else
+/// in this database recorded it. A member who was merely removed keeps
+/// everything.
+#[tokio::test]
+async fn a_membership_event_for_a_deleted_account_erases_its_email() {
+    let Some(pool) = pool().await else {
+        eprintln!("skipped: set TEST_DATABASE_URL to run");
+        return;
+    };
+    let org = "aer_mem_org";
+    for email in ["gone-member@example.test", "kept-member@example.test"] {
+        sqlx::query("DELETE FROM email_log WHERE recipient_email = $1")
+            .bind(email)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO email_log (org_id, recipient_email, kind, status, timestamp)
+             VALUES ($1, $2, 'camera_offline', 'sent', $3)",
+        )
+        .bind(org)
+        .bind(email)
+        .bind(chrono::Utc::now().naive_utc())
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    std::env::set_var("AUTH_PROVIDER", "local");
+    std::env::set_var("APP_SECRET_KEY", "x".repeat(32));
+    let mut config = sentinel_command::config::Config::from_env();
+    config.clerk_api_url = fake_clerk().await;
+    let http = reqwest::Client::new();
+    let state = sentinel_command::app::AppState {
+        auth: std::sync::Arc::new(sentinel_command::auth::Authenticator::from_config(
+            &config,
+            http.clone(),
+        )),
+        cors: sentinel_command::cors::CorsConfig::from_env(&config.frontend_url, ""),
+        hls: std::sync::Arc::new(sentinel_command::hls::HlsCache::new()),
+        limiter: std::sync::Arc::new(sentinel_command::ratelimit::Limiter::from_env("").await),
+        http,
+        config: std::sync::Arc::new(config),
+        pool: pool.clone(),
+        started_at: std::time::Instant::now(),
+        started_at_wall: chrono::Utc::now(),
+    };
+
+    for (user_id, email) in [
+        ("user_mem_gone", "Gone-Member@example.test"),
+        ("user_mem_kept", "kept-member@example.test"),
+    ] {
+        let data = serde_json::json!({
+            "organization": {"id": org},
+            "public_user_data": {"user_id": user_id, "identifier": email},
+        });
+        sentinel_command::api::clerk_webhook::erase_if_account_gone(
+            &state,
+            data.as_object().unwrap(),
+        )
+        .await;
+    }
+
+    let left = |email: &'static str| {
+        let pool = pool.clone();
+        async move {
+            let (n,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM email_log WHERE recipient_email = $1")
+                    .bind(email)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            n
+        }
+    };
+    assert_eq!(left("gone-member@example.test").await, 0);
+    assert_eq!(left("kept-member@example.test").await, 1);
+
+    sqlx::query("DELETE FROM email_log WHERE org_id = $1")
+        .bind(org)
+        .execute(&pool)
+        .await
+        .unwrap();
+}

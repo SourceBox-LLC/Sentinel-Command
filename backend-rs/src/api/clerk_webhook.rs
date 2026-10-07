@@ -495,6 +495,7 @@ async fn dispatch(
             let data = data_object()?;
             membership_notification(state, event_type, &data).await;
             if event_type == "organizationMembership.deleted" {
+                erase_if_account_gone(state, &data).await;
                 delete_org_if_empty(state, &data).await;
             }
         }
@@ -693,6 +694,59 @@ fn past_due_stamp(data: &Map<String, Value>) -> Result<String, ApiError> {
 ///
 /// Best-effort: a failure is logged, not returned, so Svix does not
 /// replay the membership notification over it.
+/// When a membership ends because the account was deleted, erase the
+/// person's data using the email address this event carries.
+///
+/// `user.deleted` carries only the user id, so its backstop can find
+/// email rows only through addresses this database happened to record
+/// next to that id (viewing and audit logs). Clerk also sends a
+/// membership deletion for each of the person's organizations, and
+/// that one names them (`public_user_data.identifier`). A membership
+/// also ends when an admin removes someone, so Clerk is asked first:
+/// only an account that no longer exists is erased.
+///
+/// Best-effort, like the other side effects here: a failure is logged,
+/// and the `user.deleted` backstop still runs.
+pub async fn erase_if_account_gone(state: &AppState, data: &Map<String, Value>) {
+    let user = data.get("public_user_data");
+    let Some(user_id) = user
+        .and_then(|u| u.get("user_id"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    else {
+        return;
+    };
+    let clerk = crate::api::account::Clerk::new(state);
+    match clerk.user_exists(user_id).await {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(err) => {
+            tracing::warn!(user_id, error = %err, "could not check whether an account was deleted");
+            return;
+        }
+    }
+    let mut emails = match crate::api::gdpr::recorded_emails(&state.pool, user_id).await {
+        Ok(emails) => emails,
+        Err(err) => {
+            tracing::error!(user_id, error = %err, "could not read recorded emails");
+            Vec::new()
+        }
+    };
+    if let Some(identifier) = user
+        .and_then(|u| u.get("identifier"))
+        .and_then(Value::as_str)
+        .filter(|s| s.contains('@'))
+    {
+        emails.push(identifier.to_lowercase());
+    }
+    match crate::api::gdpr::erase_user_data(&state.pool, user_id, &emails).await {
+        Ok(counts) => tracing::info!(user_id, counts = ?counts, "deleted account's data erased"),
+        Err(err) => {
+            tracing::error!(user_id, error = %err, "could not erase a deleted account's data")
+        }
+    }
+}
+
 async fn delete_org_if_empty(state: &AppState, data: &Map<String, Value>) {
     let Some(org_id) = data
         .get("organization")

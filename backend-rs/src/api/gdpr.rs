@@ -184,17 +184,21 @@ pub async fn write_archive<W: std::io::Write + std::io::Seek>(
                 let Some(data) = data else {
                     continue;
                 };
-                zip.start_file(path.as_str(), stored)?;
-                zip.write_all(&data)
-                    .map_err(|_| ApiError::internal("could not write the export archive"))?;
+                off_the_runtime(|| {
+                    zip.start_file(path.as_str(), stored)?;
+                    zip.write_all(&data)
+                        .map_err(|_| ApiError::internal("could not write the export archive"))
+                })?;
                 row["file"] = json!(path);
                 evidence_files += 1;
             }
         }
         let payload = python_dumps_indented(&Value::Array(rows.clone()));
-        zip.start_file(format!("{name}.json"), options)?;
-        zip.write_all(payload.as_bytes())
-            .map_err(|_| ApiError::internal("could not write the export archive"))?;
+        off_the_runtime(|| {
+            zip.start_file(format!("{name}.json"), options)?;
+            zip.write_all(payload.as_bytes())
+                .map_err(|_| ApiError::internal("could not write the export archive"))
+        })?;
         tables.push(json!({
             "name": name,
             "rows": rows.len(),
@@ -216,12 +220,28 @@ pub async fn write_archive<W: std::io::Write + std::io::Seek>(
                  Command Center. Export them from the CameraNode.",
         },
     });
-    zip.start_file("manifest.json", options)?;
-    zip.write_all(python_dumps_indented(&manifest).as_bytes())
-        .map_err(|_| ApiError::internal("could not write the export manifest"))?;
+    off_the_runtime(|| {
+        zip.start_file("manifest.json", options)?;
+        zip.write_all(python_dumps_indented(&manifest).as_bytes())
+            .map_err(|_| ApiError::internal("could not write the export manifest"))?;
+        zip.finish()?;
+        Ok(())
+    })
+}
 
-    zip.finish()?;
-    Ok(())
+/// Run a blocking file write without stalling the runtime.
+///
+/// The archive goes to a file, and a clip can be 32 MB: written inline,
+/// a large export would park a runtime worker, and every request queued
+/// behind it, for as long as the disk takes. `block_in_place` hands the
+/// worker's other tasks to another thread first. It exists only on the
+/// multi-threaded runtime (the server's); the tests' current-thread
+/// runtime runs the write inline.
+fn off_the_runtime<T>(write: impl FnOnce() -> T) -> T {
+    match tokio::runtime::Handle::try_current().map(|h| h.runtime_flavor()) {
+        Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(write),
+        _ => write(),
+    }
 }
 
 /// Where a piece of evidence's bytes go in the archive, or `None` when
