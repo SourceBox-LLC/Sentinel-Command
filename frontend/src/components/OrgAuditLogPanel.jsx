@@ -267,7 +267,7 @@ export default function OrgAuditLogPanel() {
         </div>
       ) : (
         <>
-          <div className="audit-table-wrapper">
+          <div className="audit-table-wrapper" tabIndex={0} role="region" aria-label="Audit log entries">
             <table className="audit-table">
               <thead>
                 <tr>

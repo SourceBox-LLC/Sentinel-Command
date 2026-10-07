@@ -425,6 +425,7 @@ function AdminPage() {
         mcpErrors={mcpStats?.total_errors}
       />
 
+      <div role="tabpanel" id="admin-panel" aria-labelledby={`admin-tab-${activeTab}`}>
       {activeTab === "stream" && (<>
       <div className="audit-section">
         <div className="audit-section-header">
@@ -454,8 +455,9 @@ function AdminPage() {
 
         <div className="audit-filters">
           <div className="filter-group">
-            <label>Camera</label>
+            <label htmlFor="stream-filter-camera">Camera</label>
             <select
+              id="stream-filter-camera"
               value={filters.camera_id}
               onChange={(e) => handleFilterChange("camera_id", e.target.value)}
             >
@@ -479,8 +481,9 @@ function AdminPage() {
           </div>
 
           <div className="filter-group">
-            <label>Per Page</label>
+            <label htmlFor="stream-filter-limit">Per Page</label>
             <select
+              id="stream-filter-limit"
               value={filters.limit}
               onChange={(e) => handleFilterChange("limit", parseInt(e.target.value))}
             >
@@ -500,7 +503,7 @@ function AdminPage() {
           </div>
         ) : (
           <>
-            <div className="audit-table-wrapper">
+            <div className="audit-table-wrapper" tabIndex={0} role="region" aria-label="Log entries">
               <table className="audit-table">
                 <thead>
                   <tr>
@@ -552,6 +555,7 @@ function AdminPage() {
         <div className="stats-header">
           <h2>Statistics</h2>
           <select
+            aria-label="Statistics period"
             value={days}
             onChange={(e) => handleDaysChange(parseInt(e.target.value))}
           >
@@ -644,8 +648,9 @@ function AdminPage() {
 
         <div className="audit-filters">
           <div className="filter-group">
-            <label>Tool</label>
+            <label htmlFor="mcp-filter-tool">Tool</label>
             <select
+              id="mcp-filter-tool"
               value={mcpFilters.tool_name}
               onChange={(e) => handleMcpFilterChange("tool_name", e.target.value)}
             >
@@ -702,8 +707,9 @@ function AdminPage() {
           </div>
 
           <div className="filter-group">
-            <label>Status</label>
+            <label htmlFor="mcp-filter-status">Status</label>
             <select
+              id="mcp-filter-status"
               value={mcpFilters.status}
               onChange={(e) => handleMcpFilterChange("status", e.target.value)}
             >
@@ -714,8 +720,9 @@ function AdminPage() {
           </div>
 
           <div className="filter-group">
-            <label>Per Page</label>
+            <label htmlFor="mcp-filter-limit">Per Page</label>
             <select
+              id="mcp-filter-limit"
               value={mcpFilters.limit}
               onChange={(e) => handleMcpFilterChange("limit", parseInt(e.target.value))}
             >
@@ -735,7 +742,7 @@ function AdminPage() {
           </div>
         ) : (
           <>
-            <div className="audit-table-wrapper">
+            <div className="audit-table-wrapper" tabIndex={0} role="region" aria-label="Log entries">
               <table className="audit-table">
                 <thead>
                   <tr>
@@ -820,6 +827,7 @@ function AdminPage() {
         <div className="stats-header">
           <h2>MCP Statistics</h2>
           <select
+            aria-label="MCP statistics period"
             value={mcpDays}
             onChange={(e) => setMcpDays(parseInt(e.target.value))}
           >
@@ -875,6 +883,7 @@ function AdminPage() {
         )}
       </div>
       </>)}
+      </div>
     </div>
   )
 }

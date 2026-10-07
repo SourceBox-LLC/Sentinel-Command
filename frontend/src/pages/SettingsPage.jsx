@@ -763,12 +763,10 @@ function SettingsPage() {
       <div className="settings-section" id="settings-camera-groups">
         <h2>Camera Groups</h2>
         <p className="section-description">
-          Bundle cameras by location or zone — &ldquo;Front yard&rdquo;, &ldquo;Workshop&rdquo;,
-          &ldquo;Main floor&rdquo;. AI agents (including Sentinel) resolve natural-language
-          places to a camera set via the <code>list_camera_groups</code> MCP tool.
-          Per-camera assignment from the camera card is on the roadmap; this
-          section ships group create / delete so admins can populate the
-          structure that agents read.
+          Group cameras by place, such as &ldquo;Front yard&rdquo; or &ldquo;Workshop&rdquo;.
+          Create groups here, then put a camera in one from its controls under
+          Camera Nodes. Sentinel AI and connected AI assistants use groups to
+          understand requests like &ldquo;check the front yard&rdquo;.
         </p>
 
         <div className="camera-groups-list">
@@ -1088,10 +1086,10 @@ function SettingsPage() {
               },
               {
                 key: "email_incident_created",
-                label: "AI agent created an incident",
+                label: "New incident",
                 desc:
-                  "When a connected MCP agent (Claude, Cursor, etc.) " +
-                  "opens a new incident report.",
+                  "When an incident is filed, by Sentinel AI, a connected " +
+                  "AI assistant, or a person.",
                 audience: "All members",
               },
               {
@@ -1193,8 +1191,9 @@ function SettingsPage() {
           "08:00–17:00" means 8am to 5pm local — DST is handled
           automatically. Defaults to UTC for new orgs.
         </p>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.75rem" }}>
           <select
+            aria-label="Time zone"
             value={orgTimezone}
             onChange={(e) => saveTimezone(e.target.value)}
             disabled={timezoneSaving}

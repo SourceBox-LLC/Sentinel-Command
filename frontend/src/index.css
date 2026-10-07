@@ -29,7 +29,9 @@
     /* ── Text ───────────────────────────────────────────────────── */
     --text-primary: #f4f4f5;
     --text-secondary: #a1a1aa;
-    --text-muted: #6b7280;
+    /* #6b7280 measured 3.3-4.0:1 on the app's dark surfaces, under
+       WCAG AA's 4.5:1 for body text. This is >= 5.0:1 on every one. */
+    --text-muted: #8a909c;
 
     /* ── Typography ─────────────────────────────────────────────── */
     --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -4947,7 +4949,8 @@ body {
     font-size: 0.82rem;
     font-weight: 600;
     color: #fff;
-    background: var(--accent-blue, #2563eb);
+    /* #2563eb, not the #3b82f6 accent: white on #3b82f6 is 3.7:1. */
+    background: #2563eb;
     border: none;
     border-radius: 6px;
     cursor: pointer;
@@ -5622,7 +5625,8 @@ body {
 
 .node-status.status-offline {
     background: rgba(239, 68, 68, 0.2);
-    color: var(--accent-red);
+    /* Lighter than --accent-red: that is 4.1:1 on this tinted pill. */
+    color: #f87171;
 }
 
 .node-status.status-pending {
@@ -6129,8 +6133,15 @@ body {
 }
 
 @media (max-width: 768px) {
+    /* Hidden visually, not from screen readers: on a phone the label is
+       still the tab's name (with its count), just not drawn. */
     .admin-tab-label {
-        display: none;
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
     }
     .admin-tab {
         padding: 0.6rem 0.85rem;
