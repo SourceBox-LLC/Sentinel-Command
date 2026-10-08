@@ -116,6 +116,35 @@ struct CameraRow {
     node_pk: Option<i32>,
 }
 
+/// A signed token for one camera's LAN stream, valid until `exp`.
+///
+/// A node reachable on the LAN requires a session for `/hls/*`, which
+/// Home Assistant's player can't get, so its live view could never work.
+/// The node (CameraNode 0.1.81+) also accepts this token, which opens
+/// that camera's HLS files only. The key is the node key's SHA-256,
+/// which this database stores and the node computes from its own key;
+/// format and test vector are shared with CameraNode's
+/// `server::stream_token`. An older node ignores it and refuses as before.
+pub fn stream_token(api_key_hash: &str, camera_id: &str, exp: i64) -> String {
+    let message = format!("sentinel-hls-v1:{camera_id}:{exp}");
+    let sig = crate::crypto::hmac_sha256(api_key_hash.as_bytes(), message.as_bytes());
+    format!("{exp}.{}", crate::crypto::hex(&sig))
+}
+
+/// When a token handed out at `now` expires: the end of tomorrow (UTC).
+///
+/// Whole days, not "now + 24h": Home Assistant restarts a camera's
+/// stream whenever its source URL changes, and it re-reads the URL every
+/// poll. A daily expiry changes the URL once a day; a rolling one would
+/// restart every stream on every poll. Valid between 24 and 48 hours.
+pub fn stream_token_expiry(now: i64) -> i64 {
+    (now.div_euclid(86_400) + 2) * 86_400
+}
+
+fn now_unix() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
 #[derive(sqlx::FromRow, Clone)]
 struct NodeRow {
     id: i32,
@@ -130,6 +159,8 @@ struct NodeRow {
     storage_max_bytes: Option<i64>,
     storage_disk_free_bytes: Option<i64>,
     storage_disk_total_bytes: Option<i64>,
+    /// Signs Home Assistant's stream tokens (`stream_token`).
+    api_key_hash: String,
 }
 
 impl NodeRow {
@@ -140,7 +171,8 @@ impl NodeRow {
 
 const NODE_COLUMNS: &str =
     "id, node_id, name, status, last_seen, local_ip, http_port, node_version,
-     storage_used_bytes, storage_max_bytes, storage_disk_free_bytes, storage_disk_total_bytes";
+     storage_used_bytes, storage_max_bytes, storage_disk_free_bytes, storage_disk_total_bytes,
+     api_key_hash";
 
 /// `GET /api/integration/cameras` — the one call Home Assistant polls
 /// to build all its entities.
@@ -186,10 +218,15 @@ pub async fn list_cameras(
                 .filter(|n| n.local_ip.as_deref().is_some_and(|ip| !ip.is_empty()) && n.online())
                 .map(|n| {
                     format!(
-                        "http://{}:{}/hls/{}/stream.m3u8",
+                        "http://{}:{}/hls/{}/stream.m3u8?st={}",
                         n.local_ip.as_deref().unwrap_or_default(),
                         n.http_port.filter(|p| *p != 0).unwrap_or(8080),
-                        cam.camera_id
+                        cam.camera_id,
+                        stream_token(
+                            &n.api_key_hash,
+                            &cam.camera_id,
+                            stream_token_expiry(now_unix())
+                        )
                     )
                 });
             json!({
@@ -434,6 +471,32 @@ pub async fn snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The vector CameraNode's `server::stream_token` asserts, computed
+    /// independently with Python's hmac module.
+    #[test]
+    fn stream_tokens_match_cameranode() {
+        let key_hash = "f3702f9692e7bce4e7dc0b10fe460daf0bdc6c2c741d4c2fabcdb6df44dbb4c9";
+        assert_eq!(
+            stream_token(key_hash, "cam1", 1_700_000_000),
+            "1700000000.de416edd8a624bdbff2c73bde90873ca60c6b28d3eede7d0c1dc7bb2c0814573"
+        );
+    }
+
+    #[test]
+    fn a_token_expires_at_the_end_of_tomorrow_so_the_url_is_stable_all_day() {
+        let day = 86_400;
+        let start_of_day = 1_700_006_400 - (1_700_006_400 % day);
+        assert_eq!(stream_token_expiry(start_of_day), start_of_day + 2 * day);
+        assert_eq!(
+            stream_token_expiry(start_of_day + day - 1),
+            start_of_day + 2 * day
+        );
+        assert_eq!(
+            stream_token_expiry(start_of_day + day),
+            start_of_day + 3 * day
+        );
+    }
 
     #[test]
     fn strip_matches_python_on_latin1_whitespace() {

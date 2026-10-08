@@ -524,7 +524,7 @@ Members never see `audience = "admin"` notifications, in the list, the count or 
 | GET | `/api/mcp/activity/logs`, `…/logs/stats` | admin | 120 / 60 |
 | GET | `/api/mcp/activity/stream` (SSE) | admin | 60 |
 | GET / POST / DELETE | `/api/integration/keys`, `/api/integration/keys/{id}` | admin | – / 10/h / 30/h |
-| GET | `/api/integration/cameras`: with LAN `local_url` and recording state | `osi_` key | 120 |
+| GET | `/api/integration/cameras`: with LAN `local_url` and recording state. `local_url` carries `?st=<token>`, a signed token that opens that camera's HLS on a password-protected node (CameraNode 0.1.81+; see `integration::stream_token`) | `osi_` key | 120 |
 | GET | `/api/integration/cameras/{id}/snapshot`: live JPEG via the node | `osi_` key | 30 |
 | POST | `/api/integration/cameras/{id}/recording`: body `{recording: bool}` | `osi_` key | 60 |
 | GET | `/api/integration/status`: camera and node counts, disk, versions, plan | `osi_` key | 120 |
