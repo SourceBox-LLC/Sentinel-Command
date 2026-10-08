@@ -137,22 +137,10 @@ fn has_active_item(items: &[Value]) -> bool {
 /// Best-effort by design: a failure here must not fail the webhook, or
 /// Svix retries the whole handler over a seat count.
 pub(crate) async fn set_org_member_limit(state: &AppState, org_id: &str, limit: i64) {
-    // Built through `Url`, like `fetch_live_plan_slug`: an org id is
-    // opaque, and the trailing slash is load-bearing — `join` treats
-    // the base's last segment as a file and would drop the `/v1`.
-    let base = if state.config.clerk_api_url.ends_with('/') {
-        state.config.clerk_api_url.clone()
-    } else {
-        format!("{}/", state.config.clerk_api_url)
-    };
-    let url = match reqwest::Url::parse(&base)
-        .and_then(|base| base.join(&format!("organizations/{org_id}")))
-    {
-        Ok(url) => url,
-        Err(err) => {
-            tracing::error!(error = %err, org_id, "could not build the Clerk organization URL");
-            return;
-        }
+    let Some(url) = crate::clerk_api::url(&state.config.clerk_api_url, &["organizations", org_id])
+    else {
+        tracing::error!(org_id, "could not build the Clerk organization URL");
+        return;
     };
     let result = state
         .http

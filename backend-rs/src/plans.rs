@@ -225,27 +225,13 @@ pub async fn fetch_live_plan_slug(
     secret: &str,
     org_id: &str,
 ) -> Option<String> {
-    // Built through `Url` rather than `format!`: an org id is opaque
-    // and percent-encoding it by hand is the kind of thing that works
-    // until it doesn't.
-    //
-    // The trailing slash is load-bearing. `Url::join` treats the base's
-    // last segment as a *file* and replaces it, so joining against
-    // `https://api.clerk.com/v1` would quietly drop the `/v1` and send
-    // every request to the wrong path.
-    let base = if base_url.ends_with('/') {
-        base_url.to_string()
-    } else {
-        format!("{base_url}/")
-    };
-    let url = match reqwest::Url::parse(&base)
-        .and_then(|base| base.join(&format!("organizations/{org_id}/billing/subscription")))
-    {
-        Ok(url) => url,
-        Err(err) => {
-            tracing::warn!(error = %err, org_id, "could not build the Clerk billing URL");
-            return None;
-        }
+    // The org id goes in as one encoded path segment (`clerk_api::url`).
+    let Some(url) = crate::clerk_api::url(
+        base_url,
+        &["organizations", org_id, "billing", "subscription"],
+    ) else {
+        tracing::warn!(org_id, "could not build the Clerk billing URL");
+        return None;
     };
     let response = match client.get(url).bearer_auth(secret).send().await {
         Ok(r) => r,

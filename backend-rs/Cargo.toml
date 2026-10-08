@@ -102,7 +102,7 @@ getrandom = "0.4"
 
 # Clerk session verification is local RS256 against a cached JWKS — there
 # is no Rust SDK and none is needed. See src/auth.rs.
-jsonwebtoken = "9"
+jsonwebtoken = { version = "10.3", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 
 # Shared rate-limit counters. Production sets REDIS_URL and the Python
 # limiter already uses it; without shared storage a caller round-robining

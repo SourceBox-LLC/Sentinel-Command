@@ -14,6 +14,7 @@ pub mod api;
 pub mod app;
 pub mod audit;
 pub mod auth;
+pub mod clerk_api;
 pub mod config;
 pub mod cors;
 pub mod crypto;

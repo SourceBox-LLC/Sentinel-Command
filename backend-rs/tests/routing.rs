@@ -314,15 +314,21 @@ async fn the_static_walk_cannot_escape_its_root() {
     assert_eq!(status, 200);
     assert_eq!(body, "inside");
 
-    // Traversal lands on the index rather than on a file above the root.
+    // Traversal never reaches a file above the root. A literal `..`
+    // segment is a dot-segment path and gets the API 404; an encoded one
+    // lands on the index.
     for path in [
         "/../Cargo.toml",
         "/a/../../Cargo.toml",
         "/%2e%2e/Cargo.toml",
     ] {
         let (status, _, body) = send(app, get(path)).await;
-        assert_eq!(status, 200, "{path}");
-        assert!(body.contains("SPA"), "{path} served {body:?}");
+        assert!(!body.contains("[package]"), "{path} served {body:?}");
+        assert!(
+            (status == 404 && body == r#"{"detail":"Not Found"}"#)
+                || (status == 200 && body.contains("SPA")),
+            "{path}: {status} {body:?}"
+        );
     }
 }
 

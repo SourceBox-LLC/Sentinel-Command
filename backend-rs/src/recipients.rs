@@ -117,21 +117,12 @@ async fn fetch_from_clerk(
     org_id: &str,
     audience: &str,
 ) -> Option<Vec<String>> {
-    // The trailing slash is load-bearing for `Url::join`; see the same
-    // note in `plans.rs`.
-    let base = if lookup.clerk_base_url.ends_with('/') {
-        lookup.clerk_base_url.to_string()
-    } else {
-        format!("{}/", lookup.clerk_base_url)
-    };
-    let url = match reqwest::Url::parse(&base)
-        .and_then(|base| base.join(&format!("organizations/{org_id}/memberships")))
-    {
-        Ok(url) => url,
-        Err(err) => {
-            tracing::warn!(error = %err, org_id, "[Recipients] could not build the Clerk URL");
-            return None;
-        }
+    let Some(url) = crate::clerk_api::url(
+        lookup.clerk_base_url,
+        &["organizations", org_id, "memberships"],
+    ) else {
+        tracing::warn!(org_id, "[Recipients] could not build the Clerk URL");
+        return None;
     };
 
     let response = client_get(lookup, url, org_id, audience).await?;
