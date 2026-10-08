@@ -79,8 +79,12 @@ jobs:
           # -o /dev/null so a large body doesn't inflate the timing, and
           # %{time_total} rather than `time` so the number is the request
           # itself and not the shell's view of curl's lifetime.
+          # The trailing newline in -w matters: without it `read` hits
+          # end-of-input, returns 1, and the step's `bash -e` ends the
+          # probe before it reports anything. That made every cold probe
+          # fail from the day this was written until 2026-10-07.
           read -r CODE SECS < <(curl -s -o /dev/null -m 45 \
-            -w '%{http_code} %{time_total}' "$URL")
+            -w '%{http_code} %{time_total}\n' "$URL")
           echo "HTTP $CODE in ${SECS}s (cold)"
 
           if [ "$CODE" != "200" ]; then
