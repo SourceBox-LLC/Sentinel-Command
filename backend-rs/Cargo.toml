@@ -118,7 +118,7 @@ uuid = { version = "1", features = ["v4"] }
 # Local (self-hosted) admin login. The stored hash is a PHC string
 # written by python-argon2's PasswordHasher, so the parameters travel
 # with it and this only has to verify, never choose them.
-argon2 = "0.5"
+argon2 = "0.6"
 subtle = "2"
 thiserror = "2"
 jiff = { version = "0.2.37", features = ["tzdb-bundle-always"] }
