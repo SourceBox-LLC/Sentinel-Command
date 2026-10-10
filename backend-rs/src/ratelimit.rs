@@ -85,14 +85,14 @@ impl Limiter {
                 redis::aio::ConnectionManager::new_with_config(
                     client,
                     redis::aio::ConnectionManagerConfig::new()
-                        .set_connection_timeout(REDIS_CONNECT_TIMEOUT)
-                        .set_response_timeout(REDIS_RESPONSE_TIMEOUT),
+                        .set_connection_timeout(Some(REDIS_CONNECT_TIMEOUT))
+                        .set_response_timeout(Some(REDIS_RESPONSE_TIMEOUT)),
                 ),
             )
             .await
             .unwrap_or_else(|_| {
                 Err(redis::RedisError::from((
-                    redis::ErrorKind::IoError,
+                    redis::ErrorKind::Io,
                     "timed out connecting",
                 )))
             }) {
@@ -680,5 +680,35 @@ mod tests {
         assert!(!limiter.check("hourly", 3, hour).await);
         // A different window is a different bucket.
         assert!(limiter.check("minutely", 3, Duration::from_secs(60)).await);
+    }
+
+    /// The Redis store against a real server. Skips unless
+    /// `TEST_REDIS_URL` is set (e.g. `podman run -p 6379:6379 redis`),
+    /// as the database tests skip without `TEST_DATABASE_URL`.
+    #[tokio::test]
+    async fn the_redis_store_counts_and_expires() {
+        let Ok(url) = std::env::var("TEST_REDIS_URL") else {
+            return;
+        };
+        let limiter = Limiter::from_env(&url).await;
+        assert!(
+            matches!(limiter.store, Store::Redis(_)),
+            "could not connect to {url}"
+        );
+        let bucket = format!("test:{}", uuid::Uuid::new_v4());
+        let window = Duration::from_secs(1);
+        for _ in 0..3 {
+            assert!(limiter.check(&bucket, 3, window).await);
+        }
+        assert!(!limiter.check(&bucket, 3, window).await);
+        // The first hit set the TTL, so the window ends.
+        tokio::time::sleep(Duration::from_millis(2100)).await;
+        assert!(limiter.check(&bucket, 3, window).await);
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_redis_falls_back_to_process_counters() {
+        let limiter = Limiter::from_env("redis://127.0.0.1:1").await;
+        assert!(matches!(limiter.store, Store::Memory(_)));
     }
 }
