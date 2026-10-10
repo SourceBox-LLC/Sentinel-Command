@@ -22,8 +22,7 @@
 
 use std::io::{IsTerminal, Read, Write};
 
-use argon2::password_hash::rand_core::OsRng;
-use argon2::password_hash::{PasswordHasher, SaltString};
+use argon2::password_hash::{phc::PasswordHash, PasswordHasher};
 
 /// python-argon2's `PasswordHasher()` defaults.
 const MEMORY_KIB: u32 = 65_536;
@@ -83,8 +82,9 @@ fn main() -> std::process::ExitCode {
         }
     };
     let hasher = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
-    let salt = SaltString::generate(&mut OsRng);
-    let hash = match hasher.hash_password(password.as_bytes(), &salt) {
+    // `hash_password` draws a fresh 16-byte salt from the OS.
+    let hashed: Result<PasswordHash, _> = hasher.hash_password(password.as_bytes());
+    let hash = match hashed {
         Ok(hash) => hash.to_string(),
         Err(err) => {
             eprintln!("hashing failed: {err}");

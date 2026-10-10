@@ -137,7 +137,7 @@ fn verify_credentials(
 }
 
 fn verify_argon2(stored: &str, password: &str) -> bool {
-    use argon2::password_hash::{PasswordHash, PasswordVerifier};
+    use argon2::password_hash::{phc::PasswordHash, PasswordVerifier};
     let Ok(parsed) = PasswordHash::new(stored) else {
         // A malformed stored hash is a configuration error, not a
         // reason to accept the password.
@@ -151,6 +151,9 @@ fn verify_argon2(stored: &str, password: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The salt in `HASH` (`c29tZXNhbHRzb21lc2FsdA` in PHC base64).
+    const SALT: &[u8] = b"somesaltsomesalt";
 
     // argon2id hash of "correct horse", produced by python-argon2's
     // PasswordHasher with its default parameters — the same writer the
@@ -167,17 +170,29 @@ mod tests {
     /// why a weaker tool default would never have failed a test — it
     /// would just have issued weaker credentials than the installs
     /// before it.
+    /// A real hash of "correct horse battery staple", written by
+    /// python-argon2 25's `PasswordHasher().hash()`. Every install's
+    /// LOCAL_ADMIN_PASSWORD_HASH came from that writer or from
+    /// `sentinel-hash-password`, so an `argon2` crate upgrade that stops
+    /// verifying this locks every self-hosted admin out.
+    #[test]
+    fn a_hash_written_by_python_argon2_verifies() {
+        const PYTHON_HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$LeisK+8SrW85IFLZib8gWg$\
+                                   mLF69UH/WtdjCMiqHOP0cpmoiG8s1uUAKhobQACyclQ";
+        assert!(verify_argon2(PYTHON_HASH, "correct horse battery staple"));
+        assert!(!verify_argon2(PYTHON_HASH, "correct horse battery stapler"));
+    }
+
     #[test]
     fn a_hash_with_the_pythons_parameters_verifies() {
-        use argon2::password_hash::{PasswordHasher, SaltString};
+        use argon2::password_hash::{phc::PasswordHash, PasswordHasher};
         let params = argon2::Params::new(65_536, 3, 4, None).unwrap();
         let hasher =
             argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
-        let salt = SaltString::from_b64("c29tZXNhbHRzb21lc2FsdA").unwrap();
-        let hash = hasher
-            .hash_password(b"correct horse battery staple", &salt)
-            .unwrap()
-            .to_string();
+        let hash: PasswordHash = hasher
+            .hash_password_with_salt(b"correct horse battery staple", SALT)
+            .unwrap();
+        let hash = hash.to_string();
         assert!(hash.contains("m=65536,t=3,p=4"), "{hash}");
         assert!(verify_argon2(&hash, "correct horse battery staple"));
         assert!(!verify_argon2(&hash, "wrong"));
@@ -255,11 +270,10 @@ mod tests {
     /// digest: fine for "does this parse", useless for timing, because
     /// verification of it fails before doing the work.
     fn real_hash() -> String {
-        use argon2::password_hash::{PasswordHasher, SaltString};
-        let salt = SaltString::from_b64("c29tZXNhbHRzb21lc2FsdA").unwrap();
-        argon2::Argon2::default()
-            .hash_password(b"correct horse battery staple", &salt)
-            .unwrap()
-            .to_string()
+        use argon2::password_hash::{phc::PasswordHash, PasswordHasher};
+        let hash: PasswordHash = argon2::Argon2::default()
+            .hash_password_with_salt(b"correct horse battery staple", SALT)
+            .unwrap();
+        hash.to_string()
     }
 }
