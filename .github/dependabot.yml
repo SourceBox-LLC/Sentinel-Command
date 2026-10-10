@@ -60,3 +60,10 @@ updates:
     labels:
       - "dependencies"
       - "ci"
+    ignore:
+      # CI's toolchain must equal the Dockerfile builder's (`rust:1.98`),
+      # or CI can accept code the deploy then fails to compile (see the
+      # comment on "Install Rust 1.98" in deploy.yml). Dependabot doesn't
+      # move the Dockerfile with it, and it has proposed tags that are not
+      # Rust releases at all (1.120.0, #351). Both move by hand, together.
+      - dependency-name: "dtolnay/rust-toolchain"
