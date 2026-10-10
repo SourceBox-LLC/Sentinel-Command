@@ -8,10 +8,12 @@ half Rust cannot reach: the package's own list. src/zoneinfo.rs also
 loads the package's zones from jiff's bundled database, and a test there
 fails unless that is the same IANA release recorded here.
 
-Run it with the backend's interpreter after bumping tzdata; the diff
-shows precisely which names changed.
+Run it after a jiff-tzdb bump, with the pip tzdata release of the same
+IANA version (2026e is `tzdata==2026.5`); the diff shows precisely which
+names changed. The Python backend is gone, so any interpreter will do:
 
-Usage: backend/.venv/bin/python tests/differential/gen_tz_names.py
+Usage: python -m venv v && v/bin/pip install tzdata==2026.5 &&
+       v/bin/python tests/differential/gen_tz_names.py
 """
 import pathlib
 from importlib import resources
