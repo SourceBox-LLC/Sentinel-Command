@@ -107,7 +107,7 @@ jsonwebtoken = { version = "10.3", default-features = false, features = ["aws_lc
 # Shared rate-limit counters. Production sets REDIS_URL and the Python
 # limiter already uses it; without shared storage a caller round-robining
 # across machines would get N x the nominal limit.
-redis = { version = "0.27", default-features = false, features = ["tokio-comp", "connection-manager"] }
+redis = { version = "1.7", default-features = false, features = ["tokio-comp", "connection-manager"] }
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
