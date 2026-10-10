@@ -57,7 +57,12 @@ jobs:
 
       - name: Run pg_dump on the machine
         run: |
-          flyctl ssh console -a sentinel-command -C "bash /app/scripts/backup_db.sh"
+          # --process-group app: the app has two machines since the agent
+          # moved into it, and without a group flyctl picks either. Only
+          # the app machine has the /data volume; a dump written on the
+          # agent machine is lost on its next restart (it happened on
+          # 2026-10-05).
+          flyctl ssh console -a sentinel-command --process-group app -C "bash /app/scripts/backup_db.sh"
 
       # Visibility only — never fails the job. But it must not fail
       # SILENTLY either: the database now lives on a DIFFERENT Fly app
@@ -83,10 +88,13 @@ jobs:
       - name: Pull newest dump off the machine
         if: env.BACKUP_KEY != ''
         run: |
-          LATEST=$(flyctl ssh console -a sentinel-command -C "sh -c 'ls -1t /data/backups/sentinel-*.dump | head -1'" | tr -d '\r' | tail -1)
+          # Keep only the path: flyctl also prints notices such as "No
+          # machine specified, using …" to stdout, which were once taken
+          # for the file name.
+          LATEST=$(flyctl ssh console -a sentinel-command --process-group app -C "sh -c 'ls -1t /data/backups/sentinel-*.dump | head -1'" | tr -d '\r' | grep -E '^/data/backups/sentinel-[0-9TZ]+\.dump$' | tail -1)
           echo "newest dump: $LATEST"
           test -n "$LATEST"
-          flyctl ssh sftp get "$LATEST" ./backup.dump -a sentinel-command
+          flyctl ssh sftp get "$LATEST" ./backup.dump -a sentinel-command --process-group app
           ls -lh backup.dump
 
       - name: Encrypt for off-platform storage
