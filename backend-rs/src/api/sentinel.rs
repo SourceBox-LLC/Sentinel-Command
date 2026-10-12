@@ -221,6 +221,15 @@ pub async fn list_pending_runs(
         .await?
     };
 
+    // Each org's zone, looked up once however many of its runs are queued.
+    let mut zones: std::collections::HashMap<&str, (String, jiff::tz::TimeZone)> =
+        std::collections::HashMap::new();
+    for r in &rows {
+        if !zones.contains_key(r.org_id.as_str()) {
+            zones.insert(&r.org_id, org_zone(&state, &r.org_id).await);
+        }
+    }
+
     let runs: Vec<Value> = rows
         .iter()
         .map(|r| {
@@ -228,10 +237,44 @@ pub async fn list_pending_runs(
             // The agent needs org_id to pick the right MCP key, and
             // to_dict() omits it because the dashboard does not.
             v["org_id"] = json!(r.org_id);
+            if let (Some(at), Some((name, zone))) = (r.triggered_at, zones.get(r.org_id.as_str())) {
+                v["local_time"] = json!(local_time_label(at, name, zone));
+            }
             v
         })
         .collect();
     Ok(Json(json!({ "runs": runs })))
+}
+
+/// The org's IANA zone name and zone, UTC when unset or unknown.
+async fn org_zone(state: &AppState, org_id: &str) -> (String, jiff::tz::TimeZone) {
+    let name = crate::settings::get(&state.pool, org_id, "timezone", Some("UTC"))
+        .await
+        .ok()
+        .flatten()
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "UTC".to_string());
+    match crate::zoneinfo::load(&name) {
+        Ok(zone) => (name, zone),
+        Err(_) => ("UTC".to_string(), jiff::tz::TimeZone::UTC),
+    }
+}
+
+/// When a run fired, in the cameras' local time: what the agent should
+/// judge time of day by. Every timestamp it otherwise sees is naive UTC,
+/// so without this an 8 p.m. visitor in California reads as 3 a.m.
+fn local_time_label(at: NaiveDateTime, name: &str, zone: &jiff::tz::TimeZone) -> String {
+    let instant = jiff::Timestamp::from_second(at.and_utc().timestamp())
+        .unwrap_or(jiff::Timestamp::UNIX_EPOCH);
+    let local = instant.to_zoned(zone.clone());
+    if name == "UTC" {
+        format!(
+            "{} UTC (the organization has not set a time zone, so the cameras' local time is unknown)",
+            local.strftime("%A %Y-%m-%d %H:%M")
+        )
+    } else {
+        format!("{} ({name})", local.strftime("%A %Y-%m-%d %H:%M %Z"))
+    }
 }
 
 /// `GET /api/sentinel/runs/{run_id}` — one run with its full trace, for
@@ -924,6 +967,25 @@ use crate::auth::RequireView;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_run_carries_its_local_time() {
+        let at = chrono::NaiveDate::from_ymd_opt(2026, 10, 12)
+            .unwrap()
+            .and_hms_opt(21, 9, 53)
+            .unwrap();
+        let la = crate::zoneinfo::load("America/Los_Angeles").unwrap();
+        assert_eq!(
+            local_time_label(at, "America/Los_Angeles", &la),
+            "Monday 2026-10-12 14:09 PDT (America/Los_Angeles)"
+        );
+        // Unset: say so, rather than present UTC as if it were local.
+        assert_eq!(
+            local_time_label(at, "UTC", &jiff::tz::TimeZone::UTC),
+            "Monday 2026-10-12 21:09 UTC (the organization has not set a time zone, \
+             so the cameras' local time is unknown)"
+        );
+    }
 
     /// `key_last4` is stored and returned separately from the key, and
     /// the differential blanks it by name — substituting four hex
