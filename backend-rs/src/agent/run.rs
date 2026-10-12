@@ -33,8 +33,14 @@ use crate::agent::mcp_client::Tools;
 use crate::agent::prompts::{initial_user_message, system_prompt_for_trigger};
 use crate::agent::queue::Completion;
 
-/// The write tools whose return value carries the incident's own id.
-const INCIDENT_ID_BEARING_TOOLS: [&str; 2] = ["create_incident", "finalize_incident"];
+/// The write tools whose return value is the incident itself (its `id`).
+const INCIDENT_ID_BEARING_TOOLS: [&str; 3] =
+    ["create_incident", "update_incident", "finalize_incident"];
+/// The write tools whose return value is a piece of evidence, naming its
+/// incident in `incident_id`. A run that only adds to an existing
+/// incident (a second visit, an escalation) still worked on it, and was
+/// recorded as `no_action` while it counted only new incidents.
+const EVIDENCE_TOOLS: [&str; 3] = ["attach_snapshot", "attach_clip", "add_observation"];
 const SEVERITIES: [&str; 4] = ["low", "medium", "high", "critical"];
 
 /// Process one run to a terminal result.
@@ -56,6 +62,9 @@ pub async fn run_agent(
     let mut tool_trace: Vec<Value> = Vec::new();
     let mut incident_id: Option<i64> = None;
     let mut severity: Option<String> = None;
+    // The incident's own summary, from the last write that returned it:
+    // what a run cut off after finishing its report should still say.
+    let mut incident_summary: Option<String> = None;
 
     for iteration in 0..max_iterations {
         let turn = match llm.chat(&messages, &definitions).await {
@@ -70,6 +79,7 @@ pub async fn run_agent(
                          Investigation incomplete.",
                         llm.timeout_seconds()
                     ),
+                    incident_summary,
                     tool_trace,
                 );
             }
@@ -79,6 +89,7 @@ pub async fn run_agent(
                     incident_id,
                     severity,
                     format!("LLM call failed: {reason}"),
+                    incident_summary,
                     tool_trace,
                 );
             }
@@ -140,6 +151,27 @@ pub async fn run_agent(
                 if let Some(parsed) = parse_id_from_tool_json(&result.text) {
                     incident_id = Some(parsed);
                 }
+                // The incident as stored: its severity is the real one
+                // even when this call (an escalation, a finalize) did not
+                // pass one.
+                if let Ok(Value::Object(incident)) = serde_json::from_str(&result.text) {
+                    if let Some(Value::String(stored)) = incident.get("severity") {
+                        if SEVERITIES.contains(&stored.as_str()) {
+                            severity = Some(stored.clone());
+                        }
+                    }
+                    if let Some(Value::String(text)) = incident.get("summary") {
+                        if !text.trim().is_empty() {
+                            incident_summary = Some(text.trim().to_string());
+                        }
+                    }
+                }
+            } else if EVIDENCE_TOOLS.contains(&name) {
+                if let Ok(Value::Object(evidence)) = serde_json::from_str(&result.text) {
+                    if let Some(id) = evidence.get("incident_id").and_then(Value::as_i64) {
+                        incident_id = Some(id);
+                    }
+                }
             }
 
             messages.push(tool_result_message(call, &result.text));
@@ -168,6 +200,7 @@ pub async fn run_agent(
             "Reached max iterations ({max_iterations}) without a terminal answer. \
              Investigation may be incomplete."
         ),
+        incident_summary,
         tool_trace,
     )
 }
@@ -177,15 +210,27 @@ fn truncated_result(
     incident_id: Option<i64>,
     severity: Option<String>,
     summary: String,
+    incident_summary: Option<String>,
     tool_trace: Vec<Value>,
 ) -> Completion {
     let tool_call_count = tool_trace.len();
+    // A run that finalized its incident did its work: lead with that, not
+    // with the cutoff, which reads as a failure in the runs list.
+    let finalized = tool_trace
+        .iter()
+        .any(|call| call["tool"] == "finalize_incident");
     match incident_id {
         Some(id) => Completion {
             outcome: "incident".to_string(),
             severity: Some(severity.unwrap_or_else(|| "low".to_string())),
             incident_id: Some(id),
-            summary: format!("{summary} An incident was filed before the cutoff."),
+            summary: match (finalized, incident_summary) {
+                (true, Some(text)) => format!(
+                    "Incident #{id} finalized. {text}\n\n(The agent stopped at its step \
+                     limit before writing a closing note.)"
+                ),
+                _ => format!("{summary} An incident was filed before the cutoff."),
+            },
             tool_call_count,
             tool_trace,
         },
@@ -385,6 +430,80 @@ mod tests {
         assert_eq!(result.severity.as_deref(), Some("high"));
         assert_eq!(result.tool_call_count, 2);
         assert_eq!(result.tool_trace[0]["tool"], "create_incident");
+    }
+
+    /// Found on the test rig: a second visit by the same porch thief was
+    /// escalated on the existing incident (evidence, an observation, a
+    /// higher severity) and the run was recorded as `no_action`, because
+    /// only a new incident counted.
+    #[tokio::test]
+    async fn adding_to_an_existing_incident_is_an_incident_run() {
+        let llm = Script::new(vec![
+            Ok(calls(&[
+                (
+                    "attach_snapshot",
+                    json!({"incident_id": 7, "camera_id": "cam-1"}),
+                ),
+                (
+                    "add_observation",
+                    json!({"incident_id": 7, "text": "again"}),
+                ),
+            ])),
+            Ok(calls(&[("update_incident", json!({"incident_id": 7}))])),
+            text("Escalated #7."),
+        ]);
+        let tools = Table(vec![
+            (
+                "attach_snapshot",
+                out(r#"{"id":31,"incident_id":7,"kind":"snapshot"}"#),
+            ),
+            (
+                "add_observation",
+                out(r#"{"id":32,"incident_id":7,"kind":"observation"}"#),
+            ),
+            // The severity comes back on the stored incident, not in the
+            // call's arguments.
+            (
+                "update_incident",
+                out(r#"{"id":7,"severity":"high","summary":"Package taken."}"#),
+            ),
+        ]);
+        let result = run_agent(&llm, &tools, &run(), 10).await;
+        assert_eq!(result.outcome, "incident");
+        assert_eq!(result.incident_id, Some(7), "not the evidence id 31 or 32");
+        assert_eq!(result.severity.as_deref(), Some("high"));
+    }
+
+    /// Found on the test rig: a bear sighting was filed, evidenced and
+    /// finalized, then the agent hit its step limit before its closing
+    /// message, and the runs list showed only "Reached max iterations".
+    #[tokio::test]
+    async fn a_finalized_incident_leads_the_summary_of_a_cut_off_run() {
+        let llm = Script::new(vec![
+            Ok(calls(&[("create_incident", json!({"severity": "medium"}))])),
+            Ok(calls(&[("finalize_incident", json!({"incident_id": 2}))])),
+            // Then the script runs dry: list_cameras forever, to the cutoff.
+        ]);
+        let tools = Table(vec![
+            ("create_incident", out(r#"{"id":2,"severity":"medium"}"#)),
+            (
+                "finalize_incident",
+                out(
+                    r#"{"id":2,"severity":"medium","summary":"A black bear crossed the driveway."}"#,
+                ),
+            ),
+            ("list_cameras", out("[]")),
+        ]);
+        let result = run_agent(&llm, &tools, &run(), 4).await;
+        assert_eq!(result.outcome, "incident");
+        assert_eq!(result.incident_id, Some(2));
+        assert!(
+            result
+                .summary
+                .starts_with("Incident #2 finalized. A black bear crossed the driveway."),
+            "{}",
+            result.summary
+        );
     }
 
     /// The rule that replaced the regex: prose naming an incident is not
