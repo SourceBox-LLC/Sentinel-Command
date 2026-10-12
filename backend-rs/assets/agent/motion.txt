@@ -1,8 +1,11 @@
 TRIGGER: motion detected on a camera.
 
 Your task:
-  1. Use view_camera (or watch_camera if you need motion/behavior context)
-     to see what the camera is reporting.
+  1. The event may already be over by the time you look. First replay
+     the moment motion fired: watch_camera with `at` a few seconds before
+     "Triggered at", count 5, interval_seconds 2. Then view_camera to see
+     how things are now. Judge what happened from the replay: an empty
+     scene now does not mean nothing happened.
   2. Identify what or who is in the frame. Categorize: person, vehicle,
      animal, environmental (wind, lighting, false-positive), or unknown.
   3. Decide outcome:

@@ -425,6 +425,11 @@ fn int_prop(description: &str, minimum: i64, maximum: Option<i64>) -> Value {
     prop
 }
 
+/// The `at` argument of view_camera and watch_camera.
+const AT_PROP: &str = "Look back to this moment instead of now: an ISO 8601 time, UTC \
+    unless it says otherwise (e.g. a run's triggered_at). The node keeps about the last \
+    minute of video. Each frame from the past is labelled with when it was recorded.";
+
 fn input_schema(name: &str) -> Map<String, Value> {
     match name {
         "list_cameras" | "list_camera_groups" | "list_nodes" | "get_system_status" => {
@@ -435,7 +440,10 @@ fn input_schema(name: &str) -> Map<String, Value> {
             &["camera_id"],
         ),
         "view_camera" => object_schema(
-            json!({ "camera_id": string_prop("The camera_id to view (e.g. 'node1-video0')") }),
+            json!({
+                "camera_id": string_prop("The camera_id to view (e.g. 'node1-video0')"),
+                "at": string_prop(AT_PROP),
+            }),
             &["camera_id"],
         ),
         "watch_camera" => object_schema(
@@ -443,6 +451,7 @@ fn input_schema(name: &str) -> Map<String, Value> {
                 "camera_id": string_prop("The camera_id to watch"),
                 "count": int_prop("Number of snapshots to take", 2, Some(10)),
                 "interval_seconds": int_prop("Seconds between snapshots", 1, Some(30)),
+                "at": string_prop(AT_PROP),
             }),
             &["camera_id"],
         ),
