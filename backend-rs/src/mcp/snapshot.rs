@@ -129,6 +129,37 @@ pub fn frame_time_ms(result: &Value) -> Option<i64> {
         .and_then(Value::as_i64)
 }
 
+/// The node's own error, when its reply is one. `send_command` returns
+/// error replies as results, leaving `status` for the caller to read.
+pub fn node_error(result: &Value) -> Option<String> {
+    (result.get("status").and_then(Value::as_str) == Some("error")).then(|| {
+        result
+            .get("error")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|e| !e.is_empty())
+            .unwrap_or("the camera node reported an error")
+            .to_string()
+    })
+}
+
+/// The recorded time of a frame asked for with `at`, or why there is none.
+/// A node error comes first: a reply without `frame_time_ms` is only "too
+/// old to look back" when it is a success. On the rig, a moment from
+/// before the camera's first segment came back as the node's "no video
+/// retained" error, and was misreported as an old node, which told the
+/// agent to stop looking back instead of picking a later moment.
+pub fn frame_time_for(result: &Value, at_requested: bool) -> Result<Option<i64>, String> {
+    if let Some(err) = node_error(result) {
+        return Err(err);
+    }
+    let recorded = frame_time_ms(result);
+    if at_requested && recorded.is_none() {
+        return Err(NO_REWIND.to_string());
+    }
+    Ok(recorded)
+}
+
 /// What a node too old to look back answers with: a current frame, which
 /// must not be passed off as the moment that was asked for.
 pub const NO_REWIND: &str = "This camera's node can't look back in time (it needs \
@@ -200,11 +231,10 @@ pub async fn capture(
         Err(other) => return Err(SnapshotError(other.to_string())),
     };
 
-    let frame_time = frame_time_ms(&result);
-    if at_ms.is_some() && frame_time.is_none() {
-        return Err(SnapshotError(NO_REWIND.to_string()));
-    }
+    // The image first: it turns a node error into the message a user
+    // reads, which the rewind check would otherwise have replaced.
     let image_b64 = extract_image_b64(&result, camera_id)?;
+    let frame_time = frame_time_for(&result, at_ms.is_some()).map_err(SnapshotError)?;
     // The decoder is CPython's lenient one, and its error text is
     // interpolated into the message a user reads — so "corrupt
     // snapshot data (…)" has to say what Python would have said,
@@ -225,6 +255,21 @@ pub async fn capture(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_node_error_is_not_mistaken_for_an_old_node() {
+        let error = json!({"status": "error", "error": "no video retained from that moment"});
+        assert_eq!(
+            frame_time_for(&error, true),
+            Err("no video retained from that moment".to_string())
+        );
+        let old_node = json!({"status": "success", "data": {"image_b64": "aGk="}});
+        assert_eq!(frame_time_for(&old_node, true), Err(NO_REWIND.to_string()));
+        assert_eq!(frame_time_for(&old_node, false), Ok(None));
+        let new_node =
+            json!({"status": "success", "data": {"image_b64": "aGk=", "frame_time_ms": 7}});
+        assert_eq!(frame_time_for(&new_node, true), Ok(Some(7)));
+    }
     use serde_json::json;
 
     #[test]

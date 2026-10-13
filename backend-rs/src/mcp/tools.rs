@@ -1238,10 +1238,19 @@ pub async fn watch_camera(
             .await;
         match result {
             Ok(value) => {
-                let recorded = crate::mcp::snapshot::frame_time_ms(&value);
-                if frame_at.is_some() && recorded.is_none() {
-                    return Err(crate::mcp::snapshot::NO_REWIND.to_string());
-                }
+                let recorded =
+                    match crate::mcp::snapshot::frame_time_for(&value, frame_at.is_some()) {
+                        Ok(recorded) => recorded,
+                        // An old node is the same answer for every frame.
+                        Err(err) if err == crate::mcp::snapshot::NO_REWIND => return Err(err),
+                        // The node's own refusal (e.g. a moment from before its
+                        // oldest video) is about this frame only.
+                        Err(err) => {
+                            frames
+                                .push(Frame::Text(format!("[Frame {}] Failed: {err}", index + 1)));
+                            continue;
+                        }
+                    };
                 // Deliberately NOT `extract_image_b64`: this tool reads
                 // the field directly and reports a frame with no image
                 // as text, rather than failing the whole burst on one
