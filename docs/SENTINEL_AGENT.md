@@ -89,7 +89,7 @@ A run is bounded at every layer. All bounds are env-tunable.
 
 - **Per-LLM-call timeout** — 120s, around the whole call rather than the HTTP request: a provider that accepts the connection then stalls mid-stream would otherwise hold the machine until the wall clock fires.
 - **Per-MCP-tool timeout** — 60s. Stuck tools surface to the LLM as an error result so the model can retry or pivot.
-- **Iteration cap** — 10 tool-call rounds per run (`MAX_AGENT_ITERATIONS`). Hitting it → outcome `error`, "investigation incomplete".
+- **Iteration cap** — 16 tool-call rounds per run (`MAX_AGENT_ITERATIONS`). Hitting it with no incident → outcome `error`, "investigation incomplete"; with one filed → outcome `incident`, and if it was finalized the summary leads with "Incident #N finalized" and the incident's own summary.
 - **Wall-clock cap** — 270s per wakeup (`processor.rs::DRAIN_TIMEOUT_SECONDS`). When it fires, the agent finds the in-flight run and posts `complete` with `outcome=error`, so the run ends cleanly instead of sitting in `running`. The figure was chosen under the old standalone app's 300s `kill_timeout`; this app sets none, and the `agent` machine never idles to a stop, so today only a deploy or restart cuts a run short, and the reaper below settles it.
 - **CC-side stranded-run reaper** — runs stuck in `running` for >20 minutes are marked `error` by Command Center. Catches the case where the agent crashes before its own cleanup fires.
 
@@ -154,14 +154,14 @@ fly ssh console -a sentinel-command -s --process-group agent -C "curl -s localho
 | `LLM_API_BASE` | falls back to `OLLAMA_HOST` for the Ollama path | Override only for self-hosted or proxied endpoints. |
 | `OLLAMA_API_KEY` | — | Default provider's key. Required unless `LLM_API_KEY` is set; boot fails with neither. |
 | `OLLAMA_HOST` | `https://ollama.com` | Default provider endpoint. |
-| `OLLAMA_MODEL` | `qwen3.5:cloud` | Model id used to build `LLM_MODEL` when it is unset. |
-| `MAX_AGENT_ITERATIONS` | `10` | Max tool-call loops per run. |
+| `OLLAMA_MODEL` | `kimi-k3:cloud` | Model id used to build `LLM_MODEL` when it is unset. (The default was `qwen3.5:cloud` until 2026-10; Ollama's library no longer has a cloud tag for it.) |
+| `MAX_AGENT_ITERATIONS` | `16` | Max tool-call loops per run. |
 | `MAX_TOKENS` | `2048` | Max output tokens per LLM response. |
 | `LLM_CALL_TIMEOUT_SECONDS` | `120` | Per-LLM-call timeout. |
 | `MCP_TOOL_TIMEOUT_SECONDS` | `60` | Per-MCP-tool-call timeout. |
 | `OPENSENTRY_API_BASE` | `https://sentinel-command.fly.dev` | Command Center base URL. `OPENSENTRY_MCP_URL` is derived from it. |
 | `SENTINEL_AGENT_KEY` | required | Run-lifecycle callback secret. Must match CC. |
-| `OPENSENTRY_MCP_AGENT_KEY` | `SENTINEL_AGENT_MCP_KEY`, then `SENTINEL_AGENT_KEY` | Multi-tenant MCP bearer. Self-hosted: leave unset. |
+| `OPENSENTRY_MCP_AGENT_KEY` | `SENTINEL_AGENT_MCP_KEY`, then `SENTINEL_AGENT_KEY` | The agent's bearer for Command Center's tools. It must be Command Center's `SENTINEL_AGENT_MCP_KEY`, or an `osa_` key. The bundled Compose agent (`--profile ai`) passes `SENTINEL_AGENT_MCP_KEY` here, so set that one value in `.env`; an agent run separately with an `osa_` key can leave it unset. |
 | `OPENSENTRY_MCP_URL` | derived from `OPENSENTRY_API_BASE` + `/mcp/` | Override only if MCP lives elsewhere. The trailing slash matters and is added if missing: Command Center answers `/mcp` with a 307 that the MCP client does not follow. |
 | `AGENT_HOST` / `PORT` | `0.0.0.0` / `8080` | Where the agent's own server binds. |
 | `WEBHOOK_VERIFY_SIGNATURE` | `true` | Hard-disable HMAC for local dev. Always on in prod. |

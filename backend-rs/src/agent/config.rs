@@ -123,9 +123,15 @@ impl AgentConfig {
             llm_api_base: text("LLM_API_BASE", ""),
             ollama_api_key: text("OLLAMA_API_KEY", ""),
             ollama_host: text("OLLAMA_HOST", "https://ollama.com"),
-            ollama_model: text("OLLAMA_MODEL", "qwen3.5:cloud"),
+            // `qwen3.5:cloud` until 2026-10: Ollama's library no longer has
+            // a cloud tag for it. kimi-k3 has vision and tool calling, and
+            // is the model the virtual-camera rig tests run on.
+            ollama_model: text("OLLAMA_MODEL", "kimi-k3:cloud"),
             max_tokens: number(&get, "MAX_TOKENS", 2048)?,
-            max_agent_iterations: number(&get, "MAX_AGENT_ITERATIONS", 10)?,
+            // 16, not 10: with a replay of the trigger moment, a look at the
+            // present, filing, a clip, observations and a finalize, a
+            // thorough investigation ran out at 10 on the rig.
+            max_agent_iterations: number(&get, "MAX_AGENT_ITERATIONS", 16)?,
             llm_call_timeout_seconds: number(&get, "LLM_CALL_TIMEOUT_SECONDS", 120.0)?,
             mcp_tool_timeout_seconds: number(&get, "MCP_TOOL_TIMEOUT_SECONDS", 60.0)?,
             // `opensentry-command.fly.dev` until 2026-09-07 — a leftover
@@ -199,9 +205,15 @@ impl AgentConfig {
         if !self.llm_api_base.is_empty() {
             return self.llm_api_base.clone();
         }
-        // Only meaningful for the Ollama fallback; a hosted provider
-        // resolves its own endpoint from the model string.
-        if self.llm_model.is_empty() {
+        // Only meaningful for Ollama, whether reached through the fallback
+        // (OLLAMA_MODEL) or named outright (LLM_MODEL=ollama_chat/...); a
+        // hosted provider resolves its own endpoint from the model string.
+        // An explicit ollama_chat/ model used to ignore OLLAMA_HOST and go
+        // to the default host, so a local Ollama could not be named that way.
+        if self.llm_model.is_empty()
+            || self.llm_model.starts_with("ollama_chat/")
+            || self.llm_model.starts_with("ollama/")
+        {
             self.ollama_host.clone()
         } else {
             String::new()
@@ -375,14 +387,14 @@ mod tests {
     #[test]
     fn the_ollama_trio_is_the_default_provider() {
         let c = config(&[("OLLAMA_API_KEY", "k")]).unwrap();
-        assert_eq!(c.resolved_llm_model(), "ollama_chat/qwen3.5:cloud");
+        assert_eq!(c.resolved_llm_model(), "ollama_chat/kimi-k3:cloud");
         assert_eq!(c.resolved_llm_api_key(), "k");
         assert_eq!(c.resolved_llm_api_base(), "https://ollama.com");
         assert_eq!(
             c.model_ref().unwrap(),
             ModelRef {
                 provider: Provider::Ollama,
-                model: "qwen3.5:cloud".into()
+                model: "kimi-k3:cloud".into()
             }
         );
     }
@@ -415,6 +427,26 @@ mod tests {
         ] {
             assert!(config(&[("OLLAMA_HOST", host)]).is_ok(), "{host}");
         }
+    }
+
+    /// Found on the virtual-camera rig: naming the model outright sent it
+    /// to the default host, so a local Ollama could not be used that way.
+    #[test]
+    fn an_explicit_ollama_model_still_uses_ollama_host() {
+        let c = config(&[
+            ("LLM_MODEL", "ollama_chat/kimi-k3:cloud"),
+            ("OLLAMA_HOST", "http://127.0.0.1:11434"),
+        ])
+        .expect("a local Ollama needs no key");
+        assert_eq!(c.resolved_llm_api_base(), "http://127.0.0.1:11434");
+        // Another provider still resolves its own endpoint.
+        let c = config(&[
+            ("LLM_MODEL", "anthropic/claude-x"),
+            ("LLM_API_KEY", "k"),
+            ("OLLAMA_HOST", "http://127.0.0.1:11434"),
+        ])
+        .unwrap();
+        assert_eq!(c.resolved_llm_api_base(), "");
     }
 
     /// One key configures a self-hosted agent — in one direction only.
