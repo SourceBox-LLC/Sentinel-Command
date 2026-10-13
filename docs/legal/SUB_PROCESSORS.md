@@ -157,7 +157,7 @@ terminate the affected Service per Section 4.4 of the
   that receives actual imagery — unlike motion detection (which is
   on-device) and the rest of this list (which never see video).
 - **Location of processing:** United States (Ollama Cloud,
-  ollama.com; model `qwen3.5:cloud`).
+  ollama.com; model `kimi-k3:cloud`).
 - **Cross-border transfers:** Yes.
 - **Privacy policy:** https://ollama.com/privacy
 - **Notes:** Engaged **only** when an organization runs the Sentinel
@@ -172,8 +172,8 @@ terminate the affected Service per Section 4.4 of the
   single environment variable (`LLM_MODEL`) selects the inference
   provider. The agent can be pointed at Ollama, Anthropic, or an
   OpenAI-compatible endpoint. The first-party
-  deployment is verified to resolve to `ollama_chat/qwen3.5:cloud` as of
-  this revision.
+  deployment is set to `ollama_chat/kimi-k3:cloud` as of this revision
+  (2026-10-13).
 
   **Changing `LLM_MODEL` on the first-party deployment changes who
   processes customer camera imagery, and therefore changes this list.**
@@ -279,6 +279,16 @@ diff this file in the repository for the full record.
   the first time anyone opened the Sentinel page, so an organization on
   a paid plan could start sending images to Ollama without an admin
   deciding to.
+- **2026-10-13** — The first-party agent's model changed from
+  `qwen3.5:cloud` to `kimi-k3:cloud`, both served by Ollama Cloud.
+  Ollama retired `qwen3.5:397b` on 2026-09-25: its API now answers that
+  model with "retired", so Sentinel AI could not have completed a run in
+  production. **No new sub-processor and no change to what is sent or to
+  whom**: the provider is still Ollama Cloud, and the same prompts, tool
+  results and camera frames go to it. Only the model that processes them
+  inside Ollama's service changed. It was checked against Ollama's API
+  (`kimi-k3:cloud` supports image input and tool calling) and in testing
+  on recorded footage before the switch.
 
 ---
 
