@@ -90,7 +90,8 @@ A run is bounded at every layer. All bounds are env-tunable.
 - **Per-LLM-call timeout** — 120s, around the whole call rather than the HTTP request: a provider that accepts the connection then stalls mid-stream would otherwise hold the machine until the wall clock fires.
 - **Per-MCP-tool timeout** — 60s. Stuck tools surface to the LLM as an error result so the model can retry or pivot.
 - **Iteration cap** — 16 tool-call rounds per run (`MAX_AGENT_ITERATIONS`). Hitting it with no incident → outcome `error`, "investigation incomplete"; with one filed → outcome `incident`, and if it was finalized the summary leads with "Incident #N finalized" and the incident's own summary.
-- **Wall-clock cap** — 270s per wakeup (`processor.rs::DRAIN_TIMEOUT_SECONDS`). When it fires, the agent finds the in-flight run and posts `complete` with `outcome=error`, so the run ends cleanly instead of sitting in `running`. The figure was chosen under the old standalone app's 300s `kill_timeout`; this app sets none, and the `agent` machine never idles to a stop, so today only a deploy or restart cuts a run short, and the reaper below settles it.
+- **Concurrency** — up to 4 runs are investigated at once (`MAX_CONCURRENT_RUNS`), and at most 2 for any one org (`MAX_CONCURRENT_RUNS_PER_ORG`). One deployment serves every org from one queue, so runs used to wait for each other one at a time: on the test rig a three-minute investigation held another camera's run for 96 s, and a run that waits past the node's replay window (about a minute of video) can no longer see what triggered it. The per-org cap keeps one busy customer from taking every slot. Agent tool calls are rate-limited per org (`sentinel-agent:{org}`), and two runs at once fits a Pro org's 30 calls a minute.
+- **Wall-clock cap** — 270 s per run (`processor.rs::RUN_TIMEOUT_SECONDS`). When it fires, that run alone is completed with `outcome=error`, so it ends cleanly instead of sitting in `running`; the runs beside it carry on. At shutdown the drain starts nothing new and waits for the runs in flight, which this cap keeps under Fly's 300 s.
 - **CC-side stranded-run reaper** — runs stuck in `running` for >20 minutes are marked `error` by Command Center. Catches the case where the agent crashes before its own cleanup fires.
 
 ## Endpoints
@@ -156,6 +157,8 @@ fly ssh console -a sentinel-command -s --process-group agent -C "curl -s localho
 | `OLLAMA_HOST` | `https://ollama.com` | Default provider endpoint. |
 | `OLLAMA_MODEL` | `kimi-k3:cloud` | Model id used to build `LLM_MODEL` when it is unset. (The default was `qwen3.5:cloud` until 2026-10; Ollama's library no longer has a cloud tag for it.) |
 | `MAX_AGENT_ITERATIONS` | `16` | Max tool-call loops per run. |
+| `MAX_CONCURRENT_RUNS` | `4` | Runs investigated at once, across every org. |
+| `MAX_CONCURRENT_RUNS_PER_ORG` | `2` | Runs investigated at once for one org, so one busy org cannot hold up the others. |
 | `MAX_TOKENS` | `2048` | Max output tokens per LLM response. |
 | `LLM_CALL_TIMEOUT_SECONDS` | `120` | Per-LLM-call timeout. |
 | `MCP_TOOL_TIMEOUT_SECONDS` | `60` | Per-MCP-tool-call timeout. |
@@ -219,4 +222,4 @@ Trust depends on which key the agent holds. The **first-party** deployment uses 
 - **No retry of failed webhook delivery.** If the wakeup POST fails, the run sits pending until the next trigger fires another wakeup, which also drains the prior one. Much less likely now the agent machine stays warm, but there is still no dead-letter queue. Stranded runs (claimed but never completed) *are* reaped.
 - **No cron sweeps.** `trigger_type=scheduled` is mapped in the prompt set but CC doesn't emit them yet.
 - **Sequential per wakeup.** Multiple pending runs process one after another inside a single wakeup.
-- **One drain at a time, per process.** A wakeup that arrives while a drain is running is answered immediately and does not start a second one; a run queued after that drain listed waits for the next wakeup or poll, exactly as a failed delivery does. Two agent *machines* would still both be able to claim a run — `/start` is idempotent, so that is wasted tool calls rather than corruption — which is one reason there is one.
+- **One drain at a time, per process; several runs at a time within it.** A wakeup that arrives while a drain is running is answered immediately and does not start a second one. The drain re-lists every 5 s and whenever a run finishes, so a run queued mid-drain is picked up as soon as a slot is free. Two agent *machines* would still both be able to claim a run — `/start` is idempotent, so that is wasted tool calls rather than corruption — which is one reason there is one.

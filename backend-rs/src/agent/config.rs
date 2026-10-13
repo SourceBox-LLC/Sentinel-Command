@@ -64,6 +64,10 @@ pub struct AgentConfig {
     pub ollama_model: String,
     pub max_tokens: u64,
     pub max_agent_iterations: usize,
+    /// Runs investigated at once, across every org.
+    pub max_concurrent_runs: usize,
+    /// Runs investigated at once for one org.
+    pub max_concurrent_runs_per_org: usize,
     pub llm_call_timeout_seconds: f64,
     pub mcp_tool_timeout_seconds: f64,
     pub opensentry_api_base: String,
@@ -132,6 +136,16 @@ impl AgentConfig {
             // present, filing, a clip, observations and a finalize, a
             // thorough investigation ran out at 10 on the rig.
             max_agent_iterations: number(&get, "MAX_AGENT_ITERATIONS", 16)?,
+            max_concurrent_runs: number(
+                &get,
+                "MAX_CONCURRENT_RUNS",
+                crate::agent::processor::MAX_CONCURRENT_RUNS,
+            )?,
+            max_concurrent_runs_per_org: number(
+                &get,
+                "MAX_CONCURRENT_RUNS_PER_ORG",
+                crate::agent::processor::MAX_CONCURRENT_RUNS_PER_ORG,
+            )?,
             llm_call_timeout_seconds: number(&get, "LLM_CALL_TIMEOUT_SECONDS", 120.0)?,
             mcp_tool_timeout_seconds: number(&get, "MCP_TOOL_TIMEOUT_SECONDS", 60.0)?,
             // `opensentry-command.fly.dev` until 2026-09-07 — a leftover
