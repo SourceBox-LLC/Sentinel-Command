@@ -79,11 +79,27 @@ impl ToolConnector for McpConnector {
             self.config.mcp_tool_timeout_seconds,
         )
         .await
-        .map_err(|err| format!("Failed to connect to MCP servers: {err}"))
+        .map_err(|err| mcp_connect_error(&err.to_string()))
     }
     async fn disconnect(&self, tools: McpClient) {
         tools.disconnect().await;
     }
+}
+
+/// Why the agent could not reach Command Center's tools, with the fix
+/// when it is a key mismatch: "invalid or revoked API key" alone did not
+/// say which of the two agent keys was wrong (found setting up the rig).
+fn mcp_connect_error(err: &str) -> String {
+    let mut message = format!("Failed to connect to MCP servers: {err}");
+    if err.contains("Unauthorized") || err.contains("invalid or revoked") {
+        message.push_str(
+            " — Command Center did not accept the agent's MCP key. It must equal \
+             Command Center's SENTINEL_AGENT_MCP_KEY (the agent reads it from \
+             OPENSENTRY_MCP_AGENT_KEY, else SENTINEL_AGENT_MCP_KEY), or be an \
+             osa_ key issued under MCP → Sentinel Agent Keys.",
+        );
+    }
+    message
 }
 
 /// Constant-time HMAC-SHA256 check of `sha256=<hex>` over the raw body.
@@ -338,6 +354,20 @@ pub async fn serve(state: AgentState) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_rejected_mcp_key_says_which_key_to_check() {
+        let msg = mcp_connect_error(
+            "listing tools failed: Mcp error: -32600: Unauthorized: invalid or revoked API key",
+        );
+        assert!(msg.contains("SENTINEL_AGENT_MCP_KEY"), "{msg}");
+        let other = mcp_connect_error("connection refused");
+        assert_eq!(
+            other,
+            "Failed to connect to MCP servers: connection refused"
+        );
+    }
+
     use super::*;
 
     fn sign(secret: &str, body: &[u8]) -> String {

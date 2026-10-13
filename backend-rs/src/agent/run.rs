@@ -101,6 +101,13 @@ pub async fn run_agent(
         if calls.is_empty() {
             let summary = turn.text().trim().to_string();
             let filed = incident_id.is_some();
+            // A model that files an incident and then answers with nothing
+            // (seen on the rig) leaves the runs list blank; the incident's
+            // own summary says what it found.
+            let summary = match (summary.is_empty(), incident_id, &incident_summary) {
+                (true, Some(id), Some(text)) => format!("Incident #{id} filed. {text}"),
+                _ => summary,
+            };
             return Completion {
                 outcome: if filed { "incident" } else { "no_action" }.to_string(),
                 severity: filed.then(|| severity.unwrap_or_else(|| "low".to_string())),
@@ -472,6 +479,26 @@ mod tests {
         assert_eq!(result.outcome, "incident");
         assert_eq!(result.incident_id, Some(7), "not the evidence id 31 or 32");
         assert_eq!(result.severity.as_deref(), Some("high"));
+    }
+
+    /// Found on the test rig: a night prowler was filed at high severity
+    /// and the model's closing message was empty, so the run said nothing.
+    #[tokio::test]
+    async fn an_empty_answer_after_filing_uses_the_incident_summary() {
+        let llm = Script::new(vec![
+            Ok(calls(&[("create_incident", json!({"severity": "high"}))])),
+            text("   "),
+        ]);
+        let tools = Table(vec![(
+            "create_incident",
+            out(r#"{"id":5,"severity":"high","summary":"Masked person at the SUV door."}"#),
+        )]);
+        let result = run_agent(&llm, &tools, &run(), 10).await;
+        assert_eq!(result.outcome, "incident");
+        assert_eq!(
+            result.summary,
+            "Incident #5 filed. Masked person at the SUV door."
+        );
     }
 
     /// Found on the test rig: a bear sighting was filed, evidenced and
