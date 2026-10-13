@@ -107,6 +107,42 @@ pub async fn capture_bytes(
     org_id: &str,
     camera_id: &str,
 ) -> Result<(Vec<u8>, String), SnapshotError> {
+    capture(pool, org_id, camera_id, None)
+        .await
+        .map(|c| (c.jpeg, c.node_id))
+}
+
+/// A frame from a camera, and when it was recorded.
+pub struct Capture {
+    pub jpeg: Vec<u8>,
+    pub node_id: String,
+    /// Unix ms, from CameraNode 0.1.84 on; `None` from older nodes.
+    pub frame_time_ms: Option<i64>,
+}
+
+/// The node's `frame_time_ms`, in the same two places `image_b64` may be.
+pub fn frame_time_ms(result: &Value) -> Option<i64> {
+    result
+        .get("data")
+        .and_then(|data| data.get("frame_time_ms"))
+        .or_else(|| result.get("frame_time_ms"))
+        .and_then(Value::as_i64)
+}
+
+/// What a node too old to look back answers with: a current frame, which
+/// must not be passed off as the moment that was asked for.
+pub const NO_REWIND: &str = "This camera's node can't look back in time (it needs \
+    CameraNode 0.1.84 or later), so there is no frame from that moment. \
+    Omit `at` to see the camera now.";
+
+/// A frame from the camera, now or (`at_ms`, Unix ms) from the video the
+/// node still holds, about the last minute.
+pub async fn capture(
+    pool: &crate::db::Pool,
+    org_id: &str,
+    camera_id: &str,
+    at_ms: Option<i64>,
+) -> Result<Capture, SnapshotError> {
     let row: Option<(Option<i32>,)> =
         sqlx::query_as("SELECT node_id FROM cameras WHERE org_id = $1 AND camera_id = $2 LIMIT 1")
             .bind(org_id)
@@ -140,11 +176,15 @@ pub async fn capture_bytes(
         )));
     }
 
+    let mut payload = serde_json::json!({ "camera_id": camera_id });
+    if let Some(at) = at_ms {
+        payload["at_ms"] = serde_json::json!(at);
+    }
     let result = crate::ws::MANAGER
         .send_command(
             &node_id,
             "take_snapshot",
-            serde_json::json!({ "camera_id": camera_id }),
+            payload,
             std::time::Duration::from_secs(15),
         )
         .await;
@@ -160,13 +200,21 @@ pub async fn capture_bytes(
         Err(other) => return Err(SnapshotError(other.to_string())),
     };
 
+    let frame_time = frame_time_ms(&result);
+    if at_ms.is_some() && frame_time.is_none() {
+        return Err(SnapshotError(NO_REWIND.to_string()));
+    }
     let image_b64 = extract_image_b64(&result, camera_id)?;
     // The decoder is CPython's lenient one, and its error text is
     // interpolated into the message a user reads — so "corrupt
     // snapshot data (…)" has to say what Python would have said,
     // down to the character count.
     match crate::crypto::python_b64decode(&image_b64) {
-        Ok(bytes) => Ok((bytes, node_id)),
+        Ok(jpeg) => Ok(Capture {
+            jpeg,
+            node_id,
+            frame_time_ms: frame_time,
+        }),
         Err(reason) => Err(SnapshotError(format!(
             "Camera '{camera_id}' returned corrupt snapshot data ({reason}). \
              Update the CameraNode and retry."

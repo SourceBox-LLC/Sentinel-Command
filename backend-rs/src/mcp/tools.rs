@@ -1126,21 +1126,61 @@ pub enum Frame {
     Text(String),
 }
 
+/// `at`, the moment to look back to: an ISO 8601 time, and one without a
+/// zone is UTC, as every timestamp these tools return is. Unix ms.
+fn parse_at(args: &Map<String, Value>) -> Result<Option<i64>, String> {
+    let Some(raw) = opt_str(args, "at").filter(|s| !s.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let raw = raw.trim();
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(raw) {
+        return Ok(Some(dt.timestamp_millis()));
+    }
+    for format in [
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M",
+    ] {
+        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(raw, format) {
+            return Ok(Some(naive.and_utc().timestamp_millis()));
+        }
+    }
+    Err(format!(
+        "`at` must be an ISO 8601 time such as 2026-10-12T23:38:10 (UTC), not {raw:?}"
+    ))
+}
+
+/// The label put before a frame from the past: which moment it shows.
+fn recorded_at_label(index: usize, frame_time_ms: i64) -> String {
+    let when = chrono::DateTime::from_timestamp_millis(frame_time_ms)
+        .map(|t| t.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+        .unwrap_or_else(|| frame_time_ms.to_string());
+    format!("[Frame {index} recorded at {when}]")
+}
+
 pub async fn view_camera(
     state: &AppState,
     org_id: &str,
     args: &Map<String, Value>,
 ) -> Result<ToolOutput, String> {
     let camera_id = req_str(args, "camera_id");
+    let at_ms = parse_at(args)?;
     // The camera is checked before the node, so an unknown id says so
     // rather than blaming a node that has nothing to do with it.
     if camera_row(state, org_id, &camera_id).await?.is_none() {
         return Err(format!("Camera '{camera_id}' not found"));
     }
-    let (jpeg, _node_id) = crate::mcp::snapshot::capture_bytes(&state.pool, org_id, &camera_id)
+    let capture = crate::mcp::snapshot::capture(&state.pool, org_id, &camera_id, at_ms)
         .await
         .map_err(|err| err.0)?;
-    Ok(ToolOutput::Image(jpeg, "image/jpeg".to_string()))
+    match (at_ms, capture.frame_time_ms) {
+        // A frame from the past says which moment it is.
+        (Some(_), Some(recorded)) => Ok(ToolOutput::Frames(vec![
+            Frame::Text(recorded_at_label(1, recorded)),
+            Frame::Image(capture.jpeg, "image/jpeg".to_string()),
+        ])),
+        _ => Ok(ToolOutput::Image(capture.jpeg, "image/jpeg".to_string())),
+    }
 }
 
 pub async fn watch_camera(
@@ -1151,6 +1191,9 @@ pub async fn watch_camera(
     let camera_id = req_str(args, "camera_id");
     let count = int_or(args, "count", 3).max(0) as usize;
     let interval = int_or(args, "interval_seconds", 5).max(0) as u64;
+    // With `at`, frame i shows `at + i * interval`: frames already recorded
+    // come back at once, and the rest as their moments arrive.
+    let at_ms = parse_at(args)?;
 
     if camera_row(state, org_id, &camera_id).await?.is_none() {
         return Err(format!("Camera '{camera_id}' not found"));
@@ -1166,19 +1209,39 @@ pub async fn watch_camera(
 
     let mut frames = Vec::with_capacity(count);
     for index in 0..count {
-        if index > 0 {
-            tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+        let frame_at = at_ms.map(|at| at + (index as i64) * (interval as i64) * 1000);
+        match frame_at {
+            None if index > 0 => {
+                tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+            }
+            None => {}
+            Some(moment) => {
+                // Not recorded yet: wait for the one-second segment that
+                // holds it to be finished.
+                let wait = moment + 1500 - chrono::Utc::now().timestamp_millis();
+                if wait > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(wait as u64)).await;
+                }
+            }
+        }
+        let mut payload = json!({ "camera_id": camera_id });
+        if let Some(moment) = frame_at {
+            payload["at_ms"] = json!(moment);
         }
         let result = crate::ws::MANAGER
             .send_command(
                 &node_id,
                 "take_snapshot",
-                json!({ "camera_id": camera_id }),
+                payload,
                 std::time::Duration::from_secs(15),
             )
             .await;
         match result {
             Ok(value) => {
+                let recorded = crate::mcp::snapshot::frame_time_ms(&value);
+                if frame_at.is_some() && recorded.is_none() {
+                    return Err(crate::mcp::snapshot::NO_REWIND.to_string());
+                }
                 // Deliberately NOT `extract_image_b64`: this tool reads
                 // the field directly and reports a frame with no image
                 // as text, rather than failing the whole burst on one
@@ -1196,7 +1259,12 @@ pub async fn watch_camera(
                             .filter(|v| !v.is_empty())
                     });
                 match image.map(crate::crypto::python_b64decode) {
-                    Some(Ok(bytes)) => frames.push(Frame::Image(bytes, "image/jpeg".into())),
+                    Some(Ok(bytes)) => {
+                        if let (Some(_), Some(recorded)) = (frame_at, recorded) {
+                            frames.push(Frame::Text(recorded_at_label(index + 1, recorded)));
+                        }
+                        frames.push(Frame::Image(bytes, "image/jpeg".into()))
+                    }
                     // A frame whose base64 will not decode raises out of
                     // the loop in Python — `b64decode` is outside the
                     // `except (TimeoutError, ValueError)` it catches.
@@ -1494,6 +1562,36 @@ async fn node_for_camera(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn at(value: &str) -> Result<Option<i64>, String> {
+        let mut args = Map::new();
+        args.insert("at".into(), json!(value));
+        parse_at(&args)
+    }
+
+    /// `at` takes a run's own `triggered_at` as it stands (naive UTC with
+    /// microseconds), as well as zoned and minute-only forms.
+    #[test]
+    fn at_reads_the_timestamps_the_agent_is_given() {
+        let expected = Some(1_791_848_290_000); // 2026-10-12T23:38:10Z
+        assert_eq!(at("2026-10-12T23:38:10"), Ok(expected));
+        assert_eq!(at("2026-10-12T23:38:10.000000"), Ok(expected));
+        assert_eq!(at("2026-10-12T23:38:10Z"), Ok(expected));
+        assert_eq!(at("2026-10-13T01:38:10+02:00"), Ok(expected));
+        assert_eq!(at("2026-10-12 23:38:10"), Ok(expected));
+        assert_eq!(at("2026-10-12T23:38"), Ok(Some(1_791_848_280_000)));
+        assert_eq!(at("  "), Ok(None));
+        assert!(at("five seconds ago").unwrap_err().contains("ISO 8601"));
+        assert_eq!(parse_at(&Map::new()), Ok(None));
+    }
+
+    #[test]
+    fn a_frame_from_the_past_says_when_it_was_recorded() {
+        assert_eq!(
+            recorded_at_label(2, 1_791_848_290_500),
+            "[Frame 2 recorded at 2026-10-12 23:38:10 UTC]"
+        );
+    }
 
     fn chunk(byte: u8, len: usize) -> bytes::Bytes {
         bytes::Bytes::from(vec![byte; len])
