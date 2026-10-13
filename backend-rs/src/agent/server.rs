@@ -38,9 +38,7 @@ use subtle::ConstantTimeEq;
 use crate::agent::config::{AgentConfig, AgentMode};
 use crate::agent::llm::LlmProvider;
 use crate::agent::mcp_client::McpClient;
-use crate::agent::processor::{
-    process_with_timeout, DrainOptions, ToolConnector, DRAIN_TIMEOUT_SECONDS,
-};
+use crate::agent::processor::{process_pending_runs, DrainOptions, ToolConnector};
 use crate::agent::queue::SentinelClient;
 
 /// Replay window for a signed wakeup, either side of now.
@@ -51,6 +49,9 @@ pub struct AgentState {
     pub config: Arc<AgentConfig>,
     pub llm: Arc<LlmProvider>,
     drain_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Set at shutdown: a drain in progress starts nothing new and lets
+    /// its runs in flight finish.
+    stopping: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl AgentState {
@@ -60,6 +61,7 @@ impl AgentState {
             config: Arc::new(config),
             llm: Arc::new(llm),
             drain_lock: Arc::new(tokio::sync::Mutex::new(())),
+            stopping: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }
 }
@@ -173,12 +175,17 @@ async fn drain_once(state: &AgentState, reason: &'static str) -> Option<Value> {
         let connector = McpConnector {
             config: state.config.clone(),
         };
-        let summary = process_with_timeout(
+        let options = DrainOptions {
+            max_concurrent: state.config.max_concurrent_runs,
+            max_per_org: state.config.max_concurrent_runs_per_org,
+            ..DrainOptions::new(state.config.max_agent_iterations)
+        };
+        let summary = process_pending_runs(
             &queue,
             state.llm.as_ref(),
             &connector,
-            DrainOptions::new(state.config.max_agent_iterations),
-            DRAIN_TIMEOUT_SECONDS,
+            options,
+            Some(&state.stopping),
         )
         .await;
         tracing::info!(reason, summary = %summary, "drained");
@@ -325,6 +332,7 @@ pub async fn serve(state: AgentState) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&address).await?;
     tracing::info!(%address, "sentinel agent listening");
     let lock = state.drain_lock.clone();
+    let stopping = state.stopping.clone();
 
     axum::serve(listener, router(state))
         .with_graceful_shutdown(async {
@@ -340,9 +348,10 @@ pub async fn serve(state: AgentState) -> anyhow::Result<()> {
     if let Some(poller) = poller {
         let _ = poller.await;
     }
-    // A drain in flight holds this. Waiting for it is what uvicorn's
-    // graceful shutdown did by keeping the handler alive; the bound is
-    // the drain's own wall clock plus its cleanup, under Fly's 300 s.
+    // A drain in flight holds this. It starts nothing new once `stopping`
+    // is set, and each run in flight is bounded by its own wall clock, so
+    // the wait is one run's budget plus its cleanup, under Fly's 300 s.
+    stopping.store(true, std::sync::atomic::Ordering::Relaxed);
     if tokio::time::timeout(Duration::from_secs(285), lock.lock())
         .await
         .is_err()

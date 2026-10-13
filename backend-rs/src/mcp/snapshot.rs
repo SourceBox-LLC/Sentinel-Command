@@ -167,7 +167,7 @@ pub const NO_REWIND: &str = "This camera's node can't look back in time (it need
     Omit `at` to see the camera now.";
 
 /// A frame from the camera, now or (`at_ms`, Unix ms) from the video the
-/// node still holds, about the last minute.
+/// node still holds: about the last three minutes (one before CameraNode 0.1.86).
 pub async fn capture(
     pool: &crate::db::Pool,
     org_id: &str,

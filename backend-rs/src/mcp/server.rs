@@ -428,7 +428,7 @@ fn int_prop(description: &str, minimum: i64, maximum: Option<i64>) -> Value {
 /// The `at` argument of view_camera and watch_camera.
 const AT_PROP: &str = "Look back to this moment instead of now: an ISO 8601 time, UTC \
     unless it says otherwise (e.g. a run's triggered_at). The node keeps about the last \
-    minute of video. Each frame from the past is labelled with when it was recorded.";
+    three minutes of video. Each frame from the past is labelled with when it was recorded.";
 
 fn input_schema(name: &str) -> Map<String, Value> {
     match name {

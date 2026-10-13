@@ -3,10 +3,19 @@
 //! Ported from `app/sentinel_agent/processor.py`.
 //!
 //! ```text
-//! list pending ─► for each run: claim ─► connect MCP as its org ─► loop ─► complete
-//!      ▲                                                                    │
-//!      └──────────────────────── until the queue is empty ◄─────────────────┘
+//! list pending ─► start what fits ─► each run: claim ─► connect MCP as its org ─► loop ─► complete
+//!      ▲                                                                                  │
+//!      └──────────── a run finished, or every few seconds, until the queue is empty ◄─────┘
 //! ```
+//!
+//! **Runs are investigated concurrently,** up to [`MAX_CONCURRENT_RUNS`]
+//! at once and [`MAX_CONCURRENT_RUNS_PER_ORG`] for any one org. One
+//! deployment serves every org, and the drain used to work through the
+//! queue one run at a time: on the test rig a three-minute investigation
+//! held another camera's run for 96 s, and a run that waits past the
+//! node's replay window (about a minute of video) can no longer see the
+//! moment that triggered it. The per-org cap is what keeps one busy
+//! customer from taking every slot while another customer's runs wait.
 //!
 //! One deployment serves every org. The agent holds one shared MCP secret
 //! and names the org on each connection; the server treats that header as
@@ -35,9 +44,11 @@
 //!   agent sends. Losing it to a transient 5xx orphans the run and any
 //!   incident it filed.
 
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
+use futures_util::stream::{FuturesUnordered, StreamExt};
 
 use serde_json::{json, Map, Value};
 
@@ -46,16 +57,18 @@ use crate::agent::mcp_client::Tools;
 use crate::agent::queue::{Completion, RunQueue};
 use crate::agent::run::run_agent;
 
-/// The wall-clock budget for one drain. It was set under the
-/// `kill_timeout = 300` of the agent's old standalone Fly app, which also
-/// stopped idle machines mid-drain: at 540 s, drains in the 335–540 s band
-/// died at SIGKILL with the cleanup below unreachable, and the run sat
-/// `running` until the 20-minute reaper. The `agent` process group never
-/// idles to a stop and `fly.toml` sets no `kill_timeout`, so today only a
-/// deploy or restart interrupts a drain — and the reaper settles that run.
-/// 270 s still bounds how long one wakeup can hold camera frames.
-pub const DRAIN_TIMEOUT_SECONDS: f64 = 270.0;
+/// The wall clock for one run, claim to complete. It was the budget for a
+/// whole drain while runs went one at a time (270 s, under the 300 s a
+/// Fly machine gets to stop); per run, it bounds how long one stuck
+/// investigation can hold a slot, and how long shutdown waits.
+pub const RUN_TIMEOUT_SECONDS: f64 = 270.0;
 pub const MAX_RUNS_PER_LIST: usize = 20;
+/// Runs investigated at once, across every org.
+pub const MAX_CONCURRENT_RUNS: usize = 4;
+/// Runs investigated at once for one org. Two fits a Pro org's MCP budget
+/// (30 tool calls a minute, a bucket per org) and lets two cameras that
+/// fire together be looked at together.
+pub const MAX_CONCURRENT_RUNS_PER_ORG: usize = 2;
 
 /// Opens the tool surface for one org, and closes it.
 pub trait ToolConnector: Send + Sync {
@@ -67,10 +80,6 @@ pub trait ToolConnector: Send + Sync {
     fn disconnect(&self, tools: Self::Tools) -> impl std::future::Future<Output = ()> + Send;
 }
 
-/// The run being worked when a wall-clock timeout fires, so it can be
-/// marked errored rather than stranded.
-pub type InFlight = Arc<Mutex<Option<String>>>;
-
 /// What the drain needs besides the three collaborators.
 #[derive(Debug, Clone, Copy)]
 pub struct DrainOptions {
@@ -78,6 +87,15 @@ pub struct DrainOptions {
     pub max_runs: usize,
     /// First retry delay for `/complete`; doubles each attempt.
     pub complete_backoff: Duration,
+    /// Runs investigated at the same time, across every org.
+    pub max_concurrent: usize,
+    /// Of those, at most this many for one org.
+    pub max_per_org: usize,
+    /// Wall clock for one run; past it the run is completed as an error.
+    pub run_timeout: Duration,
+    /// How often to re-list while runs are in flight, so a free slot is
+    /// filled without waiting for one of them to finish.
+    pub relist_every: Duration,
 }
 
 impl DrainOptions {
@@ -86,6 +104,10 @@ impl DrainOptions {
             max_iterations,
             max_runs: MAX_RUNS_PER_LIST,
             complete_backoff: Duration::from_secs(2),
+            max_concurrent: MAX_CONCURRENT_RUNS,
+            max_per_org: MAX_CONCURRENT_RUNS_PER_ORG,
+            run_timeout: Duration::from_secs_f64(RUN_TIMEOUT_SECONDS),
+            relist_every: Duration::from_secs(5),
         }
     }
 }
@@ -95,23 +117,38 @@ fn bump(summary: &mut Map<String, Value>, key: &str, by: u64) {
     summary.insert(key.to_string(), json!(current + by));
 }
 
-fn count(summary: &Map<String, Value>, key: &str) -> u64 {
-    summary.get(key).and_then(Value::as_u64).unwrap_or(0)
-}
-
 fn push_result(summary: &mut Map<String, Value>, result: Value) {
     if let Some(Value::Array(results)) = summary.get_mut("results") {
         results.push(result);
     }
 }
 
-/// Drain pending runs, one after another, until the queue is empty.
+fn run_id_of(run: &Value) -> String {
+    match run.get("id") {
+        Some(Value::String(id)) => id.clone(),
+        Some(Value::Number(id)) => id.to_string(),
+        _ => "?".to_string(),
+    }
+}
+
+fn org_of(run: &Value) -> Option<String> {
+    match run.get("org_id") {
+        Some(Value::String(org)) if !org.is_empty() => Some(org.clone()),
+        Some(Value::Number(org)) => Some(org.to_string()),
+        _ => None,
+    }
+}
+
+/// Drain pending runs, several at a time, until the queue is empty.
+///
+/// `stop` ends the drain gracefully: nothing new is started, and the runs
+/// in flight finish (each within its own wall clock).
 pub async fn process_pending_runs<Q, L, C>(
     queue: &Q,
     llm: &L,
     connector: &C,
     options: DrainOptions,
-    in_flight: Option<&InFlight>,
+    stop: Option<&AtomicBool>,
 ) -> Value
 where
     Q: RunQueue,
@@ -125,85 +162,148 @@ where
     summary.insert("skipped_no_org".into(), json!(0));
     summary.insert("results".into(), json!([]));
 
+    // Every id this drain has seen, finished, or must not try again.
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut finished: HashSet<String> = HashSet::new();
     let mut failed: HashSet<String> = HashSet::new();
+    let mut in_flight: HashSet<String> = HashSet::new();
+    let mut per_org: HashMap<String, usize> = HashMap::new();
+    let mut active = FuturesUnordered::new();
+    let stopping = || stop.is_some_and(|flag| flag.load(Ordering::Relaxed));
+
     loop {
-        let pending = match queue.list_pending(options.max_runs).await {
-            Ok(pending) => pending,
-            Err(err) => {
-                tracing::error!(error = %err, "processor: failed to fetch pending runs");
-                bump(&mut summary, "errored", 1);
-                summary.insert("fetched_error".into(), json!(err.to_string()));
-                return Value::Object(summary);
-            }
-        };
-        if pending.is_empty() {
-            return Value::Object(summary);
-        }
-        bump(&mut summary, "fetched", pending.len() as u64);
-        let terminal_before = count(&summary, "processed") + count(&summary, "errored");
-
-        for run in &pending {
-            let run_id = match run.get("id") {
-                Some(Value::String(id)) => id.clone(),
-                Some(Value::Number(id)) => id.to_string(),
-                _ => "?".to_string(),
-            };
-            if failed.contains(&run_id) {
-                continue;
-            }
-            // Every pending row should carry an org, but one that does
-            // not cannot be scoped — skip it rather than act on a
-            // corrupted row under no org at all.
-            let org = match run.get("org_id") {
-                Some(Value::String(org)) if !org.is_empty() => org.clone(),
-                Some(Value::Number(org)) => org.to_string(),
-                _ => {
-                    tracing::warn!(run = %run_id, "processor: run has no org_id, skipping");
-                    bump(&mut summary, "skipped_no_org", 1);
-                    continue;
+        // Fill free slots, oldest run first (Command Center lists them so).
+        if !stopping() && active.len() < options.max_concurrent.max(1) {
+            match queue.list_pending(options.max_runs).await {
+                Ok(pending) => {
+                    for run in &pending {
+                        if active.len() >= options.max_concurrent.max(1) {
+                            break;
+                        }
+                        let run_id = run_id_of(run);
+                        if failed.contains(&run_id)
+                            || finished.contains(&run_id)
+                            || in_flight.contains(&run_id)
+                        {
+                            continue;
+                        }
+                        let first_sight = seen.insert(run_id.clone());
+                        if first_sight {
+                            bump(&mut summary, "fetched", 1);
+                        }
+                        // Every pending row should carry an org, but one
+                        // that does not cannot be scoped — skip it rather
+                        // than act on a corrupted row under no org at all.
+                        let Some(org) = org_of(run) else {
+                            if first_sight {
+                                tracing::warn!(run = %run_id, "processor: run has no org_id, skipping");
+                                bump(&mut summary, "skipped_no_org", 1);
+                            }
+                            continue;
+                        };
+                        let running_for_org = per_org.entry(org.clone()).or_insert(0);
+                        if *running_for_org >= options.max_per_org.max(1) {
+                            continue; // this org's turn comes when one of its runs ends
+                        }
+                        *running_for_org += 1;
+                        in_flight.insert(run_id.clone());
+                        active.push(run_with_timeout(
+                            run.clone(),
+                            run_id,
+                            org,
+                            queue,
+                            llm,
+                            connector,
+                            options,
+                        ));
+                    }
                 }
-            };
-
-            // Stamped BEFORE the first await, so the timeout wrapper sees
-            // a current id even if it fires during the claim. It is never
-            // cleared: if it points at a row that already finished, the
-            // wrapper's complete() is an idempotent no-op server-side.
-            if let Some(handle) = in_flight {
-                *handle.lock().expect("in-flight handle poisoned") = Some(run_id.clone());
-            }
-
-            match process_one_run(run, &run_id, &org, queue, llm, connector, options).await {
-                Ok(()) => {
-                    bump(&mut summary, "processed", 1);
-                    push_result(&mut summary, json!({ "id": run_id, "status": "ok" }));
-                }
-                Err(reason) => {
-                    tracing::error!(run = %run_id, error = %reason, "processor: run failed");
-                    failed.insert(run_id.clone());
+                Err(err) => {
+                    tracing::error!(error = %err, "processor: failed to fetch pending runs");
                     bump(&mut summary, "errored", 1);
-                    push_result(
-                        &mut summary,
-                        json!({ "id": run_id, "status": "error", "error": reason }),
-                    );
-                    // Best effort: tell Command Center, so the UI shows
-                    // an error instead of a run that is pending forever.
-                    let outcome = Completion::error(format!("Agent harness failure: {reason}"));
-                    if let Err(err) =
-                        complete_with_retry(queue, &run_id, &outcome, options.complete_backoff)
-                            .await
-                    {
-                        tracing::error!(run = %run_id, error = %err, "processor: complete() also failed");
+                    summary.insert("fetched_error".into(), json!(err.to_string()));
+                    if active.is_empty() {
+                        return Value::Object(summary);
                     }
                 }
             }
         }
 
-        if count(&summary, "processed") + count(&summary, "errored") == terminal_before {
-            // A full pass moved nothing to a terminal state: every row
-            // was skip-only. Command Center's reaper owns those.
+        // Nothing running and nothing more could be started: the queue is
+        // empty, or holds only rows this drain must skip (no org, already
+        // failed once). Command Center's reaper owns those.
+        if active.is_empty() {
             return Value::Object(summary);
         }
+
+        // A run finishing frees a slot; the tick re-lists anyway, so a slot
+        // that is already free takes a new run without waiting for one.
+        let done = tokio::select! {
+            done = active.next() => done,
+            _ = tokio::time::sleep(options.relist_every) => None,
+        };
+        let Some((run_id, org, outcome)) = done else {
+            continue;
+        };
+        in_flight.remove(&run_id);
+        if let Some(count) = per_org.get_mut(&org) {
+            *count = count.saturating_sub(1);
+        }
+        match outcome {
+            Ok(()) => {
+                finished.insert(run_id.clone());
+                bump(&mut summary, "processed", 1);
+                push_result(&mut summary, json!({ "id": run_id, "status": "ok" }));
+            }
+            Err(reason) => {
+                failed.insert(run_id.clone());
+                bump(&mut summary, "errored", 1);
+                push_result(
+                    &mut summary,
+                    json!({ "id": run_id, "status": "error", "error": reason }),
+                );
+            }
+        }
     }
+}
+
+/// One run under its own wall clock. A failure, including the clock, is
+/// reported to Command Center here, inside the run's own future, so its
+/// `/complete` retries never hold up the other runs in flight.
+async fn run_with_timeout<Q, L, C>(
+    run: Value,
+    run_id: String,
+    org: String,
+    queue: &Q,
+    llm: &L,
+    connector: &C,
+    options: DrainOptions,
+) -> (String, String, Result<(), String>)
+where
+    Q: RunQueue,
+    L: Llm,
+    C: ToolConnector,
+{
+    let attempt = process_one_run(&run, &run_id, &org, queue, llm, connector, options);
+    let outcome = match tokio::time::timeout(options.run_timeout, attempt).await {
+        Ok(outcome) => outcome.map_err(|reason| format!("Agent harness failure: {reason}")),
+        Err(_) => Err(format!(
+            "Agent hit the {:.0}s wall-clock timeout — investigation incomplete.",
+            options.run_timeout.as_secs_f64()
+        )),
+    };
+    if let Err(reason) = &outcome {
+        tracing::error!(run = %run_id, error = %reason, "processor: run failed");
+        // Best effort: tell Command Center, so the UI shows an error
+        // instead of a run that is pending or running forever.
+        let completion = Completion::error(reason.clone());
+        if let Err(err) =
+            complete_with_retry(queue, &run_id, &completion, options.complete_backoff).await
+        {
+            tracing::error!(run = %run_id, error = %err, "processor: complete() also failed");
+        }
+    }
+    (run_id, org, outcome)
 }
 
 /// `POST /complete`, three attempts with a doubling backoff.
@@ -285,53 +385,6 @@ where
     Ok(())
 }
 
-/// The drain, under a hard wall clock.
-///
-/// On timeout the in-flight run is marked errored. Without that it is
-/// stranded: it is no longer `pending`, so the next wakeup's list does
-/// not return it, and `/start` does not re-claim a `running` row.
-pub async fn process_with_timeout<Q, L, C>(
-    queue: &Q,
-    llm: &L,
-    connector: &C,
-    options: DrainOptions,
-    timeout_seconds: f64,
-) -> Value
-where
-    Q: RunQueue,
-    L: Llm,
-    C: ToolConnector,
-{
-    let in_flight: InFlight = Arc::new(Mutex::new(None));
-    let drain = process_pending_runs(queue, llm, connector, options, Some(&in_flight));
-    match tokio::time::timeout(Duration::from_secs_f64(timeout_seconds), drain).await {
-        Ok(summary) => summary,
-        Err(_) => {
-            let stranded = in_flight.lock().expect("in-flight handle poisoned").clone();
-            tracing::warn!(stranded = ?stranded, "processor: hit the wall-clock timeout");
-            if let Some(run_id) = &stranded {
-                let outcome = Completion::error(format!(
-                    "Agent hit the {timeout_seconds:.0}s wall-clock timeout — \
-                     investigation incomplete."
-                ));
-                match complete_with_retry(queue, run_id, &outcome, options.complete_backoff).await {
-                    Ok(()) => {
-                        tracing::info!(run = %run_id, "processor: marked stranded run as errored")
-                    }
-                    Err(err) => {
-                        tracing::error!(run = %run_id, error = %err, "processor: failed to clean up stranded run")
-                    }
-                }
-            }
-            json!({
-                "timeout": true,
-                "timeout_seconds": timeout_seconds,
-                "stranded_run_id": stranded,
-            })
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,6 +393,7 @@ mod tests {
     use crate::agent::queue::QueueError;
     use rig_core::completion::ToolDefinition;
     use rig_core::message::{AssistantContent, Message};
+    use std::sync::Mutex;
 
     /// A queue that plays back lists and records every call.
     #[derive(Default)]
@@ -455,6 +509,10 @@ mod tests {
             max_iterations: 10,
             max_runs: 20,
             complete_backoff: Duration::from_millis(1),
+            max_concurrent: 4,
+            max_per_org: 2,
+            run_timeout: Duration::from_secs(5),
+            relist_every: Duration::from_millis(20),
         }
     }
 
@@ -478,13 +536,17 @@ mod tests {
         let completed = queue.completed.lock().unwrap();
         assert_eq!(completed.len(), 2);
         assert_eq!(completed[0].1.outcome, "no_action");
-        // Listed again after the pass, found empty, stopped.
+        // Both started from one listing; the re-list after the first
+        // finishes finds the queue empty, and the drain stops when the
+        // second is done. (A fake run finishes inside its first poll, so
+        // `a` completes before `b` is first polled.)
         assert_eq!(
             *queue.calls.lock().unwrap(),
             [
                 "list",
                 "start a",
                 "complete a",
+                "list",
                 "start b",
                 "complete b",
                 "list"
@@ -615,25 +677,131 @@ mod tests {
         );
     }
 
-    /// The wall clock: the run in flight is marked errored, by id.
+    /// The wall clock is per run: a stuck run is completed as an error by
+    /// id, and does not hold up the run beside it.
     #[tokio::test]
-    async fn a_timed_out_drain_marks_the_in_flight_run_errored() {
+    async fn a_stuck_run_times_out_alone() {
         let queue = FakeQueue::default();
         *queue.lists.lock().unwrap() = vec![Ok(vec![run("stuck", "org-1")])];
-        let summary = process_with_timeout(
+        let summary = process_pending_runs(
             &queue,
             &Model { hang: true },
             &Connector::default(),
-            options(),
-            0.05,
+            DrainOptions {
+                run_timeout: Duration::from_millis(50),
+                ..options()
+            },
+            None,
         )
         .await;
-        assert_eq!(summary["timeout"], true);
-        assert_eq!(summary["stranded_run_id"], "stuck");
+        assert_eq!(summary["errored"], 1);
         let completed = queue.completed.lock().unwrap();
         assert_eq!(completed.len(), 1);
         assert_eq!(completed[0].0, "stuck");
         assert_eq!(completed[0].1.outcome, "error");
         assert!(completed[0].1.summary.contains("wall-clock timeout"));
+    }
+
+    /// A model that takes a while, and counts how many runs were inside it
+    /// at once, and the order runs reached it.
+    #[derive(Default)]
+    struct SlowModel {
+        now: std::sync::atomic::AtomicUsize,
+        peak: std::sync::atomic::AtomicUsize,
+        order: Mutex<Vec<String>>,
+    }
+    impl Llm for SlowModel {
+        async fn chat(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> Result<AssistantTurn, LlmError> {
+            use std::sync::atomic::Ordering::SeqCst;
+            let seen = format!("{messages:?}");
+            let id = seen
+                .split("Run id: ")
+                .nth(1)
+                .and_then(|rest| rest.split(['\\', '"']).next())
+                .unwrap_or("?")
+                .to_string();
+            self.order.lock().unwrap().push(id);
+            let now = self.now.fetch_add(1, SeqCst) + 1;
+            self.peak.fetch_max(now, SeqCst);
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            self.now.fetch_sub(1, SeqCst);
+            Ok(AssistantTurn {
+                content: vec![AssistantContent::text("All clear.")],
+            })
+        }
+        fn timeout_seconds(&self) -> f64 {
+            120.0
+        }
+    }
+
+    /// The cloud service serves every org from one queue: runs must not
+    /// wait for each other one at a time.
+    #[tokio::test]
+    async fn runs_from_different_orgs_are_investigated_at_once() {
+        let queue = FakeQueue::default();
+        *queue.lists.lock().unwrap() = vec![Ok(vec![
+            run("a", "org-1"),
+            run("b", "org-2"),
+            run("c", "org-3"),
+            run("d", "org-4"),
+        ])];
+        let model = SlowModel::default();
+        let summary =
+            process_pending_runs(&queue, &model, &Connector::default(), options(), None).await;
+        assert_eq!(summary["processed"], 4);
+        assert_eq!(
+            model.peak.load(std::sync::atomic::Ordering::SeqCst),
+            4,
+            "all four in flight together"
+        );
+    }
+
+    /// The per-org cap: a busy org cannot take every slot. Its third run
+    /// waits; the other org's run, listed after it, does not.
+    #[tokio::test]
+    async fn a_busy_org_cannot_make_another_org_wait() {
+        let queue = FakeQueue::default();
+        let listing = vec![
+            run("busy-1", "busy"),
+            run("busy-2", "busy"),
+            run("busy-3", "busy"),
+            run("other-1", "other"),
+        ];
+        // Command Center keeps listing a run until it is claimed.
+        *queue.lists.lock().unwrap() = vec![Ok(listing); 100];
+        let model = SlowModel::default();
+        let summary =
+            process_pending_runs(&queue, &model, &Connector::default(), options(), None).await;
+        assert_eq!(summary["processed"], 4);
+        let order = model.order.lock().unwrap().clone();
+        let at = |id: &str| order.iter().position(|o| o == id).unwrap_or(usize::MAX);
+        assert!(at("other-1") < at("busy-3"), "{order:?}");
+        assert_eq!(
+            model.peak.load(std::sync::atomic::Ordering::SeqCst),
+            3,
+            "two of busy's, one of other's"
+        );
+    }
+
+    /// Shutdown: nothing new starts once `stop` is set.
+    #[tokio::test]
+    async fn a_stopping_drain_starts_nothing() {
+        let queue = FakeQueue::default();
+        *queue.lists.lock().unwrap() = vec![Ok(vec![run("a", "org-1")])];
+        let stop = AtomicBool::new(true);
+        let summary = process_pending_runs(
+            &queue,
+            &Model { hang: false },
+            &Connector::default(),
+            options(),
+            Some(&stop),
+        )
+        .await;
+        assert_eq!(summary["processed"], 0);
+        assert!(queue.calls.lock().unwrap().is_empty());
     }
 }
