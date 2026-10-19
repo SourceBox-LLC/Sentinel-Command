@@ -26,6 +26,7 @@ One decision per file, in order, so nobody has to re-argue it. Context, decision
 
 - [0001: schema migrations](adr/0001-sync-schema-vs-alembic.md). Why there was no Alembic, and how the schema is managed now (sqlx migrations).
 - [0002: viewer-hour billing](adr/0002-viewer-hour-billing.md). Why monthly viewer-hours, not camera count, are the real plan limit.
+- [0003: private video](adr/0003-private-video-mode.md). An opt-in, per-camera end-to-end encrypted mode, and what it switches off. Proposed; built after launch.
 
 ## Legal
 
