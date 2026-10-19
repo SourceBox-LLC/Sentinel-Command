@@ -55,6 +55,11 @@ primary_region = "sjc"
   # The database no longer shares this machine's RAM for page cache,
   # so there is a little more headroom here than there used to be.
   SEGMENT_CACHE_MAX_TOTAL_BYTES = "402653184"
+  # The database cluster's own health check, which reports how full its
+  # volume is. Command Center cannot see that volume from its machine,
+  # and Fly Postgres turns the cluster read-only at 90%, so the disk
+  # check reads it here and alerts at 80%. Private network, no secret.
+  POSTGRES_HEALTH_URL = "http://sentinel-postgres.internal:5500/flycheck/pg"
 
 # This app runs TWO process groups from ONE image. Fly has no per-group
 # image, only per-group command, so both binaries are built from one

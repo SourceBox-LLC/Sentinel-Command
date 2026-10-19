@@ -226,6 +226,7 @@ Sentry is wired through `tracing`, **so `tracing::error!` is an alert.** ERROR l
 | `MOTION_DIGEST_INTERVAL_SECONDS` | `60` | |
 | `SENTINEL_REAPER_INTERVAL_SECONDS` | `300` | |
 | `DISK_CHECK_INTERVAL_SECONDS` | `300` | |
+| `POSTGRES_HEALTH_URL` | — | The Fly Postgres cluster's `/flycheck/pg`, which reports its volume's fill. Set, the disk check alerts at 80 % (Fly turns the cluster read-only at 90 %). Production sets it in `fly.toml`: `http://sentinel-postgres.internal:5500/flycheck/pg`. |
 
 **Not read, despite appearing in old docs:** `INACTIVE_CAMERA_CLEANUP_HOURS` (caches are dropped a minute after a camera stops pushing), `LOG_RETENTION_DAYS` (retention is per plan), and `SENTINEL_LICENSE_GRACE_HOURS` (the 72-hour grace is a constant in `license.rs`).
 
@@ -621,7 +622,7 @@ Started from `main.rs`. All are `tokio` tasks in the `app` process.
 | Log cleanup | `loops.rs` | 24 h | Deletes logs older than each org's retention; terminal outbox rows after 7 days; webhook dedup markers after 30 days. |
 | Sentinel reaper | `loops.rs` | 5 min | `running` runs older than 20 min become `error`; `pending` runs unclaimed for 2 min re-fire the wakeup; after 6 h they are abandoned. |
 | Motion digest | `loops.rs` | 60 s | Closes each camera's motion-email cooldown and sends one digest for what happened inside it. |
-| Disk check | `loops.rs` | 5 min | At 95 % full, one `tracing::error!` (a Sentry alert) per 6 h. Operator-only: never a customer notification. |
+| Disk check | `loops.rs` | 5 min | The app's volume at 95 % full, or the database cluster's at 80 % (`POSTGRES_HEALTH_URL`): one `tracing::error!` (a Sentry alert) per 6 h each. Operator-only: never a customer notification. |
 | Plan reconcile | `loops.rs` | 1 h | Clerk mode only: re-reads plans from Clerk in case a webhook was missed. |
 | Licence check-in | `loops.rs` | 15 min | Local mode with a licence key. |
 | Cloud sync | `loops.rs` | 30 min | Local mode with the sync entitlement. |

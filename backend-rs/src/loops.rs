@@ -538,24 +538,59 @@ pub fn check_disk_critical(
         return None;
     }
     let pct = (used as f64 / total as f64) * 100.0;
-
-    if pct < DISK_CRITICAL_THRESHOLD_PERCENT {
-        debounce.last_emit_seconds = None;
-        return None;
-    }
-
-    if let Some(last) = debounce.last_emit_seconds {
-        if now_seconds - last < DISK_CRITICAL_REEMIT_INTERVAL_SECONDS {
-            return None;
-        }
-    }
-
-    debounce.last_emit_seconds = Some(now_seconds);
-    Some(DiskAlert {
+    alert_due(debounce, pct, DISK_CRITICAL_THRESHOLD_PERCENT, now_seconds).then(|| DiskAlert {
         percent_used: crate::pyrepr::round_to(pct, 1),
         bytes_free: free,
         path: path.to_string(),
     })
+}
+
+/// The debounce both disk alerts share: quiet below `threshold` (and a
+/// recovery clears the stamp), then one alert per six hours while it
+/// stays above.
+fn alert_due(debounce: &mut DiskDebounce, pct: f64, threshold: f64, now_seconds: f64) -> bool {
+    if pct < threshold {
+        debounce.last_emit_seconds = None;
+        return false;
+    }
+    if let Some(last) = debounce.last_emit_seconds {
+        if now_seconds - last < DISK_CRITICAL_REEMIT_INTERVAL_SECONDS {
+            return false;
+        }
+    }
+    debounce.last_emit_seconds = Some(now_seconds);
+    true
+}
+
+/// Where the database cluster's alert fires. Fly Postgres turns the
+/// cluster read-only at 90%, and from then on every service's writes
+/// fail, so this leaves room to act: `fly volumes extend` takes minutes.
+const CLUSTER_DISK_ALERT_PERCENT: f64 = 80.0;
+
+/// `15.9` from the cluster health check's line
+/// `[✓] disk-capacity: 15.9% - readonly mode will be enabled at 90.0%`.
+/// `None` when the line is missing or unreadable.
+pub fn parse_cluster_disk_percent(body: &str) -> Option<f64> {
+    let rest = body.split("disk-capacity:").nth(1)?;
+    rest.trim_start().split('%').next()?.trim().parse().ok()
+}
+
+/// The database cluster's alert, or nothing: the percentage, rounded.
+pub fn check_cluster_disk(debounce: &mut DiskDebounce, pct: f64, now_seconds: f64) -> Option<f64> {
+    alert_due(debounce, pct, CLUSTER_DISK_ALERT_PERCENT, now_seconds)
+        .then(|| crate::pyrepr::round_to(pct, 1))
+}
+
+/// Reads the cluster health check. A failing check answers 500 with the
+/// same lines, so the status is not looked at; the body is.
+async fn read_cluster_disk(http: &reqwest::Client, url: &str) -> Option<f64> {
+    let response = http
+        .get(url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .ok()?;
+    parse_cluster_disk_percent(&response.text().await.ok()?)
 }
 
 /// What one digest tick did, per anchor.
@@ -924,7 +959,11 @@ pub fn spawn_loops(state: AppState) {
 
     spawn_reaper(state.clone());
     spawn_motion_digest(state.clone());
-    spawn_disk_check(state.config.disk_check_interval_seconds);
+    spawn_disk_check(
+        state.config.disk_check_interval_seconds,
+        state.http.clone(),
+        state.config.postgres_health_url.clone(),
+    );
 
     if state.config.is_local_auth() {
         // Self-host only, and `main.py` gates them the same way. Both
@@ -988,11 +1027,12 @@ fn spawn_motion_digest(state: AppState) {
 /// queried", since disk-full is platform state rather than any org's.
 /// Not carried: an unused parameter is a claim about what a function
 /// might touch.
-fn spawn_disk_check(interval: u64) {
+fn spawn_disk_check(interval: u64, http: reqwest::Client, cluster_health_url: Option<String>) {
     tokio::spawn(async move {
         // The debounce lives with the loop rather than in a static: one
         // process, one loop, and a static would be shared with a test.
         let mut debounce = DiskDebounce::default();
+        let mut cluster_debounce = DiskDebounce::default();
         let started = std::time::Instant::now();
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
@@ -1032,6 +1072,31 @@ fn spawn_disk_check(interval: u64) {
                      customer notifications — see /api/health/detailed.",
                     alert.percent_used,
                     alert.bytes_free as f64 / (1024.0 * 1024.0 * 1024.0),
+                );
+            }
+
+            // The database lives on another machine's volume, which the
+            // reading above cannot see. Unset (self-hosted, local
+            // development) this is skipped.
+            let Some(url) = cluster_health_url.as_deref() else {
+                continue;
+            };
+            let Some(pct) = read_cluster_disk(&http, url).await else {
+                tracing::warn!(
+                    url,
+                    "[DiskCheck] could not read the database cluster's disk usage"
+                );
+                continue;
+            };
+            if let Some(pct) =
+                check_cluster_disk(&mut cluster_debounce, pct, started.elapsed().as_secs_f64())
+            {
+                tracing::error!(
+                    cluster_disk_percent_used = pct,
+                    alert_audience = "operator_only",
+                    "[DiskCheck] OPERATOR ALERT — database cluster volume {pct}% full. \
+                     Fly Postgres turns it read-only at 90%, and every service's writes \
+                     fail from then on. `fly volumes extend` the sentinel-postgres volume.",
                 );
             }
         }
@@ -1164,6 +1229,34 @@ mod tests {
         assert!(
             check_disk_critical(&mut debounce, "/data", 100, 4, 96, 6.0 * 3600.0 + 1.0).is_some()
         );
+    }
+
+    /// The real line, from production's `/flycheck/pg` on 2026-10-19.
+    #[test]
+    fn the_cluster_disk_percentage_is_read_from_the_health_check() {
+        let body = "[✓] connections: 20 used, 3 reserved, 300 max (5.19ms)\n\
+                    [✓] cluster-locks: No active locks detected (10.14µs)\n\
+                    [✓] disk-capacity: 15.9% - readonly mode will be enabled at 90.0% (9.97µs)";
+        assert_eq!(parse_cluster_disk_percent(body), Some(15.9));
+        assert_eq!(
+            parse_cluster_disk_percent("[✗] disk-capacity: 91.2% - readonly mode enabled"),
+            Some(91.2)
+        );
+        assert_eq!(parse_cluster_disk_percent("[✓] connections: 1 used"), None);
+        assert_eq!(parse_cluster_disk_percent("disk-capacity: n/a"), None);
+    }
+
+    /// 80%, ahead of Fly's read-only switch at 90%, with the same
+    /// six-hour debounce and the same clearing on recovery.
+    #[test]
+    fn the_cluster_alert_fires_at_eighty_percent() {
+        let mut debounce = DiskDebounce::default();
+        assert_eq!(check_cluster_disk(&mut debounce, 79.9, 0.0), None);
+        assert_eq!(check_cluster_disk(&mut debounce, 84.26, 10.0), Some(84.3));
+        assert_eq!(check_cluster_disk(&mut debounce, 85.0, 3600.0), None);
+        assert_eq!(check_cluster_disk(&mut debounce, 70.0, 7200.0), None);
+        assert_eq!(debounce.last_emit_seconds, None);
+        assert_eq!(check_cluster_disk(&mut debounce, 81.0, 7201.0), Some(81.0));
     }
 
     /// A zero total is a reading that failed, not a full disk. Dividing

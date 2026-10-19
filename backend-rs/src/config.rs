@@ -113,6 +113,12 @@ pub struct Config {
     /// there is: a five-minute reaper firing mid-case in one tier and
     /// not the other is a side-effect difference with no code behind it.
     pub disk_check_interval_seconds: u64,
+    /// The Fly Postgres cluster's own health check, which reports how
+    /// full its volume is (`disk-capacity: 15.9% - readonly mode will be
+    /// enabled at 90.0%`). Set, the disk check watches the database
+    /// volume too, which Command Center cannot see from its own machine.
+    /// Production: `http://sentinel-postgres.internal:5500/flycheck/pg`.
+    pub postgres_health_url: Option<String>,
     pub motion_digest_interval_seconds: u64,
     pub sentinel_reaper_interval_seconds: u64,
     pub email_worker_batch_size: i64,
@@ -301,6 +307,9 @@ impl Config {
             disk_check_interval_seconds: var_or("DISK_CHECK_INTERVAL_SECONDS", "300")
                 .parse()
                 .unwrap_or(300),
+            postgres_health_url: std::env::var("POSTGRES_HEALTH_URL")
+                .ok()
+                .filter(|v| !v.is_empty()),
             motion_digest_interval_seconds: var_or("MOTION_DIGEST_INTERVAL_SECONDS", "60")
                 .parse()
                 .unwrap_or(60),
@@ -443,6 +452,7 @@ mod tests {
             email_worker_interval_seconds: 5,
             offline_sweep_interval_seconds: 30,
             disk_check_interval_seconds: 300,
+            postgres_health_url: None,
             motion_digest_interval_seconds: 60,
             sentinel_reaper_interval_seconds: 300,
             email_worker_batch_size: 20,
