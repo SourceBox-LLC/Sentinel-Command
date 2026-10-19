@@ -8,10 +8,10 @@ This list is sequenced by *order-of-operations*, not by importance.
 Tackle the dependencies first (auth, transports) so the later items
 (legal, support process) have something to point at.
 
-> **Last refreshed: 2026-10-05**, after the Rust backend went live. Items marked ✅ have shipped. Items
+> **Last refreshed: 2026-10-19**, after the code and security review. Items marked ✅ have shipped. Items
 > marked 🟡 are partially done. Unmarked items are open.
 >
-> **Five remain, and none of them is code:**
+> **Nine remain, and none of them is code:**
 >
 > | # | Item | Blocked on |
 > | - | ---- | ---------- |
@@ -20,8 +20,12 @@ Tackle the dependencies first (auth, transports) so the later items
 > | 6 | Legal: counsel review of the published Terms and Privacy Policy, and of the DPA | you + counsel. Both policies are live (2026-10-06); nothing about them has been reviewed by a lawyer |
 > | 8 | Pi performance benchmark | hardware access |
 > | 11 | On-call rotation | you — a process, not a change |
+> | 12 | Make the CameraNode container image public | you — a GitHub setting with no API |
+> | 13 | DMARC record | you — DNS at Squarespace |
+> | 14 | Backup encryption key into a password manager | you |
+> | 15 | How incident clips are stored | you — a product decision, plus a volume resize |
 >
-> Item 12 (day-before go/no-go) is a checklist to *run*, not to close.
+> Item 16 (day-before go/no-go) is a checklist to *run*, not to close.
 >
 > Items 2, 4, 5, 7, 9 and 10 are closed. The remaining legal step is
 > review: the Terms of Service and Privacy Policy are published, but a
@@ -302,9 +306,10 @@ published Privacy Policy already says so.
 
 **State now.** The hosted database is `sentinel_command` on the shared
 `sentinel-postgres` cluster. Backups are the cluster's daily snapshots
-(kept 5 days) plus a daily portable `pg_dump` from
-`.github/workflows/backup.yml` (kept 14 days). Both live on Fly, by
-decision. Restores were rehearsed on 2026-07-06 and twice on 2026-09-07,
+(kept 5 days), a daily portable `pg_dump` from
+`.github/workflows/backup.yml` (kept 14 days), and an AES-256-encrypted
+copy of that dump stored off Fly as a GitHub artifact (kept 30 days; its
+key is item 14). Restores were rehearsed on 2026-07-06 and twice on 2026-09-07,
 and the procedure is in
 [DISASTER_RECOVERY.md](runbooks/DISASTER_RECOVERY.md).
 
@@ -429,12 +434,82 @@ a page.
 
 ---
 
-## 12. Final go/no-go checklist (to run the day before launch)
+## 12. Make the CameraNode container image public
+
+The release workflow pushes `ghcr.io/sourcebox-llc/sentinel-cameranode`
+(`:0.1.87` on 2026-10-19), but the package is private: an anonymous pull
+is refused (403, checked 2026-10-19). Every customer's `docker pull`
+fails until this changes. GitHub has no API for package visibility, so
+it is a click:
+
+**GitHub → SourceBox-LLC → Packages → `sentinel-cameranode` → Package
+settings → Danger Zone → Change visibility → Public.**
+
+Check it signed out: `docker logout ghcr.io; docker pull
+ghcr.io/sourcebox-llc/sentinel-cameranode:latest`.
+
+---
+
+## 13. DMARC record
+
+SPF and DKIM are in place for Resend (item 2), but there is no DMARC
+record: `dig +short TXT _dmarc.sentinel-command.com` is empty
+(2026-10-19). Gmail and Yahoo expect one, and without it notification
+mail is likelier to land in spam. At Squarespace, add:
+
+| Type | Host | Value |
+| --- | --- | --- |
+| TXT | `_dmarc` | `v=DMARC1; p=none;` |
+
+`p=none` only declares a policy; it rejects nothing. Tighten it to
+`p=quarantine` once mail has been flowing cleanly for a few weeks.
+
+---
+
+## 14. Backup encryption key into a password manager
+
+`BACKUP_ENCRYPTION_KEY` encrypts the daily off-site copy (item 7). The
+repository is public, so treat that artifact as public: the key is what
+keeps it private. GitHub secrets cannot be read back, so the only other
+copy is `~/sentinel-backup-encryption-key.txt` on your workstation. Lose
+that machine and every off-site copy is unreadable. Move the key into a
+password manager, check it is there, then delete the file.
+
+---
+
+## 15. How incident clips are stored
+
+Incident evidence (snapshots, and clips of up to 32 MB each) is stored
+in Postgres, in `incident_evidence.data`, on the cluster's **1 GB**
+volume (16% used on 2026-10-19). Fly Postgres turns the cluster
+**read-only at 90%**, which stops writes for all three services. Since
+2026-10-19 the disk check raises a Sentry alert at 80%, so this will
+not happen silently, but a few dozen long clips would get there.
+
+Recommended, before customers attach clips at volume:
+
+1. Extend the volume to 10 GB (about $1.50 a month):
+   `fly volumes extend <volume-id> -s 10 -a sentinel-postgres`. Check
+   `fly volumes extend --help` first: it may restart the cluster machine.
+2. Cap clips at 30 seconds.
+3. Apply each plan's log retention to clip video, keeping the incident
+   and its text.
+
+Points 2 and 3 are code, and change what customers keep, so they wait
+for your decision.
+
+---
+
+## 16. Final go/no-go checklist (to run the day before launch)
 
 ```
 [ ] Clerk production keys swapped (item 1)
 [X] Backup restore tested (item 7) — rehearsed 2026-07-06 and 2026-09-07;
-    Fly-only backups are an accepted decision
+    an encrypted off-site copy has run daily since (BACKUP_ENCRYPTION_KEY)
+[ ] CameraNode image pulls without signing in (item 12)
+[ ] DMARC record resolves (item 13)
+[ ] Backup encryption key is in a password manager, not only on disk (item 14)
+[ ] Clip storage decided, and the cluster volume sized for it (item 15)
 [ ] DPA + sub-processors PDF on file with lawyer signoff (item 6)
 [ ] Status page live and pointed at /api/health/ready (item 3)
 [X] Sentry alerts confirmed firing in production env (item 5)        — done 2026-05-03
@@ -529,6 +604,19 @@ When every box is checked, ship the launch announcement.
   with in-app self-serve (Settings → Privacy & Data) for
   Article 17 / 20 / CCPA + GitHub Issues for everything else
   until the `legal@` mailbox lands.
+- **2026-10-18 → 2026-10-19 (code and security review):**
+  - rustls 0.23.46 for RUSTSEC-2026-0346..0349 in all four Rust repos,
+    and zip 9;
+  - CameraNode 0.1.87 released;
+  - bounds on MCP tool arguments, and replay times in the future
+    refused;
+  - the agent's run-queue memory bounded;
+  - production no longer trusts `localhost` origins for CORS;
+  - Postgres connections over TLS 1.3, verified against our own CA, for
+    all three services;
+  - an alert before the database cluster's disk turns it read-only;
+  - secret scanning on the website repo;
+  - ADR 0003 (private video), designed and scheduled for after launch.
 
 > *Originally closed by Claude on 2026-04-25. Refreshed
 > 2026-05-05 after the SaaS launch-checklist closeout sweep
