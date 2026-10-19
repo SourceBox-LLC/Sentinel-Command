@@ -465,7 +465,10 @@ pub async fn get_stream_stats(
     org_id: &str,
     args: &Map<String, Value>,
 ) -> ToolResult {
-    let days = int_or(args, "days", 7);
+    // Bounded: tool arguments are not checked against their schemas, and
+    // `Duration::days` panics on an out-of-range value. 365 is the longest
+    // any plan keeps stream logs.
+    let days = int_or(args, "days", 7).clamp(1, 365);
     let cutoff = crate::models::now_naive() - chrono::Duration::days(days);
 
     let (total,): (i64,) = sqlx::query_as(
@@ -1133,22 +1136,37 @@ fn parse_at(args: &Map<String, Value>) -> Result<Option<i64>, String> {
         return Ok(None);
     };
     let raw = raw.trim();
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(raw) {
-        return Ok(Some(dt.timestamp_millis()));
+    let parsed = chrono::DateTime::parse_from_rfc3339(raw)
+        .map(|dt| dt.timestamp_millis())
+        .ok()
+        .or_else(|| {
+            [
+                "%Y-%m-%dT%H:%M:%S%.f",
+                "%Y-%m-%d %H:%M:%S%.f",
+                "%Y-%m-%dT%H:%M",
+            ]
+            .iter()
+            .find_map(|format| chrono::NaiveDateTime::parse_from_str(raw, format).ok())
+            .map(|naive| naive.and_utc().timestamp_millis())
+        });
+    let Some(at) = parsed else {
+        return Err(format!(
+            "`at` must be an ISO 8601 time such as 2026-10-12T23:38:10 (UTC), not {raw:?}"
+        ));
+    };
+    // watch_camera waits for moments not yet recorded; a far-future `at`
+    // would hold the call open until then.
+    if at > chrono::Utc::now().timestamp_millis() + MAX_AT_AHEAD_MS {
+        return Err(format!(
+            "`at` is in the future ({raw}); give a moment that has happened, or omit `at`"
+        ));
     }
-    for format in [
-        "%Y-%m-%dT%H:%M:%S%.f",
-        "%Y-%m-%d %H:%M:%S%.f",
-        "%Y-%m-%dT%H:%M",
-    ] {
-        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(raw, format) {
-            return Ok(Some(naive.and_utc().timestamp_millis()));
-        }
-    }
-    Err(format!(
-        "`at` must be an ISO 8601 time such as 2026-10-12T23:38:10 (UTC), not {raw:?}"
-    ))
+    Ok(Some(at))
 }
+
+/// How far ahead `at` may be: a little, for clock skew between the agent
+/// and Command Center.
+const MAX_AT_AHEAD_MS: i64 = 60_000;
 
 /// The label put before a frame from the past: which moment it shows.
 fn recorded_at_label(index: usize, frame_time_ms: i64) -> String {
@@ -1189,8 +1207,12 @@ pub async fn watch_camera(
     args: &Map<String, Value>,
 ) -> Result<ToolOutput, String> {
     let camera_id = req_str(args, "camera_id");
-    let count = int_or(args, "count", 3).max(0) as usize;
-    let interval = int_or(args, "interval_seconds", 5).max(0) as u64;
+    // The schema's bounds, enforced here: tool arguments are not checked
+    // against their schemas, and every frame is a snapshot the node also
+    // saves to its database, so `count: 100000` would hold the call open
+    // for days and fill the node's disk.
+    let count = int_or(args, "count", 3).clamp(1, 10) as usize;
+    let interval = int_or(args, "interval_seconds", 5).clamp(1, 30) as u64;
     // With `at`, frame i shows `at + i * interval`: frames already recorded
     // come back at once, and the rest as their moments arrive.
     let at_ms = parse_at(args)?;
@@ -1592,6 +1614,19 @@ mod tests {
         assert_eq!(at("  "), Ok(None));
         assert!(at("five seconds ago").unwrap_err().contains("ISO 8601"));
         assert_eq!(parse_at(&Map::new()), Ok(None));
+    }
+
+    /// Found in the 2026-10-18 review: a far-future `at` held a
+    /// watch_camera call open until that moment arrived.
+    #[test]
+    fn at_refuses_the_future() {
+        assert!(at("2099-01-01T00:00:00")
+            .unwrap_err()
+            .contains("in the future"));
+        let soon = (chrono::Utc::now() + chrono::Duration::seconds(30))
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        assert!(at(&soon).unwrap().is_some(), "clock skew is tolerated");
     }
 
     #[test]

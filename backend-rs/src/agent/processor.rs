@@ -176,6 +176,15 @@ where
         if !stopping() && active.len() < options.max_concurrent.max(1) {
             match queue.list_pending(options.max_runs).await {
                 Ok(pending) => {
+                    // A run that is no longer pending cannot come back, so
+                    // only ids still listed need remembering. Without this
+                    // a drain that never finds the queue empty (steady
+                    // traffic on the hosted service) grew these sets for
+                    // as long as it ran.
+                    let listed: HashSet<String> = pending.iter().map(run_id_of).collect();
+                    finished.retain(|id| listed.contains(id));
+                    failed.retain(|id| listed.contains(id));
+                    seen.retain(|id| listed.contains(id) || in_flight.contains(id));
                     for run in &pending {
                         if active.len() >= options.max_concurrent.max(1) {
                             break;
