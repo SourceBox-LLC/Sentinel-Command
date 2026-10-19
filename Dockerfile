@@ -214,6 +214,13 @@ COPY --from=frontend-builder /frontend/dist ./static
 # first.
 COPY scripts ./scripts
 
+# The private CA that signed the production Postgres server certificate.
+# DATABASE_URL names it (`sslmode=verify-full&sslrootcert=…`), so every
+# connection is encrypted and refuses a server that is not
+# `sentinel-postgres`. Public by nature; a self-hosted install never
+# reads it. See "Connections use TLS" in docs/runbooks/DISASTER_RECOVERY.md.
+COPY deploy/sentinel-postgres-ca.pem /etc/sentinel/sentinel-postgres-ca.pem
+
 ENV STATIC_DIR=/app/static
 ENV SCRIPTS_DIR=/app/scripts
 

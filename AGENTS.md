@@ -338,7 +338,7 @@ PostgreSQL in production; SQLite is the self-hosted default. **The driver is cho
 - Lists use `db::any` / `db::list`; case-insensitive matching uses `db::ILIKE`.
 - Serialise check-then-write races with a conditional `UPDATE`, or with `db::lock_for_update(tx, key)` (a transaction-scoped advisory lock on PostgreSQL; SQLite's `BEGIN IMMEDIATE` already serialises writers).
 
-**Production database.** One shared Fly Postgres cluster, `sentinel-postgres`, holds one database per service: `sentinel_command`, `sentinel_license` and `sentinel_sync`. Each database is owned by its own role, `CONNECT` is revoked from `PUBLIC`, and no role is a superuser. **`fly postgres attach` creates a superuser role**, so any future attach must be re-hardened ([DISASTER_RECOVERY.md](docs/runbooks/DISASTER_RECOVERY.md)).
+**Production database.** One shared Fly Postgres cluster, `sentinel-postgres`, holds one database per service: `sentinel_command`, `sentinel_license` and `sentinel_sync`. Each database is owned by its own role, `CONNECT` is revoked from `PUBLIC`, and no role is a superuser. **`fly postgres attach` creates a superuser role**, so any future attach must be re-hardened ([DISASTER_RECOVERY.md](docs/runbooks/DISASTER_RECOVERY.md)). Connections are TLS, verified against our own CA (`deploy/sentinel-postgres-ca.pem`, in the image at `/etc/sentinel/`): each `DATABASE_URL` uses `sentinel-postgres.internal` with `sslmode=verify-full`. **Not `.flycast`**, whose Fly proxy breaks the TLS handshake, and not the `sslmode=disable` URL that `fly postgres attach` writes.
 
 ## Authentication
 

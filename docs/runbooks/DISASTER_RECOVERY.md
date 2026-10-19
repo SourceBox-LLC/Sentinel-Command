@@ -32,7 +32,7 @@ must exist and the restore must have been rehearsed.
 - **The database** is `sentinel_command` on **`sentinel-postgres`**, a Fly Postgres cluster that holds one database per service: `sentinel_command`, `sentinel_license` and `sentinel_sync`. `DATABASE_URL` is a Fly **secret** (it carries a password). A secret always wins over `fly.toml`, so check `fly secrets list` before believing the config file.
 - **The `sentinel_data` volume** (`/data` on the `app` machine) holds HLS working files and `/data/backups`. It does **not** hold the database, so losing the volume does not lose data.
 - **The cluster is one node with no replica**, by decision (2026-09-07). A replica buys uptime, not durability, and durability is covered by snapshots plus portable dumps with a rehearsed restore. The cost: a cluster failure is **downtime for all three services** until Fly restarts the machine or someone restores a snapshot. There is no failover and nothing to promote; plan for minutes, not seconds. `fly machine clone -a sentinel-postgres` adds a standby if that trade ever changes.
-- **Every backup lives inside Fly**, by decision (2026-09-07). `BACKUP_ENCRYPTION_KEY` and `BACKUP_S3_BUCKET` are deliberately unset. Snapshots plus dumps cover a bad migration, an accidental delete and losing the cluster. Losing the Fly account itself is the accepted risk, so keep its billing current and its login secured. Turning on an off-platform copy needs only a secret, no code.
+- **One copy leaves Fly.** On 2026-09-07 every backup was kept inside Fly by decision; `BACKUP_ENCRYPTION_KEY` has since been set (confirmed 2026-10-19), so each daily dump also goes to GitHub as an AES-256-encrypted artifact, kept 30 days. `BACKUP_S3_BUCKET` is unset. Snapshots plus dumps cover a bad migration, an accidental delete and losing the cluster; the artifact covers losing the Fly account, **but only while someone still has the key**.
 
 ### Each service can reach only its own database
 
@@ -47,6 +47,48 @@ ALTER ROLE sentinel_command NOSUPERUSER;
 Move ownership **before** dropping superuser. The database is created owned by `postgres`, so a bare `NOSUPERUSER` takes away the app's right to create tables and its start-up migrations fail. Verified on the real cluster: all six cross-database connection attempts are refused, each service reaches its own, and no service role is a superuser.
 
 ⚠️ **Any future `fly postgres attach` recreates a superuser role.** Re-run the three statements for that database and re-verify.
+
+### Connections use TLS, verified against our own CA
+
+Since 2026-10-19 Postgres runs with `ssl = on`, and each service's `DATABASE_URL` has this shape:
+
+```text
+postgres://<role>:<password>@sentinel-postgres.internal:5432/<db>?sslmode=verify-full&sslrootcert=/etc/sentinel/sentinel-postgres-ca.pem
+```
+
+So every connection is encrypted (TLS 1.2 at least) and refuses a server that cannot prove it is `sentinel-postgres`. This sits on top of Fly's private network, which already carries traffic between hosts over WireGuard; the database has no public address.
+
+- **`.internal`, not `.flycast`.** The flycast address goes through Fly's proxy, whose `pg_tls` handler takes over the handshake and drops it (`unexpected eof`). `.internal` reaches the cluster's haproxy, which passes TLS through to Postgres untouched. `fly postgres attach` writes a `.flycast` URL with `sslmode=disable`: rewrite it to the shape above.
+- **The CA** is `deploy/sentinel-postgres-ca.pem` in this repo and in the License and Sync repos, copied into each image at `/etc/sentinel/sentinel-postgres-ca.pem`. It is public. Its private key was destroyed after signing, so nobody can issue another certificate under it; replacing the certificate means a new CA.
+- **The server's key and certificate** are on the cluster's volume in `/data/postgresql/tls/` (the key is mode 600, owned by `postgres`, and was generated there: it has never left the machine). The settings are in `postgresql.auto.conf`, written by `ALTER SYSTEM`. That is the one config file the Fly image does not rewrite at boot; `postgresql.user.conf`, `postgresql.internal.conf` and `pg_hba.conf` are regenerated on every start, so don't edit them.
+- **The certificate expires 2036-10-16.** It names `sentinel-postgres.internal`, `*.sentinel-postgres.internal` and `sentinel-postgres.flycast`. A cluster restored under a **different app name** needs a new certificate.
+- **⚠️ With `ssl = on`, Postgres will not start if those files are missing.** They live on the volume, so a snapshot restore brings them along.
+- **Not enforced by the server.** `pg_hba.conf` still accepts plain connections, because the image regenerates it at boot and a `hostssl` line would not survive. The URL is what enforces TLS: a client with `verify-full` never falls back. To check what is connected and how:
+
+  ```bash
+  fly ssh console -a sentinel-postgres -C "su postgres -c \"psql -p 5433 -c 'SELECT a.datname, a.usename, a.client_addr, s.ssl, s.version, count(*) FROM pg_stat_ssl s JOIN pg_stat_activity a USING (pid) WHERE a.datname IS NOT NULL GROUP BY 1,2,3,4,5'\""
+  ```
+
+  Every `sentinel_*` role should show `t`. `flypgadmin` and `repmgr` are the cluster's own management, connecting from the machine itself.
+
+**Replacing the certificate** (expiry, a new cluster name, or a suspected key leak):
+
+```bash
+# 1. On the cluster: a new key and request. The key never leaves.
+fly ssh console -a sentinel-postgres -C "sh -c 'cd /data/postgresql/tls && openssl ecparam -genkey -name prime256v1 -noout -out new.key && chown postgres:postgres new.key && chmod 600 new.key && openssl req -new -key new.key -subj /CN=sentinel-postgres.internal'" > server.csr   # keep only the BEGIN…END block
+
+# 2. Locally: a new CA, sign, then destroy the CA key.
+openssl ecparam -genkey -name prime256v1 -noout -out ca.key
+openssl req -x509 -new -key ca.key -sha256 -days 3650 -subj "/O=SourceBox LLC/CN=Sentinel Postgres CA" \
+  -addext "basicConstraints=critical,CA:TRUE,pathlen:0" -addext "keyUsage=critical,keyCertSign,cRLSign" -out new-ca.pem
+printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:sentinel-postgres.internal,DNS:*.sentinel-postgres.internal,DNS:sentinel-postgres.flycast\n' > server.ext
+openssl x509 -req -in server.csr -CA new-ca.pem -CAkey ca.key -CAcreateserial -days 3650 -sha256 -extfile server.ext -out new.crt
+shred -u ca.key
+```
+
+3. Ship **both** CAs first: append `new-ca.pem` to `deploy/sentinel-postgres-ca.pem` in all three repos and deploy them. A client trusts every certificate in that file.
+4. Copy `new.crt` to the cluster, then swap it in: `mv new.key server.key; mv new.crt server.crt`, and run `SELECT pg_reload_conf();` as `postgres`. Existing connections keep the old session; new ones get the new certificate.
+5. Remove the old CA from the three files and deploy again.
 
 ---
 
@@ -84,13 +126,13 @@ for:
 | `BACKUP_RETENTION_DAYS` | `14` | local prune window |
 | `BACKUP_S3_BUCKET` | _(unset)_ | off-platform target, e.g. `s3://bucket/cc` (needs `aws` CLI + creds) |
 
-**Every copy lives inside Fly, by choice** (see [Where the data lives](#where-the-data-lives)):
+**Every copy but one lives inside Fly** (see [Where the data lives](#where-the-data-lives)):
 
 | Copy | Where | Kept for |
 | --- | --- | --- |
 | Cluster snapshots (primary) | Fly | 5 days, daily |
 | Portable `pg_dump` (secondary) | `/data/backups` on the app's volume | 14 days, daily |
-| Encrypted GitHub artifact | GitHub | off (`BACKUP_ENCRYPTION_KEY` unset) |
+| Encrypted GitHub artifact | GitHub | 30 days, daily (AES-256, key `BACKUP_ENCRYPTION_KEY`) |
 | S3 | elsewhere | off (`BACKUP_S3_BUCKET` unset) |
 
 So you can go back up to 5 days with a snapshot, or 14 days with a dump.
@@ -129,11 +171,10 @@ A scheduled GitHub Action runs daily (09:17 UTC, plus manual
      -in backup.dump.enc -out backup.dump -pass pass:<key>
    ```
 
-   This path is **off by decision** (2026-09-07) — see the note near the
-   top. If it is ever turned back on: `openssl rand -hex 32` → repo
-   secret `BACKUP_ENCRYPTION_KEY` → **store the same key in your
-   password manager**, because an encrypted backup with a lost key is
-   no backup.
+   This path is **on** (it was off by decision from 2026-09-07 until
+   the secret was set). The key came from `openssl rand -hex 32`; keep
+   the same key **in your password manager**, because an encrypted
+   backup with a lost key is no backup.
 3. Prints the cluster's snapshot list for visibility.
 
 `BACKUP_S3_BUCKET` on the Fly app remains the alternative/additional
@@ -434,7 +475,8 @@ the half that a snapshot restore can't prove.
   command-line arguments" before restoring anything. Caught only because
   the drill ran the script rather than a hand-typed command. Fixed and
   re-drilled. **Still open:** `BACKUP_ENCRYPTION_KEY` remains unset, so
-  there is still no off-platform copy.
+  there is still no off-platform copy. *(Since set: see [Where the data
+  lives](#where-the-data-lives).)*
 - **2026-07-06 — Fly volume-snapshot restore drill. PASS (with a
   finding).** Restored the newest snapshot (`vs_ggX2o2kX99xofojJJAJ35`,
   ~4h old, 5-day retention) of `sentinel_data` into a throwaway volume
