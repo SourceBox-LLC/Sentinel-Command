@@ -152,7 +152,7 @@ Everything is an environment variable. `backend-rs/.env.example` is a commented 
 | `AUTH_PROVIDER` | `clerk` | `clerk` or `local`. Must match the frontend's `VITE_AUTH_PROVIDER`. |
 | `DATABASE_URL` | `sqlite:///./sentinel.db` | `postgresql://…` / `postgres://…`, or `sqlite:///relative` / `sqlite:////absolute`. A `postgresql+psycopg://` suffix is stripped. |
 | `FRONTEND_URL` | `http://localhost:5173` | The address people open the dashboard at. It is the Clerk `azp` the backend accepts, a CORS origin, and the base of every link in an email. Production: `https://app.sentinel-command.com`. |
-| `CORS_ALLOWED_ORIGINS` | — | Extra CORS origins, comma-separated. `http://localhost:5173` and `http://localhost:8000` are always allowed. |
+| `CORS_ALLOWED_ORIGINS` | — | Extra CORS origins, comma-separated. `http://localhost:5173` and `http://localhost:8000` are added only when `FRONTEND_URL` is itself on localhost (development, or a self-hosted install opened on its own machine); production trusts its own origin only. |
 | `TRUST_PROXY_HEADERS` | on under Fly, else off | Take the client address from `Fly-Client-IP` / `X-Forwarded-For`. Off, the TCP peer is used. It decides rate-limit buckets and the IP in the audit log. Turn it on only behind your own reverse proxy, and make the proxy overwrite `X-Forwarded-For`. |
 | `PORT` | `8000` | Listen port. |
 | `STATIC_DIR` | `/app/static` | The built frontend. |
