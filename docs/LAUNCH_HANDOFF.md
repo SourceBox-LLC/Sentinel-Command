@@ -11,7 +11,7 @@ Tackle the dependencies first (auth, transports) so the later items
 > **Last refreshed: 2026-10-19**, after the code and security review. Items marked ✅ have shipped. Items
 > marked 🟡 are partially done. Unmarked items are open.
 >
-> **Nine remain, and none of them is code:**
+> **Eight remain, and none of them is code:**
 >
 > | # | Item | Blocked on |
 > | - | ---- | ---------- |
@@ -23,7 +23,6 @@ Tackle the dependencies first (auth, transports) so the later items
 > | 12 | Make the CameraNode container image public | you — a GitHub setting with no API |
 > | 13 | DMARC record | you — DNS at Squarespace |
 > | 14 | Backup encryption key into a password manager | you |
-> | 15 | Grow the database volume to 10 GB | you — one command (the clip code shipped) |
 >
 > Item 16 (day-before go/no-go) is a checklist to *run*, not to close.
 >
@@ -477,11 +476,11 @@ password manager, check it is there, then delete the file.
 
 ---
 
-## 15. Grow the database volume (incident clips)
+## 15. Grow the database volume (incident clips) ✅ DONE
 
 Incident evidence (snapshots, and clips of up to 32 MB each) is stored
-in Postgres, in `incident_evidence.data`, on the cluster's **1 GB**
-volume (16% used on 2026-10-19). Fly Postgres turns the cluster
+in Postgres, in `incident_evidence.data`, on the cluster's volume (1 GB and 16% used on 2026-10-19, before the
+resize). Fly Postgres turns the cluster
 **read-only at 90%**, which stops writes for all three services. Since
 2026-10-19 the disk check raises a Sentry alert at 80%, so this will
 not happen silently, but a few dozen long clips would get there.
@@ -501,6 +500,9 @@ incident, its snapshots and the clip's caption. Point 1 is still yours:
 
 Then check it: `fly ssh console -a sentinel-postgres -C "df -h /data"`.
 
+**Done 2026-10-19:** extended to 10 GB without a restart; `/data` reads
+9.9 GB, 1% used, and the cluster's health check 5.2%.
+
 ---
 
 ## 16. Final go/no-go checklist (to run the day before launch)
@@ -512,7 +514,7 @@ Then check it: `fly ssh console -a sentinel-postgres -C "df -h /data"`.
 [ ] CameraNode image pulls without signing in (item 12)
 [ ] DMARC record resolves (item 13)
 [ ] Backup encryption key is in a password manager, not only on disk (item 14)
-[ ] Database cluster volume extended to 10 GB (item 15)
+[X] Database cluster volume extended to 10 GB (item 15)          — done 2026-10-19
 [ ] DPA + sub-processors PDF on file with lawyer signoff (item 6)
 [ ] Status page live and pointed at /api/health/ready (item 3)
 [X] Sentry alerts confirmed firing in production env (item 5)        — done 2026-05-03
