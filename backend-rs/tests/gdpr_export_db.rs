@@ -164,7 +164,9 @@ async fn another_orgs_evidence_never_appears() {
         json(&mut zip, "incident_evidence.json"),
         Value::Array(vec![])
     );
-    assert!(zip.file_names().all(|n| !n.starts_with("evidence/")));
+    assert!(zip
+        .file_names()
+        .all(|n| n.is_ok_and(|n| !n.starts_with("evidence/"))));
 
     clear(&pool, theirs).await;
 }
