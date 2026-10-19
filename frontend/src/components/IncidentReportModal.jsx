@@ -341,6 +341,12 @@ function IncidentReportModal({ incidentId, onClose, onUpdated, onDeleted }) {
     () => (incident?.evidence || []).filter((e) => e.kind === "clip" && e.has_data),
     [incident]
   )
+  // A clip whose video passed the plan's log retention keeps its row
+  // (camera, caption, time) but loses the video.
+  const removedClips = useMemo(
+    () => (incident?.evidence || []).filter((e) => e.kind === "clip" && !e.has_data),
+    [incident]
+  )
   const observations = useMemo(
     () => (incident?.evidence || []).filter((e) => e.kind === "observation"),
     [incident]
@@ -472,19 +478,37 @@ function IncidentReportModal({ incidentId, onClose, onUpdated, onDeleted }) {
                 </section>
               )}
 
-              {clips.length > 0 && (
+              {(clips.length > 0 || removedClips.length > 0) && (
                 <section className="incident-section">
-                  <h3 className="incident-section-title">Clips ({clips.length})</h3>
-                  <div className="incident-evidence-clip-grid">
-                    {clips.map((e) => (
-                      <EvidenceVideo
-                        key={e.id}
-                        incidentId={incident.id}
-                        evidenceId={e.id}
-                        caption={e.text || e.camera_id}
-                      />
-                    ))}
-                  </div>
+                  <h3 className="incident-section-title">
+                    Clips ({clips.length + removedClips.length})
+                  </h3>
+                  {clips.length > 0 && (
+                    <div className="incident-evidence-clip-grid">
+                      {clips.map((e) => (
+                        <EvidenceVideo
+                          key={e.id}
+                          incidentId={incident.id}
+                          evidenceId={e.id}
+                          caption={e.text || e.camera_id}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {removedClips.length > 0 && (
+                    <ul className="incident-observation-list">
+                      {removedClips.map((e) => (
+                        <li key={e.id}>
+                          {e.camera_id && <code className="incident-obs-cam">{e.camera_id}</code>}
+                          <span>
+                            {e.text ? `${e.text}: ` : ""}video removed after your plan&apos;s
+                            retention period
+                          </span>
+                          <span className="incident-obs-time">{formatRelative(e.timestamp)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </section>
               )}
 

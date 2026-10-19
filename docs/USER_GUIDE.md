@@ -90,6 +90,8 @@ Motion email is built not to flood you. The first motion from a camera emails at
 
 An **incident** is a report about something that happened: a title, a severity, a status, a written report, and **evidence** (snapshots, short video clips and notes). Incidents are filed by people, by Sentinel AI, or by an AI assistant you've connected.
 
+Clips are at most 30 seconds long, and their video is kept for your plan's log retention: 30 days on Free, 90 on Pro, 365 on Pro Plus. After that the clip shows as removed. The incident, its snapshots and notes, and the clip's caption stay until you delete them.
+
 - Open **Incidents** to see them. Filter by status (open by default), and by who filed them (**Anyone**, **AI**, **Human**).
 - **New Incident** files one yourself.
 - Click an incident to read the report, step through its evidence and change its status: **open**, **acknowledged**, **resolved** or **dismissed**.

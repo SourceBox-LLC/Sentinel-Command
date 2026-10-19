@@ -9,8 +9,10 @@
 > 1. **Fly.io holds incident evidence.** The Fly.io entry says Fly
 >    "does not see or process video content". When an incident is
 >    created, JPEG snapshots and short MPEG-TS video clips are stored in
->    the Command Center database on Fly (`incident_evidence.data`) until
->    the incident is deleted. The DPA has the same gap; see its note.
+>    the Command Center database on Fly (`incident_evidence.data`).
+>    Snapshots stay until the incident is deleted; since 2026-10-19 clip
+>    video (at most 30 seconds) is removed after the plan's log retention
+>    (30, 90 or 365 days). The DPA has the same gap; see its note.
 > 2. **Possibly missing: Upstash (Redis).** The platform documentation
 >    records Upstash on Fly as production's shared rate-limit store
 >    (`REDIS_URL`). Its keys include client IP addresses and

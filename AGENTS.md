@@ -566,7 +566,7 @@ Members never see `audience = "admin"` notifications, in the list, the count or 
 
 | Read (16) | Write (7) |
 | --- | --- |
-| `list_cameras`, `get_camera`, `get_stream_url`, `view_camera` (live JPEG), `watch_camera` (2–10 frames, 1–30 s apart), `list_camera_groups`, `list_nodes`, `get_node`, `get_camera_recording_policy`, `get_stream_logs`, `get_stream_stats`, `get_system_status`, `list_incidents`, `get_incident`, `get_incident_snapshot`, `get_incident_clip` | `create_incident`, `add_observation`, `attach_snapshot`, `attach_clip` (from the live cache), `update_incident`, `finalize_incident`, `set_camera_recording_policy` |
+| `list_cameras`, `get_camera`, `get_stream_url`, `view_camera` (live JPEG), `watch_camera` (2–10 frames, 1–30 s apart), `list_camera_groups`, `list_nodes`, `get_node`, `get_camera_recording_policy`, `get_stream_logs`, `get_stream_stats`, `get_system_status`, `list_incidents`, `get_incident`, `get_incident_snapshot`, `get_incident_clip` | `create_incident`, `add_observation`, `attach_snapshot`, `attach_clip` (from the live cache, at most 30 s), `update_incident`, `finalize_incident`, `set_camera_recording_policy` |
 
 `limit` arguments are clamped to 1–500 and `offset` to 0 or more. Live frames come from the node over the WebSocket (`mcp/snapshot.rs`), so `view_camera` needs a connected node.
 
@@ -589,6 +589,7 @@ Members never see `audience = "admin"` notifications, in the list, the count or 
 - **Plan resolution.** `resolve_org_plan` reads the `org_plan` setting and falls back to Clerk for orgs without one. `effective_plan_for_caps` returns `free_org` instead once an org has been past due for more than **7 days**. Short card failures don't punish anyone; long-unpaid accounts lose Pro limits.
 - **Camera cap.** `enforce_camera_cap` keeps the oldest N cameras and flags the rest `disabled_by_plan`. Upgrading clears the flags in the same call. It runs on subscription webhooks, on every registration, and on heartbeats while an org is past due.
 - **Sentinel AI** is available on Pro, Pro Plus and licensed self-hosted installs. Caps reset on the 1st of each month (UTC). At the cap, dispatch pauses, and nothing else is affected.
+- **Log retention covers clip video too.** Past the window, an incident clip's video is removed (`data` and `data_mime` cleared, so `has_data` reads false); the clip's row, caption and time, the incident, and its snapshots stay until someone deletes them. Clips are stored in the database, so they are also capped at 30 seconds (and 32 MB).
 
 ## Webhooks
 
@@ -619,7 +620,7 @@ Started from `main.rs`. All are `tokio` tasks in the `app` process.
 | Loop | Where | Every | Does |
 | --- | --- | --- | --- |
 | Offline sweep | `loops.rs` | 30 s | Nodes and cameras silent for 90 s go `offline`, with a notification each. |
-| Log cleanup | `loops.rs` | 24 h | Deletes logs older than each org's retention; terminal outbox rows after 7 days; webhook dedup markers after 30 days. |
+| Log cleanup | `loops.rs` | 24 h | Deletes logs older than each org's retention, and removes incident clip video past the same window; terminal outbox rows after 7 days; webhook dedup markers after 30 days. |
 | Sentinel reaper | `loops.rs` | 5 min | `running` runs older than 20 min become `error`; `pending` runs unclaimed for 2 min re-fire the wakeup; after 6 h they are abandoned. |
 | Motion digest | `loops.rs` | 60 s | Closes each camera's motion-email cooldown and sends one digest for what happened inside it. |
 | Disk check | `loops.rs` | 5 min | The app's volume at 95 % full, or the database cluster's at 80 % (`POSTGRES_HEALTH_URL`): one `tracing::error!` (a Sentry alert) per 6 h each. Operator-only: never a customer notification. |

@@ -22,8 +22,10 @@
 >    says no video content is stored on Command Center disks. In fact,
 >    when an incident is created (by the Sentinel AI agent or through
 >    the MCP tools), JPEG snapshots and short MPEG-TS video clips are
->    stored in Command Center's database (`incident_evidence.data`)
->    until the incident is deleted. The same frames are sent to the
+>    stored in Command Center's database (`incident_evidence.data`).
+>    Snapshots stay until the incident is deleted; since 2026-10-19 clip
+>    video (at most 30 seconds) is removed after the plan's log retention
+>    (30, 90 or 365 days). The same frames are sent to the
 >    configured LLM provider (see SUB_PROCESSORS.md). Recordings do stay
 >    CameraNode-only.
 > 2. **Live video buffer.** The draft says segments are evicted on a
