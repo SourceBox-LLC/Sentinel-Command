@@ -170,6 +170,9 @@ pub struct CleanupSummary {
     pub motion: u64,
     pub notif: u64,
     pub email_log: u64,
+    /// Clips whose video was removed. The rows stay; see
+    /// `run_log_cleanup`.
+    pub clip_video: u64,
     pub email_outbox: u64,
     pub processed_webhooks: u64,
 }
@@ -182,6 +185,7 @@ impl CleanupSummary {
             + self.motion
             + self.notif
             + self.email_log
+            + self.clip_video
             + self.email_outbox
             + self.processed_webhooks
     }
@@ -196,6 +200,7 @@ impl CleanupSummary {
                 "motion": self.motion,
                 "notif": self.notif,
                 "email_log": self.email_log,
+                "clip_video": self.clip_video,
                 "email_outbox": self.email_outbox,
                 "processed_webhooks": self.processed_webhooks,
             },
@@ -224,8 +229,13 @@ const WEBHOOK_MARKER_DAYS: i64 = 30;
 ///
 /// Retention is tiered (Free 30d / Pro 90d / Pro Plus 365d), so this
 /// iterates orgs rather than running one global cutoff. The org list is
-/// a UNION across the six log tables, which is also how an org with
-/// email-only activity still gets swept.
+/// a UNION across the six log tables and `incidents`, which is also how
+/// an org with email-only activity still gets swept.
+///
+/// Incident clips follow the same window: their video is removed and
+/// the row kept, so the incident still says a clip was taken, when, of
+/// which camera and with what caption. Snapshots, observations and the
+/// incidents themselves stay until someone deletes them.
 ///
 /// Python takes a `default_retention_days` for an org whose plan cannot
 /// be resolved. It is unreachable: `get_plan_limits` falls back to the
@@ -247,7 +257,8 @@ pub async fn run_log_cleanup(state: &AppState) -> Result<CleanupSummary, sqlx::E
          UNION SELECT org_id FROM audit_log
          UNION SELECT org_id FROM motion_events
          UNION SELECT org_id FROM notifications
-         UNION SELECT org_id FROM email_log",
+         UNION SELECT org_id FROM email_log
+         UNION SELECT org_id FROM incidents",
     )
     .fetch_all(&state.pool)
     .await?;
@@ -307,6 +318,20 @@ pub async fn run_log_cleanup(state: &AppState) -> Result<CleanupSummary, sqlx::E
                 .await?;
             *counter += done.rows_affected();
         }
+
+        // Both columns go: `has_data` is read from `data_mime`, so the
+        // dashboard and the MCP tools then show the clip as removed
+        // instead of offering a blob that is gone.
+        summary.clip_video += sqlx::query(
+            "UPDATE incident_evidence SET data = NULL, data_mime = NULL
+              WHERE kind = 'clip' AND data IS NOT NULL AND timestamp < $2
+                AND incident_id IN (SELECT id FROM incidents WHERE org_id = $1)",
+        )
+        .bind(org_id)
+        .bind(cutoff)
+        .execute(&state.pool)
+        .await?
+        .rows_affected();
     }
 
     // Cross-org, terminal-state only, fixed window.
@@ -1297,13 +1322,15 @@ mod tests {
             motion: 8,
             notif: 16,
             email_log: 32,
+            clip_video: 256,
             email_outbox: 64,
             processed_webhooks: 128,
         };
         // Powers of two, so a missing term is visible in the total
         // rather than merely wrong.
-        assert_eq!(summary.total_deleted(), 255);
-        assert_eq!(summary.to_json()["total_deleted"], 255);
+        assert_eq!(summary.total_deleted(), 511);
+        assert_eq!(summary.to_json()["total_deleted"], 511);
+        assert_eq!(summary.to_json()["totals"]["clip_video"], 256);
         assert_eq!(summary.to_json()["orgs_processed"], 2);
         assert_eq!(summary.to_json()["totals"]["processed_webhooks"], 128);
     }

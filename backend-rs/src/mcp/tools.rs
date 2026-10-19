@@ -26,6 +26,11 @@ const MAX_REPORT_CHARS: usize = 64_000;
 const MAX_INCIDENTS_PER_ORG_PER_DAY: i64 = 200;
 /// `_MAX_CLIP_BYTES`.
 const MAX_CLIP_BYTES: usize = 32 * 1024 * 1024;
+
+/// The longest clip `attach_clip` saves. Clips live in the database, on
+/// a volume every organization shares, and their video is kept only for
+/// the plan's log retention (`loops::run_log_cleanup`).
+const MAX_CLIP_SECONDS: i64 = 30;
 /// `_APPROX_SEGMENT_SECONDS` — CameraNode emits one-second segments.
 const APPROX_SEGMENT_SECONDS: f64 = 1.0;
 
@@ -1362,7 +1367,8 @@ pub async fn attach_snapshot(
 pub async fn attach_clip(state: &AppState, org_id: &str, args: &Map<String, Value>) -> ToolResult {
     let incident_id = int_or(args, "incident_id", 0);
     let camera_id = req_str(args, "camera_id");
-    let duration = int_or(args, "duration_seconds", 15);
+    let asked = int_or(args, "duration_seconds", 15);
+    let duration = asked.clamp(2, MAX_CLIP_SECONDS);
     let note = opt_str(args, "note");
 
     owned_incident(state, org_id, incident_id).await?;
@@ -1434,13 +1440,23 @@ pub async fn attach_clip(state: &AppState, org_id: &str, args: &Map<String, Valu
         "approx_duration_seconds": approx_duration,
         "bytes": blob.len(),
     });
+    let mut notes = Vec::new();
+    if asked > MAX_CLIP_SECONDS {
+        result["capped"] = json!(true);
+        notes.push(format!(
+            "Clips are capped at {MAX_CLIP_SECONDS} seconds; {asked} were asked for."
+        ));
+    }
     if truncated {
         result["truncated"] = json!(true);
-        result["note"] = json!(format!(
+        notes.push(format!(
             "Clip truncated to the newest ~{}s to fit the {} MB evidence cap.",
             crate::pyrepr::repr_float(approx_duration),
             MAX_CLIP_BYTES / (1024 * 1024)
         ));
+    }
+    if !notes.is_empty() {
+        result["note"] = json!(notes.join(" "));
     }
     Ok(result)
 }
@@ -1514,6 +1530,13 @@ pub async fn get_incident_clip(
             "Evidence {evidence_id} not found on incident {incident_id}"
         ));
     };
+    if kind == "clip" && byte_len.is_none() {
+        return Err(format!(
+            "The video of clip {evidence_id} on incident {incident_id} has been removed: \
+             clip video is kept for the organization's log retention period. The \
+             incident, the clip's caption and its other evidence remain."
+        ));
+    }
     let Some(byte_len) = byte_len.filter(|_| kind == "clip") else {
         return Err(format!(
             "Evidence {evidence_id} is not a clip with attached video data"

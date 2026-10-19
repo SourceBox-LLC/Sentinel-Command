@@ -544,7 +544,7 @@ fn input_schema(name: &str) -> Map<String, Value> {
                 "incident_id": int_prop("The incident id to attach the clip to", 0, None),
                 "camera_id": string_prop("The camera_id to capture from"),
                 "duration_seconds": int_prop(
-                    "How many seconds of recent video to capture", 2, Some(60)
+                    "How many seconds of recent video to capture (at most 30)", 2, Some(30)
                 ),
                 "note": string_prop("Optional caption for this clip"),
             }),

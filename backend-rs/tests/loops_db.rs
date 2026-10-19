@@ -308,6 +308,126 @@ async fn retention_follows_each_orgs_plan_in_every_log_table() {
     forget(&state, &pro).await;
 }
 
+/// An incident for `org`, its id.
+async fn add_incident(state: &AppState, org: &str) -> i32 {
+    let (id,): (i32,) = sqlx::query_as(
+        "INSERT INTO incidents (org_id, title, summary, severity, status, created_by, created_at)
+         VALUES ($1, 'test', 'test', 'low', 'open', 'test', $2) RETURNING id",
+    )
+    .bind(org)
+    .bind(ago(Duration::days(100)))
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    id
+}
+
+/// One evidence row of `kind`, `age_days` old, with bytes. Its caption
+/// names it, so the assertions can tell the rows apart.
+async fn add_evidence(state: &AppState, incident: i32, kind: &str, age_days: i64) {
+    let mime = if kind == "clip" {
+        "video/mp2t;duration=15.0"
+    } else {
+        "image/jpeg"
+    };
+    exec!(
+        state,
+        "INSERT INTO incident_evidence (incident_id, kind, text, camera_id, data, data_mime, timestamp)
+         VALUES ($1, $2, $3, 'cam', $4, $5, $6)",
+        incident,
+        kind,
+        format!("{kind}{age_days}"),
+        vec![0x47u8; 188],
+        mime,
+        ago(Duration::days(age_days))
+    );
+}
+
+/// `(caption, has bytes, has mime)` for every evidence row of `incident`.
+async fn evidence_state(state: &AppState, incident: i32) -> Vec<(String, bool, bool)> {
+    let rows: Vec<(String, Option<Vec<u8>>, Option<String>)> = sqlx::query_as(
+        "SELECT text, data, data_mime FROM incident_evidence WHERE incident_id = $1 ORDER BY text",
+    )
+    .bind(incident)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap();
+    rows.into_iter()
+        .map(|(text, data, mime)| (text, data.is_some(), mime.is_some()))
+        .collect()
+}
+
+async fn forget_incidents(state: &AppState, org: &str) {
+    exec!(
+        state,
+        "DELETE FROM incident_evidence WHERE incident_id IN (SELECT id FROM incidents WHERE org_id = $1)",
+        org
+    );
+    exec!(state, "DELETE FROM incidents WHERE org_id = $1", org);
+}
+
+/// Clip video follows the plan's log retention; the row, the incident
+/// and every snapshot stay. Found necessary on 2026-10-19: clips of up to
+/// 32 MB each sat in a 1 GB database volume forever.
+#[tokio::test]
+async fn clip_video_follows_the_plans_retention_and_nothing_else_goes() {
+    let _serial = SERIAL.lock().await;
+    let Some(state) = state(|_| {}).await else {
+        return;
+    };
+    // No log rows at all: an org with only incidents must still be swept.
+    let free = org("clips-free");
+    let pro = org("clips-pro");
+    exec!(
+        state,
+        "INSERT INTO settings (org_id, key, value, updated_at) VALUES ($1, 'org_plan', 'pro', $2)",
+        &pro,
+        &ago(Duration::zero())
+    );
+    let free_incident = add_incident(&state, &free).await;
+    let pro_incident = add_incident(&state, &pro).await;
+    for incident in [free_incident, pro_incident] {
+        add_evidence(&state, incident, "clip", 40).await;
+        add_evidence(&state, incident, "clip", 10).await;
+        add_evidence(&state, incident, "snapshot", 40).await;
+    }
+
+    let summary = loops::run_log_cleanup(&state).await.unwrap();
+
+    // Free keeps 30 days: the 40-day clip loses its video and its MIME
+    // (so `has_data` reads false), and keeps its row and caption.
+    assert_eq!(
+        evidence_state(&state, free_incident).await,
+        vec![
+            ("clip10".to_string(), true, true),
+            ("clip40".to_string(), false, false),
+            ("snapshot40".to_string(), true, true),
+        ]
+    );
+    // Pro keeps 90 days: nothing changes.
+    assert_eq!(
+        evidence_state(&state, pro_incident).await,
+        vec![
+            ("clip10".to_string(), true, true),
+            ("clip40".to_string(), true, true),
+            ("snapshot40".to_string(), true, true),
+        ]
+    );
+    assert!(summary.clip_video >= 1);
+    let incidents: Vec<(i32,)> = sqlx::query_as("SELECT id FROM incidents WHERE id IN ($1, $2)")
+        .bind(free_incident)
+        .bind(pro_incident)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(incidents.len(), 2, "the incidents themselves stay");
+
+    for org in [&free, &pro] {
+        forget_incidents(&state, org).await;
+        forget(&state, org).await;
+    }
+}
+
 #[tokio::test]
 async fn the_outbox_sheds_only_old_terminal_rows_and_never_an_email_in_flight() {
     let _serial = SERIAL.lock().await;
