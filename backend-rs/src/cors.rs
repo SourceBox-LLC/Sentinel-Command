@@ -25,15 +25,22 @@ pub struct CorsConfig {
 }
 
 impl CorsConfig {
-    /// Build the allow-list the way `main.py` does: two localhost origins
-    /// as a developer-convenience baseline, then `CORS_ALLOWED_ORIGINS`,
-    /// then `FRONTEND_URL` — each validated, duplicates dropped, order
-    /// preserved.
+    /// The allow-list: two localhost origins when the dashboard itself is
+    /// on localhost (development, or a self-hosted install opened on its
+    /// own machine), then `CORS_ALLOWED_ORIGINS`, then `FRONTEND_URL` —
+    /// each validated, duplicates dropped, order preserved.
+    ///
+    /// The localhost pair used to be unconditional, so production echoed
+    /// `http://localhost:5173` with credentials allowed: any page served
+    /// on those ports of a signed-in user's machine was a trusted origin.
+    /// It bought nothing there — a Clerk token minted on localhost carries
+    /// that `azp`, which production refuses.
     pub fn from_env(frontend_url: &str, extra_raw: &str) -> Self {
-        let mut origins = vec![
-            "http://localhost:5173".to_string(),
-            "http://localhost:8000".to_string(),
-        ];
+        let mut origins = Vec::new();
+        if frontend_url.trim().is_empty() || is_localhost(frontend_url) {
+            origins.push("http://localhost:5173".to_string());
+            origins.push("http://localhost:8000".to_string());
+        }
         for raw in extra_raw.split(',') {
             if let Some(o) = validate_origin(raw) {
                 if !origins.contains(&o) {
@@ -54,6 +61,16 @@ impl CorsConfig {
     fn allows(&self, origin: &str) -> bool {
         self.origins.iter().any(|o| o == origin)
     }
+}
+
+/// Whether a URL's host is the local machine.
+fn is_localhost(url: &str) -> bool {
+    let rest = url
+        .trim()
+        .trim_start_matches("http://")
+        .trim_start_matches("https://");
+    let host = rest.split(['/', ':']).next().unwrap_or("");
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]")
 }
 
 /// `_validate_frontend_url` from `main.py`.
@@ -170,13 +187,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_localhost_baseline_is_always_allowed() {
-        // `npm run dev` against a deployed backend works with no env
-        // configuration at all, which is why these are unconditional.
-        let c = CorsConfig::from_env("", "");
-        assert!(c.allows("http://localhost:5173"));
-        assert!(c.allows("http://localhost:8000"));
-        assert!(!c.allows("http://localhost:9999"));
+    fn the_localhost_baseline_is_there_when_the_dashboard_is_local() {
+        for frontend in ["", "http://localhost:5173", "http://127.0.0.1:8000"] {
+            let c = CorsConfig::from_env(frontend, "");
+            assert!(c.allows("http://localhost:5173"), "{frontend:?}");
+            assert!(c.allows("http://localhost:8000"), "{frontend:?}");
+            assert!(!c.allows("http://localhost:9999"), "{frontend:?}");
+        }
+    }
+
+    /// Found in the 2026-10-18 review: production echoed localhost origins
+    /// with credentials allowed.
+    #[test]
+    fn production_does_not_trust_localhost() {
+        let c = CorsConfig::from_env("https://app.sentinel-command.com", "");
+        assert!(c.allows("https://app.sentinel-command.com"));
+        assert!(!c.allows("http://localhost:5173"));
+        assert!(!c.allows("http://localhost:8000"));
+        // A localhost-looking host that is not localhost stays out.
+        let c = CorsConfig::from_env("https://localhost.evil.example", "");
+        assert!(!c.allows("http://localhost:5173"));
     }
 
     #[test]
