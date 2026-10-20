@@ -180,9 +180,11 @@ pub const MIN_APP_SECRET_KEY_LEN: usize = 32;
 pub fn weak_app_secret_key(local_auth: bool, app_secret_key: &str) -> Option<String> {
     let len = app_secret_key.chars().count();
     (local_auth && len > 0 && len < MIN_APP_SECRET_KEY_LEN).then(|| {
+        // Nothing about the key itself goes in the message, not even its
+        // length: the message ends up in logs.
         format!(
-            "APP_SECRET_KEY is {len} characters; at least {MIN_APP_SECRET_KEY_LEN} are \
-             required, because it signs the admin's login tokens. Generate one with \
+            "APP_SECRET_KEY is too short: at least {MIN_APP_SECRET_KEY_LEN} characters \
+             are required, because it signs the admin's login tokens. Generate one with \
              `openssl rand -hex 32`."
         )
     })
@@ -438,7 +440,11 @@ mod tests {
     fn a_short_app_secret_key_refuses_to_start_in_local_mode() {
         let short = "changeme";
         let message = weak_app_secret_key(true, short).unwrap();
-        assert!(message.contains("8 characters"), "{message}");
+        assert!(message.contains("too short"));
+        assert!(
+            !message.contains(short),
+            "the key never appears in the message"
+        );
         assert!(weak_app_secret_key(true, &"x".repeat(31)).is_some());
         assert!(weak_app_secret_key(true, &"x".repeat(32)).is_none());
         // Unset is the existing "local login not configured" path.
