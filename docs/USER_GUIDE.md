@@ -54,6 +54,7 @@ The **Dashboard** shows every camera in your organization, with its status, the 
   - **Scheduled Recording**: records only between the times you set. A camera uses one or the other.
 - **Set your time zone** in **Settings → Time Zone**, so "08:00–17:00" means your local time. It starts as UTC.
 - **Watching recordings.** Open CameraNode's own web dashboard on the computer it runs on and go to its **Recordings** tab. Its **Snapshots** tab has your saved stills.
+- **If a CameraNode computer is lost or stolen,** delete that node in **Settings → Camera Nodes**. Its key stops working at once, so the missing computer can't connect or upload. Its recordings are encrypted, but the key sits on the same disk, so turn on full-disk encryption (BitLocker, FileVault or LUKS) on computers that might walk away.
 
 ### Storage cap
 
