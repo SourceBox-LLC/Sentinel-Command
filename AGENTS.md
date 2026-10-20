@@ -157,7 +157,7 @@ Everything is an environment variable. `backend-rs/.env.example` is a commented 
 | `PORT` | `8000` | Listen port. |
 | `STATIC_DIR` | `/app/static` | The built frontend. |
 | `SCRIPTS_DIR` | `/app/scripts` | Where `/install.sh` and `/mcp-setup.*` are read from. |
-| `REDIS_URL` | — | Shared rate-limit counters. Without it, counters are per process: fine on one machine. Production has used Upstash on Fly; confirm with `fly secrets list`. |
+| `REDIS_URL` | — | Shared rate-limit counters. Without it, counters are per process: fine on one machine. Production uses Upstash on Fly. Bucket names carry node-key hash prefixes, org IDs and keyed hashes of client addresses, never the addresses themselves (`ratelimit::pseudonymous_tenant`). |
 | `API_DOCS_ENABLED` | off under Fly, else on | Serves `/api-docs`, `/api-redoc` and `/api/openapi.json`. |
 | `CLERK_WEBHOOK_SECRET` | — | Svix signing secret for `/api/webhooks/clerk`. Unset, every delivery is refused. |
 | `LOCAL_ORG_ID` | `self-host` | The single org in local-auth mode. |

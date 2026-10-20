@@ -305,6 +305,24 @@ pub fn tenant_key_with(
     client_ip(headers, peer, trust_proxy).unwrap_or_else(|| "unknown".to_string())
 }
 
+/// What a client address looks like in a bucket name: a keyed hash, not
+/// the address.
+///
+/// Buckets live in Redis when `REDIS_URL` is set (Upstash, in
+/// production), and a plain SHA-256 of an IPv4 address is reversed by
+/// trying all four billion. The key comes from the deployment's own
+/// secret, so every machine sharing the store names a client's bucket
+/// the same way. Node and org buckets are left as they are: neither is
+/// an address. Found in the 2026-10-19 security audit.
+pub fn pseudonymous_tenant(tenant: String, secret: &str) -> String {
+    if tenant.starts_with("node:") || tenant.starts_with("org:") || tenant == "unknown" {
+        return tenant;
+    }
+    let subkey = crate::crypto::hmac_sha256(secret.as_bytes(), b"sentinel-ratelimit-ip-v1");
+    let tag = crate::crypto::hmac_sha256(&subkey, tenant.as_bytes());
+    format!("ip:{}", &crate::crypto::hex(&tag)[..16])
+}
+
 /// Pull `org_id` out of a JWT payload without verifying the signature.
 fn org_from_unverified_jwt(token: &str) -> Option<String> {
     let parts: Vec<&str> = token.split('.').collect();
@@ -460,6 +478,12 @@ impl<const LIMIT: u32, const WINDOW_SECS: u64, const IP_ONLY: bool> FromRequestP
             IP_ONLY,
             proxy_headers_trusted(),
         );
+        let secret = if state.config.clerk_secret_key.is_empty() {
+            &state.config.app_secret_key
+        } else {
+            &state.config.clerk_secret_key
+        };
+        let tenant = pseudonymous_tenant(tenant, secret);
 
         // Bucket per route as well as per tenant, matching slowapi's
         // per-endpoint limits. The matched path template is used rather
@@ -710,5 +734,23 @@ mod tests {
     async fn an_unreachable_redis_falls_back_to_process_counters() {
         let limiter = Limiter::from_env("redis://127.0.0.1:1").await;
         assert!(matches!(limiter.store, Store::Memory(_)));
+    }
+
+    /// Redis holds a keyed hash of the address, never the address.
+    #[test]
+    fn a_client_address_is_bucketed_under_a_keyed_hash() {
+        let a = pseudonymous_tenant("203.0.113.7".into(), "secret-one");
+        assert!(a.starts_with("ip:") && a.len() == 3 + 16, "{a}");
+        assert!(!a.contains("203.0.113.7"));
+        // Stable for one deployment, so machines sharing Redis agree...
+        assert_eq!(a, pseudonymous_tenant("203.0.113.7".into(), "secret-one"));
+        // ...and unlinkable across deployments or addresses.
+        assert_ne!(a, pseudonymous_tenant("203.0.113.7".into(), "secret-two"));
+        assert_ne!(a, pseudonymous_tenant("203.0.113.8".into(), "secret-one"));
+        assert!(!pseudonymous_tenant("2001:db8::1".into(), "s").contains("2001"));
+        // Node and org buckets are not addresses and stay readable.
+        for kept in ["node:0123456789abcdef", "org:org_abc", "unknown"] {
+            assert_eq!(pseudonymous_tenant(kept.into(), "s"), kept);
+        }
     }
 }

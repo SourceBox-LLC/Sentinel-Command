@@ -15,9 +15,11 @@
 >    (30, 90 or 365 days). The DPA has the same gap; see its note.
 > 2. **Possibly missing: Upstash (Redis).** The platform documentation
 >    records Upstash on Fly as production's shared rate-limit store
->    (`REDIS_URL`). Its keys include client IP addresses and
->    organization IDs. Confirm with `fly secrets list -a sentinel-command`;
->    if `REDIS_URL` is set, Upstash belongs on this list.
+>    (`REDIS_URL`). Its keys include keyed hashes of client IP addresses
+>    (not the addresses themselves, since 2026-10-19) and
+>    organization IDs. **Confirmed in use (2026-10-19):** `REDIS_URL` is
+>    set and production logs "rate limiter using redis storage", so
+>    Upstash belongs on this list.
 > 3. **`/security` page.** Published 2026-10-07 at
 >    <https://sentinel-command.com/security>. Its provider details point
 >    to the Privacy Policy's table, which matches this list.
