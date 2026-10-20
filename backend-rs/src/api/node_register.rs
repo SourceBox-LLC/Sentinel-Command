@@ -182,6 +182,9 @@ pub async fn register_node(
         Some(_) => errors.optional_int_in_range(&body, "http_port", 1, 65535),
     };
     let lan_streaming = errors.optional_bool(&body, "lan_streaming");
+    // CameraNode 0.1.89+ serves its LAN dashboard and streams over HTTPS
+    // and says so. Absent is an older node: plain HTTP, stored as NULL.
+    let http_tls = errors.optional_bool(&body, "http_tls");
     let cameras = parse_camera_reports(&mut errors, &body);
     let video_codec = errors.optional_string(&body, "video_codec", 50);
     let audio_codec = errors.optional_string(&body, "audio_codec", 50);
@@ -293,7 +296,7 @@ pub async fn register_node(
         "UPDATE camera_nodes
             SET hostname = $1, local_ip = $2, http_port = $3, status = 'online',
                 last_seen = $4, last_register_error = NULL,
-                last_register_error_at = NULL, updated_at = $4
+                last_register_error_at = NULL, updated_at = $4, http_tls = $6
           WHERE id = $5",
     )
     .bind(&hostname)
@@ -301,6 +304,7 @@ pub async fn register_node(
     .bind(http_port)
     .bind(now)
     .bind(node.id)
+    .bind(http_tls)
     .execute(&state.pool)
     .await?;
 

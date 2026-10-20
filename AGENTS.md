@@ -401,7 +401,7 @@ Both live in `mcp_api_keys`, split by `kind` (`mcp` or `integration`). **Every q
 | Table | Holds |
 | --- | --- |
 | `cameras` | a camera: node, name, status, codecs, group, recording policy, `disabled_by_plan`, `last_seen` |
-| `camera_nodes` | a CameraNode: `api_key_hash`, hostname, status, version, storage stats, `last_register_error` |
+| `camera_nodes` | a CameraNode: `api_key_hash`, hostname, status, version, storage stats, `last_register_error`, LAN address and whether it serves HTTPS (`http_tls`) |
 | `camera_groups` | user-defined groups (name, colour, icon) |
 | `settings` | per-org key/value: plan, timezone, notification toggles, payment flags, licence verdict, sync cursors, cooldown anchors |
 | `audit_log` | security audit trail |
@@ -525,7 +525,7 @@ Members never see `audience = "admin"` notifications, in the list, the count or 
 | GET | `/api/mcp/activity/logs`, `…/logs/stats` | admin | 120 / 60 |
 | GET | `/api/mcp/activity/stream` (SSE) | admin | 60 |
 | GET / POST / DELETE | `/api/integration/keys`, `/api/integration/keys/{id}` | admin | – / 10/h / 30/h |
-| GET | `/api/integration/cameras`: with LAN `local_url` and recording state. `local_url` carries `?st=<token>`, a signed token that opens that camera's HLS on a password-protected node (CameraNode 0.1.81+; see `integration::stream_token`) | `osi_` key | 120 |
+| GET | `/api/integration/cameras`: with LAN `local_url` and recording state. `local_url` is `https://` for a node that reported `http_tls` (CameraNode 0.1.89+, which serves its LAN dashboard and streams over HTTPS) and carries `?st=<token>`, a signed token that opens that camera's HLS on a password-protected node (CameraNode 0.1.81+; see `integration::stream_token`) | `osi_` key | 120 |
 | GET | `/api/integration/cameras/{id}/snapshot`: live JPEG via the node | `osi_` key | 30 |
 | POST | `/api/integration/cameras/{id}/recording`: body `{recording: bool}` | `osi_` key | 60 |
 | GET | `/api/integration/status`: camera and node counts, disk, versions, plan | `osi_` key | 120 |

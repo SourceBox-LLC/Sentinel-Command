@@ -154,6 +154,8 @@ struct NodeRow {
     last_seen: Option<NaiveDateTime>,
     local_ip: Option<String>,
     http_port: Option<i32>,
+    /// The node serves its LAN streams over HTTPS (CameraNode 0.1.89+).
+    http_tls: Option<bool>,
     node_version: Option<String>,
     storage_used_bytes: Option<i64>,
     storage_max_bytes: Option<i64>,
@@ -170,9 +172,18 @@ impl NodeRow {
 }
 
 const NODE_COLUMNS: &str =
-    "id, node_id, name, status, last_seen, local_ip, http_port, node_version,
+    "id, node_id, name, status, last_seen, local_ip, http_port, http_tls, node_version,
      storage_used_bytes, storage_max_bytes, storage_disk_free_bytes, storage_disk_total_bytes,
      api_key_hash";
+
+/// A camera's LAN-direct stream on its node, for Home Assistant. HTTPS
+/// when the node said it serves HTTPS (CameraNode 0.1.89+): the node
+/// would redirect a plain request anyway, but the token should not cross
+/// the LAN in the clear on the way to the redirect.
+fn lan_stream_url(ip: &str, port: i32, tls: bool, camera_id: &str, token: &str) -> String {
+    let scheme = if tls { "https" } else { "http" };
+    format!("{scheme}://{ip}:{port}/hls/{camera_id}/stream.m3u8?st={token}")
+}
 
 /// `GET /api/integration/cameras` — the one call Home Assistant polls
 /// to build all its entities.
@@ -217,16 +228,16 @@ pub async fn list_cameras(
             let local_url = n
                 .filter(|n| n.local_ip.as_deref().is_some_and(|ip| !ip.is_empty()) && n.online())
                 .map(|n| {
-                    format!(
-                        "http://{}:{}/hls/{}/stream.m3u8?st={}",
+                    lan_stream_url(
                         n.local_ip.as_deref().unwrap_or_default(),
                         n.http_port.filter(|p| *p != 0).unwrap_or(8080),
-                        cam.camera_id,
-                        stream_token(
+                        n.http_tls.unwrap_or(false),
+                        &cam.camera_id,
+                        &stream_token(
                             &n.api_key_hash,
                             &cam.camera_id,
-                            stream_token_expiry(now_unix())
-                        )
+                            stream_token_expiry(now_unix()),
+                        ),
                     )
                 });
             json!({
@@ -505,5 +516,17 @@ mod tests {
         assert_eq!(python_strip("\u{a0}osi_key\u{85}"), "osi_key");
         assert_eq!(python_strip("\u{1f}osi_key\t"), "osi_key");
         assert_eq!(python_strip("osi key"), "osi key");
+    }
+
+    #[test]
+    fn the_lan_stream_url_follows_the_nodes_scheme() {
+        assert_eq!(
+            lan_stream_url("192.168.1.20", 8080, true, "cam1", "9.ab"),
+            "https://192.168.1.20:8080/hls/cam1/stream.m3u8?st=9.ab"
+        );
+        assert_eq!(
+            lan_stream_url("192.168.1.20", 8081, false, "cam1", "9.ab"),
+            "http://192.168.1.20:8081/hls/cam1/stream.m3u8?st=9.ab"
+        );
     }
 }
