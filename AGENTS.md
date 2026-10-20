@@ -370,7 +370,7 @@ A 401 from any API call makes the frontend end the Clerk session and return to `
 
 `AUTH_PROVIDER=local` replaces Clerk with one admin account and one org (`LOCAL_ORG_ID`). Both produce the same `AuthUser`, so every route and plan check works unchanged.
 
-- **Login.** `POST /api/auth/local/login` checks `LOCAL_ADMIN_USERNAME` and the argon2 `LOCAL_ADMIN_PASSWORD_HASH` (from `sentinel-hash-password`, whose parameters match python-argon2's), and returns a 30-day HS256 token signed with `APP_SECRET_KEY`. It is limited to 10 attempts a minute **per client address**, whatever credentials the request carries (`PerMinuteByIp`).
+- **Login.** `POST /api/auth/local/login` checks `LOCAL_ADMIN_USERNAME` and the argon2 `LOCAL_ADMIN_PASSWORD_HASH` (from `sentinel-hash-password`, whose parameters match python-argon2's), and returns a 30-day HS256 token signed with `APP_SECRET_KEY` (at least 32 characters, or the server refuses to start). It is limited to 10 attempts a minute **per client address**, whatever credentials the request carries (`PerMinuteByIp`).
 - **Refresh.** `POST /api/auth/local/refresh` re-signs a valid token, so an open dashboard never hits the 30-day wall.
 - **Plan.** Every plan lookup short-circuits to the `self_host` tier. Everything is unlocked except Sentinel AI, which needs a licence.
 - **Not available:** the Clerk webhook route is not mounted, the hourly plan reconcile does not run, and email recipients are just `LOCAL_ADMIN_EMAIL`.
@@ -462,7 +462,7 @@ Both live in `mcp_api_keys`, split by `kind` (`mcp` or `integration`). **Every q
 | POST | `/api/nodes/{id}/rotate-key` | admin | 5 |
 | POST | `/api/nodes/{id}/storage-cap`: body `{max_size_gb}`; sent to the node as `set_storage_cap` (CameraNode 0.1.79+) | admin | 10 |
 
-**WebSocket `/ws/node`.** The node authenticates with `X-Node-API-Key` and `X-Node-Id` headers; an old `?api_key=&node_id=` query string still works but logs a deprecation warning. Node → backend messages are `heartbeat` and `command_result`. Backend → node messages are `ack`, `command` (`take_snapshot`, `list_snapshots`, `list_recordings`, `wipe_data`, `set_storage_cap`) and `error`. A node too old to know a command answers `unknown command: …`; `set_storage_cap` turns that into a 409 telling the admin to update. Any other message type gets an `error` frame, and frames containing a NUL are refused. Motion never travels over the socket.
+**WebSocket `/ws/node`.** The node authenticates with `X-Node-API-Key` and `X-Node-Id` headers; credentials in the query string are refused (removed 2026-10-19; CameraNode has sent headers since 0.1.65, now the minimum version). Node → backend messages are `heartbeat` and `command_result`. Backend → node messages are `ack`, `command` (`take_snapshot`, `list_snapshots`, `list_recordings`, `wipe_data`, `set_storage_cap`) and `error`. A node too old to know a command answers `unknown command: …`; `set_storage_cap` turns that into a 409 telling the admin to update. Any other message type gets an `error` frame, and frames containing a NUL are refused. Motion never travels over the socket.
 
 ### Live video (HLS)
 
