@@ -118,3 +118,74 @@ async fn a_wrong_key_annotates_only_a_node_that_has_never_connected() {
         .await
         .unwrap();
 }
+
+/// CameraNode 0.1.89+ reports that its LAN server speaks HTTPS, and the
+/// register stores it so Home Assistant's stream URL is built as
+/// `https://`. A node that does not say (an older one) is plain HTTP.
+#[tokio::test]
+async fn register_records_whether_the_node_serves_https() {
+    let Some(state) = state().await else { return };
+    let org = format!("tls-{}", uuid::Uuid::new_v4().simple());
+    let node_id = org[4..12].to_string();
+    let key = "the-right-key";
+    let now = chrono::Utc::now().naive_utc();
+    sqlx::query(
+        "INSERT INTO camera_nodes (node_id, org_id, api_key_hash, name, status, created_at, updated_at)
+         VALUES ($1, $2, $3, 'Shed', 'pending', $4, $4)",
+    )
+    .bind(&node_id)
+    .bind(&org)
+    .bind(sentinel_command::api::node_writes::node_key_hash(key.as_bytes()))
+    .bind(now)
+    .execute(&state.pool)
+    .await
+    .unwrap();
+
+    let register =
+        |http_tls: Option<bool>| {
+            let mut body = serde_json::json!({
+                "node_id": node_id, "name": "Shed", "node_version": "0.1.89", "cameras": [],
+            });
+            if let Some(tls) = http_tls {
+                body["http_tls"] = serde_json::json!(tls);
+            }
+            let mut request = axum::http::Request::builder()
+                .method("POST")
+                .uri("/api/nodes/register")
+                .header("content-type", "application/json")
+                .header("x-node-api-key", key)
+                .body(axum::body::Body::from(body.to_string()))
+                .unwrap();
+            request.extensions_mut().insert(axum::extract::ConnectInfo(
+                std::net::SocketAddr::from(([127, 0, 0, 1], 9)),
+            ));
+            sentinel_command::app::build_router(state.clone()).oneshot(request)
+        };
+    let stored = || async {
+        let (tls,): (Option<bool>,) =
+            sqlx::query_as("SELECT http_tls FROM camera_nodes WHERE node_id = $1")
+                .bind(&node_id)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        tls
+    };
+
+    let response = register(Some(true)).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    assert_eq!(stored().await, Some(true));
+
+    let response = register(None).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    assert_eq!(
+        stored().await,
+        None,
+        "a node that does not say is plain HTTP"
+    );
+
+    sqlx::query("DELETE FROM camera_nodes WHERE org_id = $1")
+        .bind(&org)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+}
