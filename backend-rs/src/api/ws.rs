@@ -412,32 +412,24 @@ fn python_or(name: Option<&str>, fallback: &str) -> String {
 
 /// `WS /ws/node`.
 ///
-/// **Credentials come from headers, and from the query string only for
-/// nodes too old to know better.** A URL reaches far more log sinks
-/// than a header does — the access log, the platform's own, whatever
-/// ships them onward — and a custom client, which CameraNode is, can
-/// set headers freely. The query path still authenticates, and says so
-/// in the log each time, so it can be retired once the install base has
-/// rolled forward.
+/// **Credentials come from headers only.** A URL reaches far more log
+/// sinks than a header does — the access log, the platform's own,
+/// whatever ships them onward. CameraNode moved the key into headers in
+/// 0.1.65; the query-string fallback for older nodes was removed on
+/// 2026-10-19, and the minimum node version rose with it.
 pub async fn node_websocket(
     ws: axum::extract::WebSocketUpgrade,
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
-    request_uri: axum::http::Uri,
 ) -> axum::response::Response {
-    let query = crate::query::Query::parse(request_uri.query());
-    let header_key = headers.get("x-node-api-key").and_then(|v| v.to_str().ok());
-    let header_node = headers.get("x-node-id").and_then(|v| v.to_str().ok());
-
-    // Headers win; the query string is the fallback. `auth_path` only
-    // drives the deprecation log below.
-    let from_header = header_key.is_some();
-    let api_key = header_key
-        .map(str::to_string)
-        .or_else(|| query.last("api_key").map(str::to_string));
-    let node_id = header_node
-        .map(str::to_string)
-        .or_else(|| query.last("node_id").map(str::to_string));
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+    };
+    let api_key = header("x-node-api-key");
+    let node_id = header("x-node-id");
 
     let (Some(api_key), Some(node_id)) = (api_key, node_id) else {
         // 4001 is also what a wrong key gets, deliberately: a client
@@ -472,19 +464,6 @@ pub async fn node_websocket(
         tracing::warn!(node_id, "[WS] Auth failed");
         return refuse_handshake(4001, "Invalid node_id or API key");
     };
-
-    // Logged after authentication, so an invalid-key probe on the old
-    // path does not generate the signal — only a node that really is
-    // still using it.
-    if !from_header {
-        tracing::warn!(
-            node_id,
-            "[WS] Node authenticated via deprecated query-string api_key — upgrade \
-             CameraNode to v0.1.65+ to move the credential into request headers \
-             (X-Node-API-Key / X-Node-Id). Query-string auth is still accepted but \
-             logs the key in uvicorn / Fly access pipelines."
-        );
-    }
 
     ws.on_upgrade(move |socket| serve_node(socket, state, node_id, node_pk, org_id))
 }

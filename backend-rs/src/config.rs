@@ -168,6 +168,26 @@ impl Config {
     }
 }
 
+/// The shortest `APP_SECRET_KEY` a local-auth install starts with. It
+/// signs the admin's 30-day login tokens (HS256) and the unsubscribe
+/// links, so a short one can be guessed offline from a single captured
+/// token. `openssl rand -hex 32` gives 64 characters.
+pub const MIN_APP_SECRET_KEY_LEN: usize = 32;
+
+/// A sentence refusing to start, when local auth is on and its signing
+/// key is too short to be safe. An unset key is left alone: local login
+/// then reports itself unconfigured, as before.
+pub fn weak_app_secret_key(local_auth: bool, app_secret_key: &str) -> Option<String> {
+    let len = app_secret_key.chars().count();
+    (local_auth && len > 0 && len < MIN_APP_SECRET_KEY_LEN).then(|| {
+        format!(
+            "APP_SECRET_KEY is {len} characters; at least {MIN_APP_SECRET_KEY_LEN} are \
+             required, because it signs the admin's login tokens. Generate one with \
+             `openssl rand -hex 32`."
+        )
+    })
+}
+
 pub const DEFAULT_LICENSE_SERVICE_URL: &str = "https://sentinel-license.fly.dev";
 pub const DEFAULT_SYNC_SERVICE_URL: &str = "https://sentinel-sync.fly.dev";
 
@@ -243,7 +263,10 @@ impl Config {
                 .parse()
                 .unwrap_or(64 * 1024),
             cleanup_interval: var_or("CLEANUP_INTERVAL", "20").parse().unwrap_or(20),
-            min_supported_node_version: var_or("MIN_SUPPORTED_NODE_VERSION", "0.1.0"),
+            // 0.1.65 moved the WebSocket credential into headers; the
+            // query-string fallback for older nodes is gone, so they are
+            // told to update at registration rather than fail to connect.
+            min_supported_node_version: var_or("MIN_SUPPORTED_NODE_VERSION", "0.1.65"),
             latest_node_version: var_or("LATEST_NODE_VERSION", "0.1.77"),
             sentinel_agent_key: std::env::var("SENTINEL_AGENT_KEY")
                 .ok()
@@ -409,6 +432,21 @@ pub fn normalize_database_url(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// Found in the 2026-10-19 audit: any non-empty key was accepted.
+    #[test]
+    fn a_short_app_secret_key_refuses_to_start_in_local_mode() {
+        let short = "changeme";
+        let message = weak_app_secret_key(true, short).unwrap();
+        assert!(message.contains("8 characters"), "{message}");
+        assert!(weak_app_secret_key(true, &"x".repeat(31)).is_some());
+        assert!(weak_app_secret_key(true, &"x".repeat(32)).is_none());
+        // Unset is the existing "local login not configured" path.
+        assert!(weak_app_secret_key(true, "").is_none());
+        // Hosted mode does not sign with it.
+        assert!(weak_app_secret_key(false, short).is_none());
+    }
+
     use super::*;
     fn config_with(auth_provider: &str, secret: &str, publishable: &str) -> Config {
         Config {

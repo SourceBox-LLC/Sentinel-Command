@@ -44,6 +44,12 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::from_env();
     let port = config.port;
+    if let Some(message) = sentinel_command::config::weak_app_secret_key(
+        config.is_local_auth(),
+        &config.app_secret_key,
+    ) {
+        anyhow::bail!(message);
+    }
 
     // One database driver is compiled into each binary. A URL for the
     // other one is handed to the sibling binary if it is installed, and
